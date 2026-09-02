@@ -3,10 +3,12 @@
  * 拆開是為了讓 main() 可以直接被 vitest 測試,不用真的 spawn 子程序。
  *
  * 用法(FEATURE.md):
- *   prompt-check.ts --golden [--task <task>] [--fake]
+ *   prompt-check.ts --golden [--task <task>] [--fake] [--out <存放根目錄>]
  *   prompt-check.ts --diff <run 目錄 A> <run 目錄 B>
  *
  * Wave 0 phase-1 只支援 --fake(預設就是 fake,--fake 是明示寫法)。--live 是 phase-2。
+ * --out 不給時,fake run 存到 golden-fake/(不進 git),live run 存到 golden/(進 git);
+ * 見 golden-run.ts 的 defaultGoldenBaseDir()。測試一律傳暫存目錄,不碰 repo 裡的檔案。
  */
 import { runGolden, MissingGoldenSetError } from './golden-run.js';
 import { compareRuns, NotComparableError } from './compare.js';
@@ -42,12 +44,17 @@ export async function main(argv: string[]): Promise<CliResult> {
     return runGoldenCommand(argv, log, lines);
   }
 
-  log('用法:prompt-check.ts --golden [--task <task>] [--fake]  |  --diff <run 目錄 A> <run 目錄 B>');
+  log('用法:prompt-check.ts --golden [--task <task>] [--fake] [--out <存放根目錄>]  |  --diff <run 目錄 A> <run 目錄 B>');
   return { code: 1, output: lines.join('\n') };
 }
 
 async function runGoldenCommand(argv: string[], log: (s: string) => void, lines: string[]): Promise<CliResult> {
   const explicitTask = arg(argv, '--task') as LlmTask | undefined;
+  const outDir = arg(argv, '--out');
+  if (argv.includes('--out') && !outDir) {
+    log('--out 需要一個目錄:--out <存放根目錄>');
+    return { code: 1, output: lines.join('\n') };
+  }
   const tasks = explicitTask ? [explicitTask] : listGoldenTasks();
   let totalInputs = 0;
   let anyIssues = 0;
@@ -55,7 +62,7 @@ async function runGoldenCommand(argv: string[], log: (s: string) => void, lines:
 
   for (const task of tasks) {
     try {
-      const result = await runGolden({ task });
+      const result = await runGolden({ task, ...(outDir ? { baseDir: outDir } : {}) });
       totalInputs += result.outputs.length;
       log(`✓ golden run ${task} → ${result.dir}(${result.outputs.length} 個輸入)`);
       for (const o of result.outputs) {

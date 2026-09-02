@@ -13,8 +13,19 @@ import { renderScoresSheet } from './scores.js';
 import type { GoldenOutput, GoldenRunMeta, GoldenRunResult, LlmRouter, LlmTask } from './types.js';
 
 export const ROOT = resolve(import.meta.dirname, '../../../..');
+/** live run(phase-2)的存放處:進 git,diff 看得到(FEATURE.md「golden 儲存」)。 */
 export const DEFAULT_GOLDEN_BASE_DIR = join(ROOT, 'packages/core/src/prompt-quality/golden');
+/**
+ * fake run 的存放處:重播 fixture 的輸出沒有品質資訊,不值得進 git,
+ * 所以放在 .gitignore 掉的目錄。CI / 單獨執行 `--golden --fake` 跑完 git status 仍是乾淨的。
+ */
+export const DEFAULT_FAKE_GOLDEN_BASE_DIR = join(ROOT, 'packages/core/src/prompt-quality/golden-fake');
 export const DEFAULT_FAKE_FIXTURE_DIR = join(ROOT, 'packages/core/src/prompt-quality/fixtures/llm');
+
+/** 沒指定 baseDir 時,依模式決定預設存放處。 */
+export function defaultGoldenBaseDir(mode: GoldenRunMeta['mode']): string {
+  return mode === 'fake' ? DEFAULT_FAKE_GOLDEN_BASE_DIR : DEFAULT_GOLDEN_BASE_DIR;
+}
 
 export class MissingGoldenSetError extends Error {
   constructor(public readonly task: string) {
@@ -31,6 +42,10 @@ export interface RunGoldenOptions {
   router?: LlmRouter;
   /** 每次呼叫 router.call 都會觸發,方便呼叫端(cucumber World)記錄 llmCalls */
   onCall?: (task: string, prompt: string) => void;
+  /**
+   * 存放根目錄。不給就依模式用 defaultGoldenBaseDir()。
+   * 測試一律要傳暫存目錄,不要讓測試對 repo 裡的檔案讀寫或刪除(審核意見,ADR-032)。
+   */
   baseDir?: string;
 }
 
@@ -51,8 +66,10 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
   const set = getGoldenSet(opts.task);
   if (!set) throw new MissingGoldenSetError(opts.task);
 
+  // Wave 0 phase-1 只有 fake 模式;live 是 phase-2。
+  const mode: GoldenRunMeta['mode'] = 'fake';
   const date = opts.today ?? today();
-  const baseDir = opts.baseDir ?? DEFAULT_GOLDEN_BASE_DIR;
+  const baseDir = opts.baseDir ?? defaultGoldenBaseDir(mode);
   const dir = join(baseDir, set.task, date);
   mkdirSync(dir, { recursive: true });
 
@@ -84,7 +101,7 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
     model,
     provider,
     promptFileGitCommit: gitCommitOf(set.promptFile),
-    mode: 'fake',
+    mode,
   };
   writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
   writeFileSync(

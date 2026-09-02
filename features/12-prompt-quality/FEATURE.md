@@ -41,7 +41,8 @@ npx tsx scripts/prompt-check.ts --golden --task ingest.cards --fake
 npx tsx scripts/prompt-check.ts --diff prompts/golden/ingest.cards/2026-09-10 prompts/golden/ingest.cards/2026-10-01
 ```
 
-`--fake` 用重播 fixture,所以單獨執行不花錢也不需要網路。
+`--fake` 用重播 fixture,所以單獨執行不花錢也不需要網路;它的輸出存到不進 git 的
+`golden-fake/`(要存到別處用 `--out <目錄>`)。
 真的評分要 `--live`,那會呼叫雲端。
 
 ## 依賴
@@ -115,3 +116,12 @@ npx tsx scripts/prompt-check.ts --diff prompts/golden/ingest.cards/2026-09-10 pr
   `packages/core/src/prompt-quality/golden-sets/registry.ts`,demo 用的佔位 prompt 檔也在
   同一個資料夾。等 02/05 的真 prompt 檔存在後,把 registry.ts 對應項目的 `promptFile` 指過去
   即可,存放路徑要不要真的搬進 `packages/core/prompts/golden/` 麻煩協調者決定。
+- **fake run 不進 git、測試不碰 repo 檔案**(回應獨立審核意見):原本 `cli.test.ts` 的
+  `afterEach` 對 repo 裡的 `golden/grade.apply/` 做 `rmSync`,跑 `npm test` 就把 git 追蹤的
+  golden 檔真的刪掉——正是 ADR-032 要防的事。現在:(1) `runGolden` / CLI 依模式選預設存放處,
+  fake run 存到 `packages/core/src/prompt-quality/golden-fake/`(已 `.gitignore`,重播 fixture
+  的輸出沒有品質資訊),live run(phase-2)才存到 `golden/` 進 git;(2) CLI 加 `--out <目錄>`,
+  所有測試(vitest 與 cucumber steps)一律寫到 `mkdtemp` 暫存目錄,清理範圍也只限暫存目錄;
+  (3) 先前誤 commit 進 git 的 demo run `golden/grade.apply/2026-09-02/`(meta 還寫著
+  `promptFileGitCommit: uncommitted`,是開發中跑測試留下的產物)已移除。
+  跑 `npm test` 與 `prompt-check.ts --golden --fake` 之後 `git status` 都是乾淨的。

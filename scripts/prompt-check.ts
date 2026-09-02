@@ -3,7 +3,7 @@
  * packages/core/src/prompt-quality/cli.ts,這裡只負責印輸出、設退出碼。
  *
  * 用法:
- *   npx tsx scripts/prompt-check.ts --golden [--task <task>] [--fake]
+ *   npx tsx scripts/prompt-check.ts --golden [--task <task>] [--fake] [--out <存放根目錄>]
  *   npx tsx scripts/prompt-check.ts --diff <run 目錄 A> <run 目錄 B>
  */
 import { main } from '../packages/core/src/prompt-quality/cli.js';

@@ -10,3 +10,6 @@ reports/
 apps/desktop/src-tauri/target/
 tmp-learning/
 !.env.example
+
+# 12-prompt-quality:fake 模式的 golden run 只是重播 fixture,沒有品質資訊,不進 git(golden/ 的 live run 才進)
+packages/core/src/prompt-quality/golden-fake/

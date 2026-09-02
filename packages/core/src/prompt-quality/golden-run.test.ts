@@ -2,7 +2,13 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runGolden, MissingGoldenSetError } from './golden-run.js';
+import {
+  runGolden,
+  MissingGoldenSetError,
+  defaultGoldenBaseDir,
+  DEFAULT_GOLDEN_BASE_DIR,
+  DEFAULT_FAKE_GOLDEN_BASE_DIR,
+} from './golden-run.js';
 
 const tmpDirs: string[] = [];
 function tmpBaseDir(): string {
@@ -13,6 +19,15 @@ function tmpBaseDir(): string {
 
 afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
+});
+
+describe('defaultGoldenBaseDir', () => {
+  it('fake run 預設存到不進 git 的 golden-fake/,live run 存到進 git 的 golden/', () => {
+    expect(defaultGoldenBaseDir('fake')).toBe(DEFAULT_FAKE_GOLDEN_BASE_DIR);
+    expect(defaultGoldenBaseDir('live')).toBe(DEFAULT_GOLDEN_BASE_DIR);
+    expect(DEFAULT_FAKE_GOLDEN_BASE_DIR).not.toBe(DEFAULT_GOLDEN_BASE_DIR);
+    expect(DEFAULT_FAKE_GOLDEN_BASE_DIR.endsWith('golden-fake')).toBe(true);
+  });
 });
 
 describe('runGolden', () => {
