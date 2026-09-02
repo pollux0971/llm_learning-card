@@ -1,0 +1,13 @@
+[package]
+name = "learning-cards-desktop"
+version = "0.0.0"
+description = "Tauri 2 桌面殼(10-desktop-shell,phase-1)"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-window-state = "2"

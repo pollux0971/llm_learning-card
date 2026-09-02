@@ -8,5 +8,6 @@ reports/
 *.log
 .DS_Store
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/schemas/
 tmp-learning/
 !.env.example
