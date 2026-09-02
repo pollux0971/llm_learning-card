@@ -3,6 +3,7 @@ export * from './validator-min.js';
 export * from './scan.js';
 export * from './checks.js';
 export * from './report.js';
+export * from './atomic-write.js';
 
 import { scanDir } from './scan.js';
 import { runChecks } from './checks.js';

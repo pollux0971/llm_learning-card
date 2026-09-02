@@ -1,6 +1,6 @@
 /**
  * 09-lint 的 CLI 入口。健檢一個 learning 目錄,列出問題,寫一份報告到
- * <dir>/state/lint-report-<日期>.md,同樣內容也印到終端機。不改 cards / questions
+ * <dir>/state/lint-report-<日期>.md(原子寫入:tmp → fsync → rename),同樣內容也印到終端機。不改 cards / questions
  * / graph / state/reviews.json 等既有檔案——lint 只看不動。
  *
  * 用法:
@@ -8,9 +8,9 @@
  *
  * 退出碼:0 沒有問題;1 有問題。
  */
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { lint, formatReport } from '../packages/core/src/lint/index.js';
+import { lint, formatReport, atomicWriteFileSync } from '../packages/core/src/lint/index.js';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -33,7 +33,8 @@ const report = formatReport(result, now.toISOString());
 const stateDir = join(dir, 'state');
 if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
 const reportPath = join(stateDir, `lint-report-${dateStr}.md`);
-writeFileSync(reportPath, report, 'utf8');
+// state/ 的寫入必須是原子的(契約 §11b、CLAUDE.md 硬規則 5):tmp → fsync → rename
+atomicWriteFileSync(reportPath, report);
 
 console.log(report);
 console.log(`report written to ${reportPath}`);
