@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "PQ_DEMO_3",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[false,false,true],\"feedback\":\"只答對最後一點,概念沒抓到。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "PQ_DEMO_2",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[true,false],\"feedback\":\"漏了第二個要點。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}
