@@ -1,4 +1,4 @@
-@i4 @ingest @phase-3
+@i4 @ingest-pipeline @phase-3
 Feature: Source rules, generation without raw material, and incremental runs
   Raw first, model second. This phase adds the path for categories that have no
   raw material, and makes ingest reliable as raw keeps growing and changing.

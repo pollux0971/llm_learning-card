@@ -1,4 +1,4 @@
-@i1 @ingest @phase-2
+@i1 @ingest-pipeline @phase-2
 Feature: Questions, second level cards and the dependency graph
   Cards exist; now make them reviewable, deepenable and orderable. All three are
   produced at ingest time so that the next day's review and the first level of

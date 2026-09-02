@@ -72,3 +72,33 @@ phase-1 全自動(FakeLlm 是確定性的)。phase-2 起有 `@llm` 場景需真�
 
 - 一份 raw 該切成幾張卡?交給 LLM 判斷,上限 20。太大的 raw 應在放進來前先拆。
 - 圖片如何從 raw 帶進 assets/?目前只處理 raw 已是 markdown 且圖片路徑相對的情況。
+
+## 待協調
+
+phase-1 實作完成、跑過(見下方驗證結果),但發現兩個不在本功能落點內的問題,
+需要協調者處理:
+
+1. **`cucumber.js` 的 profile 寫法讓所有步驟檔都載入不到(阻擋全部功能的
+   `npm run accept` / `accept:standalone` / `accept:integration`)。**
+   目前寫法是 `export default { default: { paths, import, tags, ... } }`,
+   cucumber-js 11.3.0 印出「No profiles specified; using default profile」但
+   實際上並沒有把巢狀的 `default` 攤平進最終設定,`import` 解析結果是空陣列,
+   於是連 `common.steps.ts` 都載入不到,162 個場景全部 `undefined`
+   (不是我這個功能寫壞的,拿掉 `features/steps/ingest.steps.ts` 問題依舊在)。
+   已本機驗證:把 `cucumber.js` 改成不包一層 `default:`(直接
+   `export default { paths, import, tags, format, publishQuiet }`)就正常了,
+   `02-ingest-pipeline/phase-1` 的 10 個場景全過。因為 `cucumber.js` 是共用檔,
+   我沒有動它,留給協調者判斷怎麼改(ADR-033 可能要補一條)。
+2. `contracts/fixtures/cards/README.md` 的 `wordcount-cases.md` 範例宣稱合計
+   26,但依 `contracts/types.md` §2 的演算法逐字元推演是 23(表格本身逐行加總
+   也是 23)。已在 `word-count-min.test.ts` 用 23 並附註,沒有動 README,懷疑
+   是原文筆誤,麻煩跟 01-data-layer / 09-lint 對一下。
+
+順手修了一個只影響我自己這三個檔的小 bug:`features/02-ingest-pipeline/phase-{1,2,3}.feature`
+第一行的 tag 原本是 `@ingest`,但 `standaloneKey()` 的規則要求跟
+`standalone.json` 的 key 同尾碼,`02-ingest-pipeline` 需要 `@ingest-pipeline`
+才配得到(跟其他功能的 tag 慣例一致,例如 `@llm-router`、`@weekly-goal`)。
+已改成 `@ingest-pipeline`,全域搜尋過沒有其他地方依賴舊名字。
+
+`npm run prompt:golden` 現在會直接噴 `Cannot find module scripts/prompt-check.ts`——
+12-prompt-quality 還沒建,不是這次改動造成的,先記著。
