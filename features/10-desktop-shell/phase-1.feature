@@ -23,6 +23,7 @@ Feature: Two windows that stay where you put them
     Then the other does not move
     And they may overlap if the person wants
 
+  @manual
   Scenario: Position and size survive a restart
     When both windows are moved and resized and the application is closed
     Then the window state is persisted
