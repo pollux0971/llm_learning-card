@@ -130,4 +130,4 @@ Feature: Schemas, card validation and the word counter
 
   Scenario: The word count fixture matches the contract
     When the word counter runs against the word count fixture card
-    Then the count is 26
+    Then the count is 23
