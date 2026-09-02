@@ -1,0 +1,10 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "security-basics",
+  "attempt": 1,
+  "note": "給 02-ingest-pipeline 的 standalone 指令用(--file contracts/fixtures/raw/security-basics.md)。三張卡對應 security-basics.md 的三個小節,行號落在該檔案的 34 行以內。",
+  "response": {
+    "text": "[{\"title\":\"同源政策\",\"body\":\"瀏覽器限制網頁只能存取同源資源。同源指協定、主機、埠號三者完全相同。這條規則存在是因為瀏覽器會自動帶上 cookie,沒有它任何網站都能背景讀到你其他站台的回應。\",\"examples\":[\"https://a.com 與 https://a.com/api 同源\\nhttps 與 http 不同源\\n埠號不同也不同源\"],\"lines\":[3,12]},{\"title\":\"跨來源資源共享\",\"body\":\"跨來源請求預設會被瀏覽器擋下,伺服器要在回應標頭明確列出允許的來源,瀏覽器才會把結果交給網頁。允許範圍由伺服器決定,網頁不能自己宣稱有權限,帶憑證時規則更嚴格。\",\"examples\":[\"回應標頭列出允許的來源\\n帶憑證的請求不能用萬用字元\"],\"lines\":[14,24]},{\"title\":\"預檢請求\",\"body\":\"有些跨來源請求瀏覽器會先送一個預檢請求,問伺服器願不願意接受,同意後才送出真正的請求。這是為了保護同源政策出現前就存在、沒預期會收到跨來源寫入的舊系統。\",\"examples\":[\"改變狀態的方法會觸發預檢\\n自訂標頭也會觸發預檢\"],\"lines\":[26,34]}]",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

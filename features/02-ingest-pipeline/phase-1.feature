@@ -1,4 +1,4 @@
-@wave0 @ingest @phase-1 @standalone
+@wave0 @ingest-pipeline @phase-1 @standalone
 Feature: Turning raw material into level zero cards
   The first time the pipeline produces real cards. In Wave 0 it runs against a
   fake LLM that replays recorded fixtures, so it is fully offline and
