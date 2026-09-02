@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "phase-1:兩個 placeholder 視窗,不需要檔案/系統列權限",
+  "windows": ["teach", "test"],
+  "permissions": ["core:default", "window-state:default"]
+}

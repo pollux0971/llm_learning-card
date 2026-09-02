@@ -75,3 +75,17 @@ Wave 0 是兩個 placeholder HTML 視窗,不載入任何真的內容。
 
 - Wayland 置頂:偵測並提示,不做 hack。
 - 兩個視窗還是一個視窗兩分頁?定為兩個。用了覺得煩就在 I5 時 `/decide`。
+
+## 待協調
+
+- **根目錄 `cucumber.js` 有 bug,擋住全 repo 的 `npm run accept*`,不是 10-desktop-shell 專屬問題**。
+  現況把設定包了一層多的 `default` key:
+  ```js
+  export default { default: { paths: [...], import: [...], ... } };
+  ```
+  但 cucumber-js 11 的設定檔格式是直接把 `paths` / `import` / `tags` … 放在頂層(`default` 是「選 profile」用的機制,
+  不是「把設定包起來」的 key)。實測:拿掉這層 `default:` 包裝、欄位攤平到頂層,`npm run accept:standalone`
+  就能正常載入 `features/steps/**/*.ts` 並跑過。目前的寫法會讓 `import`/`paths` 都被吃成空陣列,
+  於是每個 scenario 都變成 undefined(跟哪個功能的步驟檔無關,common.steps.ts 也一樣中招)。
+  這個檔案只有協調者能改,phase-1 的步驟(`features/steps/desktop-shell.steps.ts`)已經用
+  `cucumber-js --import features/steps/*.ts` 手動驗證過 5/5 通過,邏輯沒問題,純粹是設定檔格式的問題。
