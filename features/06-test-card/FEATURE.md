@@ -71,3 +71,32 @@ npm run dev -w apps/test-card
 ## 開放問題
 
 - 應用題輸入要不要支援 markdown(寫程式碼片段)?先純文字。
+
+## 待協調
+
+- **`cucumber.js`(共用檔,只有協調者能改)有一個會讓全部 `npm run accept*` 誤判的 bug**:
+  這個 repo 是 `"type": "module"`,cucumber-js 11 用 ESM `import()` 載入 `cucumber.js`,
+  動態 `import()` 本身就會把預設匯出包一層 `.default`。目前檔案內容又自己包了一層
+  `export default { default: { paths, import, tags, ... } }`,兩層 `.default` 疊起來,
+  造成 `paths` / `import` / `tags` 都沒被讀到——**連 `common.steps.ts` 定義的步驟都會顯示
+  Undefined**,不是只有 06 的場景。已用 `@cucumber/cucumber/api` 的 `loadConfiguration()`
+  實測確認(`useConfiguration.import` 解析出來是 `[]`,paths/tags 同樣是空的),
+  並用一份拿掉外層 `default:` 的暫存 config 驗證修好後 `06-test-card/phase-1` 六個
+  非 `@manual` 場景全過。
+  **修法**:`cucumber.js` 的 `export default` 直接寫設定物件本身,不要再包一層 `default:`:
+  ```js
+  export default {
+    paths: [...],
+    import: [...],
+    tags: 'not @manual',
+    format: ['progress'],
+  };
+  ```
+  （`publishQuiet` 該版本已標記不需要,可以順便拿掉,但不影響這個 bug。）
+  這個檔案我不能動,麻煩協調者確認並修。修好前,`npm run accept` / `accept:standalone` /
+  `accept:integration` 對任何功能都會回報「全部 undefined」,不代表哪個功能沒寫步驟定義。
+- phase-1.feature 有一行 wording 微調(不影響行為,只是消歧義):「A grading error leaves
+  the question in place」情境的 When 從 `the result is displayed` 改成
+  `the person submits an answer`——前者跟 `common.steps.ts` 的通用比對句
+  `the result is {}`(cucumber expression 的 `{}` 是萬用參數)撞在一起,cucumber 會報
+  ambiguous match。純文字改動,場景語意不變。
