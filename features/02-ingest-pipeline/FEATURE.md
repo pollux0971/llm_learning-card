@@ -42,8 +42,8 @@ npx tsx scripts/ingest.ts --fake --file contracts/fixtures/raw/security-basics.m
 
 | 東西 | 位置 | 整合時移除於 |
 |---|---|---|
-| `FakeLlmRouter` | `packages/ingest/src/fake-llm.ts` | I1(改用 03) |
-| 最小字數檢查 | `packages/ingest/src/word-count-min.ts` | I1(改用 01) |
+| `FakeLlmRouter` | `packages/core/src/ingest/fake-llm.ts` | I1(改用 03) |
+| 最小字數檢查 | `packages/core/src/ingest/word-count-min.ts` | I1(改用 01) |
 
 ## 技術棧
 

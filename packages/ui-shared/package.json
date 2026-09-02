@@ -1,0 +1,11 @@
+{
+  "name": "@learning/ui-shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "兩張卡共用的 UI 邏輯(markdown-it example 圍欄插件)。Wave 0 由 07-teach-card 擁有(ADR-035)",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  }
+}

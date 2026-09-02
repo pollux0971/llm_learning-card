@@ -1,7 +1,21 @@
-import { setWorldConstructor, World, IWorldOptions, Before } from '@cucumber/cucumber';
-import { readFileSync, mkdtempSync, cpSync, rmSync } from 'node:fs';
+import { setWorldConstructor, World, IWorldOptions, Before, After } from '@cucumber/cucumber';
+import { readFileSync, mkdtempSync, cpSync, rmSync, existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+
+/** repo 根目錄(features/steps/ 的上兩層) */
+export const ROOT = resolve(import.meta.dirname, '../..');
+
+type Manifest = Record<string, { cmd: string; interactive: boolean; expect?: string }>;
+
+export interface RunResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  /** stdout + stderr,方便「it prints …」類的斷言 */
+  output: string;
+}
 
 /**
  * 所有步驟共用的狀態容器。
@@ -10,18 +24,38 @@ import { join } from 'node:path';
  * 1. 每個 scenario 一個新的 World,不共用狀態
  * 2. 需要寫入的 fixture 一律複製到暫存目錄再動,絕不修改 contracts/fixtures/
  * 3. lastResult 存放 When 的產出,Then 從這裡斷言
+ *
+ * 通用步驟(features/steps/common.steps.ts)只讀寫這裡的欄位;各功能的步驟檔負責填值。
  */
 export class LearningWorld extends World {
   /** 暫存的 learning 目錄,由 useFixture 建立 */
-  dir?: string;
+  dir?: string | undefined;
   /** 測試裡的「今天」,預設 2026-09-10 以配合 mid-cycle fixture */
   today = '2026-09-10';
   /** 最近一次 When 的結果,型別由各步驟自己收斂 */
   lastResult: unknown;
+  /**
+   * 給通用步驟「the result is X」比對用的文字。
+   * 當 lastResult 不是原始值時,When 步驟可以直接設這個欄位,省得通用步驟猜。
+   */
+  resultText?: string | undefined;
   /** 最近一次拋出的錯誤,給「應該失敗」的場景用 */
-  lastError?: Error;
+  lastError?: Error | undefined;
   /** FakeLlmRouter 記錄的呼叫,用來斷言「沒有呼叫模型」 */
   llmCalls: { task: string; prompt: string }[] = [];
+  /** 任何對外網路請求的記錄(fake adapter 推進來),用來斷言「沒有網路請求」 */
+  networkRequests: string[] = [];
+  /** 通用步驟「a fake router replaying the recorded fixtures」設 true;各功能的 When 自己建 FakeLlmRouter */
+  useFakeRouter = false;
+  /** 最近一次外部指令(standalone / dev server)的結果 */
+  lastRun?: RunResult;
+  /** 目前 scenario 所屬 feature 的 tags(Before hook 填) */
+  tags: string[] = [];
+  /** 通用步驟載入的卡片原文(Given a card with three example fences …) */
+  cardText?: string;
+  /** 純函式檢查用:呼叫前的輸入物件參照與深拷貝,見 trackInput */
+  inputRef?: unknown;
+  inputSnapshot?: string;
 
   constructor(options: IWorldOptions) {
     super(options);
@@ -29,7 +63,7 @@ export class LearningWorld extends World {
 
   /** 把一份唯讀 fixture 複製到暫存目錄,回傳新路徑 */
   useFixture(name: string): string {
-    const src = join('contracts/fixtures', name);
+    const src = join(ROOT, 'contracts/fixtures', name);
     const dst = mkdtempSync(join(tmpdir(), 'lc-'));
     cpSync(src, dst, { recursive: true });
     this.dir = dst;
@@ -38,7 +72,7 @@ export class LearningWorld extends World {
 
   /** 直接讀 fixture,不複製。只用於不會被修改的情況 */
   readFixture(relPath: string): string {
-    return readFileSync(join('contracts/fixtures', relPath), 'utf8');
+    return readFileSync(join(ROOT, 'contracts/fixtures', relPath), 'utf8');
   }
 
   /** 讀暫存目錄裡的檔案 */
@@ -47,14 +81,102 @@ export class LearningWorld extends World {
     return readFileSync(join(this.dir, relPath), 'utf8');
   }
 
+  /** 純函式檢查:在呼叫被測函式之前記下輸入,之後用「the original object is unchanged」斷言 */
+  trackInput<T>(input: T): T {
+    this.inputRef = input;
+    this.inputSnapshot = JSON.stringify(input);
+    return input;
+  }
+
+  /** 由 feature 檔的 tag 推出 standalone.json 的 key,例如 @scheduler → 04-scheduler */
+  standaloneKey(): string {
+    const manifest = this.manifest();
+    for (const t of this.tags) {
+      const name = t.replace(/^@/, '');
+      const hit = Object.keys(manifest).find((k) => k.endsWith(`-${name}`));
+      if (hit) return hit;
+    }
+    throw new Error(`從 tags ${this.tags.join(' ')} 推不出 standalone.json 的 key`);
+  }
+
+  manifest(): Manifest {
+    return JSON.parse(readFileSync(join(ROOT, 'standalone.json'), 'utf8')) as Manifest;
+  }
+
+  /** 同步執行一個 shell 指令(cwd = repo 根),結果放進 lastRun 並回傳 */
+  runCommand(cmd: string, opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): RunResult {
+    const r = spawnSync(cmd, {
+      cwd: ROOT,
+      shell: true,
+      encoding: 'utf8',
+      timeout: opts.timeoutMs ?? 120_000,
+      env: { ...process.env, ...opts.env },
+    });
+    const stdout = r.stdout ?? '';
+    const stderr = r.stderr ?? '';
+    this.lastRun = { status: r.error ? null : r.status, stdout, stderr, output: stdout + stderr };
+    return this.lastRun;
+  }
+
+  /** 跑 standalone.json 裡某個 key 的指令。不給 key 就由 tags 推 */
+  runStandalone(key?: string, extraArgs = ''): RunResult {
+    const k = key ?? this.standaloneKey();
+    const entry = this.manifest()[k];
+    if (!entry) throw new Error(`standalone.json 裡沒有 ${k}`);
+    if (entry.interactive) throw new Error(`${k} 是互動式指令,用 startDevServer`);
+    return this.runCommand(extraArgs ? `${entry.cmd} ${extraArgs}` : entry.cmd);
+  }
+
+  /**
+   * 啟動互動式指令(dev server),等到輸出出現 ready 字樣或逾時,然後關掉。
+   * 結果放進 lastRun:status 0 表示有看到 ready 字樣。
+   */
+  async startDevServer(key?: string, opts: { readyPattern?: RegExp; timeoutMs?: number } = {}): Promise<RunResult> {
+    const k = key ?? this.standaloneKey();
+    const entry = this.manifest()[k];
+    if (!entry) throw new Error(`standalone.json 裡沒有 ${k}`);
+    const ready = opts.readyPattern ?? /localhost:\d+|Local:|ready in/i;
+    const timeoutMs = opts.timeoutMs ?? 60_000;
+
+    return new Promise<RunResult>((resolveRun) => {
+      const child = spawn(entry.cmd, { cwd: ROOT, shell: true, env: process.env, detached: true });
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const finish = (status: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* 已經結束 */ }
+        this.lastRun = { status, stdout, stderr, output: stdout + stderr };
+        resolveRun(this.lastRun);
+      };
+      const check = () => { if (ready.test(stdout + stderr)) finish(0); };
+      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); check(); });
+      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); check(); });
+      child.on('exit', (code) => finish(code ?? 1));
+      const timer = setTimeout(() => finish(null), timeoutMs);
+    });
+  }
+
   cleanup(): void {
-    if (this.dir) rmSync(this.dir, { recursive: true, force: true });
+    if (this.dir && existsSync(this.dir)) rmSync(this.dir, { recursive: true, force: true });
+    this.dir = undefined;
   }
 }
 
 setWorldConstructor(LearningWorld);
 
-Before(function (this: LearningWorld) {
+Before(function (this: LearningWorld, { pickle }) {
   this.llmCalls = [];
+  this.networkRequests = [];
   this.lastError = undefined;
+  this.lastResult = undefined;
+  this.resultText = undefined;
+  this.useFakeRouter = false;
+  this.tags = pickle.tags.map((t) => t.name);
+});
+
+After(function (this: LearningWorld) {
+  this.cleanup();
 });

@@ -23,7 +23,7 @@
 ## 單獨執行
 
 ```bash
-LLM_CLOUD_PROVIDER=anthropic ANTHROPIC_API_KEY=... \
+LLM_CLOUD_PROVIDER=openai OPENAI_API_KEY=... LLM_CLOUD_MODEL=gpt-5.6-luna \
   npx tsx scripts/llm.ts --task deepen --prompt "用 50 字解釋同源政策"
 npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模型
 ```
@@ -67,6 +67,19 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 
 路由決策全自動(mock 網路與 Ollama 狀態)。真呼叫只在 `@llm` 與 `@manual`。
 `routing.ts` 的變異門檻 95%——契約 §7 的表格每一格都要有測試。
+
+## 已決定但要複核(ADR-034)
+
+- 雲端 provider:**OpenAI**。金鑰在專案根目錄 `.env` 的 `OPENAI_API_KEY`(已被 .gitignore 擋住)。
+- 模型名稱:使用者給的是 `gpt-5.6-luna`。**不要在程式碼裡寫死。** 依契約 §11,
+  模型名從環境變數 `LLM_CLOUD_MODEL` 讀(其次 `settings.llm.cloud_model`),provider 從
+  `LLM_CLOUD_PROVIDER`。scaffold 已在 `.env.example` 放這三個變數與預設值。
+- `.env` 的載入:Node 22 內建 `process.loadEnvFile('.env')`,只在 CLI 入口(`scripts/llm.ts`)呼叫,
+  檔案不存在時吞掉錯誤;library 程式碼只讀 `process.env`,不碰檔案。
+- 模型名已由協調者用 API 驗證存在(2026-09-02)。之後要換模型只改 `.env`,不用動程式碼。
+- **OpenAI adapter 的參數名**:協調者用實際金鑰打過 `/v1/chat/completions`,`gpt-5.6-luna` 確實存在(HTTP 200),
+  但**不吃 `max_tokens`**,會回 400 `Unsupported parameter: 'max_tokens' ... Use 'max_completion_tokens' instead.`
+  adapter 一律用 `max_completion_tokens`。
 
 ## 開放問題
 

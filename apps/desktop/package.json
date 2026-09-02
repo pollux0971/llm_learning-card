@@ -1,0 +1,12 @@
+{
+  "name": "@learning/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tauri 2 桌面殼。src-tauri/ 由 10-desktop-shell/phase-1 建立",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "tauri"
+  }
+}

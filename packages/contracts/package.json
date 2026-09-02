@@ -1,0 +1,11 @@
+{
+  "name": "@learning/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "contracts/types.md 的可執行版本:zod schema 與 TypeScript 型別(01-data-layer 擁有)",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  }
+}

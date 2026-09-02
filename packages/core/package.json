@@ -1,0 +1,10 @@
+{
+  "name": "@learning/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "桌面與 CLI 共用的核心邏輯。每個功能一個子目錄,見 README.md",
+  "exports": {
+    "./*": "./src/*"
+  }
+}

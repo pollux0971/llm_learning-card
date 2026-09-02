@@ -38,7 +38,7 @@ npx tsx scripts/lint.ts --dir contracts/fixtures/learning-broken
 
 | 東西 | 位置 | 整合時移除於 |
 |---|---|---|
-| 最小卡片驗證器 | `packages/lint/src/validator-min.ts` | I6(改用 01) |
+| 最小卡片驗證器 | `packages/core/src/lint/validator-min.ts` | I6(改用 01) |
 
 **這個重複是刻意的且值得**:lint 的價值在於「用另一雙眼睛看」。
 Wave 0 期間它用自己的驗證器,如果它跟 01 的驗證器對同一張卡結論不同,

@@ -298,19 +298,52 @@ graph TD
 - **Consequences**: 改 prompt 多一道手續。`CLAUDE.md` 加一條:改了 prompt 沒跑 golden 就 commit,是這個專案唯一會靜默毀掉品質的操作。
 - **Related**: features/12-prompt-quality
 
+## ADR-033 · cucumber 用 tsx 的 ESM loader 載入 TypeScript
+
+- **Status**: accepted · 2026-09-02
+- **Context**: `@cucumber/cucumber` 11 + `"type": "module"`,步驟檔是 TypeScript。載入方式有 ts-node、tsx、先編譯三種,而這件事擋住所有自動驗收。
+- **Decision**: `package.json` 的三個 `accept*` 腳本前綴 `NODE_OPTIONS=--import=tsx`;`cucumber.js` 維持 `import: ['features/steps/**/*.ts']`。步驟檔之間互相 import 寫 `./_world.js`(ESM 慣例,tsx 對應到 `.ts`)。
+- **Alternatives**: ts-node/esm(維護慢、ESM 支援不穩);先 `tsc` 再跑(多一步,而且 vitest 與 scripts 已經都走 tsx)。
+- **Consequences**: 整個 repo 的 TypeScript 執行只有一條路(tsx)。Windows(I8)要把 `NODE_OPTIONS=` 前綴改成 `cross-env`,到時再處理。
+- **Related**: ADR-016, ADR-017, features/steps/README.md
+
+## ADR-034 · 雲端 provider 用 OpenAI,模型名只從環境變數來
+
+- **Status**: accepted · 2026-09-02
+- **Context**: 待決表的「雲端 provider 與模型」擋著 03-llm-router/phase-1 的 `@llm` 場景。使用者決定用 OpenAI,金鑰在 `.env`(`OPENAI_API_KEY`,已 gitignore),模型名 `gpt-5.6-luna`(協調者已用 API 驗證存在)。
+- **Decision**: provider 與模型名不寫死在程式碼。依契約 §11 從 `LLM_CLOUD_PROVIDER` / `LLM_CLOUD_MODEL` 讀,其次 `settings.llm`。`.env.example` 記錄變數名與目前值;只有 CLI 入口用 `process.loadEnvFile` 載入 `.env`,library 只讀 `process.env`。OpenAI adapter 用 `max_completion_tokens`(該模型不接受 `max_tokens`)。
+- **Alternatives**: 寫死模型名(換模型要改程式);同時做 Anthropic adapter 的真呼叫(契約保留 `anthropic` 值,adapter 要有,但 Wave 0 只有 OpenAI 有金鑰,Anthropic 走 mock)。
+- **Consequences**: 換模型只改 `.env`。`contracts/fixtures/learning-minimal/config/settings.yaml` 仍寫 anthropic 當範例,環境變數會覆蓋它。
+- **Related**: ADR-006, contracts/types.md §7 §11, features/03-llm-router/FEATURE.md
+
+## ADR-035 · Wave 0 平行開發的落點與共用檔歸屬
+
+- **Status**: accepted · 2026-09-02
+- **Context**: 使用者決定打破 WIP ≤ 2,十一個 phase-1 各開一個 git worktree 同時做。互踩只會發生在共用檔與同一個目錄,所以要在分叉前定好。
+- **Decision**:
+  1. 落點表在 `packages/core/README.md`,`scripts/check-boundaries.ts` 的 `OWNERS` 是同一份表的程式版。每個功能一個 `packages/core/src/<name>/`(含自己的 stub),UI 在 `apps/<name>/`。
+  2. `packages/ui-shared/`(example 圍欄插件)Wave 0 由 07-teach-card 擁有;06-test-card 在 I3 前不 import 它。
+  3. 共用檔只有協調者改:`package.json`、lock、`tsconfig.json`、`cucumber.js`、`standalone.json`、`features/steps/_world.ts`、`features/steps/common.steps.ts`、`docs/01-roadmap.md`、本檔。worker 把需求寫在自己 FEATURE.md 的「待協調」段。
+  4. 出現在兩個以上資料夾的 gherkin 句子只在 `common.steps.ts` 定義一次;只用在 `@manual` 場景的句子不定義。
+  5. 所有依賴一次裝在 root(workspaces hoisting),worktree 只跑 `npm ci`,不動 lock。
+  6. 合併順序:01 先,再 04,其餘隨到隨合;每次合併後跑 `boundaries`、`test`、`accept:standalone`、`standalone`。
+- **Alternatives**: 各 worktree 自己加依賴與 workspace(lock 必衝);允許 06 與 07 同時寫 ui-shared(同檔互踩)。
+- **Consequences**: worker 的自由度小一點,但合併幾乎不會衝突。`CLAUDE.md` 的「WIP ≤ 2」在 Wave 0 暫時不適用,Wave 0 之後恢復。
+- **Related**: ADR-021, ADR-022, ADR-023, packages/core/README.md, scripts/check-boundaries.ts
+
 ---
 
 ## 待決(不影響開工)
 
 | 項目 | 需在何時前決定 | 阻擋什麼 |
 |---|---|---|
-| 雲端 provider 與模型 | Wave 0 的 03 phase-1 前 | 03-llm-router/phase-1 的 @llm 場景 |
+| ~~雲端 provider 與模型~~ | 已決定(ADR-034) | — |
 | 本機模型與硬體 | I1 前 | **03-llm-router/phase-2**(見該資料夾 NEXT.md) |
 | 週目標預設值是否維持 7 | I5 前 | 無 |
 | 通知 / 提醒時間 | I5 後 | 無 |
 | 時令型卡片設計 | v2 | 無(ADR-013) |
 | 跨機器同步:git 手動 vs Syncthing | I7 前 | 無 |
-| cucumber 的 TypeScript loader 設定 | Wave 0 第一個 phase-done 前 | 所有自動驗收(見 features/steps/README.md) |
+| ~~cucumber 的 TypeScript loader 設定~~ | 已決定(ADR-033) | — |
 | golden 評分的維度與規模 | I2 前 | 12-prompt-quality/phase-2 |
 
 ## 已推翻
