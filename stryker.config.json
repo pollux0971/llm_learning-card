@@ -10,7 +10,10 @@
   "mutate": [
     "packages/core/src/**/*.ts",
     "!packages/core/src/**/*.test.ts",
-    "!packages/core/src/**/index.ts"
+    "!packages/core/src/**/index.ts",
+    "packages/ui-shared/src/**/*.ts",
+    "!packages/ui-shared/src/**/*.test.ts",
+    "!packages/ui-shared/src/**/index.ts"
   ],
   "thresholds": { "high": 90, "low": 70, "break": 60 },
   "ignorePatterns": ["reports", "dist", "target", "apps/desktop/src-tauri"]
