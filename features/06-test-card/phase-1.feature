@@ -78,7 +78,7 @@ Feature: The test card interface running against fixtures
 
   Scenario: A grading error leaves the question in place
     Given the stub grader returns an error result
-    When the result is displayed
+    When the person submits an answer
     Then no scheduler transition is applied
     And the interface says grading failed and to try again
     And the question stays in the session
