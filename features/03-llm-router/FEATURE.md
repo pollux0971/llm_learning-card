@@ -85,3 +85,31 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 
 - 雲端逾時 60 秒是否太長?先這樣,用了再調。
 - token 用量要不要做 UI?先只 log。
+
+## 待協調
+
+- **`cucumber.js`(共用檔,worker 不能自己改)有 bug,擋住所有功能的 `npm run accept:standalone` /
+  `npm run accept`。** 現況(ESM,`"type": "module"`):
+  ```js
+  export default {
+    default: { paths: [...], import: [...], tags: 'not @manual', format: [...], publishQuiet: true },
+  };
+  ```
+  cucumber-js 11.3.0 用 `await import()` 讀 ESM 設定檔時,模組的 `export default` 值本身就會被當成
+  「`default` profile 的內容」——不需要再手動包一層 `default:`。現在這樣包兩層,實際解析出來的
+  `paths` / `import` 都是空陣列,所以**目前沒有任何 `.feature` 真的載入到 `features/steps/**/*.ts`
+  的步驟定義**,`npm run accept:standalone` 對所有功能都回報 100% undefined steps(不是我這個功能
+  獨有的問題)。
+  修法(已驗證):拿掉多包的 `default:` 一層,改成
+  ```js
+  export default {
+    paths: ['features/**/*.feature', 'docs/integration/**/*.feature'],
+    import: ['features/steps/**/*.ts'],
+    tags: 'not @manual',
+    format: ['progress'],
+  };
+  ```
+  (`publishQuiet` 這版也提示已不需要,可以順便拿掉,但不影響本問題。)
+  改完之後我這個功能的 phase-1.feature 12 個非 `@manual` 場景全過(本地用暫時修好的
+  `cucumber.js` 驗證過:`12 scenarios (12 passed)`,驗完立刻還原檔案沒有留改動)。
+  **這個 bug 擋住其他九個平行 worker 的驗收,建議優先修。**
