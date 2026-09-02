@@ -10,3 +10,6 @@ reports/
 apps/desktop/src-tauri/target/
 tmp-learning/
 !.env.example
+
+# lint 對 fixture 跑「單獨執行」驗證時會在那裡寫報告檔,不要進版本控制
+contracts/fixtures/**/state/lint-report-*.md
