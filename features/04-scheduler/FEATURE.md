@@ -66,3 +66,25 @@ npx tsx scripts/due.ts --simulate --days 200 --new-per-day 2
 ## 開放問題
 
 - 「今天」用本地時區 00:00 還是可設的一天開始時間(如 04:00)?先 00:00,I5 再議。
+
+## 待協調
+
+- **`cucumber.js`(共用檔)的 ESM profile 解析有 bug,擋住全專案的 `npm run accept*`。**
+  現在寫法是 `export default { default: { paths: [...], import: [...], ... } }`。
+  但 `@cucumber/cucumber` 11.3.0 讀 ESM 設定檔時,`definitions` 會是整個 module
+  namespace(`{ default: <你 export 的值> }`),不會像 CJS 一樣自動把 `.default`
+  攤平回上一層。於是 `definitions['default']` 抓到的是你 export 的**整包**
+  `{ default: {...實際設定...} }`,而不是裡面那層真正的 paths/import/tags——
+  結果所有 step 定義都沒被載入,`npm run accept`、`accept:standalone`、
+  `accept:integration` 三個指令跑起來全部變成「Undefined」,不管哪個資料夾。
+  修法(二選一,已用第一種在本地驗證過可行):
+  1. 拿掉多包的一層,直接 `export default { paths: [...], import: [...], ... }`
+     (單一 profile 就不需要 `default:` 這個 key,ESM 的 `export default` 本身
+     就對應到 profile map 的 `default` 鍵)。
+  2. 保留現在的多 profile 結構,但改用具名 export:
+     `export const config = {...}` 不行,要嘛用 `.mjs`/`.cjs` 明確副檔名讓
+     loader 走 CJS 分支(那邊不會有這個雙層問題),要嘛照方案 1。
+  這個檔案在「共用檔:只有協調者改」清單裡,我沒有動它。用
+  `NODE_OPTIONS=--import=tsx npx cucumber-js --import 'features/steps/**/*.ts' ...`
+  (繞過壞掉的設定檔,直接用 CLI flag 帶 import glob)驗證過:04-scheduler
+  phase-1 的 17 個 scenario、63 個 step 全過。
