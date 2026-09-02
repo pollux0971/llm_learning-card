@@ -79,7 +79,7 @@ function makeSpyAdvance(inner: SchedulerAdvanceFn): { advance: SchedulerAdvanceF
   return { advance, calls };
 }
 
-async function buildTestCardState(): Promise<TestCardState> {
+export async function buildTestCardState(): Promise<TestCardState> {
   const fs = new MemoryFs(buildFsSeed());
   const reviews = await loadReviews(fs);
   const dailyCap = await loadDailyCap(fs);
@@ -113,9 +113,8 @@ function state(world: LearningWorld): TestCardState {
 
 // ---------------------------------------------------------------- Given
 
-Given('the development server is running against the rich fixture set', async function (this: LearningWorld) {
-  this.testCard = await buildTestCardState();
-});
+// 「the development server is running against the rich fixture set」跟 07-teach-card
+// 逐字相同,依規則移到 common.steps.ts 用 tag 分派,這裡不重複定義。
 
 Given('three questions are due', function (this: LearningWorld) {
   assert.equal(state(this).due.length, 3, `預期三張到期卡,實際 ${state(this).due.length}`);

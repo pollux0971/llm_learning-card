@@ -7,8 +7,22 @@
 import { Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import type { LearningWorld } from './_world.js';
+import { buildTestCardState } from './test-card.steps.js';
+import { getOrCreateDeck } from './teach-card.steps.js';
 
 // ---------------------------------------------------------------- Given
+
+// 06、07 的 Background 逐字相同,用 tag 分派到各自的建置邏輯,避免 cucumber 的
+// ambiguous-step 錯誤(兩個功能各自的步驟檔不准再定義這句)。
+Given('the development server is running against the rich fixture set', async function (this: LearningWorld) {
+  if (this.tags.includes('@teach-card')) {
+    getOrCreateDeck(this);
+  } else if (this.tags.includes('@test-card')) {
+    this.testCard = await buildTestCardState();
+  } else {
+    throw new Error('未知的功能 tag,無法判斷要建立 test-card 還是 teach-card 的 fixture 狀態');
+  }
+});
 
 Given('a learning directory populated by the I1 pipeline', function (this: LearningWorld) {
   this.useFixture('learning-minimal');

@@ -1,10 +1,8 @@
 /**
  * 07-teach-card / phase-1 的步驟定義。
  *
- * 「the development server is running against the rich fixture set」跟 06-test-card 的
- * Background 逐字相同,照 features/steps/README.md 的規則應該搬進 common.steps.ts,但
- * 06-test-card 目前還沒有步驟檔,不會撞。已經記在 FEATURE.md 的「待協調」段,合併時
- * 請協調者移過去。
+ * 「the development server is running against the rich fixture set」跟 06-test-card
+ * 逐字相同,已移到 common.steps.ts 用 tag 分派,這裡不重複定義。
  */
 import { Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
@@ -23,7 +21,7 @@ const ORDER = fakeOrder(CARD_IDS);
 const decks = new WeakMap<LearningWorld, DeckState>();
 const initialCard = new WeakMap<LearningWorld, string | null>();
 
-function getOrCreateDeck(world: LearningWorld): DeckState {
+export function getOrCreateDeck(world: LearningWorld): DeckState {
   let deck = decks.get(world);
   if (!deck) {
     deck = createDeck(ORDER);
@@ -40,10 +38,6 @@ function stripFrontmatter(text: string): string {
 }
 
 // ---------------------------------------------------------------- Given
-
-Given('the development server is running against the rich fixture set', function (this: LearningWorld) {
-  getOrCreateDeck(this);
-});
 
 Given('a card whose example fence contains a list, bold text and a code block', function (this: LearningWorld) {
   this.cardText = this.readFixture('cards/valid-example-with-nested-content.md');
