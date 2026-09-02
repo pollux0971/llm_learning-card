@@ -126,7 +126,7 @@ export class CloudLlmRouter implements LlmRouter {
       }
       throw err;
     } finally {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     }
   }
 
