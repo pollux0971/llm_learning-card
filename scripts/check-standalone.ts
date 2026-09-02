@@ -16,7 +16,10 @@ import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
-type Manifest = Record<string, { cmd: string; interactive: boolean; expect?: string }>;
+type Manifest = Record<
+  string,
+  { cmd: string; interactive: boolean; expect?: string; expectExit?: number }
+>;
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -53,14 +56,19 @@ for (const [name, entry] of entries) {
   const ms = Date.now() - t0;
   const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   const timedOut = r.error && (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';
-  const exitOk = r.status === 0 && !timedOut;
+  const wantExit = entry.expectExit ?? 0;
+  const exitOk = r.status === wantExit && !timedOut;
   const expectOk = !entry.expect || output.includes(entry.expect);
 
   if (exitOk && expectOk) {
     console.log(`✓  ${name}  (${ms} ms)`);
   } else {
     failed++;
-    const why = timedOut ? `逾時 ${timeout} ms` : !exitOk ? `退出碼 ${r.status ?? r.signal}` : `輸出不含 "${entry.expect}"`;
+    const why = timedOut
+      ? `逾時 ${timeout} ms`
+      : !exitOk
+        ? `退出碼 ${r.status ?? r.signal},預期 ${wantExit}`
+        : `輸出不含 "${entry.expect}"`;
     console.log(`✗  ${name}  ${why}\n   $ ${entry.cmd}`);
     const tail = output.trim().split('\n').slice(-20).join('\n   | ');
     if (tail) console.log(`   | ${tail}`);

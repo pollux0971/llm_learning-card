@@ -40,7 +40,8 @@
   "09-lint": {
     "cmd": "npx tsx scripts/lint.ts --dir contracts/fixtures/learning-broken",
     "interactive": false,
-    "expect": "problems"
+    "expect": "problems",
+    "expectExit": 1
   },
   "10-desktop-shell": {
     "cmd": "npm run tauri dev",
