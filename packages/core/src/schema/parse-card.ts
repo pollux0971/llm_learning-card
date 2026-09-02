@@ -34,5 +34,5 @@ export function parseCardText(raw: string): ParsedCard {
       return '';
     })
     .trim();
-  return { frontmatter: normalizeDates((data ?? {}) as Record<string, unknown>), body, examples };
+  return { frontmatter: normalizeDates(data as Record<string, unknown>), body, examples };
 }

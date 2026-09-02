@@ -2,6 +2,11 @@ import { CARD_BODY_WORD_LIMIT, CardFrontmatterSchema, type Card } from '@contrac
 import { parseCardText } from './parse-card.js';
 import { countWords } from './word-count.js';
 
+/** zod issue 的路徑轉成 "a.b.1" 這種可讀字串;沒有路徑(整個物件層級的錯)顯示 "(root)"。 */
+export function formatIssuePath(path: readonly PropertyKey[]): string {
+  return path.length ? path.map(String).join('.') : '(root)';
+}
+
 export interface ValidationResult {
   ok: boolean;
   errors: string[];
@@ -20,8 +25,7 @@ export function validateCard(raw: string): ValidationResult {
   const fm = CardFrontmatterSchema.safeParse(parsed.frontmatter);
   if (!fm.success) {
     for (const issue of fm.error.issues) {
-      const field = issue.path.length ? issue.path.join('.') : '(root)';
-      errors.push(`${field}: ${issue.message}`);
+      errors.push(`${formatIssuePath(issue.path)}: ${issue.message}`);
     }
   } else {
     if (fm.data.level >= 1 && !fm.data.parent) {

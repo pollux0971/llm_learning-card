@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stringify as yamlStringify } from 'yaml';
+import { writeFileAtomic } from './atomic-write.js';
 
 /** 契約 §12 目錄結構,phase-1 負責建立的部分 */
 const DIRS = ['raw', 'cards', 'questions', 'assets', 'state', 'graph', 'config'] as const;
@@ -54,6 +55,7 @@ export function initLearningDir(dir: string, opts: { today?: Date } = {}): InitR
     }
   }
 
+  /** 一般檔案(graph/、config/):直接寫。 */
   const writeIfAbsent = (relPath: string, content: string): void => {
     const p = join(dir, relPath);
     if (existsSync(p)) {
@@ -64,11 +66,22 @@ export function initLearningDir(dir: string, opts: { today?: Date } = {}): InitR
     created.push(relPath);
   };
 
-  writeIfAbsent('state/reviews.json', `${JSON.stringify({}, null, 2)}\n`);
+  /** state/ 底下的檔案:硬規則 5,tmp → fsync → rename。 */
+  const writeStateIfAbsent = (relPath: string, content: string): void => {
+    const p = join(dir, relPath);
+    if (existsSync(p)) {
+      skipped.push(relPath);
+      return;
+    }
+    writeFileAtomic(p, content);
+    created.push(relPath);
+  };
+
+  writeStateIfAbsent('state/reviews.json', `${JSON.stringify({}, null, 2)}\n`);
 
   const week = isoWeek(opts.today ?? new Date());
   const weekly = { week, target: DEFAULT_SETTINGS.weekly_target, learned: 0, passed_d1: 0, counted: [] as string[] };
-  writeIfAbsent('state/weekly.json', `${JSON.stringify(weekly, null, 2)}\n`);
+  writeStateIfAbsent('state/weekly.json', `${JSON.stringify(weekly, null, 2)}\n`);
 
   writeIfAbsent('graph/deps.json', `${JSON.stringify({}, null, 2)}\n`);
   writeIfAbsent('config/categories.yaml', yamlStringify([]));
