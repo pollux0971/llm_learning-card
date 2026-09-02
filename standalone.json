@@ -33,7 +33,7 @@
     "interactive": true
   },
   "08-weekly-goal": {
-    "cmd": "npx tsx scripts/weekly.ts --state contracts/fixtures/weekly/mid-week.json --event pass-d1 --card sec-0009",
+    "cmd": "npx tsx scripts/weekly.ts --state contracts/fixtures/weekly/mid-week.json --event pass-d1 --card sec-0009 --today 2026-09-10",
     "interactive": false,
     "expect": "passed_d1"
   },
