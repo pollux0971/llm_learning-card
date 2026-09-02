@@ -82,3 +82,36 @@ npx tsx scripts/prompt-check.ts --diff prompts/golden/ingest.cards/2026-09-10 pr
 
 - 評分要幾個維度?先兩個:「正確嗎」「是一個概念嗎」,各 1–5 分。太多維度沒人會填
 - golden set 要多大?先每個任務 3 個輸入。大了你不會想評
+
+## 待協調
+
+- **`cucumber.js` 的 config 沒有生效(阻擋全專案的 `npm run accept*`)**:目前寫法是
+  `export default { default: { paths, import, tags, ... } }`。cucumber-js 11.3.0 對
+  `.js`(ESM)設定檔用 `import()` 讀取,拿到的是模組命名空間物件,它的 `.default` 已經是
+  我們自己 export 的整包東西;把整包東西又包一層 `default: {...}` 等於多包了一層,
+  cucumber-js 內部 `fromFile()` 抓到的是這層多餘的 `default`,schema 驗證時整包被當成
+  不認得的東西丟掉,最後 `import`/`paths`/`tags` 都退回空值——**所有 `.steps.ts` 都不會被載入,
+  每個 feature 的每個 scenario 都變成 undefined**,即使步驟其實有定義。這不是我這個 phase 造成的
+  (是 scaffold commit 8586915 帶進來的),但影響全部 12 個功能的 `npm run accept` /
+  `accept:standalone` / `accept:integration`。
+  **修法**(已用暫存複本驗證過,driver 是拿掉多餘的外層 `default:`):
+  ```js
+  export default {
+    paths: ['features/**/*.feature', 'docs/integration/**/*.feature'],
+    import: ['features/steps/**/*.ts'],
+    tags: 'not @manual',
+    format: ['progress'],
+  };
+  ```
+  (順便拿掉 `publishQuiet`——cucumber-js 11 說這個選項已經不需要了,會印一行 deprecation 警告。)
+  這個檔案是共用檔,我沒有動它;12-prompt-quality 本身的 15 個 scenario 已經用
+  `NODE_OPTIONS=--import=tsx npx cucumber-js --import 'features/steps/**/*.ts' --tags '@prompt-quality and @standalone'`
+  繞過這個問題驗證過,66 個 step 全過。
+- **golden 輸出的存放位置**:FEATURE.md 原本寫「`prompts/golden/<task>/<ISO date>/`」,但
+  `packages/core/prompts/` 在 `packages/core/README.md` 的落點表是 02-ingest-pipeline 的地盤,
+  而 phase-1 沒有真的 prompt(02 還沒動工)。目前存到自己的
+  `packages/core/src/prompt-quality/golden/<task>/<date>/`,golden set 登記表(含一組
+  `grade.apply` 的自我測試 demo,3 個固定輸入)在
+  `packages/core/src/prompt-quality/golden-sets/registry.ts`,demo 用的佔位 prompt 檔也在
+  同一個資料夾。等 02/05 的真 prompt 檔存在後,把 registry.ts 對應項目的 `promptFile` 指過去
+  即可,存放路徑要不要真的搬進 `packages/core/prompts/golden/` 麻煩協調者決定。

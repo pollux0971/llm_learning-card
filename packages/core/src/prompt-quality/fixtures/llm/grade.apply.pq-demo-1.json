@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "PQ_DEMO_1",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[true,true,true],\"feedback\":\"三個要點都有提到,說明清楚。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "demo-1",
+  "text": "{\"criteria\":[true,true,true],\"feedback\":\"三個要點都有提到,說明清楚。\"}",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}
