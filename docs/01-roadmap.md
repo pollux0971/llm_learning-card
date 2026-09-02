@@ -9,7 +9,7 @@
 
 | 欄位 | 值 |
 |---|---|
-| 目前階段 | Wave 0 |
+| 目前階段 | Wave 0(十一個 phase-1 都已合併 main;7 個 done,02/06/07/10 等使用者確認 @manual 場景才能標 done) |
 | 目前 sprint | 尚未開始 — 執行 `/sprint` |
 | 契約版本 | 1.1.0(凍結) |
 | 最後更新 | 2026-09-02 |
@@ -18,7 +18,7 @@
 
 ```mermaid
 graph TD
-  C[contracts 1.0.0 凍結] --> W0[Wave 0 · 十個 phase-1 平行]
+  C[contracts 1.1.0 凍結] --> W0[Wave 0 · 十一個 phase-1 平行]
   W0 --> I1[I1 內容管線]
   I1 --> I2[I2 複習迴圈 CLI ★ 開始每天用]
   I2 --> I3[I3 桌面複習]
@@ -31,11 +31,11 @@ graph TD
 
 ---
 
-## Wave 0 · 十個 phase-1,完全平行
+## Wave 0 · 十一個 phase-1,完全平行
 
-**前提**:`contracts/types.md` 1.0.0 已凍結、`contracts/fixtures/` 已建立。
+**前提**:`contracts/types.md` 1.1.0 已凍結、`contracts/fixtures/` 已建立。
 
-**規則**:這十個 phase 之間**沒有任何依賴**。可以十個同時開,也可以一次一個。
+**規則**:這十一個 phase 之間**沒有任何依賴**。可以十一個同時開,也可以一次一個。
 每個都只 import `contracts/`,跨資料夾 import 是違規。
 
 | Phase | 交付 | 單獨執行 | Gherkin |

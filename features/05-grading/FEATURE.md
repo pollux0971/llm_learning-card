@@ -58,7 +58,7 @@ npx tsx scripts/grade.ts --apply --fake \
 
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
-| 1 | 填空三層審核 | Wave 0 | ready | |
+| 1 | 填空三層審核 | Wave 0 | done | 2026-09-02 |
 | 2 | 應用題 rubric 雲端審核 | I2 | todo | |
 | 3 | 離線審核、複審修正、縮短版生成 | I6 | todo | |
 

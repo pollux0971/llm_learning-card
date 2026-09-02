@@ -50,7 +50,7 @@ npx tsx scripts/weekly.ts --state contracts/fixtures/weekly/mid-week.json \
 
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
-| 1 | 計數、D1 護欄、週歸零 | Wave 0 | ready | |
+| 1 | 計數、D1 護欄、週歸零 | Wave 0 | done | 2026-09-02 |
 | 2 | 顯示與目標調整 | I5 | todo | |
 
 ## 驗收方式

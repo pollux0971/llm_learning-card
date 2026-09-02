@@ -59,7 +59,7 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
-| 1 | 介面、雲端 adapter、log、逾時 | Wave 0 | ready | |
+| 1 | 介面、雲端 adapter、log、逾時 | Wave 0 | done | 2026-09-02 |
 | 2 | 本機 adapter、離線偵測、路由表 | I1 | todo | |
 | 3 | provisional 標記與複審佇列 | I6 | todo | |
 
