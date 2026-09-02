@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CloudLlmRouter } from './router.js';
@@ -149,7 +149,86 @@ describe('CloudLlmRouter.call', () => {
 
     await expect(router.call('deepen', 'hi')).rejects.toThrow(LlmTimeoutError);
     const event = JSON.parse(readFileSync(logPath, 'utf8').trim());
-    expect(event).toMatchObject({ task: 'deepen', timeout: true, timeout_ms: 20 });
+    expect(event).toMatchObject({ type: 'llm_call', task: 'deepen', timeout: true, timeout_ms: 20 });
+  });
+
+  it('aborts the in-flight adapter call once the timeout fires', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const adapter: CloudAdapter = {
+      call: vi.fn((args) => {
+        capturedSignal = args.signal;
+        return new Promise<never>(() => {});
+      }),
+    };
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: adapter },
+      defaultTimeoutMs: 20,
+    });
+
+    await expect(router.call('deepen', 'hi')).rejects.toThrow(LlmTimeoutError);
+    expect(capturedSignal?.aborted).toBe(true);
+  });
+
+  it('does not write a log entry when the adapter fails for a non-timeout reason', async () => {
+    const logPath = tmpLogPath();
+    const boom = new Error('adapter exploded');
+    const adapter: CloudAdapter = { call: vi.fn(async () => Promise.reject(boom)) };
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: adapter },
+      logPath,
+    });
+
+    await expect(router.call('deepen', 'hi')).rejects.toBe(boom);
+    expect(existsSync(logPath)).toBe(false);
+  });
+
+  it('does not put a tokens_in/tokens_out key on the logged event when the adapter omits them', async () => {
+    const events: Record<string, unknown>[] = [];
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: fakeAdapter() },
+      logAppender: (event) => events.push(event),
+    });
+
+    await router.call('deepen', 'hi');
+    expect(Object.prototype.hasOwnProperty.call(events[0], 'tokens_in')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(events[0], 'tokens_out')).toBe(false);
+  });
+
+  it('clears the timeout timer once a call settles successfully', async () => {
+    const clearSpy = vi.spyOn(global, 'clearTimeout');
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: fakeAdapter() },
+    });
+
+    await router.call('deepen', 'hi');
+    expect(clearSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
+  });
+
+  it('rejects with a message naming the missing model when none is configured', async () => {
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'k' },
+      adapters: { openai: fakeAdapter() },
+    });
+
+    await expect(router.call('deepen', 'hi')).rejects.toThrow(/no cloud model configured/);
+  });
+
+  it('rejects with the empty provider name when neither env nor settings name one', async () => {
+    const adapter = fakeAdapter();
+    const router = new CloudLlmRouter({
+      env: {},
+      settings: {},
+      adapters: { openai: adapter, anthropic: adapter },
+    });
+
+    const err = await router.call('deepen', 'hi').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnsupportedProviderError);
+    expect((err as UnsupportedProviderError).provider).toBe('');
   });
 
   it('lets a call override the timeout to a shorter deadline', async () => {
@@ -197,6 +276,94 @@ describe('CloudLlmRouter.probeOnline / probeLocal', () => {
     }) as unknown as typeof fetch;
     const router = new CloudLlmRouter({ env: { LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'k' } });
     await expect(router.probeOnline()).resolves.toBe(false);
+  });
+
+  it('reports offline on a server error status (boundary: 500 is offline, not online)', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 500 })) as unknown as typeof fetch;
+    const router = new CloudLlmRouter({ env: { LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'k' } });
+    await expect(router.probeOnline()).resolves.toBe(false);
+  });
+
+  it('reports offline without attempting a network call when no provider is configured', async () => {
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const router = new CloudLlmRouter({ env: {} });
+    await expect(router.probeOnline()).resolves.toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('probes the anthropic-specific URL and headers', async () => {
+    const fetchSpy = vi.fn(async (_url: string, _opts: RequestInit) => new Response(null, { status: 200 }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const router = new CloudLlmRouter({ env: { LLM_CLOUD_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'secret-key' } });
+
+    await router.probeOnline();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe('https://api.anthropic.com/v1/models');
+    expect(opts.headers).toEqual({ 'x-api-key': 'secret-key', 'anthropic-version': '2023-06-01' });
+  });
+
+  it('probes the openai-specific URL and headers', async () => {
+    const fetchSpy = vi.fn(async (_url: string, _opts: RequestInit) => new Response(null, { status: 200 }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const router = new CloudLlmRouter({ env: { LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'secret-key' } });
+
+    await router.probeOnline();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe('https://api.openai.com/v1/models');
+    expect(opts.headers).toEqual({ Authorization: 'Bearer secret-key' });
+  });
+
+  it('probes with no headers when no credential is present', async () => {
+    const fetchSpy = vi.fn(async (_url: string, _opts: RequestInit) => new Response(null, { status: 200 }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const router = new CloudLlmRouter({ env: { LLM_CLOUD_PROVIDER: 'openai' } });
+
+    await router.probeOnline();
+    const [, opts] = fetchSpy.mock.calls[0]!;
+    expect(opts.headers).toEqual({});
+  });
+
+  it('passes the abort signal through to fetch', async () => {
+    const fetchSpy = vi.fn(async (_url: string, _opts: RequestInit) => new Response(null, { status: 200 }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const router = new CloudLlmRouter({ env: { LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'k' } });
+
+    await router.probeOnline();
+    const [, opts] = fetchSpy.mock.calls[0]!;
+    expect(opts.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('clears the probe timeout timer once the request settles', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 200 })) as unknown as typeof fetch;
+    const clearSpy = vi.spyOn(global, 'clearTimeout');
+    const router = new CloudLlmRouter({ env: { LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'k' } });
+
+    await router.probeOnline();
+    expect(clearSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
+  });
+
+  it('aborts the probe request once the probe timeout elapses', async () => {
+    vi.useFakeTimers();
+    globalThis.fetch = vi.fn(
+      (_url, opts: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          opts.signal.addEventListener('abort', () => {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        }),
+    ) as unknown as typeof fetch;
+    const router = new CloudLlmRouter({ env: { LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'k' } });
+
+    const pending = router.probeOnline();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(pending).resolves.toBe(false);
+    vi.useRealTimers();
   });
 
   it('probeLocal reports unavailable in phase-1 (no local adapter yet)', async () => {
