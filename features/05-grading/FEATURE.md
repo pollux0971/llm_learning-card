@@ -70,3 +70,15 @@ npx tsx scripts/grade.ts --apply --fake \
 
 - 模糊比對門檻(長度 ≥ 4 允許 1)對中文是否合適?中文四字詞差一字可能意思完全不同。
   先這樣,收集實際誤判再 `/decide`。
+
+## 待協調
+
+- `npm run accept:standalone`(以及不帶路徑參數的 `npx cucumber-js`)目前對**整個 repo**
+  回報全部 scenario 為 undefined,連 `common.steps.ts` 定義的句子(如 `it exits with status {int}`)
+  都不例外。這是 pre-existing 問題,不是 05-grading 造成的——把 `features/steps/grading.steps.ts`
+  整個移走再跑一次,結果一樣全部 undefined。
+  用 `NODE_OPTIONS=--import=tsx npx cucumber-js --import 'features/steps/**/*.ts' --tags '@grading and @standalone' features/05-grading`
+  明確帶 `--import` 就正常(05-grading 20 scenarios / 75 steps 全過),
+  代表問題出在 `cucumber.js` 設定檔的 `import` 欄位沒有被吃到,不是步驟定義本身的問題。
+  `cucumber.js` 是協調者才能改的共用檔,這裡先記錄,由協調者排查(可能與 cucumber-js 讀取
+  ESM `export default` 設定檔的方式有關)。
