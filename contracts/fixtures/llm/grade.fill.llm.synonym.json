@@ -1,0 +1,9 @@
+{
+  "task": "grade.fill.llm",
+  "prompt_contains": "通訊協定",
+  "attempt": 1,
+  "response": {
+    "text": "yes",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

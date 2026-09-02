@@ -1,0 +1,3 @@
+- id: security
+  name: 資安
+  require_raw: true

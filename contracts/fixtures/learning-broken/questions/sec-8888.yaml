@@ -1,0 +1,11 @@
+card: sec-8888
+fill:
+  - prompt: "這張卡不存在。答案是 ___。"
+    answers: [["無"]]
+  - prompt: "孤兒考題檔的第二題 ___。"
+    answers: [["無"]]
+apply:
+  - prompt: "這個考題檔沒有對應的卡片。"
+    rubric:
+      - "第一條"
+      - "第二條"

@@ -1,0 +1,7 @@
+daily_cap: 10
+weekly_target: 7
+short_body_limit: 50
+llm:
+  cloud_provider: anthropic
+  cloud_model: claude-sonnet-4-6
+  local_model: qwen2.5:14b

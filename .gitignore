@@ -1,0 +1,10 @@
+node_modules/
+dist/
+target/
+reports/
+.stryker-tmp/
+.env
+.env.*
+*.log
+.DS_Store
+apps/desktop/src-tauri/target/

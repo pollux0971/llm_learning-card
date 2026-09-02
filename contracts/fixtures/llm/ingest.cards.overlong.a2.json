@@ -1,0 +1,9 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "OVERLONG_TEST",
+  "attempt": 2,
+  "response": {
+    "text": "[{\"title\":\"測試用超長卡\",\"body\":\"這是重試後的版本,長度符合限制。\",\"examples\":[],\"lines\":[1,10]}]",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

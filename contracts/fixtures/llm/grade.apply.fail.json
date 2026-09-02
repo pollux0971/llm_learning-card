@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "重開瀏覽器",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[false,false,true],\"feedback\":\"沒有指出跨來源問題,也沒提到解法。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

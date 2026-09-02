@@ -1,0 +1,19 @@
+{
+  "sec-0001": {
+    "stage": 1, "learned_at": "2026-08-01", "next_due": "2026-09-10",
+    "fails_in_row": 3, "total_fails": 5, "stuck": true,
+    "history": [
+      {"date":"2026-09-07","stage":1,"type":"fill","pass":false,"grader":"exact"},
+      {"date":"2026-09-08","stage":1,"type":"fill","pass":false,"grader":"exact"},
+      {"date":"2026-09-09","stage":1,"type":"fill","pass":false,"grader":"exact"}
+    ]
+  },
+  "sec-0002": {
+    "stage": 1, "learned_at": "2026-08-05", "next_due": "2026-09-10",
+    "fails_in_row": 4, "total_fails": 4, "stuck": true, "history": []
+  },
+  "sec-0003": {
+    "stage": 1, "learned_at": "2026-08-10", "next_due": "2026-09-10",
+    "fails_in_row": 3, "total_fails": 6, "stuck": true, "history": []
+  }
+}

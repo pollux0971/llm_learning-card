@@ -1,0 +1,59 @@
+{
+  "01-data-layer": {
+    "cmd": "npx tsx packages/core/src/schema/cli.ts validate contracts/fixtures/cards/valid-basic.md",
+    "interactive": false,
+    "expect": "OK"
+  },
+  "02-ingest-pipeline": {
+    "cmd": "npx tsx scripts/ingest.ts --fake --file contracts/fixtures/raw/security-basics.md --out ./tmp-learning",
+    "interactive": false,
+    "expect": "sec-0001"
+  },
+  "03-llm-router": {
+    "cmd": "npx tsx scripts/llm.ts --probe",
+    "interactive": false,
+    "expect": "online"
+  },
+  "04-scheduler": {
+    "cmd": "npx tsx scripts/due.ts --state contracts/fixtures/reviews/mid-cycle.json --today 2026-09-10",
+    "interactive": false,
+    "expect": "sec-0002"
+  },
+  "05-grading": {
+    "cmd": "npx tsx scripts/grade.ts --fill --q contracts/fixtures/learning-minimal/questions/sec-0001.yaml --index 1 --answer 否",
+    "interactive": false,
+    "expect": "exact"
+  },
+  "06-test-card": {
+    "cmd": "npm run dev -w apps/test-card",
+    "interactive": true
+  },
+  "07-teach-card": {
+    "cmd": "npm run dev -w apps/teach-card",
+    "interactive": true
+  },
+  "08-weekly-goal": {
+    "cmd": "npx tsx scripts/weekly.ts --state contracts/fixtures/weekly/mid-week.json --event pass-d1 --card sec-0009",
+    "interactive": false,
+    "expect": "passed_d1"
+  },
+  "09-lint": {
+    "cmd": "npx tsx scripts/lint.ts --dir contracts/fixtures/learning-broken",
+    "interactive": false,
+    "expect": "problems"
+  },
+  "10-desktop-shell": {
+    "cmd": "npm run tauri dev",
+    "interactive": true
+  },
+  "11-review-cli": {
+    "cmd": "npx tsx scripts/review.ts --dir contracts/fixtures/learning-minimal --dry-run --today 2026-09-10",
+    "interactive": false,
+    "expect": "due"
+  },
+  "12-prompt-quality": {
+    "cmd": "npx tsx scripts/prompt-check.ts --golden",
+    "interactive": false,
+    "expect": "golden"
+  }
+}

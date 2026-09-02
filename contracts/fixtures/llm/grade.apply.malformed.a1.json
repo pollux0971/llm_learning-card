@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "MALFORMED_TEST",
+  "attempt": 1,
+  "response": {
+    "text": "我覺得這個答案還不錯,大概有講到重點吧。",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "types": ["vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@contracts/*": ["packages/contracts/src/*"],
+      "@core/*": ["packages/core/src/*"]
+    }
+  },
+  "include": ["packages/**/*.ts", "apps/**/*.ts", "scripts/**/*.ts", "features/steps/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/src-tauri/target"]
+}

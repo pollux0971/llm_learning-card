@@ -1,0 +1,37 @@
+# 02 · ingest-pipeline — 下一步
+
+## 目前
+
+| 欄位 | 值 |
+|---|---|
+| 已完成 | 無 |
+| 進行中 | 無 |
+| 下一個 | phase-1(Wave 0) |
+
+## Gate
+
+**phase-1**:無 gate。用 `FakeLlmRouter` 與自己的最小字數檢查,不等任何人。
+
+**phase-2** 需要:
+- [ ] 自身:phase-1 `done`
+- [ ] 跨資料夾:01 phase-2 與 phase-3 `done`、03 phase-2 `done`
+- [ ] 整合:無(phase-2 **就是** I1 的一部分)
+
+**phase-3** 需要:
+- [ ] 自身:phase-2 `done`
+- [ ] 整合:**I1 通過**
+- [ ] 契約:無
+
+## Gate 未滿足時
+
+**phase-2 卡住**:代表 01 或 03 還沒做完。這段時間**不要**先寫 phase-2 的實作——
+你會照著猜測的介面寫,然後全部重寫。可以做的是:讀 `contracts/types.md` §3 §8,
+把考題與圖的 prompt 草稿先寫進 `packages/core/prompts/ingest/`,那不依賴任何人。
+
+**phase-3 卡住**:等 I1。phase-3 處理增量與 stale,而「增量」的意義要建立在
+一個真的跑過的完整管線上,提前做會做錯。
+
+## 完成後
+
+phase-2 完成是 I1 的最後一塊。I1 通過後你就能把真的素材餵進去了——**立刻去做**,
+不要等 I2。真實資料會暴露一堆 fixture 蓋不到的問題。
