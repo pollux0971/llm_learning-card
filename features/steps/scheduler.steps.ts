@@ -143,7 +143,7 @@ When('the interval is added', function (this: LearningWorld) {
   assert.ok(learnedAt, '還沒有 Given 日期');
   const originalTz = process.env.TZ;
   try {
-    process.env.TZ = 'America/Havana';
+    process.env.TZ = 'Europe/London';
     const withDst = addIsoDays(learnedAt, 7);
     process.env.TZ = 'UTC';
     const withUtc = addIsoDays(learnedAt, 7);

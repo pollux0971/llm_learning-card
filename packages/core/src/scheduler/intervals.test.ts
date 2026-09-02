@@ -13,8 +13,8 @@ describe('intervalDaysForStage', () => {
     expect(intervalDaysForStage(stage)).toBe(expected);
   });
 
-  it.each([0, 6] as Stage[])('stage %i 沒有固定間隔,丟出錯誤', (stage) => {
-    expect(() => intervalDaysForStage(stage)).toThrow();
+  it.each([0, 6] as Stage[])('stage %i 沒有固定間隔,丟出錯誤且訊息指出是哪個 stage', (stage) => {
+    expect(() => intervalDaysForStage(stage)).toThrow(`stage ${stage} `);
   });
 });
 
@@ -29,7 +29,7 @@ describe('questionTypesForStage', () => {
     expect(questionTypesForStage(stage)).toEqual(expected);
   });
 
-  it.each([0, 6] as Stage[])('stage %i 沒有題型,丟出錯誤', (stage) => {
-    expect(() => questionTypesForStage(stage)).toThrow();
+  it.each([0, 6] as Stage[])('stage %i 沒有題型,丟出錯誤且訊息指出是哪個 stage', (stage) => {
+    expect(() => questionTypesForStage(stage)).toThrow(`stage ${stage} `);
   });
 });

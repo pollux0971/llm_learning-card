@@ -18,7 +18,7 @@ describe('addIsoDays', () => {
     });
 
     it('DST 那天加 7 天,跟 UTC 算出來一樣', () => {
-      process.env.TZ = 'America/Havana';
+      process.env.TZ = 'Europe/London';
       const withDst = addIsoDays('2026-03-29', 7);
       process.env.TZ = 'UTC';
       const withUtc = addIsoDays('2026-03-29', 7);
