@@ -3,4 +3,5 @@
  *
  * Wave 0 由 07-teach-card 擁有並填內容(ADR-035);06-test-card 在 I3 之前不 import 這裡。
  */
-export {};
+export { exampleFencePlugin, createMarkdownRenderer, renderMarkdown, EXAMPLE_CLASS } from './example-fence.js';
+export { wordCount } from './word-count.js';

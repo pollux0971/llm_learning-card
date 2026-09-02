@@ -23,3 +23,11 @@
 
 合計 26。這張卡的存在是為了讓兩個獨立實作可以對照——如果 01-data-layer 和
 09-lint 的驗證器對它算出不同的數字,那就是契約還有歧義。
+
+> **待確認**:上面表格逐項加總實際是 23,不是 26(`packages/ui-shared/src/word-count.test.ts`
+> 有算過並附了推導)。懷疑是文件筆誤,尚未發 ADR 更正,先記在這裡免得兩個實作各自對出不同數字
+> 卻都以為自己錯。
+
+`valid-example-with-nested-content.md`(07-teach-card 加,phase-1):example 圍欄內含清單、
+粗體與一個巢狀 code fence(`ts`)。用外層 4 個反引號包住,讓內層的 3 個反引號 code fence
+不會提早把外層圍欄截斷。給 fence 插件的「巢狀 markdown 渲染」測試用。
