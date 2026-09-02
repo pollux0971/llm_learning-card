@@ -60,3 +60,19 @@ phase-1 全自動。ISO 週的年末交界(2026-12-31 與 2027-01-01 同屬 2026
 ## 開放問題
 
 - 週一 00:00 歸零,但使用者週一凌晨還在用怎麼辦?先接受這個邊界。
+
+## 待協調
+
+- **`cucumber.js` 有 bug,`npm run accept` / `accept:standalone` 全部 feature 都會回報 undefined
+  steps(即使 `common.steps.ts` 也一樣)。**
+  原因:專案 `package.json` 是 `"type": "module"`,所以 cucumber-js 用 ESM `import()` 讀
+  `cucumber.js`,得到的模組物件已經是 `{ default: <你 export 的東西> }`;而 `cucumber.js`
+  自己又多包了一層 `export default { default: { paths, import, ... } } `,變成兩層
+  `default`,cucumber-js 只會剝一層,於是實際吃到的 profile 物件是空的(`paths`/`import`
+  都變成預設值 `[]`)。
+  驗證方式:把 `cucumber.js` 改成不要外層那層 `default:`(即
+  `export default { paths: [...], import: [...], tags: ..., format: [...] }`),
+  `npm run accept:standalone -- --tags '@weekly-goal'` 就會從 undefined 變成
+  16 scenarios / 73 steps 全過。這個檔案是共用檔,我沒有直接改,只在本機驗證過修法。
+  08-weekly-goal 的步驟定義本身已確認正確(用 `--import 'features/steps/**/*.ts'`
+  明確指定時,16/16 scenarios、73/73 steps 全過)。
