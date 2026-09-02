@@ -16,6 +16,14 @@ describe('applyEvent — learned', () => {
     const { weekly } = applyEvent(base, { type: 'learned', card: 'sec-0001' }, '2026-W37');
     expect(weekly.counted).not.toContain('sec-0001');
   });
+
+  it('preserves an existing counted list untouched', () => {
+    const withCounted: Weekly = { ...base, learned: 3, passed_d1: 2, counted: ['sec-0001', 'sec-0002'] };
+    const { weekly } = applyEvent(withCounted, { type: 'learned', card: 'sec-0099' }, '2026-W37');
+    expect(weekly.counted).toEqual(['sec-0001', 'sec-0002']);
+    expect(weekly.passed_d1).toBe(2);
+    expect(weekly.learned).toBe(4);
+  });
 });
 
 describe('applyEvent — checkpoint 1 (D1)', () => {
