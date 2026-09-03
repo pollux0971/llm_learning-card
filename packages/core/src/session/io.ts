@@ -13,15 +13,36 @@
  *   yaml 的 parse、@contracts 的 ReviewSchema / QuestionFileSchema /
  *   SettingsSchema、@core/schema/atomic-write.js 的 writeFileAtomic。
  */
-import type { CardId, QuestionFile, Review, Settings } from '@contracts/index.js';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { parse as parseYaml } from 'yaml';
+import {
+  QuestionFileSchema,
+  ReviewSchema,
+  SettingsSchema,
+  type CardId,
+  type QuestionFile,
+  type Review,
+  type Settings,
+} from '@contracts/index.js';
+import { parseCardText } from '@core/schema/parse-card.js';
+import { writeFileAtomic } from '@core/schema/atomic-write.js';
 
 /**
  * state/reviews.json 讀成 Record<CardId, Review>。每筆值過
  * `ReviewSchema.parse`,格式錯誤時讓 zod 的錯誤直接往上丟(這是磁碟壞掉的
  * 徵兆,不該吞掉)。檔案不存在視為 `{}`(還沒有任何複習記錄)。
  */
-export function loadReviews(_learningDir: string): Record<CardId, Review> {
-  throw new Error('not implemented');
+export function loadReviews(learningDir: string): Record<CardId, Review> {
+  const path = join(learningDir, 'state/reviews.json');
+  if (!existsSync(path)) return {};
+
+  const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  const reviews: Record<CardId, Review> = {};
+  for (const [card, value] of Object.entries(raw)) {
+    reviews[card] = ReviewSchema.parse(value);
+  }
+  return reviews;
 }
 
 /**
@@ -29,18 +50,23 @@ export function loadReviews(_learningDir: string): Record<CardId, Review> {
  * 用 `writeFileAtomic`,不是普通的 writeFileSync——這是「幾個月的記憶資料」,
  * 見契約 §11b、CLAUDE.md 硬規則 5。
  */
-export function saveReviews(_learningDir: string, _reviews: Record<CardId, Review>): void {
-  throw new Error('not implemented');
+export function saveReviews(learningDir: string, reviews: Record<CardId, Review>): void {
+  const path = join(learningDir, 'state/reviews.json');
+  writeFileAtomic(path, `${JSON.stringify(reviews, null, 2)}\n`);
 }
 
 /** config/settings.yaml,用 `SettingsSchema.parse` 驗證。phase-1 只用得到 daily_cap。 */
-export function loadSettings(_learningDir: string): Settings {
-  throw new Error('not implemented');
+export function loadSettings(learningDir: string): Settings {
+  const path = join(learningDir, 'config/settings.yaml');
+  const raw = parseYaml(readFileSync(path, 'utf8'));
+  return SettingsSchema.parse(raw);
 }
 
 /** questions/<id>.yaml,用 `QuestionFileSchema.parse` 驗證與套預設值。 */
-export function loadQuestionFile(_learningDir: string, _card: CardId): QuestionFile {
-  throw new Error('not implemented');
+export function loadQuestionFile(learningDir: string, card: CardId): QuestionFile {
+  const path = join(learningDir, 'questions', `${card}.yaml`);
+  const raw = parseYaml(readFileSync(path, 'utf8'));
+  return QuestionFileSchema.parse(raw);
 }
 
 /**
@@ -52,8 +78,16 @@ export function loadQuestionFile(_learningDir: string, _card: CardId): QuestionF
  * `cards/` 底下每個分類子目錄找檔名——phase-1 的規模(單一 session,最多
  * daily_cap 張)掃全部分類目錄夠快,不需要建索引。
  */
-export function findCardFile(_learningDir: string, _card: CardId, _opts: { short?: boolean } = {}): string {
-  throw new Error('not implemented');
+export function findCardFile(learningDir: string, card: CardId, opts: { short?: boolean } = {}): string {
+  const cardsDir = join(learningDir, 'cards');
+  const filename = opts.short ? `${card}.short.md` : `${card}.md`;
+  if (existsSync(cardsDir)) {
+    for (const category of readdirSync(cardsDir)) {
+      const candidate = join(cardsDir, category, filename);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  throw new Error(`找不到卡片檔案:${filename}(learningDir=${learningDir})`);
 }
 
 /**
@@ -61,6 +95,7 @@ export function findCardFile(_learningDir: string, _card: CardId, _opts: { short
  * (用 `parseCardText` 的 `.body`)。reteach 呈現(「shown before the first
  * question」)與一般問答呈現都走這個函式,差別只在 `opts.short`。
  */
-export function loadCardBody(_learningDir: string, _card: CardId, _opts: { short?: boolean } = {}): string {
-  throw new Error('not implemented');
+export function loadCardBody(learningDir: string, card: CardId, opts: { short?: boolean } = {}): string {
+  const path = findCardFile(learningDir, card, opts);
+  return parseCardText(readFileSync(path, 'utf8')).body;
 }

@@ -12,8 +12,15 @@ import type { EstimateInput, EstimateResult, SessionSummaryInput } from './types
  * total 超過 dailyCap 時,capped=true、shown=dailyCap、overflow=total-dailyCap;
  * 沒超過時 capped=false、shown=total、overflow=0。
  */
-export function estimateTomorrow(_input: EstimateInput): EstimateResult {
-  throw new Error('not implemented');
+export function estimateTomorrow(input: EstimateInput): EstimateResult {
+  const total = input.dueTomorrowExcludingReturns + input.returnedToday;
+  const capped = total > input.dailyCap;
+  return {
+    total,
+    capped,
+    shown: capped ? input.dailyCap : total,
+    overflow: capped ? total - input.dailyCap : 0,
+  };
 }
 
 /**
@@ -25,8 +32,20 @@ export function estimateTomorrow(_input: EstimateInput): EstimateResult {
  * errors 有發生時也要提一句(不是 phase-1.feature 明文要求,但 session 結束
  * 使用者應該知道有幾題因為 grading 錯誤被跳過)。
  */
-export function renderSummary(_input: SessionSummaryInput): string {
-  throw new Error('not implemented');
+export function renderSummary(input: SessionSummaryInput): string {
+  const lines: string[] = [`${input.passed} passed, ${input.failed} returned.`];
+
+  lines.push(
+    input.tomorrow.capped
+      ? `Tomorrow: ${input.tomorrow.shown} due (daily cap reached, ${input.tomorrow.overflow} more waiting).`
+      : `Tomorrow: ${input.tomorrow.shown} due.`,
+  );
+
+  if (input.errors > 0) {
+    lines.push(`${input.errors} question(s) had a grading error and were skipped.`);
+  }
+
+  return lines.join('\n');
 }
 
 /**
@@ -36,6 +55,7 @@ export function renderSummary(_input: SessionSummaryInput): string {
  * 格式化字串,「不寫檔案」這件事由呼叫端(scripts/review.ts)保證:
  * dry-run 模式下完全不呼叫 submitAnswer/saveReviews。
  */
-export function renderDryRun(_due: { card: string; stage: number; overdueDays: number }[]): string {
-  throw new Error('not implemented');
+export function renderDryRun(due: { card: string; stage: number; overdueDays: number }[]): string {
+  if (due.length === 0) return 'Nothing is due today.';
+  return due.map((d) => `${d.card}  stage ${d.stage}  overdue ${d.overdueDays}d`).join('\n');
 }

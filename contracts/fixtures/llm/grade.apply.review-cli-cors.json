@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "跨來源請求會遇到什麼問題",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[true,true],\"feedback\":\"有指出跨來源問題,也提出了解法。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

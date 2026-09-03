@@ -38,8 +38,71 @@
  * 「挑最近沒考過的」是可以之後再決定的事,phase-1.feature 沒有任何場景測
  * 這個選擇,不要在沒有驗收標準的情況下先做複雜的挑選邏輯。
  */
-import type { CardPresentation, Session } from './types.js';
+import { countBlanks } from '@contracts/index.js';
+import { loadCardBody, loadQuestionFile } from './io.js';
+import type { CardPresentation, CurrentQuestion, Session } from './types.js';
 
-export async function presentNextCard(_session: Session): Promise<CardPresentation> {
-  throw new Error('not implemented');
+function pickQuestion(session: Session, current: CurrentQuestion): CardPresentation {
+  const type = current.types[current.typeIndex]!;
+  const progress = { index: session.totalDue - session.queue.length + 1, total: session.totalDue };
+
+  if (type === 'fill') {
+    const fillQuestion = current.fillQuestion!;
+    return {
+      kind: 'question',
+      card: current.card,
+      stage: current.stage,
+      type: 'fill',
+      prompt: fillQuestion.prompt,
+      blanks: countBlanks(fillQuestion.prompt),
+      progress,
+      stuck: current.stuck,
+    };
+  }
+
+  const applyQuestion = current.applyQuestion!;
+  return {
+    kind: 'question',
+    card: current.card,
+    stage: current.stage,
+    type: 'apply',
+    prompt: applyQuestion.prompt,
+    progress,
+    stuck: current.stuck,
+  };
+}
+
+export async function presentNextCard(session: Session): Promise<CardPresentation> {
+  if (session.reteachQueue.length > 0) {
+    const card = session.reteachQueue.shift()!;
+    const shortBody = loadCardBody(session.learningDir, card, { short: true });
+    return { kind: 'reteach', card, shortBody };
+  }
+
+  if (session.current && session.current.card === session.queue[0]?.card) {
+    return pickQuestion(session, session.current);
+  }
+
+  if (session.queue.length === 0) {
+    return { kind: 'done' };
+  }
+
+  const due = session.queue[0]!;
+  const questionFile = loadQuestionFile(session.learningDir, due.card);
+  const current: CurrentQuestion = {
+    card: due.card,
+    stage: due.stage,
+    overdueDays: due.overdue_days,
+    overdueRatio: due.overdue_ratio,
+    stuck: due.stuck,
+    types: due.types,
+    typeIndex: 0,
+    fillQuestion: questionFile.fill[0]!,
+    applyQuestion: questionFile.apply[0]!,
+    pendingAnswers: [],
+    hadError: false,
+  };
+  session.current = current;
+
+  return pickQuestion(session, current);
 }

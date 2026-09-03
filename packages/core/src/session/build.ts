@@ -6,8 +6,13 @@
  * 排序與上限邏輯完全信任 04,這裡不重新計算 overdue_ratio 之類的東西。
  */
 import type { CardId, Review } from '@contracts/index.js';
-import type { LlmRouter } from '@core/grading/index.js';
+import { buildDueList, selectSession, type SchedulableCard } from '@core/scheduler/index.js';
+import { FakeLlmRouter, loadFixturesFromDir, type LlmRouter } from '@core/grading/index.js';
+import { resolve } from 'node:path';
+import { loadReviews, loadSettings } from './io.js';
 import type { Session } from './types.js';
+
+const LLM_FIXTURES_DIR = resolve(import.meta.dirname, '../../../../contracts/fixtures/llm');
 
 export interface BuildSessionCtx {
   learningDir: string;
@@ -39,8 +44,8 @@ export interface BuildSessionCtx {
  * 顯示 stuck 提示」的路徑(見 presentNextCard),不是 reteach。一張卡不會同時
  * 觸發兩種提示。
  */
-export function deriveReteachQueue(_reviews: Record<CardId, Review>, _dueCards: CardId[]): CardId[] {
-  throw new Error('not implemented');
+export function deriveReteachQueue(reviews: Record<CardId, Review>, dueCards: CardId[]): CardId[] {
+  return dueCards.filter((card) => reviews[card]?.fails_in_row === 2);
 }
 
 /**
@@ -58,6 +63,40 @@ export function deriveReteachQueue(_reviews: Record<CardId, Review>, _dueCards: 
  * scripts/grade.ts 的模式一致),讓 `--dry-run` 之外的互動流程在沒有真實
  * 雲端金鑰時也能跑。
  */
-export async function buildTodaySession(_ctx: BuildSessionCtx): Promise<Session> {
-  throw new Error('not implemented');
+export async function buildTodaySession(ctx: BuildSessionCtx): Promise<Session> {
+  const reviews = loadReviews(ctx.learningDir);
+  const settings = loadSettings(ctx.learningDir);
+
+  // exactOptionalPropertyTypes 讓 04 自己落點內複製的 Review 型別跟 @contracts
+  // 的 Review 型別在結構上「同形但不同名」時互不相容(見 answer.ts 的
+  // asSchedulerReview 註解),這裡跨邊界一樣要經過 unknown 中介轉型。
+  const dueItems = buildDueList(reviews as unknown as Parameters<typeof buildDueList>[0], ctx.today);
+  const reteachQueue = deriveReteachQueue(
+    reviews,
+    dueItems.map((item) => item.card),
+  );
+
+  const schedulable: SchedulableCard[] = dueItems.map((item) => ({
+    ...item,
+    learned_at: reviews[item.card]!.learned_at,
+  }));
+
+  const result = selectSession(schedulable, { dailyCap: settings.daily_cap, reteach: reteachQueue });
+
+  const router = ctx.router ?? new FakeLlmRouter(loadFixturesFromDir(LLM_FIXTURES_DIR));
+
+  return {
+    learningDir: ctx.learningDir,
+    today: ctx.today,
+    dailyCap: settings.daily_cap,
+    router,
+    queue: result.due,
+    reteachQueue: result.reteach,
+    totalDue: result.due.length,
+    deferred: result.deferred,
+    passed: 0,
+    failed: 0,
+    errors: 0,
+    current: undefined,
+  };
 }

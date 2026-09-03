@@ -6,7 +6,22 @@
  * scripts/review.ts 用 node:readline 把使用者輸入收好之後,才呼叫這兩個
  * 函式與 submitAnswer——單元測試因此可以直接注入陣列,不用假造 readline。
  */
+import type { Review } from '@contracts/index.js';
+import { gradeApply, gradeFillQuestion } from '@core/grading/index.js';
+import { applyFailTransition, applyPassTransition, type Review as SchedulerReview } from '@core/scheduler/index.js';
+import { loadReviews, saveReviews } from './io.js';
 import type { AnswerOutcome, Session } from './types.js';
+
+/**
+ * 04-scheduler 的 Review/ReviewEntry 是自己落點內複製的本地型別(見
+ * session/types.ts 開頭的說明),跟 @contracts 的 Review 結構完全相容,只是
+ * `exactOptionalPropertyTypes` 底下 `provisional?: boolean` 與
+ * `provisional?: boolean | undefined` 這類寫法不算「同一型別」,TypeScript
+ * 會擋。這裡跨那條邊界時用 unknown 中介轉型,不改任一邊的型別定義。
+ */
+function asSchedulerReview(review: Review): SchedulerReview {
+  return review as unknown as SchedulerReview;
+}
 
 /**
  * 填空題答案:使用者在一行輸入,用逗號分隔對應每個空格
@@ -14,8 +29,8 @@ import type { AnswerOutcome, Session } from './types.js';
  * 純函式:trim 每一段、逗號前後允許空白,不處理跳脫逗號之類的邊界
  * (fill 的答案本身不會含逗號,見契約 §3 的填空範例)。
  */
-export function splitFillAnswer(_raw: string): string[] {
-  throw new Error('not implemented');
+export function splitFillAnswer(raw: string): string[] {
+  return raw.split(',').map((part) => part.trim());
 }
 
 /**
@@ -25,8 +40,10 @@ export function splitFillAnswer(_raw: string): string[] {
  * gradeApply(phase-1.feature「the whole text is submitted as one answer」)。
  * 尾端多餘的空行需 trim 掉。
  */
-export function joinApplyLines(_lines: string[]): string {
-  throw new Error('not implemented');
+export function joinApplyLines(lines: string[]): string {
+  const trimmed = [...lines];
+  while (trimmed.length > 0 && trimmed[trimmed.length - 1] === '') trimmed.pop();
+  return trimmed.join('\n');
 }
 
 /**
@@ -81,6 +98,66 @@ export function joinApplyLines(_lines: string[]): string {
  *    e. 回傳 `{ status: overallPass ? 'passed' : 'failed', pass: overallPass,
  *       feedback, cardDone: true, newStage: 更新後的 review.stage }`。
  */
-export async function submitAnswer(_session: Session, _rawAnswer: string): Promise<AnswerOutcome> {
-  throw new Error('not implemented');
+export async function submitAnswer(session: Session, rawAnswer: string): Promise<AnswerOutcome> {
+  const current = session.current;
+  if (!current) {
+    throw new Error('submitAnswer 呼叫順序錯誤:session.current 還沒由 presentNextCard 設定');
+  }
+
+  const type = current.types[current.typeIndex]!;
+  const result =
+    type === 'fill'
+      ? await gradeFillQuestion(current.fillQuestion!, splitFillAnswer(rawAnswer), session.router)
+      : await gradeApply(current.applyQuestion!, rawAnswer, session.router);
+
+  if (result.pass === null) {
+    current.hadError = true;
+  } else {
+    current.pendingAnswers.push({ type, pass: result.pass, grader: result.grader });
+  }
+
+  current.typeIndex += 1;
+
+  if (current.typeIndex < current.types.length) {
+    return { status: 'partial', pass: result.pass, feedback: result.feedback, cardDone: false };
+  }
+
+  if (current.hadError) {
+    session.errors += 1;
+    session.queue.shift();
+    session.current = undefined;
+    return { status: 'error', pass: null, feedback: result.feedback, cardDone: true };
+  }
+
+  const overallPass = current.pendingAnswers.every((answer) => answer.pass);
+  const reviews = loadReviews(session.learningDir);
+  const review = reviews[current.card]!;
+
+  let outcome;
+  if (overallPass && current.pendingAnswers.length === 1) {
+    const answer = current.pendingAnswers[0]!;
+    outcome = applyPassTransition(asSchedulerReview(review), { card: current.card, today: session.today, type: answer.type, grader: answer.grader });
+  } else if (overallPass) {
+    throw new Error(
+      `已知的 04-scheduler 介面缺口:applyPassTransition 只接受單一 type/grader,無法一次記錄卡片 ${current.card} 這次 checkpoint 的 ${current.pendingAnswers.length} 筆通過答案。見這次功能的完成報告。`,
+    );
+  } else {
+    outcome = applyFailTransition(asSchedulerReview(review), { card: current.card, today: session.today, answers: current.pendingAnswers });
+  }
+
+  reviews[current.card] = outcome.review as unknown as Review;
+  saveReviews(session.learningDir, reviews);
+
+  session.queue.shift();
+  if (overallPass) session.passed += 1;
+  else session.failed += 1;
+  session.current = undefined;
+
+  return {
+    status: overallPass ? 'passed' : 'failed',
+    pass: overallPass,
+    feedback: result.feedback,
+    cardDone: true,
+    newStage: outcome.review.stage,
+  };
 }
