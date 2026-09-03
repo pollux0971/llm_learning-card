@@ -87,11 +87,8 @@ async function main(): Promise<void> {
     const router = new FakeLlmRouter({ fixturesDir });
     const result = await runIngest({ outDir: absOut, rawRelPath, category, router });
 
-    if (result.cardsCreated.length > 0) {
-      console.log(`建立了 ${result.cardsCreated.length} 張卡:`);
-      for (const id of result.cardsCreated) console.log(`  ${id}`);
-    }
     console.log(result.message);
+    for (const id of result.cardsCreated) console.log(`  ${id}`);
     process.exit(result.exitCode);
   }
 
@@ -108,13 +105,11 @@ async function main(): Promise<void> {
 
   const result = await runIngestPipeline({ outDir: absOut, rawRelPath, category, router });
 
-  // 建立的卡 = level 0 卡 + 子卡。只印 level 0 的話,子卡就成了看不見的產物。
-  const allCreated = [...result.cardsCreated, ...result.childrenCreated];
-  if (allCreated.length > 0) {
-    console.log(`建立了 ${allCreated.length} 張卡:`);
-    for (const id of allCreated) console.log(`  ${id}`);
-  }
+  // 建立的卡 = level 0 卡 + 子卡。只印 level 0 的話,子卡就成了看不見的產物——
+  // 這個總數現在就是 runIngestPipeline() 的 message 本人,CLI 不再另外算一個
+  // 表頭數字,免得兩個數字背靠背互相矛盾(REVIEW.md §7.6 第 1 點)。
   console.log(result.message);
+  for (const id of [...result.cardsCreated, ...result.childrenCreated]) console.log(`  ${id}`);
 
   // I1 的 e2e 場景「every card has a question file with the same id」不接受部分
   // 成功:只要有任何一張卡的考題產生失敗,整個 CLI 就以非 0 退出碼結束。
