@@ -150,7 +150,14 @@ export function simulateSteadyState(ctx: SimulationCtx): SimulationReport {
     const date = addIsoDays(startDate, day - 1);
 
     for (let i = 0; i < ctx.newCardsPerDay; i++) {
+      // cardCounter 只用來產生模擬用卡片 id 的計數器。buildDueList 會用 id 字串排序,
+      // 但 selectSession 之後一律用 overdue_ratio/learned_at 重排,SimulationReport
+      // (daily/cap_reached_*)只回報張數統計、不外露卡片 id 或其排序,所以遞增/遞減、
+      // 補零與否都不改變任何外部可觀察行為,只要每個 id 仍然唯一即可(正負號遞增遞減
+      // 都保證唯一)。以下兩行的變異(+= -> -=、padStart 補零字元 '0' -> '')都是等價變異。
+      // Stryker disable next-line all: 見上方說明,id 遞增方向不影響外部可觀察行為
       cardCounter += 1;
+      // Stryker disable next-line all: 見上方說明,id 補零格式不影響外部可觀察行為
       const id = `sim-${String(cardCounter).padStart(6, '0')}`;
       reviews[id] = applyLearnedTransition({ card: id, learnedAt: date });
     }

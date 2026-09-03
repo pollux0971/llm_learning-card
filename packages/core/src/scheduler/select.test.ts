@@ -194,4 +194,35 @@ describe('simulateSteadyState', () => {
     const totalDue = (r: typeof light) => r.daily.reduce((sum, d) => sum + d.due_count, 0);
     expect(totalDue(heavy)).toBeGreaterThan(totalDue(light));
   });
+
+  it('每天的日期從 startDate 逐天遞增一天(day 是算日期用的序號,不是寫死位移)', () => {
+    const report = simulateSteadyState({ days: 3, newCardsPerDay: 0, dailyCap: 10, startDate: '2026-05-01' });
+    expect(report.daily.map((d) => d.date)).toEqual(['2026-05-01', '2026-05-02', '2026-05-03']);
+  });
+
+  it('每天真的新學 newCardsPerDay 張卡:隔天到期數剛好等於前一天新學的張數', () => {
+    // stage 1 間隔是 1 天,今天學的卡片明天才到期,所以第 1 天到期數是 0,
+    // 第 2 天到期數剛好是第 1 天新學的張數——這個數字被迴圈上界少學/多學一張都會露餡。
+    const report = simulateSteadyState({ days: 2, newCardsPerDay: 3, dailyCap: 100 });
+    expect(report.daily[0]!.due_count).toBe(0);
+    expect(report.daily[1]!.due_count).toBe(3);
+  });
+
+  it('選進題目的卡片會被推進到下一階、間隔拉長,不會每天持續佔用到期清單', () => {
+    // 若 selectSession 選出的卡片沒有真的套用 pass transition(呼叫端沒推進狀態),
+    // 卡片的 next_due 永遠不變,會一直卡在到期清單裡,到期數只會逐天累加、不會收斂。
+    // 正確實作下,stage 1(間隔 1 天)通過後晉階 stage 2(間隔 7 天),同一時間只有
+    // 一兩張卡片在「剛到期、還沒晉階」的窗口裡,不會累積。
+    const report = simulateSteadyState({ days: 10, newCardsPerDay: 1, dailyCap: 100 });
+    expect(report.daily[0]!.due_count).toBe(0);
+    expect(report.daily.at(-1)!.due_count).toBeLessThanOrEqual(2);
+  });
+
+  it('新卡量超過上限時,cap_reached 與累計次數/比例反映真正的 deferred_count,不是寫死的值', () => {
+    const report = simulateSteadyState({ days: 5, newCardsPerDay: 20, dailyCap: 5 });
+    const capReachedDays = report.daily.filter((d) => d.cap_reached).length;
+    expect(capReachedDays).toBeGreaterThan(0);
+    expect(report.cap_reached_days).toBe(capReachedDays);
+    expect(report.cap_reached_ratio).toBeCloseTo(capReachedDays / 5, 5);
+  });
 });
