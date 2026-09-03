@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "為什麼要重開瀏覽器",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[false,true],\"feedback\":\"沒有講到重點。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

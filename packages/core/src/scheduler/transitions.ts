@@ -25,16 +25,30 @@ export function applyLearnedTransition(ctx: LearnedCtx): Review {
   };
 }
 
+/**
+ * 一次 checkpoint 裡被考的其中一題結果,通過的那一側。跟 FailAnswer 對齊
+ * (type、grader),沒有 pass 欄位——PassCtx 底下的 answers 全部隱含 pass:true,
+ * 混合結果（有一題沒過）走 FailCtx。
+ */
+export interface PassAnswer {
+  type: QuestionType;
+  grader: Grader;
+}
+
 export interface PassCtx {
   card: CardId;
   today: IsoDate;
-  type: QuestionType;
-  grader: Grader;
+  /** 這次 checkpoint 的所有題目結果;長度 1(stage 1/3/4/5)或 2(stage 2 兩題都過)。 */
+  answers: PassAnswer[];
 }
 
 /**
  * 答對:歷史記錄的 stage 是「被考的那個 stage」(推進前),不是推進後的。
  * stage 5 通過後歸檔(stage 6,next_due 為 null,emit 'archived')。
+ *
+ * stage 2 checkpoint 兩題都過時 answers 長度是 2——跟 applyFailTransition 一樣,
+ * 每一題各自附加一條 history entry,但只推進一次 stage、只算一次 next_due
+ * (不是「過一題進一 stage」)。
  */
 export function applyPassTransition(review: Review, ctx: PassCtx): SchedulerOutcome {
   const newStage = (review.stage + 1) as Stage;
@@ -48,7 +62,13 @@ export function applyPassTransition(review: Review, ctx: PassCtx): SchedulerOutc
     stuck: false,
     history: [
       ...review.history,
-      { date: ctx.today, stage: review.stage, type: ctx.type, pass: true, grader: ctx.grader },
+      ...ctx.answers.map((answer) => ({
+        date: ctx.today,
+        stage: review.stage,
+        type: answer.type,
+        pass: true as const,
+        grader: answer.grader,
+      })),
     ],
   };
 

@@ -8,6 +8,7 @@
 import { Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import type { LearningWorld } from './_world.js';
+import { seedApplyQuestion } from './review-cli.steps.js';
 
 import { MemoryFs } from '../../apps/test-card/src/stubs/memory-fs.js';
 import { buildFsSeed, TODAY } from '../../apps/test-card/src/stubs/fixtures.js';
@@ -125,7 +126,15 @@ Given('the current question is a fill question', function (this: LearningWorld) 
   assert.equal(view.current?.type, 'fill', `目前題型是 ${view.current?.type ?? '(無)'},預期 fill`);
 });
 
+// 11-review-cli 的 phase-1.feature 剛好也用一模一樣的文字(它是手動組
+// session.current,不是操作這裡真的 TestSession/getView())——用 tag 分派
+// 避免 cucumber 的 ambiguous-step 錯誤(跟 grading.steps.ts 對 phase-1/phase-2
+// 共用句子的作法一致)。
 Given('the current question is an apply question', function (this: LearningWorld) {
+  if (this.tags.includes('@review-cli')) {
+    seedApplyQuestion(this);
+    return;
+  }
   const s = state(this);
   let view = s.session.getView();
   if (view.current?.type !== 'apply') {

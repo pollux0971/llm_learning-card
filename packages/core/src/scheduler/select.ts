@@ -175,8 +175,7 @@ export function simulateSteadyState(ctx: SimulationCtx): SimulationReport {
       const outcome = applyPassTransition(review, {
         card: item.card,
         today: date,
-        type: item.types[0]!,
-        grader: 'exact',
+        answers: [{ type: item.types[0]!, grader: 'exact' }],
       });
       reviews[item.card] = outcome.review;
     }

@@ -33,7 +33,7 @@ Feature: A usable review session in the terminal
     Given the current question is a fill question with three blanks
     When the person enters three answers separated by commas
     Then each blank is graded separately
-    And the result is shown with feedback
+    And the fill-question feedback is shown
 
   Scenario: An apply question is answered across several lines
     Given the current question is an apply question
@@ -59,9 +59,23 @@ Feature: A usable review session in the terminal
     Then one failure is written
     And the history contains both answers
 
+  # 審核發現的真 bug(features/11-review-cli/REVIEW.md,commit b482ec3):兩題都對
+  # 這條最常見的成功路徑之前完全沒被場景覆蓋,實際上會讓 session 丟未捕捉例外當掉
+  # (04-scheduler 的 applyPassTransition 舊介面接不住一次 checkpoint 兩筆通過答案)。
+  # 只驗這一層該有的行為(不當掉、正確往下一張卡);history/stage 各記一次的細節
+  # 已經在 features/04-scheduler/phase-2.feature「At stage two both questions
+  # passing advances the card once」驗過,這裡不重複驗 04 的內部邏輯。
+  Scenario: A card at stage two advances after both questions pass
+    Given a card at stage 2 is being asked where both answers will pass
+    When the fill question is answered correctly
+    Then no transition has been written yet
+    When the apply question is answered correctly
+    Then the review state on disk shows stage 3
+    And the session continues to the next question
+
   Scenario: A grading error leaves the card alone and keeps going
     Given the grader returns an error result for the current question
-    When the result is handled
+    When the grading error is handled
     Then no transition is written for that card
     And the session reports that grading failed
     And the session continues to the next question

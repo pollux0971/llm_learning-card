@@ -67,7 +67,17 @@ npx tsx scripts/due.ts --simulate --days 200 --new-per-day 2
 
 - 「今天」用本地時區 00:00 還是可設的一天開始時間(如 04:00)?先 00:00,I5 再議。
 
-## 待協調
+## 完成後的介面變更記錄
+
+- **2026-09-03,`PassCtx` 補上 `answers: PassAnswer[]`(commit 4b26d11,審核見
+  `features/11-review-cli/REVIEW.md` 第二輪覆核)**:這個模組所有 phase 都已 `done`,
+  但 11-review-cli/phase-1 審核時發現 stage 2「兩題都答對」這條路徑沒有介面可以一次呼叫
+  `applyPassTransition` 記兩筆 history、只推進一次 stage——`applyPassTransition` 舊簽章只吃
+  單一 `{type, grader}`,跟 `FailCtx.answers[]` 不對稱,導致呼叫端(`session/answer.ts`)
+  必須 `throw` 當掉。屬於 CLAUDE.md 硬規則 1 講的「函式簽章」軟約定,改了不算違反硬約定
+  (磁碟格式、`LlmTask`、路由表沒動),但要留痕跡說明理由,所以補這一筆。改動只加欄位、
+  不改既有呼叫路徑(stage 1/3/4/5 傳長度 1 的 `answers`,行為與改前一致),嚴格變異測試
+  重新驗證過 **100.00%**,沒有退步。
 
 - **潛在的 cucumber step 撞名(來自 01-data-layer/phase-2,還沒發生,先提醒)**:
   `features/steps/data-layer.steps.ts` 已經定義了 `Then('stuck is false', ...)` 與
