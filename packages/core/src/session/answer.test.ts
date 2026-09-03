@@ -219,7 +219,7 @@ describe('submitAnswer — stage 2 checkpoint spans two questions', () => {
       fails_in_row: 0,
       total_fails: 0,
       stuck: false,
-      history: [{ date: '2026-09-02', stage: 1, type: 'fill', pass: true, grader: 'exact' }],
+      history: [],
     };
     const dir = makeLearningDir({ [card]: review });
     const before = readFileSync(join(dir, 'state/reviews.json'), 'utf8');

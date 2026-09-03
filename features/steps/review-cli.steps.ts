@@ -448,7 +448,7 @@ Given('a card at stage 2 is being asked', function (this: LearningWorld) {
       stage: 2,
       learned_at: '2026-09-01',
       next_due: this.today,
-      history: [{ date: '2026-09-02', stage: 1, type: 'fill', pass: true, grader: 'exact' }],
+      history: [],
     }),
   });
   s.reviewsSnapshotBefore = readFileSync(reviewsPath(this), 'utf8');
