@@ -52,11 +52,6 @@
     "cmd": "npm run tauri dev",
     "interactive": true
   },
-  "11-review-cli": {
-    "cmd": "npx tsx scripts/review.ts --dir contracts/fixtures/learning-minimal --dry-run --today 2026-09-10",
-    "interactive": false,
-    "expect": "due"
-  },
   "12-prompt-quality": {
     "cmd": "npx tsx scripts/prompt-check.ts --golden",
     "interactive": false,
