@@ -18,5 +18,20 @@
     "from": "05-grading",
     "to": "01-data-layer",
     "reason": "grade-apply.ts 的 log.jsonl 寫入用 01 的 recordEvent()(§10/§11b 原子寫入),feedback 字數上限用 01 的 countWords()(契約 §2 的權威演算法),不重新發明兩邊都已經有正式實作的東西"
+  },
+  {
+    "from": "11-review-cli",
+    "to": "01-data-layer",
+    "reason": "phase-1 是組合層(ADR-021 例外,沒有獨立的 Wave 0 版本),session/io.ts 讀寫 reviews.json/questions.yaml 用 01 的 writeFileAtomic(§11b 原子寫入)與 zod schema 驗證,不重新發明磁碟格式檢查"
+  },
+  {
+    "from": "11-review-cli",
+    "to": "04-scheduler",
+    "reason": "phase-1 是組合層,session/build.ts 直接呼叫 04 的 buildDueList/selectSession 決定今日到期清單與排序,session/answer.ts 呼叫 04 的 applyPassTransition/applyFailTransition 落地 stage 轉移,這就是這一層存在的理由(把 04/05/01 串起來)"
+  },
+  {
+    "from": "11-review-cli",
+    "to": "05-grading",
+    "reason": "phase-1 是組合層,session/answer.ts 呼叫 05 的 gradeFillQuestion/gradeApply 審核作答,scripts/review.ts 用 05 的 FakeLlmRouter 當預設 router(跟 scripts/grade.ts 同一個模式)"
   }
 ]

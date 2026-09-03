@@ -5,6 +5,7 @@
 import { Given, When, Then, Before, DataTable } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import type { LearningWorld } from './_world.js';
+import { seedCardsDue } from './review-cli.steps.js';
 import {
   addIsoDays,
   applyFailTransition,
@@ -513,7 +514,15 @@ Given('the daily cap is {int}', function (cap: number) {
 });
 
 // 涵蓋「15 cards are due today」「8 cards are due」「10 cards are due」等說法。
-Given(/^(\d+) cards are due(?: today)?$/, function (n: string) {
+// 11-review-cli 的 phase-1.feature 剛好也用「3 cards are due」——那句是佈置
+// state/reviews.json,跟這裡佈置記憶體陣列給 selectSession 用完全是兩回事,
+// 用 tag 分派避免 cucumber 的 ambiguous-step 錯誤(跟 grading.steps.ts 對
+// phase-1/phase-2 共用句子的作法一致)。
+Given(/^(\d+) cards are due(?: today)?$/, function (this: LearningWorld, n: string) {
+  if (this.tags.includes('@review-cli')) {
+    seedCardsDue(this, Number(n));
+    return;
+  }
   selectDueCards = makeDueCards(Number(n));
 });
 
