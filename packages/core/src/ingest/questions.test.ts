@@ -5,7 +5,7 @@ import { parse as yamlParse } from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Card, QuestionFile } from '@contracts/index.js';
 import type { LlmResult, LlmRouter, LlmTask } from '@core/llm/index.js';
-import { LlmTimeoutError, OutputTruncatedError } from '@core/llm/index.js';
+import { LlmTimeoutError, OutputTruncatedError, TASK_MAX_TOKENS } from '@core/llm/index.js';
 import { validateQuestionFile } from '@core/schema/validate-question.js';
 import { generateQuestions, generateQuestionsForCards, writeQuestionFile } from './questions.js';
 import { loadPromptTemplate } from './prompts.js';
@@ -68,16 +68,19 @@ function goodCandidateJson(): string {
   });
 }
 
-/** 呼叫次數導向的假 router:第 callIndex 次呼叫時執行 script[callIndex]。 */
+/**
+ * 呼叫次數導向的假 router:第 callIndex 次呼叫時執行 script[callIndex]。
+ * calls 連 opts 一起記下來——重試時的預算(截斷加倍、其餘原樣)是被驗的行為之一。
+ */
 function makeScriptedRouter(script: Array<(task: LlmTask, prompt: string) => string>): {
   router: LlmRouter;
-  calls: { task: string; prompt: string }[];
+  calls: { task: string; prompt: string; opts?: { maxTokens?: number } | undefined }[];
 } {
-  const calls: { task: string; prompt: string }[] = [];
+  const calls: { task: string; prompt: string; opts?: { maxTokens?: number } | undefined }[] = [];
   const router: LlmRouter = {
-    async call(task, prompt): Promise<LlmResult> {
+    async call(task, prompt, opts): Promise<LlmResult> {
       const index = calls.length;
-      calls.push({ task, prompt });
+      calls.push({ task, prompt, opts });
       const handler = script[index];
       if (!handler) throw new Error(`script 沒有第 ${index} 次呼叫的回應`);
       return { text: handler(task, prompt), provider: 'anthropic', model: 'test-model', latency_ms: 1, provisional: false };
@@ -119,6 +122,16 @@ afterEach(() => {
 function makeOutDir(): string {
   dir = mkdtempSync(join(tmpdir(), 'lc-questions-'));
   return dir;
+}
+
+/** 讀 outDir/state/log.jsonl;檔案不存在就當成沒有事件。 */
+function readLogEvents(outDir: string): Record<string, unknown>[] {
+  const logPath = join(outDir, 'state/log.jsonl');
+  if (!existsSync(logPath)) return [];
+  return readFileSync(logPath, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 
 // ============================================================== generateQuestions
@@ -312,6 +325,74 @@ describe('generateQuestions retry on transient errors', () => {
     expect(calls).toHaveLength(2);
   });
 
+  // 截斷是「預算不夠」,原樣重打治不好,所以重打那次把 maxTokens 加倍;第一次維持
+  // token-limits.ts 的 task 預設(不帶 opts)。
+  it('doubles the token budget on the truncation retry and leaves the first call on the task default', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw new OutputTruncatedError('ingest.questions', 2048, 2048);
+      },
+      () => goodCandidateJson(),
+    ]);
+
+    await generateQuestions(makeCard('sec-0001'), router);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.opts).toBeUndefined();
+    expect(calls[1]!.opts).toEqual({ maxTokens: TASK_MAX_TOKENS['ingest.questions'] * 2 });
+  });
+
+  // 逾時/網路抖動是「當下不順」,預算不是問題——原樣重打,不加預算。
+  it('leaves the budget untouched on a timeout retry', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw new LlmTimeoutError('ingest.questions', 30_000);
+      },
+      () => goodCandidateJson(),
+    ]);
+
+    await generateQuestions(makeCard('sec-0001'), router);
+
+    expect(calls[1]!.opts).toBeUndefined();
+  });
+
+  it('leaves the budget untouched on a network-layer retry', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw new Error('socket hang up');
+      },
+      () => goodCandidateJson(),
+    ]);
+
+    await generateQuestions(makeCard('sec-0001'), router);
+
+    expect(calls[1]!.opts).toBeUndefined();
+  });
+
+  // 丟出來的不是 Error(字串、物件)時沒有 message 可以比對,不能當成網路抖動重打。
+  it('does not retry when the router throws a value that is not an Error', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw '壞掉了,但不是 Error';
+      },
+    ]);
+
+    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toBeTruthy();
+    expect(calls).toHaveLength(1);
+  });
+
+  // 模型自己回報的失敗是確定性的(重打還是壞),訊息裡沒有網路特徵就不該被重試。
+  it('does not retry a plain error whose message has no network signature', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw new Error('model unavailable for this card');
+      },
+    ]);
+
+    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toThrow('model unavailable');
+    expect(calls).toHaveLength(1);
+  });
+
   // 既有行為(回歸測試):JSON parse 失敗不重試——確定性錯誤,重打也是壞。
   it('does not retry when the response is not valid JSON', async () => {
     const { router, calls } = makeScriptedRouter([() => 'not json at all']);
@@ -407,5 +488,44 @@ describe('generateQuestionsForCards', () => {
       expect(existsSync(join(outDir, 'questions', `${id}.yaml`))).toBe(true);
     }
     expect(existsSync(join(outDir, 'questions', 'sec-0003.yaml'))).toBe(false);
+  });
+
+  // 重試本身要留下痕跡,否則「模型不穩」只會表現成帳單變貴、看不出來為什麼。
+  it('appends one llm_call event naming the card and the retry reason when a card is truncated once', async () => {
+    const outDir = makeOutDir();
+    const { router } = makeScriptedRouter([
+      () => goodCandidateJson(),
+      () => {
+        throw new OutputTruncatedError('ingest.questions', 2048, 2048);
+      },
+      () => goodCandidateJson(),
+      () => goodCandidateJson(),
+      () => goodCandidateJson(),
+      () => goodCandidateJson(),
+    ]);
+
+    const result = await generateQuestionsForCards(outDir, FIVE_CARDS, router);
+
+    expect(result.failures).toEqual([]);
+    const events = readLogEvents(outDir);
+    expect(events).toHaveLength(1);
+    const { ts, ...rest } = events[0]!;
+    expect(typeof ts).toBe('string');
+    expect(rest).toEqual({
+      type: 'llm_call',
+      task: 'ingest.questions',
+      card: 'sec-0002',
+      retry: true,
+      retry_reason: 'output_truncated',
+    });
+  });
+
+  it('writes no llm_call event when no card needs a retry', async () => {
+    const outDir = makeOutDir();
+    const { router } = makeAlwaysGoodRouter();
+
+    await generateQuestionsForCards(outDir, FIVE_CARDS, router);
+
+    expect(readLogEvents(outDir)).toEqual([]);
   });
 });

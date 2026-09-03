@@ -14,7 +14,7 @@
  */
 import { Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
@@ -34,6 +34,8 @@ import { validateQuestionFile } from '../../packages/core/src/schema/validate-qu
 import { generateQuestionsForCards, type GenerateQuestionsRunResult } from '../../packages/core/src/ingest/questions.js';
 import { generateChildrenForCards, type GenerateChildrenResult } from '../../packages/core/src/ingest/children.js';
 import { analyzeDependencies, type AnalyzeDependenciesResult } from '../../packages/core/src/ingest/deps.js';
+import { runIngestPipeline, type RunIngestOptions, type RunIngestPipelineResult } from '../../packages/core/src/ingest/ingest.js';
+import { ensureInitialized } from '../../packages/core/src/ingest/init.js';
 
 // ---------------------------------------------------------------- 場景內狀態
 
@@ -58,6 +60,8 @@ interface IngestPipelineCtx {
   questionsResult?: GenerateQuestionsRunResult;
   childrenResult?: GenerateChildrenResult;
   depsResult?: AnalyzeDependenciesResult;
+  /** 「the run completes」跑完整 runIngestPipeline() 之後的結果。 */
+  pipelineResult?: RunIngestPipelineResult;
   languageOrderBefore?: string;
 }
 
@@ -119,9 +123,28 @@ function goodChildCandidatesJson(): string {
   ]);
 }
 
-/** 預設的 'ingest.deps' 回應:把傳入的 cards 串成一條鏈,保證「圖包含每張卡」。 */
-function defaultDepsEdgesJson(c: IngestPipelineCtx): string {
-  const ids = c.cards.map((card) => card.frontmatter.id);
+/** 'ingest.cards' 的 level 0 回應(prompt 沒有 parent_id: 那一行時)。 */
+function levelZeroCandidatesJson(count: number): string {
+  return JSON.stringify(
+    Array.from({ length: count }, (_, i) => ({
+      title: `第 ${i + 1} 個概念`,
+      body: `這是第 ${i + 1} 張卡的正文內容,描述同源政策的其中一個面向。`,
+      examples: [],
+      lines: [i * 2 + 1, i * 2 + 2],
+    })),
+  );
+}
+
+/**
+ * 預設的 'ingest.deps' 回應:把 prompt 裡「- <id>: <title>」列出的卡片串成一條鏈,
+ * 保證「圖包含每張卡」且無循環。
+ *
+ * 讀 prompt 而不是讀 ctx.cards:走 runIngestPipeline() 的場景裡,deps 拿到的是
+ * level 0 卡「加上」子卡,ctx.cards 只有前者——照 ctx.cards 回答會漏掉子卡,圖就
+ * 不含每張卡了。只跑 analyzeDependencies() 的場景兩者結果相同。
+ */
+function defaultDepsEdgesJson(prompt: string): string {
+  const ids = [...prompt.matchAll(/^- (\S+):/gm)].map((m) => m[1] as CardId);
   const edges: [CardId, CardId][] = [];
   for (let i = 0; i + 1 < ids.length; i++) edges.push([ids[i]!, ids[i + 1]!]);
   return JSON.stringify({ edges });
@@ -145,7 +168,9 @@ function buildResponseText(task: LlmTask, callIndex: number, prompt: string, c: 
     return goodQuestionCandidateJson();
   }
   if (task === 'ingest.cards') {
-    return goodChildCandidatesJson();
+    // children.ts 的 prompt 帶 parent_id:,generate-cards.ts 的 level 0 prompt 沒有——
+    // 兩者共用同一個 LlmTask(契約 §7 路由表),只能靠 prompt 分辨。
+    return prompt.includes('parent_id:') ? goodChildCandidatesJson() : levelZeroCandidatesJson(c.cards.length);
   }
   if (task === 'ingest.deps') {
     if (c.depsScript) {
@@ -153,7 +178,7 @@ function buildResponseText(task: LlmTask, callIndex: number, prompt: string, c: 
       if (!edges) throw new Error(`depsScript 沒有第 ${callIndex} 次呼叫的回應`);
       return JSON.stringify({ edges });
     }
-    return defaultDepsEdgesJson(c);
+    return defaultDepsEdgesJson(prompt);
   }
   throw new Error(`ingest-pipeline.steps.ts 的假 adapter 沒有預期到 task=${task}`);
 }
@@ -315,9 +340,44 @@ When('question generation runs', async function (this: LearningWorld) {
   c.questionsResult = await generateQuestionsForCards(this.dir!, c.cards, c.router!);
 });
 
+/**
+ * 「the run completes」是完整的一次 ingest,不是只有考題那一步:考題失敗的 warning
+ * 依 questions.ts 的介面契約是 runIngestPipeline() 的責任(generateQuestionsForCards()
+ * 只把失敗收進 failures,不寫 log),所以這個 When 一定要跑到 pipeline 這一層,
+ * 否則「a warning naming the third card」永遠驗不到真東西。
+ *
+ * runIngestPipeline() 是從 raw 檔開始跑的,自己會生 level 0 卡,所以這裡另開一個
+ * 乾淨的 learning 目錄(Background 手寫的那五張卡只用來讓 Given 算出「第三張卡」
+ * 的 id);新目錄裡 level 0 的編號一樣從 sec-0001 開始,兩邊對得上——下面的
+ * assert 把這個耦合寫死,對不上就當場紅,不會靜悄悄跑成別的東西。
+ */
 When('the run completes', async function (this: LearningWorld) {
   const c = ctx(this);
-  c.questionsResult = await generateQuestionsForCards(this.dir!, c.cards, c.router!);
+  const dir = mkdtempSync(join(tmpdir(), 'lc-ingest-pipeline-run-'));
+  ensureInitialized(dir);
+  const rawRelPath = `raw/${CATEGORY}/web-basics.md`;
+  mkdirSync(join(dir, 'raw', CATEGORY), { recursive: true });
+  writeFileSync(join(dir, rawRelPath), '一些原始內容\n'.repeat(20), 'utf8');
+
+  rmSync(this.dir!, { recursive: true, force: true });
+  this.dir = dir;
+
+  c.pipelineResult = await runIngestPipeline({
+    outDir: dir,
+    rawRelPath,
+    category: CATEGORY,
+    today: this.today,
+    // runIngestPipeline() 的 router 型別是 ingest/types.ts 的 Wave 0 版(provider 多一個
+    // 'fake' literal),c.router 是 @core/llm 的版本;call/probeOnline/probeLocal 的簽章
+    // 結構相同,只有那個 literal union 寬窄不同,對執行沒有影響。
+    router: c.router as unknown as RunIngestOptions['router'],
+  });
+
+  assert.deepEqual(
+    c.pipelineResult.cardsCreated,
+    c.cards.map((card) => card.frontmatter.id),
+    'pipeline 產生的 level 0 卡片編號要跟 Background 的五張對得上,場景專屬的 Given 才指得到「第三張卡」',
+  );
 });
 
 When('child generation runs', async function (this: LearningWorld) {
@@ -570,11 +630,8 @@ Then('a warning naming the third card and the reason is in the log', function (t
   const failedId = c.cards[2]!.frontmatter.id;
   const logPath = join(this.dir!, 'state/log.jsonl');
   // 這筆 log 是 runIngestPipeline()(packages/core/src/ingest/ingest.ts)的責任,
-  // 不是 generateQuestionsForCards() 自己的事(見 questions.ts 的介面契約)。這個
-  // 場景的 When 只跑到 generateQuestionsForCards() 這層(見上面「the run
-  // completes」),所以現在這裡一定找不到對應的 warning——這是刻意留的紅燈,
-  // 真正的接線與斷言在 pipeline.test.ts 對 runIngestPipeline() 的整合測試裡
-  // (describe('question generation failures are logged'))。
+  // 不是 generateQuestionsForCards() 自己的事(見 questions.ts 的介面契約),所以
+  // 上面的 When 跑的是完整 pipeline。
   const events = existsSync(logPath)
     ? readFileSync(logPath, 'utf8')
         .split('\n')
@@ -585,16 +642,63 @@ Then('a warning naming the third card and the reason is in the log', function (t
     (e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes(failedId),
   );
   assert.ok(warning, JSON.stringify(events));
+  // 「and the reason」:光有 card id 不算,訊息要帶上失敗原因本身。
+  const failure = c.pipelineResult!.questionFailures.find((f) => f.card === failedId);
+  assert.ok(failure, JSON.stringify(c.pipelineResult!.questionFailures));
+  assert.ok(
+    (warning!.message as string).includes(failure!.error),
+    `warning 沒有帶上失敗原因: ${String(warning!.message)}`,
+  );
 });
 
-Then('the command prints the failed card and exits with a non-zero status', function () {
-  // TODO(下一輪開發 agent,questions-retry-and-reporting):這個場景還沒接到真的
-  // scripts/ingest.ts CLI 呼叫——「When the run completes」目前只跑
-  // generateQuestionsForCards() 這層(見上面),沒有印出失敗清單、也沒有退出碼
-  // 可斷言。接上 CLI 之後(見 scripts/ingest.ts 與 ingest.ts 的 hasQuestionFailures
-  // 欄位),這裡改成透過 this.runCommand() 或等價方式真的跑一次 CLI,斷言 stdout
-  // 印出 failedId、status 非 0。先留一個明確會紅的斷言,不要悄悄放行。
-  assert.fail('CLI 尚未接上失敗清單印出與非 0 退出碼(commit2 任務描述,下一輪開發 agent 補)');
+/**
+ * 「the command」是真的那支 CLI(scripts/ingest.ts),所以這裡真的把它 spawn 起來,
+ * 不是在程序內模擬一次。CLI 沒有注入 router 的縫(它自己 `new LlmRouterImpl(...)`),
+ * 而參數解析、複製 raw、印出清單、退出碼正是這一句要驗的東西,不能繞過去——所以
+ * 改在最外層的網路邊界造假:`--import features/steps/_fake-cloud.mjs` 換掉子程序的
+ * globalThis.fetch,LlmRouterImpl / CloudLlmRouter / anthropicAdapter / Anthropic SDK
+ * 全部跑真的,只是不打真網路(細節見那個檔案的檔頭)。
+ *
+ * 上面的 When 跑的是程序內的 runIngestPipeline(),拿不到退出碼,所以這一句自己
+ * 另外跑一次 CLI(另一個乾淨目錄),故意讓同一張卡失敗。
+ */
+Then('the command prints the failed card and exits with a non-zero status', function (this: LearningWorld) {
+  const c = ctx(this);
+  const failedId = c.cards[2]!.frontmatter.id;
+  const cliOut = mkdtempSync(join(tmpdir(), 'lc-ingest-cli-'));
+  try {
+    const run = this.runCommand(
+      `npx tsx --import ./features/steps/_fake-cloud.mjs scripts/ingest.ts` +
+        ` --file contracts/fixtures/raw/security-basics.md --out "${cliOut}" --category ${CATEGORY}`,
+      {
+        env: {
+          LLM_CLOUD_PROVIDER: 'anthropic',
+          LLM_CLOUD_MODEL: 'test-model',
+          ANTHROPIC_API_KEY: 'test-anthropic-key',
+          FAKE_CLOUD_LEVEL0_COUNT: String(c.cards.length),
+          FAKE_CLOUD_QUESTIONS_FAIL_CARD: failedId,
+        },
+        timeoutMs: 180_000,
+      },
+    );
+
+    // 先確認這一跑真的走到底(卡片有建出來),否則任何早期崩潰都會是「非 0」而假綠。
+    assert.ok(run.output.includes(c.cards[0]!.frontmatter.id), `CLI 沒有印出建立的卡片:\n${run.output}`);
+    assert.ok(run.output.includes(failedId), `CLI 沒有印出失敗的卡片 ${failedId}:\n${run.output}`);
+    assert.notEqual(run.status, 0, `退出碼應該非 0,實際是 ${run.status}:\n${run.output}`);
+    assert.notEqual(run.status, null, `CLI 沒有正常結束(逾時或無法啟動):\n${run.output}`);
+    // 失敗的那張卡不該留下考題檔,其餘的要留下——「不失去其他卡」在 CLI 這一路也成立。
+    assert.equal(existsSync(join(cliOut, 'questions', `${failedId}.yaml`)), false, `${failedId} 不該有考題檔`);
+    for (const card of c.cards) {
+      if (card.frontmatter.id === failedId) continue;
+      assert.ok(
+        existsSync(join(cliOut, 'questions', `${card.frontmatter.id}.yaml`)),
+        `CLI 這一路缺少 ${card.frontmatter.id} 的考題檔`,
+      );
+    }
+  } finally {
+    rmSync(cliOut, { recursive: true, force: true });
+  }
 });
 
 Then('all five question files exist', function (this: LearningWorld) {

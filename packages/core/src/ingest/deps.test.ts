@@ -647,6 +647,14 @@ describe('removeCyclesLocally', () => {
     const second = removeCyclesLocally(graph, 6);
 
     expect(second.edgesRemoved).toEqual(first.edgesRemoved);
+    // 「兩次一樣」在同一個 process 裡太弱(靠 Set/Map 迭代順序的實作也會兩次一樣)。
+    // 真正釘住確定性的是「丟的是哪兩條」:detectCycle() 的 DFS 照 nodes/edges 的
+    // 原始順序走,回邊必定是每個環裡最後被走到的那條。
+    expect(first.edgesRemoved).toEqual([
+      ['sec-0003', 'sec-0001'],
+      ['sec-0006', 'sec-0004'],
+    ]);
+    expect(first.unresolved).toBeNull();
   });
 });
 
@@ -723,11 +731,18 @@ describe('analyzeDependencies: local cycle repair loop', () => {
     expect(result.cycleUnresolved).toEqual(['sec-0001', 'sec-0002', 'sec-0003', 'sec-0001']);
     expect(existsSync(join(outDir, 'graph', 'deps.json'))).toBe(false);
     expect(existsSync(join(outDir, 'graph', 'order-security.json'))).toBe(false);
+    // 沒寫檔就沒有 order、也沒有卡片被改寫——回傳值要跟磁碟上的事實一致。
+    expect(result.order).toEqual([]);
+    expect(result.cardsUpdated).toEqual([]);
     const events = logEventsOf(outDir);
     const warning = events.find(
       (e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes('sec-0001'),
     );
     expect(warning, JSON.stringify(events)).toBeTruthy();
+    // warning 要點名「沒被寫出的是哪個檔」,而且殘留路徑要是人看得懂的
+    // 「a -> b -> c -> a」,不是黏成一串。
+    expect(warning!.file).toBe('graph/deps.json');
+    expect(warning!.message).toContain('sec-0001 -> sec-0002 -> sec-0003 -> sec-0001');
   });
 });
 

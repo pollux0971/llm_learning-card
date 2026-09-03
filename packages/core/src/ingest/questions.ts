@@ -95,6 +95,10 @@ const RETRY_MAX_TOKENS = TASK_MAX_TOKENS['ingest.questions'] * 2;
 function isNetworkError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const cause = (err as { cause?: { code?: unknown } }).cause;
+  // Stryker disable next-line StringLiteral: 這個 '' 只是「沒有 cause.code」的佔位字串,
+  // 它唯一的用途是下一行餵給 NETWORK_ERROR_PATTERN.test()。換成任何不含
+  // fetch failed / ECONNRESET / … 這些特徵的字面值(Stryker 用的是 "Stryker was here!"),
+  // test() 的結果一樣是 false,對每一種輸入都不可觀測——語意等價,不是漏測。
   const causeCode = typeof cause?.code === 'string' ? cause.code : '';
   return NETWORK_ERROR_PATTERN.test(err.message) || NETWORK_ERROR_PATTERN.test(causeCode);
 }
