@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "COUNT_MISMATCH_TEST",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[true,false],\"feedback\":\"只給了兩個 verdict。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

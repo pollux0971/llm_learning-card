@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "COUNT_MISMATCH_TEST",
+  "attempt": 2,
+  "response": {
+    "text": "{\"criteria\":[true,true,false],\"feedback\":\"這次三個 verdict 都給了。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}
