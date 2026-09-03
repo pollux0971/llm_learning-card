@@ -73,8 +73,8 @@ Feature: The system survives offline use and stays healthy over time
     Then it reports that reconciliation needs the cloud
     And the queue is unchanged
 
-  @regression @i5
-  Scenario: The daily habit features still work
+  @regression
+  Scenario: The daily habit features still work as in I5
     When the machine is restarted and a session is completed from the tray
     Then everything behaves as in I5
 

@@ -41,7 +41,7 @@ Feature: The same system on Windows
     When the application starts
     Then text is sharp and both windows are scaled correctly
 
-  @regression @i7
-  Scenario: All prior capabilities work on Windows
+  @regression
+  Scenario: All prior capabilities work on Windows as in I7
     When the integration suites for I1 through I6 are run on Windows
     Then every non platform specific scenario passes

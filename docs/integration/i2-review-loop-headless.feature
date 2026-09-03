@@ -88,8 +88,8 @@ Feature: A working spaced repetition loop in the terminal
     Then the session resumes at the third card
     And the same 5 cards are used
 
-  @regression @i1
-  Scenario: The content pipeline still works
+  @regression
+  Scenario: The content pipeline still works as in I1
     When the person ingests a new raw file
     Then cards, questions and order are produced as in I1
 

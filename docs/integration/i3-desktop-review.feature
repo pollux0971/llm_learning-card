@@ -57,8 +57,8 @@ Feature: Reviewing in a desktop window
     Then it does not attempt to set always on top
     And it shows a one time note explaining how to configure this in the desktop environment
 
-  @regression @i2
-  Scenario: The terminal review loop still works
+  @regression
+  Scenario: The terminal review loop still works as in I2
     When the person runs the review command
     Then a full session can be completed as in I2
 

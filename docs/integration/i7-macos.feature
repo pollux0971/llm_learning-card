@@ -41,7 +41,7 @@ Feature: The same system on macOS
     When the application reads a card
     Then the file is found
 
-  @regression @i6
-  Scenario: All prior capabilities work on macOS
+  @regression
+  Scenario: All prior capabilities work on macOS as in I6
     When the integration suites for I1 through I6 are run on macOS
     Then every non platform specific scenario passes

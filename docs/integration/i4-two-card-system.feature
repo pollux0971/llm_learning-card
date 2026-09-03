@@ -72,8 +72,8 @@ Feature: The complete two card system
     Then cards are generated with source llm and no source_ref
     And the teach card shows the llm source marker on them
 
-  @regression @i3
-  Scenario: Desktop review still works
+  @regression
+  Scenario: Desktop review still works as in I3
     When the person opens the test card and answers a question
     Then the schedule advances as in I3
 

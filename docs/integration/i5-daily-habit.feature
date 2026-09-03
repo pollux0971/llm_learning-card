@@ -76,8 +76,8 @@ Feature: The system becomes part of the day
     Then it runs normally
     And it shows a one time note about installing the extension
 
-  @regression @i4
-  Scenario: Both cards still work
+  @regression
+  Scenario: Both cards still work as in I4
     When the person learns a card and reviews it the next day
     Then the full flow works as in I4
 
