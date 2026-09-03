@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { LlmRouterImpl } from './router-impl.js';
+import { CloudLlmRouter } from './router.js';
+import type { LlmResult } from './types.js';
 
 /**
  * 對照 features/03-llm-router/phase-2.feature 的三個非 Outline scenario:
@@ -7,6 +9,35 @@ import { LlmRouterImpl } from './router-impl.js';
  * briefly」、「The cache expires」。路由表 11 組的 Outline 測試在 routing.test.ts
  * (decideRoute 是純函式,不需要透過這個類別)。
  */
+
+describe('LlmRouterImpl.call — 路由決策後的組裝邏輯', () => {
+  it('決策是 cloud 時,轉呼叫底層 cloudRouter.call(),回傳它的結果', async () => {
+    const cloudRouter = new CloudLlmRouter();
+    const fakeResult: LlmResult = {
+      text: 'hi',
+      provider: 'anthropic',
+      model: 'test-model',
+      latency_ms: 1,
+      provisional: false,
+    };
+    const callSpy = vi.spyOn(cloudRouter, 'call').mockResolvedValue(fakeResult);
+    const router = new LlmRouterImpl({ cloudRouter, onlineProber: async () => true });
+
+    const result = await router.call('ingest.cards', 'prompt');
+
+    expect(callSpy).toHaveBeenCalledWith('ingest.cards', 'prompt', {});
+    expect(result).toBe(fakeResult);
+  });
+
+  it('決策是 local 時,丟出帶 phase-4 字樣的錯誤(local adapter 還沒實作)', async () => {
+    const router = new LlmRouterImpl({
+      onlineProber: async () => false,
+      localProber: async () => ({ available: true, models: ['some-local-model'] }),
+    });
+
+    await expect(router.call('grade.fill.llm', 'prompt')).rejects.toThrow('phase-4');
+  });
+});
 
 describe('LlmRouterImpl.probeLocal — 本機探測可注入,預設固定 unavailable(ADR-037)', () => {
   it('本機模型伺服器拒絕連線時,回報不可用,不把錯誤往外丟', async () => {
@@ -62,6 +93,30 @@ describe('LlmRouterImpl.probeOnline — 快取(FEATURE.md:60 秒快取)', () => 
 
     expect(onlineProber).toHaveBeenCalledTimes(1);
     expect(second).toBe(false);
+  });
+
+  it('經過的時間剛好等於 TTL 時,快取視為已過期,第二次呼叫會再打一次(釘住現在的 < 邊界,不是 <=)', async () => {
+    let now = 0;
+    const onlineProber = vi.fn(async () => true);
+    const router = new LlmRouterImpl({ onlineProber, now: () => now });
+
+    await router.probeOnline();
+    now += 60_000; // 預設 onlineProbeTtlMs,剛好等於 TTL
+    await router.probeOnline();
+
+    expect(onlineProber).toHaveBeenCalledTimes(2);
+  });
+
+  it('時鐘從很大的數字開始(模擬真的 Date.now() epoch ms)時,TTL 內快取依然有效', async () => {
+    let now = 1_700_000_000_000;
+    const onlineProber = vi.fn(async () => true);
+    const router = new LlmRouterImpl({ onlineProber, now: () => now });
+
+    await router.probeOnline();
+    now += 1_000; // 遠小於 TTL
+    await router.probeOnline();
+
+    expect(onlineProber).toHaveBeenCalledTimes(1);
   });
 });
 
