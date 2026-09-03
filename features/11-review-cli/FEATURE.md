@@ -66,7 +66,7 @@ npx tsx scripts/review.ts --dir contracts/fixtures/learning-minimal --dry-run --
 
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
-| 1 | session 建立、作答、落地、小結 | I2 | todo | |
+| 1 | session 建立、作答、落地、小結 | I2 | in-progress | |
 | 2 | 續答、跨日、暫停、dry-run 完整化 | I3 | todo | |
 
 ## 驗收方式
