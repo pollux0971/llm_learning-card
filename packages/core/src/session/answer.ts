@@ -81,13 +81,8 @@ export function joinApplyLines(lines: string[]): string {
  *         PassCtx 已經對稱 FailCtx 改成接受 answers[](見
  *         packages/core/src/scheduler/transitions.ts 與
  *         features/11-review-cli/REVIEW.md 記錄的那個 bug),一次呼叫就能記多筆
- *         history、只推進一次 stage。
- *
- *         [TODO,下一輪實作]:目前 pendingAnswers.length > 1 這條分支還沒接上——
- *         下面暫時保留丟錯,避免在沒驗過的狀況下猜一個可能是錯的行為。
- *         對應規格見 answer.test.ts「submitAnswer — stage 2 checkpoint, both
- *         questions pass」與 phase-1.feature「A card at stage two advances
- *         after both questions pass」(目前都是紅燈)。
+ *         history、只推進一次 stage(stage 2 兩題都過與 stage 1/3/4/5 單題都走
+ *         這同一條路徑,不用分岔)。
  *       - !overallPass → 呼叫 applyFailTransition(review, { card,
  *         today: session.today, answers: current.pendingAnswers })
  *         (04 的 FailCtx.answers 本來就是設計成一次checkpoint 的多題結果,
@@ -138,18 +133,12 @@ export async function submitAnswer(session: Session, rawAnswer: string): Promise
   const review = reviews[current.card]!;
 
   let outcome;
-  if (overallPass && current.pendingAnswers.length === 1) {
-    const answer = current.pendingAnswers[0]!;
-    outcome = applyPassTransition(asSchedulerReview(review), { card: current.card, today: session.today, answers: [{ type: answer.type, grader: answer.grader }] });
-  } else if (overallPass) {
-    // TODO(下一輪實作):04 的 PassCtx 現在已經接受 answers[](見上方 submitAnswer
-    // 文件註解與 transitions.ts),這裡應該改成
-    // applyPassTransition(asSchedulerReview(review), { card: current.card, today: session.today, answers: current.pendingAnswers })。
-    // 這輪(審核/規格)刻意不動這個分支的行為,只設計介面、寫測試——
-    // answer.test.ts 與 phase-1.feature 已經有對應的紅燈規格等下一輪轉綠。
-    throw new Error(
-      `[TODO 下一輪實作] answer.ts 還沒接上 04 新版的 applyPassTransition({ answers }) 介面,無法記錄卡片 ${current.card} 這次 checkpoint 的 ${current.pendingAnswers.length} 筆通過答案。`,
-    );
+  if (overallPass) {
+    outcome = applyPassTransition(asSchedulerReview(review), {
+      card: current.card,
+      today: session.today,
+      answers: current.pendingAnswers.map((answer) => ({ type: answer.type, grader: answer.grader })),
+    });
   } else {
     outcome = applyFailTransition(asSchedulerReview(review), { card: current.card, today: session.today, answers: current.pendingAnswers });
   }
