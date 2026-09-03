@@ -121,44 +121,45 @@ export interface RemoveCyclesLocallyResult {
 }
 
 /**
- * TODO(下一輪開發 agent,cycle-local-repair):本地迴圈版的循環修復,取代
- * analyzeDependencies() 現在「第二次仍有循環就丟一條邊、不管圖還有沒有殘留循環
- * 就直接寫檔」的舊行為(真的跑 29 張卡的文章時撞到:模型回應有兩個獨立循環,
- * 只丟一條邊完全沒解決,deps.json 寫出一個帶循環的圖,order 檔卻因
- * topologicalSort() 丟錯而沒寫——磁碟上留下自相矛盾的狀態)。
+ * 本地迴圈版的循環修復(cycle-local-repair):detectCycle → 依 path 算出 back edge
+ * ([path[path.length-2], path[path.length-1]])、從 edges 濾掉 → 再 detectCycle,
+ * 重複直到無環或丟邊次數達 maxDrops。純函式,不做 I/O。
  *
- * 目標行為:detectCycle(graph) → 若有循環,依 path 算出 back edge
- * ([path[path.length-2], path[path.length-1]])、從 edges 濾掉 → 再
- * detectCycle,重複直到無環或丟邊次數達 maxDrops。丟邊必須確定性(同樣輸入永遠
- * 丟同一條——只要不改變 nodes/edges 的走訪順序,detectCycle() 的 DFS 本身已經
- * 保證這件事,這裡不用另外排序)。
+ * 取代原本「第二次仍有循環就丟一條邊、不管圖還有沒有殘留循環就直接寫檔」的行為
+ * (真的跑 29 張卡的文章時撞到:模型回應有兩個獨立循環,只丟一條邊完全沒解決,
+ * deps.json 寫出一個帶循環的圖,order 檔卻因 topologicalSort() 丟錯而沒寫——
+ * 磁碟上留下自相矛盾的狀態)。
+ *
+ * 丟邊是確定性的:這裡不排序、不用 Set/Map 的迭代順序決定丟哪條,只沿用
+ * detectCycle() 的 DFS(它照 nodes/edges 的原始順序建鄰接表)找到的第一個循環,
+ * 而 filter() 保留其餘邊的相對順序,所以同一組輸入永遠丟出同一串邊、順序也一樣。
  *
  * 回傳:
  *   - 無循環或在 maxDrops 內清乾淨:edgesRemoved 記下依丟棄順序的每一條邊,
  *     unresolved 是 null。
- *   - 丟到 maxDrops 次還有循環:unresolved 是最後一次 detectCycle() 回傳的
- *     path(呼叫端要用它組出警告訊息);graph 是丟到第 maxDrops 條邊之後的
- *     狀態(呼叫端在這個情況下不該把它寫進 deps.json——見
- *     AnalyzeDependenciesResult 的說明)。
+ *   - 丟到 maxDrops 次還有循環:unresolved 是最後一次 detectCycle() 回傳的 path
+ *     (呼叫端要用它組出警告訊息);graph 是丟到第 maxDrops 條邊之後的狀態
+ *     (呼叫端在這個情況下不該把它寫進 deps.json——見 AnalyzeDependenciesResult)。
  *
- * 呼叫端(analyzeDependencies() 的第二次挑戰之後)要把 edgesRemoved 的每一條邊
- * 各自 log 一筆 'cycle_removed' 事件——這裡不做 I/O,純函式方便單獨測。
- *
- * 這裡先佔位維持舊行為(只嘗試丟一次,不管 maxDrops、不管丟完還有沒有殘留循環
- * 都回傳 unresolved: null),真的迴圈與上限判斷留給下一輪開發 agent。目標行為見
- * deps.test.ts 的 'removeCyclesLocally' describe 區塊。
+ * 呼叫端(analyzeDependencies() 的第二次挑戰之後)負責把 edgesRemoved 的每一條邊
+ * 各自 log 一筆 'cycle_removed' 事件——這裡只算,不寫檔。
  */
 export function removeCyclesLocally(graph: Graph, maxDrops: number): RemoveCyclesLocallyResult {
-  // TODO: 換成 while 迴圈,重複 detectCycle → 丟 back edge,直到無環或
-  // edgesRemoved.length === maxDrops;達上限仍有循環時回傳 unresolved: 最後一次
-  // detectCycle() 的 path。
-  const cycle = detectCycle(graph);
-  if (!cycle.hasCycle) return { graph, edgesRemoved: [], unresolved: null };
+  const nodes = graph.nodes;
+  let edges = graph.edges;
+  const edgesRemoved: [CardId, CardId][] = [];
 
-  const path = cycle.path;
-  const offending: [CardId, CardId] = [path[path.length - 2]!, path[path.length - 1]!];
-  const edges = graph.edges.filter(([from, to]) => !(from === offending[0] && to === offending[1]));
-  return { graph: { nodes: graph.nodes, edges }, edgesRemoved: [offending], unresolved: null };
+  for (;;) {
+    const cycle = detectCycle({ nodes, edges });
+    if (!cycle.hasCycle) return { graph: { nodes, edges }, edgesRemoved, unresolved: null };
+    // 已經丟滿上限還有環:不再丟,把殘留的路徑交給呼叫端組警告訊息。
+    if (edgesRemoved.length >= maxDrops) return { graph: { nodes, edges }, edgesRemoved, unresolved: cycle.path };
+
+    const path = cycle.path;
+    const offending: [CardId, CardId] = [path[path.length - 2]!, path[path.length - 1]!];
+    edges = edges.filter(([from, to]) => !(from === offending[0] && to === offending[1]));
+    edgesRemoved.push(offending);
+  }
 }
 
 /**
@@ -297,40 +298,33 @@ export async function analyzeDependencies(
   const firstEdges = await fetchEdges(router, category, cards, maxTokens);
   let edges = mergeEdges(firstEdges, parentEdges);
   let graph: Graph = { nodes, edges };
-  let cycle = detectCycle(graph);
+  const cycle = detectCycle(graph);
 
   let edgesRemoved: [CardId, CardId][] = [];
-  const cycleUnresolved: CardId[] | null = null;
+  const logPath = join(outDir, 'state/log.jsonl');
 
   if (cycle.hasCycle) {
+    // 模型呼叫就此打住,最多兩次——第二次之後不管有沒有循環都改用本地迴圈修。
     const retryEdges = await fetchEdges(router, category, cards, maxTokens, cycle.path);
     edges = mergeEdges(retryEdges, parentEdges);
-    graph = { nodes, edges };
-    cycle = detectCycle(graph);
 
-    // TODO(下一輪開發 agent,cycle-local-repair):下面這段只挑戰一次、丟一條邊
-    // 就不管三七二十一直接往下寫檔——即使圖裡還有殘留循環,deps.json 也會被寫
-    // 出去,但緊接著的 computeAndSaveCategoryOrder() 因為圖還有循環會丟錯,
-    // order 檔沒寫,磁碟留下「deps.json 有環、沒有 order」的自相矛盾狀態。改法:
-    // 用 removeCyclesLocally(graph, cards.length) 取代這整個 if 區塊,重複丟邊
-    // 直到無環或達上限;達上限時 cycleUnresolved 設成殘留路徑、記一筆 warning,
-    // 並整段跳過下面的 writeCategoryGraph/writeUpdatedPrereqs/
-    // computeAndSaveCategoryOrder(deps.json 與 order 都不寫,cardsUpdated/order
-    // 給空陣列)。細節與型別見 removeCyclesLocally() 與 AnalyzeDependenciesResult
-    // 上面的註解;測試見 deps.test.ts 的 'local cycle repair loop' 與
-    // 'removeCyclesLocally' 兩個 describe 區塊。
-    if (cycle.hasCycle) {
-      const path = cycle.path;
-      const offending: [CardId, CardId] = [path[path.length - 2]!, path[path.length - 1]!];
-      edges = edges.filter(([from, to]) => !(from === offending[0] && to === offending[1]));
-      graph = { nodes, edges };
-      edgesRemoved = [offending];
-      appendLogEvent(join(outDir, 'state/log.jsonl'), {
+    const repaired = removeCyclesLocally({ nodes, edges }, cards.length);
+    graph = repaired.graph;
+    edgesRemoved = repaired.edgesRemoved;
+    for (const edge of edgesRemoved) {
+      appendLogEvent(logPath, { ts: new Date().toISOString(), type: 'cycle_removed', category, edge });
+    }
+
+    if (repaired.unresolved) {
+      // 契約 §8 的語意上 deps.json 該是 DAG,order 檔又是 topologicalSort() 的產物:
+      // 兩個都不寫,好過留下「有環的 deps.json + 沒有 order」的自相矛盾狀態。
+      appendLogEvent(logPath, {
         ts: new Date().toISOString(),
-        type: 'cycle_removed',
-        category,
-        edge: offending,
+        type: 'warning',
+        file: 'graph/deps.json',
+        message: `依賴圖丟了 ${edgesRemoved.length} 條邊(上限 ${cards.length})仍有循環,deps.json 與 order 檔都不寫:${repaired.unresolved.join(' -> ')}`,
       });
+      return { graph, order: [], cardsUpdated: [], edgesRemoved, cycleUnresolved: repaired.unresolved };
     }
   }
 
@@ -338,5 +332,5 @@ export async function analyzeDependencies(
   const cardsUpdated = writeUpdatedPrereqs(outDir, cards, graph);
   const order = computeAndSaveCategoryOrder(outDir, category);
 
-  return { graph, order, cardsUpdated, edgesRemoved, cycleUnresolved };
+  return { graph, order, cardsUpdated, edgesRemoved, cycleUnresolved: null };
 }
