@@ -123,3 +123,11 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
   }
   ```
   (對應的 fixture 檔還沒建,一起交給協調者決定要不要連 `contracts/fixtures/questions/` 一起補。)
+- **`stryker.config.json`(共用檔,不自己改)目前沒有把 `packages/contracts/src` 納入 `mutate` 範圍**:
+  獨立審核指出 `packages/contracts/src/index.ts` 的變異分數只有 85%(`AnswerGroupSchema` 的
+  `some`→`every` 存活)。已在 `packages/contracts/src/index.test.ts` 補上混合空字串/全空的案例、
+  regex 錨點(前後多字元)的案例、以及每條驗證錯誤訊息的斷言,手動指定
+  `npx stryker run --mutate "packages/contracts/src/index.ts,!packages/contracts/src/**/*.test.ts"`
+  跑出 174 個變異體、100% 擊殺。但因為 `mutate` 清單只有 `packages/core` 與 `packages/ui-shared`,
+  平常 `npx stryker run` 不會掃到 contracts,這個分數不會自動守住。請協調者決定要不要把
+  `packages/contracts/src/**/*.ts`(排除 `*.test.ts`)正式加進 `stryker.config.json`,納入變異門檻。

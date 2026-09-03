@@ -536,17 +536,17 @@ When('a freshly initialised settings file is read', function (this: DataLayerWor
   this.settingsUnderTest = yamlParse(readFileSync(join(dir, 'config/settings.yaml'), 'utf8'));
 });
 
-Then('the daily cap is {int}', function (this: DataLayerWorld, n: number) {
+Then('the default daily cap is {int}', function (this: DataLayerWorld, n: number) {
   assert.ok(this.settingsUnderTest, '還沒有讀過任何 settings 檔');
   assert.equal(this.settingsUnderTest['daily_cap'], n);
 });
 
-Then('the weekly target is {int}', function (this: DataLayerWorld, n: number) {
+Then('the default weekly target is {int}', function (this: DataLayerWorld, n: number) {
   assert.ok(this.settingsUnderTest, '還沒有讀過任何 settings 檔');
   assert.equal(this.settingsUnderTest['weekly_target'], n);
 });
 
-Then('the short body limit is {int}', function (this: DataLayerWorld, n: number) {
+Then('the default short body limit is {int}', function (this: DataLayerWorld, n: number) {
   assert.ok(this.settingsUnderTest, '還沒有讀過任何 settings 檔');
   assert.equal(this.settingsUnderTest['short_body_limit'], n);
 });
