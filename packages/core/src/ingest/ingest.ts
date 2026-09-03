@@ -8,7 +8,12 @@ import { generateCards, type CardCandidate, type ParkedCandidate } from './gener
 import { nextCardIds } from './ids.js';
 import { ensureInitialized } from './init.js';
 import { atomicWriteJson, readJsonOr, appendLogEvent } from './state.js';
-import { CloudRequiredError } from './fake-llm.js';
+import type { Card } from '@contracts/index.js';
+import { validateCard } from '@core/schema/validate-card.js';
+import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
+import { generateChildrenForCards } from './children.js';
+import { analyzeDependencies } from './deps.js';
+import type { LlmRouter as CoreLlmRouter } from '@core/llm/index.js';
 
 export interface RunIngestOptions {
   /** learning 根目錄(絕對路徑)。 */
@@ -71,13 +76,16 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
   try {
     generated = await generateCards(opts.router, { relLabel: basename, category, content: raw });
   } catch (err) {
-    if (err instanceof CloudRequiredError) {
+    if (isCloudRequiredError(err)) {
       return fail('ingest 需要雲端模型,目前無法使用雲端,不會降級到本機模型', 1);
     }
     throw err;
   }
 
   const cardsDir = join(opts.outDir, 'cards', category);
+  // Stryker disable next-line all: recursive:true 只在 category 本身含路徑分隔符時才有差異
+  // (契約的 category id 是單一識別字,不會發生)——ensureInitialized() 保證 outDir/cards 已存在,
+  // 拿掉 recursive 或改 false 在目前骨架下行為不變,測不出差異不代表邏輯錯。
   mkdirSync(cardsDir, { recursive: true });
   const totalLines = raw.split('\n').length;
 
@@ -152,6 +160,15 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
   };
 }
 
+/**
+ * fake-llm.ts 與 @core/llm/errors.js 過去各自定義一個 CloudRequiredError class,
+ * instanceof 互相認不出對方(兩邊已經統一成同一個 class,見 fake-llm.ts)。改成
+ * 看契約 §7 路由表共用的 code 值,不管未來還有沒有第三個地方冒出新的 class。
+ */
+function isCloudRequiredError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'CLOUD_REQUIRED';
+}
+
 function fail(message: string, exitCode: number): RunIngestResult {
   return {
     ok: false,
@@ -184,4 +201,117 @@ function writeCardFile(cardsDir: string, id: CardId, fm: CardFrontmatter, body: 
 
 function sha256Of(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+// ============================================================================
+// runIngestPipeline():把 phase-1 的 runIngest()(raw → level 0 卡)接上
+// phase-2 的三步(questions.ts / children.ts / deps.ts)。runIngest() 本身不改
+// (--fake 路徑還在用它,FakeLlmRouter 目前沒有 questions/deps 的 fixture)。
+// 行為規格見 pipeline.test.ts 與 docs/integration/i1-content-pipeline.feature。
+//
+// FakeLlmRouter 目前只有 'ingest.cards' 的預錄回應(contracts/fixtures/llm/
+// 沒有 ingest.questions / ingest.deps 的 fixture),所以 scripts/ingest.ts 的
+// `--fake` 路徑刻意只呼叫 runIngest()(level 0),不呼叫 runIngestPipeline()——
+// 要接上就得先補 fixture,不是這輪的範圍。
+// ============================================================================
+
+export interface RunIngestPipelineResult extends RunIngestResult {
+  /** level 0 卡的考題產生失敗清單(card id + 錯誤訊息),來自 questions.ts,只轉發。 */
+  questionFailures: GenerateQuestionsFailure[];
+  /** 產生出來的 level 1 子卡 id,依 parent 處理順序攤平。 */
+  childrenCreated: CardId[];
+  /** 子卡的考題產生失敗清單。 */
+  childQuestionFailures: GenerateQuestionsFailure[];
+  /** analyzeDependencies() 算出的分類排序;deps 步驟整個失敗時給 []。 */
+  depsOrder: CardId[];
+  /** 二次挑戰仍循環而被丟棄的邊;沒有循環或 deps 步驟整個失敗時給 null。 */
+  cycleRemoved: [CardId, CardId] | null;
+}
+
+/** !level0.ok 或 level0.alreadyProcessed 時,補上 phase-2 欄位的空值,原樣回傳。 */
+function emptyPipelineResult(level0: RunIngestResult): RunIngestPipelineResult {
+  return {
+    ...level0,
+    questionFailures: [],
+    childrenCreated: [],
+    childQuestionFailures: [],
+    depsOrder: [],
+    cycleRemoved: null,
+  };
+}
+
+/** 把剛寫好的卡片從磁碟讀回來,用 data-layer 真的驗證器組成 Card[]。 */
+function loadWrittenCards(outDir: string, category: string, ids: CardId[]): Card[] {
+  return ids.map((id) => {
+    const path = join(outDir, 'cards', category, `${id}.md`);
+    const check = validateCard(readFileSync(path, 'utf8'));
+    if (!check.ok || !check.card) {
+      // Stryker disable next-line all: 內部不變量守門(剛用 writeCardFile() 寫出的卡片理論上一定通過
+      // 同一份 validateCard())。要測到得故意在寫入後、讀回前弄壞磁碟上的檔案,價值低於複雜度;
+      // if 條件本身(check.ok/check.card)有被別的測試涵蓋,這裡只豁免訊息字串的 mutant。
+      throw new Error(`剛寫入的卡片 ${id} 沒有通過 data-layer 驗證器:${check.errors.join('; ')}`);
+    }
+    return check.card;
+  });
+}
+
+export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunIngestPipelineResult> {
+  const level0 = await runIngest(opts);
+  if (!level0.ok || level0.alreadyProcessed) {
+    return emptyPipelineResult(level0);
+  }
+
+  const category = opts.category ?? inferCategory(opts.rawRelPath) ?? 'security';
+  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  const logPath = join(opts.outDir, 'state/log.jsonl');
+
+  const level0Cards = loadWrittenCards(opts.outDir, category, level0.cardsCreated);
+
+  // questions.ts / children.ts / deps.ts 用 @core/llm 的 LlmRouter(見 questions.ts 的
+  // 型別選擇說明);opts.router 的型別是 Wave 0 的 ./types.js LlmRouter,provider 多一個
+  // 'fake' literal(FakeLlmRouter 與測試用的 scripted router 都會回這個值)——兩邊
+  // call()/probeOnline()/probeLocal() 的方法簽章結構相同,差異只在這個 literal union
+  // 更寬,對執行沒有影響,窄化成 phase-2 三個函式期待的型別。
+  const router = opts.router as unknown as CoreLlmRouter;
+
+  const questions = await generateQuestionsForCards(opts.outDir, level0Cards, router);
+
+  let children: Card[] = [];
+  let childQuestionFailures: GenerateQuestionsFailure[] = [];
+  try {
+    const result = await generateChildrenForCards(level0Cards, router, { outDir: opts.outDir, today });
+    children = result.children;
+    childQuestionFailures = result.questionFailures;
+  } catch (err) {
+    appendLogEvent(logPath, {
+      ts: new Date().toISOString(),
+      type: 'warning',
+      file: opts.rawRelPath,
+      message: `子卡產生失敗,已略過:${(err as Error).message}`,
+    });
+  }
+
+  let depsOrder: CardId[] = [];
+  let cycleRemoved: [CardId, CardId] | null = null;
+  try {
+    const result = await analyzeDependencies(category, [...level0Cards, ...children], router, opts.outDir);
+    depsOrder = result.order;
+    cycleRemoved = result.cycleRemoved;
+  } catch (err) {
+    appendLogEvent(logPath, {
+      ts: new Date().toISOString(),
+      type: 'warning',
+      file: opts.rawRelPath,
+      message: `依賴圖分析失敗,已略過:${(err as Error).message}`,
+    });
+  }
+
+  return {
+    ...level0,
+    questionFailures: questions.failures,
+    childrenCreated: children.map((c) => c.frontmatter.id),
+    childQuestionFailures,
+    depsOrder,
+    cycleRemoved,
+  };
 }

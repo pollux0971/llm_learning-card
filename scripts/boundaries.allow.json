@@ -8,5 +8,10 @@
     "from": "02-ingest-pipeline",
     "to": "03-llm-router",
     "reason": "phase-2 接上 03 的真實 LlmRouter/LlmTask 型別(@core/llm/index.js),取代 Wave 0 的 fake-llm.ts 型別 stub"
+  },
+  {
+    "from": "03-llm-router",
+    "to": "01-data-layer",
+    "reason": "router.ts 的 log.jsonl 寫入換成 01 的 recordEvent()(§10/§11b 原子寫入 + schema 驗證的正式實作),取代 Wave 0 的 log-min.ts,清掉 FEATURE.md「Wave 0 的重複」表列的技術債"
   }
 ]

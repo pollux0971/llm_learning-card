@@ -176,6 +176,7 @@ Given('ingest has already run for that file', async function (this: LearningWorl
   await doIngestRun(this);
   const s = ctx(this);
   s.cardCountAfterFirstRun = readAllCards(this.dir!, s.category).length;
+  this.cardCountBefore = s.cardCountAfterFirstRun;
 });
 
 Given('the category already contains cards numbered up to sec-{int}', function (this: LearningWorld, maxNum: number) {
@@ -302,7 +303,7 @@ Then('the other cards are still produced', function (this: LearningWorld) {
 
 Then('the number of cards is unchanged', function (this: LearningWorld) {
   const s = ctx(this);
-  assert.equal(readAllCards(this.dir!, s.category).length, s.cardCountAfterFirstRun);
+  assert.equal(readAllCards(this.dir!, s.category).length, this.cardCountBefore);
 });
 
 Then('it reports that the file was already processed', function (this: LearningWorld) {
