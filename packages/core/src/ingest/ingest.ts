@@ -303,14 +303,17 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     });
   }
 
-  // TODO(下一輪開發 agent,questions-retry-and-reporting):questions.failures(上面
-  // level 0 那批)與 childQuestionFailures(上面子卡那批)目前只收在記憶體裡,
-  // 完全沒有寫進 log.jsonl,I1 的 e2e 場景「every card has a question file with
-  // the same id」形同虛設。接線方式:對兩批的每一筆各自呼叫 appendLogEvent(logPath,
-  // { ts: new Date().toISOString(), type: 'warning', file: opts.rawRelPath,
-  // message: `考題產生失敗:${f.card} — ${f.error}` }),格式可微調但要含 card id
-  // 與完整 error 訊息。見 pipeline.test.ts 'question generation failures are
-  // logged' 這個 describe 區塊釘住的目標行為。
+  // 兩批考題失敗(level 0 與子卡)各自記一筆 warning。只收在記憶體裡的話,I1 的
+  // e2e 場景「every card has a question file with the same id」形同虛設——磁碟上
+  // 少了考題檔,log 卻一片安靜。沒有失敗就一筆都不寫。
+  for (const failure of [...questions.failures, ...childQuestionFailures]) {
+    appendLogEvent(logPath, {
+      ts: new Date().toISOString(),
+      type: 'warning',
+      file: opts.rawRelPath,
+      message: `考題產生失敗:${failure.card} — ${failure.error}`,
+    });
+  }
 
   let depsOrder: CardId[] = [];
   let edgesRemoved: [CardId, CardId][] = [];

@@ -28,7 +28,8 @@
  *   同一個 class,見 ingest.ts 的 isCloudRequiredError() 註解)。探測到線上就呼叫
  *   runIngestPipeline(),接上 phase-2 的 questions/children/deps 三步。
  *
- * 退出碼:0 成功(含「已經處理過」);1 失敗(空檔案、找不到檔案、離線)。
+ * 退出碼:0 成功(含「已經處理過」);1 失敗(空檔案、找不到檔案、離線,或
+ *   任何一張卡的考題產生失敗——見 hasQuestionFailures)。
  */
 import './_env.js';
 import { mkdirSync, copyFileSync, existsSync, readFileSync } from 'node:fs';
@@ -107,20 +108,24 @@ async function main(): Promise<void> {
 
   const result = await runIngestPipeline({ outDir: absOut, rawRelPath, category, router });
 
-  // TODO(下一輪開發 agent,questions-retry-and-reporting):
-  // 1. cardsCreated 這裡只印 level 0 卡,漏了子卡——應該改印
-  //    [...result.cardsCreated, ...result.childrenCreated]。
-  // 2. result.hasQuestionFailures 為 true 時(見 ingest.ts 的定義),要把
-  //    result.questionFailures 與 result.childQuestionFailures 的失敗清單
-  //    (哪張卡、什麼原因)印出來,並且整個 process 用非 0 退出碼結束——I1 的
-  //    e2e 場景「every card has a question file with the same id」不接受部分
-  //    成功。目前這裡完全沒讀 hasQuestionFailures,退出碼還是 result.exitCode
-  //    (只反映 level 0 卡本身有沒有建立成功)。
-  if (result.cardsCreated.length > 0) {
-    console.log(`建立了 ${result.cardsCreated.length} 張卡:`);
-    for (const id of result.cardsCreated) console.log(`  ${id}`);
+  // 建立的卡 = level 0 卡 + 子卡。只印 level 0 的話,子卡就成了看不見的產物。
+  const allCreated = [...result.cardsCreated, ...result.childrenCreated];
+  if (allCreated.length > 0) {
+    console.log(`建立了 ${allCreated.length} 張卡:`);
+    for (const id of allCreated) console.log(`  ${id}`);
   }
   console.log(result.message);
+
+  // I1 的 e2e 場景「every card has a question file with the same id」不接受部分
+  // 成功:只要有任何一張卡的考題產生失敗,整個 CLI 就以非 0 退出碼結束。
+  if (result.hasQuestionFailures) {
+    const failures = [...result.questionFailures, ...result.childQuestionFailures];
+    console.error(`${failures.length} 張卡的考題產生失敗:`);
+    for (const f of failures) console.error(`  ${f.card} — ${f.error}`);
+    console.error('每張卡都必須有考題檔,部分成功不算完成。');
+    process.exit(1);
+  }
+
   process.exit(result.exitCode);
 }
 
