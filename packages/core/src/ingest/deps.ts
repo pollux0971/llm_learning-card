@@ -86,26 +86,19 @@ export interface AnalyzeDependenciesResult {
 }
 
 /**
- * TODO(下一輪開發 agent):依卡片數量算 'ingest.deps' 這次呼叫的動態 maxTokens,
- * 取代 token-limits.ts 裡固定的 2048(真的跑 30 張卡的分類時,固定值會把回應截斷,
- * 依賴圖分析整段被跳過——見 deps-token-scaling 這輪的任務描述)。
+ * 依卡片數量算 'ingest.deps' 這次呼叫的動態 maxTokens,取代 token-limits.ts 裡固定的
+ * 2048(卡片一多,固定值會把回應截斷,依賴圖分析整段被跳過)。
  *
  * 估算依據:模型回應是 `{ edges: [CardId, CardId][] }`,每條邊序列化成 JSON
  * 大約 15–25 tokens(兩個 card id 字串 + 陣列語法);cards.length 張卡通常會產生
  * 跟卡片數量同量級的邊數(不會是平方級——每張卡平均只跟少數幾張卡有先備關係)。
- * 建議公式:`Math.min(16384, Math.max(2048, cardCount * 256))`
  *   - 下限 2048:保留給小分類原本就夠用的空間,也是 token-limits.ts 的舊預設值。
  *   - 每卡 256 tokens:覆蓋「每條邊 15–25 tokens」估計的數倍安全邊界,含 JSON 縮排、
  *     多條邊、以及模型可能比預期多列一些邊的餘裕。
  *   - 上限 16384:避免卡片數量沒有上限時,單次呼叫的預算跟著無限長大。
- *
- * 這裡先佔位維持舊行為(恆回傳下限值),函式體真的算動態值留給下一輪開發 agent。
- * analyzeDependencies() 兩次呼叫 router.call('ingest.deps', ...) 都要把這個值
- * 放進 opts.maxTokens——目前還沒接,見本檔案 fetchEdges() 與 analyzeDependencies()。
  */
 export function computeDepsMaxTokens(cardCount: number): number {
-  // TODO: 換成 Math.min(16384, Math.max(2048, cardCount * 256)) 或依實測調整的等效公式。
-  return 2048;
+  return Math.min(16384, Math.max(2048, cardCount * 256));
 }
 
 export function writeCategoryGraph(outDir: string, category: CategoryId, graph: Graph): void {
@@ -130,9 +123,10 @@ async function fetchEdges(
   router: LlmRouter,
   category: CategoryId,
   cards: Card[],
+  maxTokens: number,
   cyclePath?: CardId[],
 ): Promise<[CardId, CardId][]> {
-  const result = await router.call('ingest.deps', buildDepsPrompt(category, cards, cyclePath));
+  const result = await router.call('ingest.deps', buildDepsPrompt(category, cards, cyclePath), { maxTokens });
   let parsed: unknown;
   try {
     parsed = JSON.parse(result.text);
@@ -222,8 +216,9 @@ export async function analyzeDependencies(
 ): Promise<AnalyzeDependenciesResult> {
   const nodes = cards.map((c) => c.frontmatter.id);
   const parentEdges = parentEdgesOf(cards);
+  const maxTokens = computeDepsMaxTokens(cards.length);
 
-  const firstEdges = await fetchEdges(router, category, cards);
+  const firstEdges = await fetchEdges(router, category, cards, maxTokens);
   let edges = mergeEdges(firstEdges, parentEdges);
   let graph: Graph = { nodes, edges };
   let cycle = detectCycle(graph);
@@ -231,7 +226,7 @@ export async function analyzeDependencies(
   let cycleRemoved: [CardId, CardId] | null = null;
 
   if (cycle.hasCycle) {
-    const retryEdges = await fetchEdges(router, category, cards, cycle.path);
+    const retryEdges = await fetchEdges(router, category, cards, maxTokens, cycle.path);
     edges = mergeEdges(retryEdges, parentEdges);
     graph = { nodes, edges };
     cycle = detectCycle(graph);
