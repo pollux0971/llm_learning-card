@@ -1,0 +1,467 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import matter from 'gray-matter';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import type { Card, CardId } from '@contracts/index.js';
+import type { LlmResult, LlmRouter } from '@core/llm/index.js';
+import type { Graph } from '@core/schema/graph.js';
+import { readLogEvents } from './state.js';
+import { analyzeDependencies, writeCategoryGraph } from './deps.js';
+import { loadPromptTemplate } from './prompts.js';
+
+// ---------------------------------------------------------------- 共用 fixture
+
+function makeCard(id: CardId, overrides: Partial<Card['frontmatter']> = {}): Card {
+  return {
+    frontmatter: {
+      id,
+      category: 'security',
+      title: `卡 ${id}`,
+      level: 0,
+      source: 'raw',
+      created: '2026-09-01',
+      source_ref: 'raw/security/web-basics.md#L1-L10',
+      prereqs: [],
+      provisional: false,
+      stale: false,
+      source_missing: false,
+      ...overrides,
+    },
+    body: '測試用內容,足夠模型判斷先備關係。',
+    examples: [],
+  };
+}
+
+/** 依呼叫次數回應 'ingest.deps' 的假 router;script[i] 是第 i 次呼叫(0-based)的 edges。 */
+function makeDepsRouter(script: [CardId, CardId][][]): { router: LlmRouter; calls: string[] } {
+  const calls: string[] = [];
+  const router: LlmRouter = {
+    async call(task, prompt): Promise<LlmResult> {
+      if (task !== 'ingest.deps') throw new Error(`未預期的 task: ${task}`);
+      const index = calls.length;
+      calls.push(prompt);
+      const edges = script[index];
+      if (!edges) throw new Error(`script 沒有第 ${index} 次呼叫的回應`);
+      return { text: JSON.stringify({ edges }), provider: 'anthropic', model: 'test-model', latency_ms: 1, provisional: false };
+    },
+    async probeOnline() {
+      return true;
+    },
+    async probeLocal() {
+      return { available: false, models: [] };
+    },
+  };
+  return { router, calls };
+}
+
+let dir: string;
+
+afterEach(() => {
+  if (dir) rmSync(dir, { recursive: true, force: true });
+});
+
+function makeOutDir(): string {
+  dir = mkdtempSync(join(tmpdir(), 'lc-deps-'));
+  mkdirSync(join(dir, 'graph'), { recursive: true });
+  return dir;
+}
+
+function logEventsOf(outDir: string): Record<string, unknown>[] {
+  return readLogEvents(join(outDir, 'state/log.jsonl'));
+}
+
+// ============================================================== analyzeDependencies
+
+describe('analyzeDependencies', () => {
+  // Scenario: Prerequisites are inferred for the category
+  it('produces a graph containing every card, with parent edges guaranteed for level one cards', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [
+      makeCard('sec-0001'),
+      makeCard('sec-0002'),
+      makeCard('sec-0003'),
+      makeCard('sec-0004'),
+      makeCard('sec-0005', { level: 1, source: 'llm', parent: 'sec-0001' }),
+    ];
+    const { router } = makeDepsRouter([
+      [
+        ['sec-0001', 'sec-0002'],
+        ['sec-0002', 'sec-0003'],
+        ['sec-0003', 'sec-0004'],
+      ],
+    ]);
+
+    const result = await analyzeDependencies('security', cards, router, outDir);
+
+    expect(new Set(result.graph.nodes)).toEqual(new Set(cards.map((c) => c.frontmatter.id)));
+    expect(result.graph.edges).toEqual(
+      expect.arrayContaining([
+        ['sec-0001', 'sec-0002'],
+        ['sec-0002', 'sec-0003'],
+        ['sec-0003', 'sec-0004'],
+        ['sec-0001', 'sec-0005'],
+      ]),
+    );
+  });
+
+  it('reports every card whose stored prereqs disagree with the final graph as updated', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002', { prereqs: [] })];
+    const { router } = makeDepsRouter([[['sec-0001', 'sec-0002']]]);
+
+    const result = await analyzeDependencies('security', cards, router, outDir);
+
+    // sec-0002 的 frontmatter 原本 prereqs: [],跟圖裡的 [sec-0001] 不一致,必須列進 cardsUpdated
+    expect(result.cardsUpdated).toContain('sec-0002');
+  });
+
+  it('reports a card as updated when its stored prereqs have the same length as the graph but different ids', async () => {
+    const outDir = makeOutDir();
+    // sec-0003 已存了跟自己數量相同(1 個)但內容錯誤的 prereqs——只比長度會漏掉這個情況
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003', { prereqs: ['sec-0002'] })];
+    const { router } = makeDepsRouter([[['sec-0001', 'sec-0003']]]);
+
+    const result = await analyzeDependencies('security', cards, router, outDir);
+
+    expect(result.cardsUpdated).toContain('sec-0003');
+    const path = join(outDir, 'cards', 'security', 'sec-0003.md');
+    const parsed = matter(readFileSync(path, 'utf8'));
+    expect(parsed.data.prereqs).toEqual(['sec-0001']);
+  });
+
+  // stored 跟 computed 長度相同、還「共用一個」id 的情況:同一長度加上部分重疊,
+  // 才分得出「stored 的每一個都要在 computed 裡」(every)和「stored 只要有一個在 computed
+  // 裡」(some)這兩種判斷——完全不重疊的情況兩者結果一樣,測不出差異。
+  it('reports a card as updated when stored and computed prereqs overlap by one id but are not identical', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [
+      makeCard('sec-0001'),
+      makeCard('sec-0002'),
+      makeCard('sec-0003', { prereqs: ['sec-0001', 'sec-0002'] }),
+    ];
+    // 圖裡 sec-0003 真正的先備是 sec-0001 跟一張新的 sec-0004,跟舊的 sec-0002 不同,
+    // 但兩邊都有 sec-0001,長度也一樣(2 個)
+    const fourthCard = makeCard('sec-0004');
+    const { router } = makeDepsRouter([
+      [
+        ['sec-0001', 'sec-0003'],
+        ['sec-0004', 'sec-0003'],
+      ],
+    ]);
+
+    const result = await analyzeDependencies('security', [...cards, fourthCard], router, outDir);
+
+    expect(result.cardsUpdated).toContain('sec-0003');
+    const parsed = matter(readFileSync(join(outDir, 'cards', 'security', 'sec-0003.md'), 'utf8'));
+    expect(parsed.data.prereqs).toEqual(['sec-0001', 'sec-0004']);
+  });
+
+  it('does not report a card as updated when its stored prereqs already match the graph', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002', { prereqs: ['sec-0001'] })];
+    const { router } = makeDepsRouter([[['sec-0001', 'sec-0002']]]);
+
+    const result = await analyzeDependencies('security', cards, router, outDir);
+
+    // sec-0001 沒有任何先備(圖裡沒有指向它的邊,電腦出的 prereqs 應該是空陣列)、
+    // sec-0002 的既有 prereqs 已經跟圖一致——兩張卡都不該出現在 cardsUpdated
+    expect(result.cardsUpdated).toEqual([]);
+    // 沒被判定要更新的卡片,磁碟上不該多出一份重寫的檔案
+    expect(existsSync(join(outDir, 'cards', 'security', 'sec-0001.md'))).toBe(false);
+    expect(existsSync(join(outDir, 'cards', 'security', 'sec-0002.md'))).toBe(false);
+  });
+
+  it('accumulates every distinct source into a card prereqs list and drops a duplicate incoming edge', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
+    // sec-0001 和 sec-0002 都是 sec-0003 的先備;sec-0001->sec-0003 額外重複一次(去重不能只留最後一個 from)
+    const { router } = makeDepsRouter([
+      [
+        ['sec-0001', 'sec-0003'],
+        ['sec-0002', 'sec-0003'],
+        ['sec-0001', 'sec-0003'],
+      ],
+    ]);
+
+    const result = await analyzeDependencies('security', cards, router, outDir);
+
+    expect(result.cardsUpdated).toContain('sec-0003');
+    const parsed = matter(readFileSync(join(outDir, 'cards', 'security', 'sec-0003.md'), 'utf8'));
+    expect(parsed.data.prereqs).toEqual(['sec-0001', 'sec-0002']);
+    // mergeEdges 本身要真的去重——不能只靠 prereqsByCardOf 那層再擋一次重複的 from,
+    // 否則 mergeEdges 的去重壞了也測不出來(兩層去重互相遮蔽)
+    const dupCount = result.graph.edges.filter(([from, to]) => from === 'sec-0001' && to === 'sec-0003').length;
+    expect(dupCount).toBe(1);
+  });
+
+  it('writes the updated card file under cards/<category>/ with the body trimmed and examples fenced', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [
+      makeCard('sec-0001'),
+      { ...makeCard('sec-0002'), body: '  有先備關係的內容,前後有空白。  ', examples: ['  範例一  ', '範例二'] },
+    ];
+    const { router } = makeDepsRouter([[['sec-0001', 'sec-0002']]]);
+
+    await analyzeDependencies('security', cards, router, outDir);
+
+    const raw = readFileSync(join(outDir, 'cards', 'security', 'sec-0002.md'), 'utf8');
+    const parsed = matter(raw);
+    expect(parsed.content.trim().startsWith('有先備關係的內容,前後有空白。')).toBe(true);
+    expect(raw).toContain('```example\n範例一\n```\n\n```example\n範例二\n```');
+    expect(parsed.data.prereqs).toEqual(['sec-0001']);
+    // yamlStringify(...).trimEnd() 之後緊接關閉的 '---',中間不該留一行空白
+    expect(raw).not.toMatch(/\n\n---\n\n有先備/);
+    expect(raw).toMatch(/\n---\n\n有先備/);
+    // body 後面隔一個空行才接上例句區塊
+    expect(raw).toContain('有先備關係的內容,前後有空白。\n\n```example\n範例一\n```\n\n```example\n範例二\n```\n');
+    expect(raw.endsWith('```example\n範例二\n```\n')).toBe(true);
+  });
+
+  it('writes no trailing example block for an updated card that has no examples', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [
+      makeCard('sec-0001'),
+      { ...makeCard('sec-0002'), body: '沒有範例的內容。', examples: [] },
+    ];
+    const { router } = makeDepsRouter([[['sec-0001', 'sec-0002']]]);
+
+    await analyzeDependencies('security', cards, router, outDir);
+
+    const raw = readFileSync(join(outDir, 'cards', 'security', 'sec-0002.md'), 'utf8');
+    expect(raw).not.toContain('```example');
+    expect(raw.endsWith('沒有範例的內容。\n')).toBe(true);
+  });
+
+  it('sends a prompt built from the template, category and a line per card', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002')];
+    const { router, calls } = makeDepsRouter([[['sec-0001', 'sec-0002']]]);
+
+    await analyzeDependencies('security', cards, router, outDir);
+
+    const prompt = calls[0]!;
+    const lines = prompt.split('\n');
+    expect(prompt.startsWith(loadPromptTemplate('deps'))).toBe(true);
+    expect(lines).toContain('---');
+    expect(lines).toContain('category: security');
+    expect(lines).toContain('cards:');
+    // 'cards:' 前面隔了一個空行才是卡片清單
+    expect(prompt).toContain('\n\ncards:\n');
+    for (const card of cards) {
+      expect(lines).toContain(`- ${card.frontmatter.id}: ${card.frontmatter.title}`);
+    }
+    // 模板文件本身會說明「之前的回應形成循環」這個機制,所以不能只查那個子字串;
+    // 這裡查的是 buildDepsPrompt 真的附上重試說明時才會出現的固定片語。
+    expect(prompt).not.toContain('不能再回同一條路徑');
+  });
+
+  it('describes the cycle path in the retry prompt, joined with " -> "', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
+    const cyclicEdges: [CardId, CardId][] = [
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0003'],
+      ['sec-0003', 'sec-0001'],
+    ];
+    const { router, calls } = makeDepsRouter([cyclicEdges, [['sec-0001', 'sec-0002'], ['sec-0002', 'sec-0003']]]);
+
+    await analyzeDependencies('security', cards, router, outDir);
+
+    // 重試提示前面隔了一個空行才接上循環說明
+    expect(calls[1]).toContain('\n\n之前的回應形成循環,不能再回同一條路徑:');
+    expect(calls[1]).toMatch(/sec-000\d( -> sec-000\d)+/);
+  });
+
+  // Scenario: The order file is produced
+  it('writes an order file for the category that is consistent with the graph', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
+    const { router } = makeDepsRouter([
+      [
+        ['sec-0001', 'sec-0002'],
+        ['sec-0002', 'sec-0003'],
+      ],
+    ]);
+
+    const result = await analyzeDependencies('security', cards, router, outDir);
+
+    const orderPath = join(outDir, 'graph', 'order-security.json');
+    expect(existsSync(orderPath)).toBe(true);
+    const order = JSON.parse(readFileSync(orderPath, 'utf8')) as CardId[];
+    expect(order).toEqual(result.order);
+    expect(new Set(order)).toEqual(new Set(['sec-0001', 'sec-0002', 'sec-0003']));
+    for (const [from, to] of result.graph.edges) {
+      expect(order.indexOf(from)).toBeLessThan(order.indexOf(to));
+    }
+  });
+
+  // Scenario: Only the affected category is re-sorted
+  it('does not touch another category order file or its deps.json entry', async () => {
+    const outDir = makeOutDir();
+    const languageGraph: Graph = { nodes: ['lan-0001', 'lan-0002'], edges: [['lan-0001', 'lan-0002']] };
+    writeFileSync(join(outDir, 'graph', 'deps.json'), JSON.stringify({ language: languageGraph }, null, 2));
+    const languageOrderPath = join(outDir, 'graph', 'order-language.json');
+    writeFileSync(languageOrderPath, JSON.stringify(['lan-0001', 'lan-0002'], null, 2) + '\n');
+    const languageOrderBefore = readFileSync(languageOrderPath, 'utf8');
+
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002')];
+    const { router } = makeDepsRouter([[['sec-0001', 'sec-0002']]]);
+
+    await analyzeDependencies('security', cards, router, outDir);
+
+    expect(readFileSync(languageOrderPath, 'utf8')).toBe(languageOrderBefore);
+    const deps = JSON.parse(readFileSync(join(outDir, 'graph', 'deps.json'), 'utf8')) as Record<string, Graph>;
+    expect(deps.language).toEqual(languageGraph);
+    expect(deps.security).toBeDefined();
+  });
+
+  // Scenario: A cycle returned by the model is challenged once
+  describe('when the model returns a cycle', () => {
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
+    const cyclicEdges: [CardId, CardId][] = [
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0003'],
+      ['sec-0003', 'sec-0001'],
+    ];
+
+    it('calls the model a second time with the cycle described', async () => {
+      const outDir = makeOutDir();
+      const { router, calls } = makeDepsRouter([cyclicEdges, [['sec-0001', 'sec-0002'], ['sec-0002', 'sec-0003']]]);
+
+      await analyzeDependencies('security', cards, router, outDir);
+
+      expect(calls).toHaveLength(2);
+    });
+
+    it('does not call the model a second time when the first response has no cycle', async () => {
+      const outDir = makeOutDir();
+      const { router, calls } = makeDepsRouter([[['sec-0001', 'sec-0002'], ['sec-0002', 'sec-0003']]]);
+
+      await analyzeDependencies('security', cards, router, outDir);
+
+      expect(calls).toHaveLength(1);
+    });
+
+    it('drops the offending edge and logs cycle_removed when the second attempt still cycles', async () => {
+      const outDir = makeOutDir();
+      const { router } = makeDepsRouter([cyclicEdges, cyclicEdges]);
+
+      const result = await analyzeDependencies('security', cards, router, outDir);
+
+      expect(result.cycleRemoved).not.toBeNull();
+      expect(result.graph.edges).not.toContainEqual(result.cycleRemoved);
+      const events = logEventsOf(outDir);
+      expect(events.some((e) => e.type === 'cycle_removed')).toBe(true);
+    });
+
+    it('produces a graph with no cycle after dropping the offending edge', async () => {
+      const outDir = makeOutDir();
+      const { router } = makeDepsRouter([cyclicEdges, cyclicEdges]);
+
+      const result = await analyzeDependencies('security', cards, router, outDir);
+
+      // 拓樸排序得出全序代表最終圖已經無環——沒有排出來就會丟錯,這裡不用另外呼叫
+      // detectCycle 重新驗一次(那是 topologicalSort/computeAndSaveCategoryOrder 內部的事)。
+      expect(result.order).toHaveLength(3);
+    });
+
+    it('reports no removed edge and does not log cycle_removed when the second attempt resolves the cycle', async () => {
+      const outDir = makeOutDir();
+      const { router } = makeDepsRouter([cyclicEdges, [['sec-0001', 'sec-0002'], ['sec-0002', 'sec-0003']]]);
+
+      const result = await analyzeDependencies('security', cards, router, outDir);
+
+      expect(result.cycleRemoved).toBeNull();
+      const events = logEventsOf(outDir);
+      expect(events.some((e) => e.type === 'cycle_removed')).toBe(false);
+    });
+
+    // 加一張跟被丟棄的邊只共用一個端點(from 相同、to 不同)的無關邊,證明丟邊判斷是
+    // 「from 且 to 都符合」(AND),不是「from 或 to 符合就丟」(OR)——否則這條無關邊
+    // 會被一起誤刪。
+    it('only drops the exact offending [from, to] pair, keeping edges that share just one endpoint with it', async () => {
+      const outDir = makeOutDir();
+      const fiveCards: Card[] = [
+        makeCard('sec-0001'),
+        makeCard('sec-0002'),
+        makeCard('sec-0003'),
+        makeCard('sec-0004'),
+        makeCard('sec-0005'),
+      ];
+      // sec-0003->sec-0004 共用 offending 的 from(sec-0003),to 不同;
+      // sec-0005->sec-0001 共用 offending 的 to(sec-0001),from 不同——兩種各只符合
+      // 一半的邊都不該被丟掉,才證明判斷是「from 且 to 都符合」而不是任一符合就丟。
+      const edgesWithRedHerrings: [CardId, CardId][] = [...cyclicEdges, ['sec-0003', 'sec-0004'], ['sec-0005', 'sec-0001']];
+      const { router } = makeDepsRouter([edgesWithRedHerrings, edgesWithRedHerrings]);
+
+      const result = await analyzeDependencies('security', fiveCards, router, outDir);
+
+      expect(result.cycleRemoved).toEqual(['sec-0003', 'sec-0001']);
+      expect(result.graph.edges).toContainEqual(['sec-0003', 'sec-0004']);
+      expect(result.graph.edges).toContainEqual(['sec-0005', 'sec-0001']);
+      expect(result.graph.edges).toContainEqual(['sec-0001', 'sec-0002']);
+      expect(result.graph.edges).toContainEqual(['sec-0002', 'sec-0003']);
+      expect(result.graph.edges).not.toContainEqual(['sec-0003', 'sec-0001']);
+    });
+  });
+
+  describe('when the model response for ingest.deps is malformed', () => {
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002')];
+
+    function makeBadRouter(text: string): LlmRouter {
+      return {
+        async call(task): Promise<LlmResult> {
+          if (task !== 'ingest.deps') throw new Error(`未預期的 task: ${task}`);
+          return { text, provider: 'anthropic', model: 'test-model', latency_ms: 1, provisional: false };
+        },
+        async probeOnline() {
+          return true;
+        },
+        async probeLocal() {
+          return { available: false, models: [] };
+        },
+      };
+    }
+
+    it('throws when the response is not valid JSON', async () => {
+      const outDir = makeOutDir();
+      const router = makeBadRouter('not json at all');
+
+      await expect(analyzeDependencies('security', cards, router, outDir)).rejects.toThrow('不是合法 JSON');
+    });
+
+    it('throws when the response has no edges array', async () => {
+      const outDir = makeOutDir();
+      const router = makeBadRouter(JSON.stringify({ nodes: [] }));
+
+      await expect(analyzeDependencies('security', cards, router, outDir)).rejects.toThrow('缺少 edges 陣列');
+    });
+  });
+});
+
+// ============================================================== writeCategoryGraph
+
+describe('writeCategoryGraph', () => {
+  it('creates graph/deps.json with only the given category when none exists yet', () => {
+    const outDir = makeOutDir();
+    const graph: Graph = { nodes: ['sec-0001'], edges: [] };
+
+    writeCategoryGraph(outDir, 'security', graph);
+
+    const deps = JSON.parse(readFileSync(join(outDir, 'graph', 'deps.json'), 'utf8')) as Record<string, Graph>;
+    expect(deps).toEqual({ security: graph });
+  });
+
+  it('replaces only the target category, leaving other categories untouched', () => {
+    const outDir = makeOutDir();
+    const languageGraph: Graph = { nodes: ['lan-0001'], edges: [] };
+    writeFileSync(join(outDir, 'graph', 'deps.json'), JSON.stringify({ language: languageGraph }, null, 2));
+    const securityGraph: Graph = { nodes: ['sec-0001', 'sec-0002'], edges: [['sec-0001', 'sec-0002']] };
+
+    writeCategoryGraph(outDir, 'security', securityGraph);
+
+    const deps = JSON.parse(readFileSync(join(outDir, 'graph', 'deps.json'), 'utf8')) as Record<string, Graph>;
+    expect(deps).toEqual({ language: languageGraph, security: securityGraph });
+  });
+});
