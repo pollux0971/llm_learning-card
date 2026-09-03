@@ -61,8 +61,8 @@ Feature: Failure, repetition and getting stuck
   Scenario Outline: Repeated failure and recovery
     Given a card with <before> consecutive failures and stuck <stuck_before>
     When the <transition> transition is applied
-    Then the consecutive count is <after>
-    And stuck is <stuck_after>
+    Then the resulting consecutive count is <after>
+    And the outcomes stuck flag is <stuck_after>
 
     Examples:
       | before | stuck_before | transition | after | stuck_after |
