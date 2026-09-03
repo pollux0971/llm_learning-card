@@ -28,7 +28,7 @@ import {
   type LlmRouter,
   type LlmTask,
 } from '../../packages/core/src/llm/index.js';
-import { checkPrereqConsistency, type Graph } from '../../packages/core/src/schema/graph.js';
+import { checkPrereqConsistency, detectCycle, type Graph } from '../../packages/core/src/schema/graph.js';
 import { validateQuestionFile } from '../../packages/core/src/schema/validate-question.js';
 import { generateQuestionsForCards, type GenerateQuestionsRunResult } from '../../packages/core/src/ingest/questions.js';
 import { generateChildrenForCards, type GenerateChildrenResult } from '../../packages/core/src/ingest/children.js';
@@ -236,8 +236,43 @@ Given('the model returns edges containing a cycle on the first attempt', functio
     [ids[2]!, ids[0]!],
   ];
   // 兩次都回循環的邊,對應「if the second attempt still cycles」這個分支。
+  // 下面兩個場景專屬的 Given 會覆寫 depsScript[1](重試回應),depsScript[0]
+  // (第一次的循環,單純用來觸發挑戰)維持不變。
   c.depsScript = [cyclicEdges, cyclicEdges];
 });
+
+Given('the second attempt still returns two independent cycles that share no card or edge', function (this: LearningWorld) {
+  const c = ctx(this);
+  assert.ok(c.depsScript, '要先跑過 "the model returns edges containing a cycle on the first attempt"');
+  const ids = c.cards.map((card) => card.frontmatter.id);
+  // sec-0001..0003 的三卡循環(跟第一次攻擊用的一樣)+ sec-0004/sec-0005 的
+  // 兩卡循環——兩者不共用任何節點或邊。
+  const cycleA: [CardId, CardId][] = [
+    [ids[0]!, ids[1]!],
+    [ids[1]!, ids[2]!],
+    [ids[2]!, ids[0]!],
+  ];
+  const cycleB: [CardId, CardId][] = [
+    [ids[3]!, ids[4]!],
+    [ids[4]!, ids[3]!],
+  ];
+  c.depsScript![1] = [...cycleA, ...cycleB];
+});
+
+Given(
+  'the second attempt keeps forming a new cycle after each edge is dropped, up to the card count limit',
+  function (this: LearningWorld) {
+    const c = ctx(this);
+    assert.ok(c.depsScript, '要先跑過 "the model returns edges containing a cycle on the first attempt"');
+    const ids = c.cards.map((card) => card.frontmatter.id);
+    // 5 個自環(各自佔一次丟邊)+ 一個把全部 5 張卡串起來的循環:自環排在每張卡
+    // 鄰接表的最前面,本地迴圈會先把 5 個自環各丟一次,丟滿 cards.length(=5)
+    // 的上限時,五卡循環本身完全沒被碰到,依然是殘留的循環。
+    const selfLoops: [CardId, CardId][] = ids.map((id) => [id, id]);
+    const bigCycle: [CardId, CardId][] = ids.map((id, i) => [id, ids[(i + 1) % ids.length]!]);
+    c.depsScript![1] = [...selfLoops, ...bigCycle];
+  },
+);
 
 Given('an order file already exists for another category', function (this: LearningWorld) {
   const languageGraph: Graph = { nodes: ['lan-0001', 'lan-0002'], edges: [['lan-0001', 'lan-0002']] };
@@ -421,21 +456,58 @@ Then('the model is called again with the cycle described', function (this: Learn
   assert.equal(c.callCounts.get('ingest.deps'), 2, 'ingest.deps 應該被呼叫兩次');
 });
 
-Then('if the second attempt still cycles the offending edge is dropped', function (this: LearningWorld) {
+Then('if the second attempt still cycles, edges are dropped one at a time until the graph is acyclic', function (this: LearningWorld) {
   const c = ctx(this);
-  assert.notEqual(c.depsResult!.cycleRemoved, null, '應該有一條邊被丟棄');
-  assert.ok(
-    !c.depsResult!.graph.edges.some(([f, t]) => f === c.depsResult!.cycleRemoved![0] && t === c.depsResult!.cycleRemoved![1]),
-    '被丟棄的邊不該還留在最終的圖裡',
-  );
+  assert.ok(c.depsResult!.edgesRemoved.length > 0, '應該至少有一條邊被丟棄');
+  assert.equal(detectCycle(c.depsResult!.graph).hasCycle, false, '本地迴圈丟完邊之後的圖不該還有循環');
 });
 
-Then('a cycle removed event is logged', function (this: LearningWorld) {
+Then('each dropped edge is logged as a cycle removed event', function (this: LearningWorld) {
+  const c = ctx(this);
   const events = readFileSync(join(this.dir!, 'state/log.jsonl'), 'utf8')
     .split('\n')
     .filter((l) => l.trim().length > 0)
     .map((l) => JSON.parse(l) as Record<string, unknown>);
-  assert.ok(events.some((e) => e.type === 'cycle_removed'), JSON.stringify(events));
+  const removedEvents = events.filter((e) => e.type === 'cycle_removed');
+  assert.equal(removedEvents.length, c.depsResult!.edgesRemoved.length, JSON.stringify(events));
+});
+
+Then('the graph file and the order file are written together or not at all', function (this: LearningWorld) {
+  const depsExists = existsSync(join(this.dir!, 'graph', 'deps.json'));
+  const orderExists = existsSync(join(this.dir!, 'graph', `order-${CATEGORY}.json`));
+  assert.equal(depsExists, orderExists, `deps.json 存在=${depsExists},order 存在=${orderExists},兩者應該一致`);
+});
+
+Then('both offending edges are dropped', function (this: LearningWorld) {
+  const c = ctx(this);
+  assert.equal(c.depsResult!.edgesRemoved.length, 2, JSON.stringify(c.depsResult!.edgesRemoved));
+  assert.equal(detectCycle(c.depsResult!.graph).hasCycle, false, '兩條邊都丟掉之後的圖不該還有循環');
+});
+
+Then('the order file exists and lists each card exactly once', function (this: LearningWorld) {
+  const c = ctx(this);
+  const orderPath = join(this.dir!, 'graph', `order-${CATEGORY}.json`);
+  assert.ok(existsSync(orderPath));
+  const order = JSON.parse(readFileSync(orderPath, 'utf8')) as CardId[];
+  assert.deepEqual([...order].sort(), c.cards.map((card) => card.frontmatter.id).sort());
+});
+
+Then('the graph file and the order file are not written', function (this: LearningWorld) {
+  assert.equal(existsSync(join(this.dir!, 'graph', 'deps.json')), false, 'deps.json 不該被寫出');
+  assert.equal(existsSync(join(this.dir!, 'graph', `order-${CATEGORY}.json`)), false, 'order 檔不該被寫出');
+});
+
+Then('a warning naming the remaining cycle is logged', function (this: LearningWorld) {
+  const c = ctx(this);
+  const events = readFileSync(join(this.dir!, 'state/log.jsonl'), 'utf8')
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const firstId = c.cards[0]!.frontmatter.id;
+  assert.ok(
+    events.some((e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes(firstId)),
+    JSON.stringify(events),
+  );
 });
 
 Then('an order file exists for the category', function (this: LearningWorld) {

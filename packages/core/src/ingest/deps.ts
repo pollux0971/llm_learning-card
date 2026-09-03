@@ -12,12 +12,26 @@
  * ①組出 Graph、②處理「模型回應有循環」的重試/丟邊、③把 Graph 併回 deps.json、
  * ④把卡片 frontmatter.prereqs 寫回跟 graph 一致。
  *
- * **循環處理**(Scenario 6):第一次呼叫模型的回應有循環 →
- * 用「這條路徑循環了」的描述再呼叫模型一次(附上 detectCycle() 回傳的 path) →
- * 如果第二次還是循環,丟掉造成循環的那條邊(path 最後一段:
- * [path[path.length-2], path[path.length-1]]),記一筆 'cycle_removed' 事件到
- * log.jsonl(見 contracts/types.md §10 EventType,'cycle_removed' 已經是硬約定
- * 允許的事件型別)。只挑戰一次——第二次之後不管有沒有循環都不再呼叫模型。
+ * **循環處理**(cycle-local-repair,取代原本的 Scenario 6):第一次呼叫模型的
+ * 回應有循環 → 用「這條路徑循環了」的描述再呼叫模型一次(附上 detectCycle() 回傳
+ * 的 path)。模型呼叫次數就此打住,最多兩次——第二次之後不管有沒有循環都不再
+ * 呼叫模型。
+ *
+ * 如果第二次還是循環,不能只丟一條邊就直接寫檔:真的跑 29 張卡的文章時撞到模型
+ * 回應有兩個獨立循環,只丟一條邊完全沒解決,deps.json 寫出一個帶循環的圖,order
+ * 檔卻因為 topologicalSort() 丟錯而沒寫——磁碟上留下自相矛盾的狀態(deps.json
+ * 有環,但契約 §8 的語意上該是 DAG)。改成本地迴圈(不再呼叫模型):
+ * detectCycle → 用 path 算出 back edge([path[path.length-2], path[path.length-1]])
+ * → 從 edges 濾掉 → 再 detectCycle,重複直到無環或丟邊次數達上限(用
+ * cards.length 當上限,避免無窮迴圈)。每丟一條邊都各自記一筆 'cycle_removed'
+ * 事件到 log.jsonl(見 contracts/types.md §10 EventType,'cycle_removed' 已經是
+ * 硬約定允許的事件型別)。丟邊必須確定性:同樣輸入永遠丟同一條——只要不改變
+ * nodes/edges 的走訪順序,detectCycle() 的 DFS 本身已經保證這件事。
+ *
+ * 達上限仍然有循環 → graph/deps.json 跟 order 檔都不寫(維持契約 §8「要嘛都寫、
+ * 要嘛都不寫」的不變量),改記一筆 'warning'(格式比照 ingest.ts 既有的
+ * warning log,message 要包含殘留的循環路徑)。見 removeCyclesLocally() 與
+ * AnalyzeDependenciesResult 的說明。
  *
  * **每張 level 1 卡的 parent 一定是它的先備**(Scenario 5:「every level one
  * card lists its parent as a prerequisite」):不管模型回應有沒有包含這條邊,
@@ -36,7 +50,8 @@
  *   graph: Graph;
  *   order: CardId[];
  *   cardsUpdated: CardId[];                        // frontmatter.prereqs 被改寫的卡片
- *   cycleRemoved: [CardId, CardId] | null;          // 二次挑戰仍循環而被丟棄的邊
+ *   edgesRemoved: [CardId, CardId][];               // 本地迴圈依丟棄順序記錄的邊;無循環時 []
+ *   cycleUnresolved: CardId[] | null;               // 丟邊達上限仍有循環時的殘留路徑;否則 null
  * }
  *
  * ---- 函式 ----
@@ -50,14 +65,21 @@
  *   3. 把每張有 parent 的卡的 [parent, id] 併入 edges(見上面的不變量)
  *   4. detectCycle(graph)(01 的函式);有循環才進第 5 步,否則跳到第 6 步
  *   5. 再呼叫一次 router.call('ingest.deps', 附帶循環路徑的 prompt),重複 3、
- *      detectCycle;還是循環就丟掉 path 最後一段的邊,記 'cycle_removed' 事件,
- *      cycleRemoved 設成那條邊;否則 cycleRemoved 為 null
+ *      detectCycle;還是循環就呼叫 removeCyclesLocally(graph, cards.length)
+ *      (本地迴圈,不再呼叫模型)——無循環或在上限內清乾淨就繼續第 6 步;達上限
+ *      仍有循環就記一筆 'warning'(含殘留路徑),直接回傳(不寫 deps.json、不寫
+ *      order 檔、cardsUpdated 給 []、order 給 []、cycleUnresolved 設成殘留路徑)
  *   6. writeCategoryGraph(outDir, category, graph)
  *   7. 把 graph 蘊含的 prereqs 寫回每張卡片的 frontmatter(跟目前檔案內容不一致
  *      的才需要真的重寫磁碟),回傳被改寫的 card id 到 cardsUpdated
  *   8. computeAndSaveCategoryOrder(outDir, category)(01 的函式,內部會自己重跑
  *      validateGraphEdges/detectCycle/topologicalSort 並寫 order 檔),把回傳值
  *      放進 order
+ * removeCyclesLocally(graph: Graph, maxDrops: number):
+ *   { graph: Graph; edgesRemoved: [CardId, CardId][]; unresolved: CardId[] | null }
+ *   純函式,不做 I/O。detectCycle → 濾掉 back edge → 再 detectCycle,重複到無環
+ *   或丟邊次數達 maxDrops。呼叫端(analyzeDependencies())負責把 edgesRemoved
+ *   逐一 log 成 'cycle_removed' 事件——這裡只算,不寫檔。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -82,7 +104,61 @@ export interface AnalyzeDependenciesResult {
   graph: Graph;
   order: CardId[];
   cardsUpdated: CardId[];
-  cycleRemoved: [CardId, CardId] | null;
+  /** 本地迴圈依丟棄順序記錄的邊;沒有循環或第二次挑戰就過時為 []。 */
+  edgesRemoved: [CardId, CardId][];
+  /**
+   * 丟邊次數達上限仍有循環時,殘留的循環路徑(detectCycle 的 path,頭尾同一張
+   * 卡);否則 null。不為 null 時,deps.json 與 order 檔都不寫,cardsUpdated 與
+   * order 給空陣列——見 removeCyclesLocally() 與 analyzeDependencies() 的說明。
+   */
+  cycleUnresolved: CardId[] | null;
+}
+
+export interface RemoveCyclesLocallyResult {
+  graph: Graph;
+  edgesRemoved: [CardId, CardId][];
+  unresolved: CardId[] | null;
+}
+
+/**
+ * TODO(下一輪開發 agent,cycle-local-repair):本地迴圈版的循環修復,取代
+ * analyzeDependencies() 現在「第二次仍有循環就丟一條邊、不管圖還有沒有殘留循環
+ * 就直接寫檔」的舊行為(真的跑 29 張卡的文章時撞到:模型回應有兩個獨立循環,
+ * 只丟一條邊完全沒解決,deps.json 寫出一個帶循環的圖,order 檔卻因
+ * topologicalSort() 丟錯而沒寫——磁碟上留下自相矛盾的狀態)。
+ *
+ * 目標行為:detectCycle(graph) → 若有循環,依 path 算出 back edge
+ * ([path[path.length-2], path[path.length-1]])、從 edges 濾掉 → 再
+ * detectCycle,重複直到無環或丟邊次數達 maxDrops。丟邊必須確定性(同樣輸入永遠
+ * 丟同一條——只要不改變 nodes/edges 的走訪順序,detectCycle() 的 DFS 本身已經
+ * 保證這件事,這裡不用另外排序)。
+ *
+ * 回傳:
+ *   - 無循環或在 maxDrops 內清乾淨:edgesRemoved 記下依丟棄順序的每一條邊,
+ *     unresolved 是 null。
+ *   - 丟到 maxDrops 次還有循環:unresolved 是最後一次 detectCycle() 回傳的
+ *     path(呼叫端要用它組出警告訊息);graph 是丟到第 maxDrops 條邊之後的
+ *     狀態(呼叫端在這個情況下不該把它寫進 deps.json——見
+ *     AnalyzeDependenciesResult 的說明)。
+ *
+ * 呼叫端(analyzeDependencies() 的第二次挑戰之後)要把 edgesRemoved 的每一條邊
+ * 各自 log 一筆 'cycle_removed' 事件——這裡不做 I/O,純函式方便單獨測。
+ *
+ * 這裡先佔位維持舊行為(只嘗試丟一次,不管 maxDrops、不管丟完還有沒有殘留循環
+ * 都回傳 unresolved: null),真的迴圈與上限判斷留給下一輪開發 agent。目標行為見
+ * deps.test.ts 的 'removeCyclesLocally' describe 區塊。
+ */
+export function removeCyclesLocally(graph: Graph, maxDrops: number): RemoveCyclesLocallyResult {
+  // TODO: 換成 while 迴圈,重複 detectCycle → 丟 back edge,直到無環或
+  // edgesRemoved.length === maxDrops;達上限仍有循環時回傳 unresolved: 最後一次
+  // detectCycle() 的 path。
+  const cycle = detectCycle(graph);
+  if (!cycle.hasCycle) return { graph, edgesRemoved: [], unresolved: null };
+
+  const path = cycle.path;
+  const offending: [CardId, CardId] = [path[path.length - 2]!, path[path.length - 1]!];
+  const edges = graph.edges.filter(([from, to]) => !(from === offending[0] && to === offending[1]));
+  return { graph: { nodes: graph.nodes, edges }, edgesRemoved: [offending], unresolved: null };
 }
 
 /**
@@ -223,7 +299,8 @@ export async function analyzeDependencies(
   let graph: Graph = { nodes, edges };
   let cycle = detectCycle(graph);
 
-  let cycleRemoved: [CardId, CardId] | null = null;
+  let edgesRemoved: [CardId, CardId][] = [];
+  const cycleUnresolved: CardId[] | null = null;
 
   if (cycle.hasCycle) {
     const retryEdges = await fetchEdges(router, category, cards, maxTokens, cycle.path);
@@ -231,12 +308,23 @@ export async function analyzeDependencies(
     graph = { nodes, edges };
     cycle = detectCycle(graph);
 
+    // TODO(下一輪開發 agent,cycle-local-repair):下面這段只挑戰一次、丟一條邊
+    // 就不管三七二十一直接往下寫檔——即使圖裡還有殘留循環,deps.json 也會被寫
+    // 出去,但緊接著的 computeAndSaveCategoryOrder() 因為圖還有循環會丟錯,
+    // order 檔沒寫,磁碟留下「deps.json 有環、沒有 order」的自相矛盾狀態。改法:
+    // 用 removeCyclesLocally(graph, cards.length) 取代這整個 if 區塊,重複丟邊
+    // 直到無環或達上限;達上限時 cycleUnresolved 設成殘留路徑、記一筆 warning,
+    // 並整段跳過下面的 writeCategoryGraph/writeUpdatedPrereqs/
+    // computeAndSaveCategoryOrder(deps.json 與 order 都不寫,cardsUpdated/order
+    // 給空陣列)。細節與型別見 removeCyclesLocally() 與 AnalyzeDependenciesResult
+    // 上面的註解;測試見 deps.test.ts 的 'local cycle repair loop' 與
+    // 'removeCyclesLocally' 兩個 describe 區塊。
     if (cycle.hasCycle) {
       const path = cycle.path;
       const offending: [CardId, CardId] = [path[path.length - 2]!, path[path.length - 1]!];
       edges = edges.filter(([from, to]) => !(from === offending[0] && to === offending[1]));
       graph = { nodes, edges };
-      cycleRemoved = offending;
+      edgesRemoved = [offending];
       appendLogEvent(join(outDir, 'state/log.jsonl'), {
         ts: new Date().toISOString(),
         type: 'cycle_removed',
@@ -250,5 +338,5 @@ export async function analyzeDependencies(
   const cardsUpdated = writeUpdatedPrereqs(outDir, cards, graph);
   const order = computeAndSaveCategoryOrder(outDir, category);
 
-  return { graph, order, cardsUpdated, cycleRemoved };
+  return { graph, order, cardsUpdated, edgesRemoved, cycleUnresolved };
 }

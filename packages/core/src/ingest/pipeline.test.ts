@@ -175,7 +175,8 @@ describe('runIngestPipeline', () => {
     expect(result.questionFailures).toEqual([]);
     expect(result.childrenCreated).toHaveLength(3 * 2);
     expect(result.childQuestionFailures).toEqual([]);
-    expect(result.cycleRemoved).toBeNull();
+    expect(result.edgesRemoved).toEqual([]);
+    expect(result.cycleUnresolved).toBeNull();
 
     const allIds = listCardIds(dir);
     expect(allIds).toHaveLength(3 + 3 * 2);
@@ -217,7 +218,8 @@ describe('runIngestPipeline', () => {
     expect(result.questionFailures).toEqual([]);
     expect(result.childQuestionFailures).toEqual([]);
     expect(result.depsOrder).toEqual([]);
-    expect(result.cycleRemoved).toBeNull();
+    expect(result.edgesRemoved).toEqual([]);
+    expect(result.cycleUnresolved).toBeNull();
   });
 
   it('重跑同一個檔案:card 數不變,也不再呼叫 LLM(含 phase-2 三步)', async () => {
@@ -246,7 +248,8 @@ describe('runIngestPipeline', () => {
     expect(second.childrenCreated).toEqual([]);
     expect(second.childQuestionFailures).toEqual([]);
     expect(second.depsOrder).toEqual([]);
-    expect(second.cycleRemoved).toBeNull();
+    expect(second.edgesRemoved).toEqual([]);
+    expect(second.cycleUnresolved).toBeNull();
   });
 
   it('單卡生成失敗不影響其他卡:一張 level 0 卡的考題生成失敗,其餘照常完成', async () => {
@@ -308,7 +311,8 @@ describe('runIngestPipeline', () => {
     expect(result.cardsCreated).toHaveLength(2);
     expect(result.childrenCreated).toHaveLength(2);
     expect(result.depsOrder).toEqual([]);
-    expect(result.cycleRemoved).toBeNull();
+    expect(result.edgesRemoved).toEqual([]);
+    expect(result.cycleUnresolved).toBeNull();
 
     const events = readLogEvents(join(dir, 'state/log.jsonl'));
     const warning = events.find((e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes('依賴圖分析失敗'));

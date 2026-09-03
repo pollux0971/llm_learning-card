@@ -224,8 +224,10 @@ export interface RunIngestPipelineResult extends RunIngestResult {
   childQuestionFailures: GenerateQuestionsFailure[];
   /** analyzeDependencies() 算出的分類排序;deps 步驟整個失敗時給 []。 */
   depsOrder: CardId[];
-  /** 二次挑戰仍循環而被丟棄的邊;沒有循環或 deps 步驟整個失敗時給 null。 */
-  cycleRemoved: [CardId, CardId] | null;
+  /** 本地迴圈依丟棄順序記錄的邊;沒有循環或 deps 步驟整個失敗時給 []。 */
+  edgesRemoved: [CardId, CardId][];
+  /** 丟邊次數達上限仍有循環時的殘留路徑;否則(含 deps 步驟整個失敗時)給 null。 */
+  cycleUnresolved: CardId[] | null;
 }
 
 /** !level0.ok 或 level0.alreadyProcessed 時,補上 phase-2 欄位的空值,原樣回傳。 */
@@ -236,7 +238,8 @@ function emptyPipelineResult(level0: RunIngestResult): RunIngestPipelineResult {
     childrenCreated: [],
     childQuestionFailures: [],
     depsOrder: [],
-    cycleRemoved: null,
+    edgesRemoved: [],
+    cycleUnresolved: null,
   };
 }
 
@@ -292,11 +295,13 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
   }
 
   let depsOrder: CardId[] = [];
-  let cycleRemoved: [CardId, CardId] | null = null;
+  let edgesRemoved: [CardId, CardId][] = [];
+  let cycleUnresolved: CardId[] | null = null;
   try {
     const result = await analyzeDependencies(category, [...level0Cards, ...children], router, opts.outDir);
     depsOrder = result.order;
-    cycleRemoved = result.cycleRemoved;
+    edgesRemoved = result.edgesRemoved;
+    cycleUnresolved = result.cycleUnresolved;
   } catch (err) {
     appendLogEvent(logPath, {
       ts: new Date().toISOString(),
@@ -312,6 +317,7 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     childrenCreated: children.map((c) => c.frontmatter.id),
     childQuestionFailures,
     depsOrder,
-    cycleRemoved,
+    edgesRemoved,
+    cycleUnresolved,
   };
 }

@@ -7,7 +7,8 @@ import type { Card, CardId } from '@contracts/index.js';
 import type { LlmResult, LlmRouter } from '@core/llm/index.js';
 import type { Graph } from '@core/schema/graph.js';
 import { readLogEvents } from './state.js';
-import { analyzeDependencies, computeDepsMaxTokens, writeCategoryGraph } from './deps.js';
+import { analyzeDependencies, computeDepsMaxTokens, removeCyclesLocally, writeCategoryGraph } from './deps.js';
+import { detectCycle } from '@core/schema/graph.js';
 import { loadPromptTemplate } from './prompts.js';
 
 // ---------------------------------------------------------------- 共用 fixture
@@ -441,8 +442,8 @@ describe('analyzeDependencies', () => {
 
       const result = await analyzeDependencies('security', cards, router, outDir);
 
-      expect(result.cycleRemoved).not.toBeNull();
-      expect(result.graph.edges).not.toContainEqual(result.cycleRemoved);
+      expect(result.edgesRemoved).toHaveLength(1);
+      expect(result.graph.edges).not.toContainEqual(result.edgesRemoved[0]);
       const events = logEventsOf(outDir);
       expect(events.some((e) => e.type === 'cycle_removed')).toBe(true);
     });
@@ -464,7 +465,7 @@ describe('analyzeDependencies', () => {
 
       const result = await analyzeDependencies('security', cards, router, outDir);
 
-      expect(result.cycleRemoved).toBeNull();
+      expect(result.edgesRemoved).toEqual([]);
       const events = logEventsOf(outDir);
       expect(events.some((e) => e.type === 'cycle_removed')).toBe(false);
     });
@@ -489,7 +490,7 @@ describe('analyzeDependencies', () => {
 
       const result = await analyzeDependencies('security', fiveCards, router, outDir);
 
-      expect(result.cycleRemoved).toEqual(['sec-0003', 'sec-0001']);
+      expect(result.edgesRemoved).toEqual([['sec-0003', 'sec-0001']]);
       expect(result.graph.edges).toContainEqual(['sec-0003', 'sec-0004']);
       expect(result.graph.edges).toContainEqual(['sec-0005', 'sec-0001']);
       expect(result.graph.edges).toContainEqual(['sec-0001', 'sec-0002']);
@@ -529,6 +530,204 @@ describe('analyzeDependencies', () => {
 
       await expect(analyzeDependencies('security', cards, router, outDir)).rejects.toThrow('缺少 edges 陣列');
     });
+  });
+});
+
+// ============================================================== removeCyclesLocally
+//
+// 本地迴圈的循環修復(cycle-local-repair):純函式,不用假 router。
+// detectCycle → 濾掉 back edge → 再 detectCycle,重複到無環或丟邊次數達
+// maxDrops。見 deps.ts 裡 removeCyclesLocally() 上面的 TODO 註解——函式體現在
+// 只佔位丟一次(不管 maxDrops、不管丟完還有沒有殘留循環),所以下面大多數案例
+// 目前是紅燈,釘住目標行為給下一輪開發 agent 接上真的迴圈。
+
+describe('removeCyclesLocally', () => {
+  it('returns the graph unchanged when there is no cycle', () => {
+    const graph: Graph = { nodes: ['sec-0001', 'sec-0002'], edges: [['sec-0001', 'sec-0002']] };
+
+    const result = removeCyclesLocally(graph, 5);
+
+    expect(result.edgesRemoved).toEqual([]);
+    expect(result.unresolved).toBeNull();
+    expect(result.graph.edges).toEqual(graph.edges);
+  });
+
+  // 既有行為(回歸測試):單一循環一次丟邊就過。
+  it('resolves a single 3-cycle by dropping exactly one edge', () => {
+    const graph: Graph = {
+      nodes: ['sec-0001', 'sec-0002', 'sec-0003'],
+      edges: [
+        ['sec-0001', 'sec-0002'],
+        ['sec-0002', 'sec-0003'],
+        ['sec-0003', 'sec-0001'],
+      ],
+    };
+
+    const result = removeCyclesLocally(graph, 3);
+
+    expect(result.edgesRemoved).toEqual([['sec-0003', 'sec-0001']]);
+    expect(result.unresolved).toBeNull();
+    expect(detectCycle(result.graph).hasCycle).toBe(false);
+  });
+
+  // 兩個獨立循環,不共用任何節點或邊。DFS 從 nodes[0](sec-0001)開始,第一次
+  // detectCycle 只會走到 sec-0001..0003 那個循環就回傳(還沒走到 sec-0004..0006);
+  // 丟掉它的 back edge 之後,第二次 detectCycle 才會抓到 sec-0004..0006 那個。
+  it('resolves two independent cycles across two rounds', () => {
+    const graph: Graph = {
+      nodes: ['sec-0001', 'sec-0002', 'sec-0003', 'sec-0004', 'sec-0005', 'sec-0006'],
+      edges: [
+        ['sec-0001', 'sec-0002'],
+        ['sec-0002', 'sec-0003'],
+        ['sec-0003', 'sec-0001'],
+        ['sec-0004', 'sec-0005'],
+        ['sec-0005', 'sec-0006'],
+        ['sec-0006', 'sec-0004'],
+      ],
+    };
+
+    const result = removeCyclesLocally(graph, 6);
+
+    expect(result.edgesRemoved).toEqual([
+      ['sec-0003', 'sec-0001'],
+      ['sec-0006', 'sec-0004'],
+    ]);
+    expect(result.unresolved).toBeNull();
+    expect(detectCycle(result.graph).hasCycle).toBe(false);
+    expect(result.graph.edges).toHaveLength(4);
+  });
+
+  // 上限(maxDrops):3 張卡,3 個各只需要丟一次邊的循環(2 個自環 + 1 個三卡
+  // 循環),但 maxDrops 只給 3。自環排在每張卡鄰接表的最前面,所以本地迴圈會先
+  // 把 3 個自環各丟一次,丟滿上限時,三卡循環(sec-0001→sec-0002→sec-0003→
+  // sec-0001)本身完全沒被碰到,依然殘留。
+  it('stops at maxDrops and reports the remaining cycle as unresolved', () => {
+    const graph: Graph = {
+      nodes: ['sec-0001', 'sec-0002', 'sec-0003'],
+      edges: [
+        ['sec-0001', 'sec-0001'],
+        ['sec-0002', 'sec-0002'],
+        ['sec-0003', 'sec-0003'],
+        ['sec-0001', 'sec-0002'],
+        ['sec-0002', 'sec-0003'],
+        ['sec-0003', 'sec-0001'],
+      ],
+    };
+
+    const result = removeCyclesLocally(graph, 3);
+
+    expect(result.edgesRemoved).toEqual([
+      ['sec-0001', 'sec-0001'],
+      ['sec-0002', 'sec-0002'],
+      ['sec-0003', 'sec-0003'],
+    ]);
+    expect(result.unresolved).toEqual(['sec-0001', 'sec-0002', 'sec-0003', 'sec-0001']);
+    expect(result.graph.edges).toEqual([
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0003'],
+      ['sec-0003', 'sec-0001'],
+    ]);
+  });
+
+  // 確定性:同一組輸入跑兩次,丟的邊完全一樣、順序也一樣。
+  it('is deterministic: the same graph run twice drops the same edges in the same order', () => {
+    const graph: Graph = {
+      nodes: ['sec-0001', 'sec-0002', 'sec-0003', 'sec-0004', 'sec-0005', 'sec-0006'],
+      edges: [
+        ['sec-0001', 'sec-0002'],
+        ['sec-0002', 'sec-0003'],
+        ['sec-0003', 'sec-0001'],
+        ['sec-0004', 'sec-0005'],
+        ['sec-0005', 'sec-0006'],
+        ['sec-0006', 'sec-0004'],
+      ],
+    };
+
+    const first = removeCyclesLocally(graph, 6);
+    const second = removeCyclesLocally(graph, 6);
+
+    expect(second.edgesRemoved).toEqual(first.edgesRemoved);
+  });
+});
+
+// ============================================================== analyzeDependencies:
+// local cycle repair loop
+//
+// 這幾個測試透過假 router 走完整條 analyzeDependencies(),驗證「第二次挑戰仍
+// 循環」之後真的接上本地迴圈(目前還沒接,見 deps.ts 的 TODO)。analyzeDependencies()
+// 現在的舊行為在這兩個 fixture 底下都會在 computeAndSaveCategoryOrder() 裡
+// 丟出「依賴圖有循環」的錯誤(deps.json 已經寫了一半、order 沒寫)——下面的斷言
+// 描述的是接上本地迴圈之後「應該」的樣子,目前是紅燈。
+
+describe('analyzeDependencies: local cycle repair loop', () => {
+  it('removes both edges when the retry response itself contains two independent cycles, and writes an order listing every card once', async () => {
+    const outDir = makeOutDir();
+    const sixCards: Card[] = [
+      makeCard('sec-0001'),
+      makeCard('sec-0002'),
+      makeCard('sec-0003'),
+      makeCard('sec-0004'),
+      makeCard('sec-0005'),
+      makeCard('sec-0006'),
+    ];
+    const firstAttemptCycle: [CardId, CardId][] = [
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0001'],
+    ];
+    const retryTwoIndependentCycles: [CardId, CardId][] = [
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0003'],
+      ['sec-0003', 'sec-0001'],
+      ['sec-0004', 'sec-0005'],
+      ['sec-0005', 'sec-0006'],
+      ['sec-0006', 'sec-0004'],
+    ];
+    const { router } = makeDepsRouter([firstAttemptCycle, retryTwoIndependentCycles]);
+
+    const result = await analyzeDependencies('security', sixCards, router, outDir);
+
+    expect(result.edgesRemoved).toEqual([
+      ['sec-0003', 'sec-0001'],
+      ['sec-0006', 'sec-0004'],
+    ]);
+    expect(result.cycleUnresolved).toBeNull();
+    const orderPath = join(outDir, 'graph', 'order-security.json');
+    expect(existsSync(orderPath)).toBe(true);
+    const order = JSON.parse(readFileSync(orderPath, 'utf8')) as CardId[];
+    expect([...order].sort()).toEqual(sixCards.map((c) => c.frontmatter.id).sort());
+    const events = logEventsOf(outDir);
+    expect(events.filter((e) => e.type === 'cycle_removed')).toHaveLength(2);
+  });
+
+  it('writes neither deps.json nor the order file when the local loop still cycles at the card-count cap, and logs a warning naming the remaining cycle', async () => {
+    const outDir = makeOutDir();
+    const threeCards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
+    const firstAttemptCycle: [CardId, CardId][] = [
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0001'],
+    ];
+    // 每丟一條邊就冒出下一個環:3 個自環各佔一次丟邊,丟滿上限(3 張卡)之後,
+    // 三卡循環本身還在(見 removeCyclesLocally 的同款 fixture)。
+    const chainReactionEdges: [CardId, CardId][] = [
+      ['sec-0001', 'sec-0001'],
+      ['sec-0002', 'sec-0002'],
+      ['sec-0003', 'sec-0003'],
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0003'],
+      ['sec-0003', 'sec-0001'],
+    ];
+    const { router } = makeDepsRouter([firstAttemptCycle, chainReactionEdges]);
+
+    const result = await analyzeDependencies('security', threeCards, router, outDir);
+
+    expect(result.cycleUnresolved).toEqual(['sec-0001', 'sec-0002', 'sec-0003', 'sec-0001']);
+    expect(existsSync(join(outDir, 'graph', 'deps.json'))).toBe(false);
+    expect(existsSync(join(outDir, 'graph', 'order-security.json'))).toBe(false);
+    const events = logEventsOf(outDir);
+    const warning = events.find(
+      (e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes('sec-0001'),
+    );
+    expect(warning, JSON.stringify(events)).toBeTruthy();
   });
 });
 
