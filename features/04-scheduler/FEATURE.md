@@ -69,7 +69,16 @@ npx tsx scripts/due.ts --simulate --days 200 --new-per-day 2
 
 ## 待協調
 
-- **`cucumber.js`(共用檔)的 ESM profile 解析有 bug,擋住全專案的 `npm run accept*`。**
+- **潛在的 cucumber step 撞名(來自 01-data-layer/phase-2,還沒發生,先提醒)**:
+  `features/steps/data-layer.steps.ts` 已經定義了 `Then('stuck is false', ...)` 與
+  `Then('the consecutive count is {int}', ...)`(讀 `this.lastResult`),因為 phase-2 開工時
+  `features/steps/scheduler.steps.ts` 還沒實作到這幾句、暫時先頂著跑。等這個 phase(02/03)
+  寫到 `SchedulerOutcome.review.stuck` 相關斷言時,如果也想用一模一樣的文字,會跟 01 那句撞名
+  (cucumber 的 step 是全域註冊,不分 tag)。屆時要嘛沿用 01 那句(如果 `this.lastResult` 型別對
+  得上),要嘛把這句拉進 `features/steps/common.steps.ts`(只有協調者能改)。開工前先讀一次
+  `data-layer.steps.ts` 目前定義的句子,避免重複定義。
+- **`cucumber.js`(共用檔)的 ESM profile 解析有 bug,擋住全專案的 `npm run accept*`。**(main
+  已於 commit 217ad09 修好,下面這段是歷史記錄,不用再處理。)
   現在寫法是 `export default { default: { paths: [...], import: [...], ... } }`。
   但 `@cucumber/cucumber` 11.3.0 讀 ESM 設定檔時,`definitions` 會是整個 module
   namespace(`{ default: <你 export 的值> }`),不會像 CJS 一樣自動把 `.default`

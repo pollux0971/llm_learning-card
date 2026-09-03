@@ -4,6 +4,11 @@
     "interactive": false,
     "expect": "OK"
   },
+  "01-data-layer-questions": {
+    "cmd": "npx tsx packages/core/src/schema/cli.ts validate-question contracts/fixtures/learning-minimal/questions/sec-0001.yaml",
+    "interactive": false,
+    "expect": "OK"
+  },
   "02-ingest-pipeline": {
     "cmd": "npx tsx scripts/ingest.ts --fake --file contracts/fixtures/raw/security-basics.md --out ./tmp-learning",
     "interactive": false,
