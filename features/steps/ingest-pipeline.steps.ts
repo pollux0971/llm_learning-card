@@ -14,7 +14,7 @@
  */
 import { Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
@@ -179,6 +179,28 @@ function readCard(dir: string, id: CardId): { data: Record<string, unknown>; con
   return { data: parsed.data, content: parsed.content };
 }
 
+/**
+ * 掃描 dir 底下所有分類的卡片,回傳 { id, data }。跟 ctx(world).cards 不一樣,
+ * 這是直接讀磁碟——給那些「不管是哪個場景寫的卡,只要卡真的存在就該通過」的
+ * 共用 Then 步驟用,不依賴呼叫端有沒有先跑過這個檔案自己的 Given(docs/integration
+ * 的 i1-content-pipeline.feature 會重用這裡幾個 Then 的文字,但走的是不同的
+ * Given/When,不會填 ctx(world).cards)。
+ */
+function listAllCardsOnDisk(dir: string): { id: CardId; data: Record<string, unknown> }[] {
+  const cardsRoot = join(dir, 'cards');
+  if (!existsSync(cardsRoot)) return [];
+  const out: { id: CardId; data: Record<string, unknown> }[] = [];
+  for (const category of readdirSync(cardsRoot)) {
+    const categoryDir = join(cardsRoot, category);
+    for (const name of readdirSync(categoryDir)) {
+      if (!name.endsWith('.md')) continue;
+      const parsed = matter(readFileSync(join(categoryDir, name), 'utf8'));
+      out.push({ id: name.replace(/\.md$/, ''), data: parsed.data });
+    }
+  }
+  return out;
+}
+
 function readQuestionFile(dir: string, id: CardId): QuestionFile {
   return yamlParse(readFileSync(join(dir, 'questions', `${id}.yaml`), 'utf8')) as QuestionFile;
 }
@@ -259,9 +281,9 @@ When('new cards are ingested for security', async function (this: LearningWorld)
 // ---------------------------------------------------------------- Then(考題)
 
 Then('every card has a question file with the same id', function (this: LearningWorld) {
-  const c = ctx(this);
-  for (const card of c.cards) {
-    const id = card.frontmatter.id;
+  const cards = listAllCardsOnDisk(this.dir!);
+  assert.ok(cards.length > 0, '目錄底下沒有任何卡片');
+  for (const { id } of cards) {
     assert.ok(existsSync(join(this.dir!, 'questions', `${id}.yaml`)), `缺少 ${id} 的考題檔`);
     assert.equal(readQuestionFile(this.dir!, id).card, id);
   }
@@ -356,9 +378,12 @@ Then('each child has source llm', function (this: LearningWorld) {
 });
 
 Then('each child has its own question file', function (this: LearningWorld) {
-  const c = ctx(this);
-  for (const child of c.childrenResult!.children) {
-    const id = child.frontmatter.id;
+  // 「子卡」用磁碟上的 parent 欄位判斷,不靠 ctx(this).childrenResult——這個
+  // Then 的文字被 docs/integration/i1-content-pipeline.feature 重用,那邊走的是
+  // 完整 pipeline(runIngestPipeline),不會經過這個檔案自己的 When 填 childrenResult。
+  const children = listAllCardsOnDisk(this.dir!).filter((c) => c.data.parent);
+  assert.ok(children.length > 0, '目錄底下沒有任何子卡(parent 欄位不存在)');
+  for (const { id } of children) {
     assert.ok(existsSync(join(this.dir!, 'questions', `${id}.yaml`)), `缺少子卡 ${id} 的考題檔`);
     assert.equal(readQuestionFile(this.dir!, id).card, id);
   }

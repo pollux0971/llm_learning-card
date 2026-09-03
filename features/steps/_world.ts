@@ -67,6 +67,12 @@ export class LearningWorld extends World {
   /** 純函式檢查用:呼叫前的輸入物件參照與深拷貝,見 trackInput */
   inputRef?: unknown;
   inputSnapshot?: string;
+  /**
+   * 「重跑不改變卡片數」類場景的共用快照欄位:第一次跑完後記下卡片數,
+   * 「the number of cards is unchanged」這個共用 Then 步驟讀這裡比對,不管是
+   * 哪個功能的 Given/When 填的值(見 ingest.steps.ts 與 i1-content-pipeline.steps.ts)。
+   */
+  cardCountBefore?: number;
 
   constructor(options: IWorldOptions) {
     super(options);
