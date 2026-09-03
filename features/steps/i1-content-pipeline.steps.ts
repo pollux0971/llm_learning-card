@@ -287,7 +287,7 @@ When('both the ingest validator and lint are run against the word count fixture'
 
 // ---------------------------------------------------------------- Then
 
-Then('at least 3 cards exist under {string}', function (this: LearningWorld) {
+Then('at least 3 cards exist under {string}', function (this: LearningWorld, _dirLabel: string) {
   assert.ok(listAllCardsOnDisk(this.dir!).length >= 3, `卡片數應至少 3,實際 ${listAllCardsOnDisk(this.dir!).length}`);
 });
 
@@ -394,7 +394,7 @@ Then('each child has parent set to its level 0 card', function (this: LearningWo
   }
 });
 
-Then('cycle detection over {string} reports no cycles', function (this: LearningWorld) {
+Then('cycle detection over {string} reports no cycles', function (this: LearningWorld, _pathLabel: string) {
   const graph = readCategoryGraph(this.dir!, CATEGORY);
   const cycle = detectCycle(graph);
   assert.equal(cycle.hasCycle, false, `發現循環:${cycle.path.join(' -> ')}`);

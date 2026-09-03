@@ -83,6 +83,9 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
   }
 
   const cardsDir = join(opts.outDir, 'cards', category);
+  // Stryker disable next-line all: recursive:true 只在 category 本身含路徑分隔符時才有差異
+  // (契約的 category id 是單一識別字,不會發生)——ensureInitialized() 保證 outDir/cards 已存在,
+  // 拿掉 recursive 或改 false 在目前骨架下行為不變,測不出差異不代表邏輯錯。
   mkdirSync(cardsDir, { recursive: true });
   const totalLines = raw.split('\n').length;
 
@@ -243,6 +246,9 @@ function loadWrittenCards(outDir: string, category: string, ids: CardId[]): Card
     const path = join(outDir, 'cards', category, `${id}.md`);
     const check = validateCard(readFileSync(path, 'utf8'));
     if (!check.ok || !check.card) {
+      // Stryker disable next-line all: 內部不變量守門(剛用 writeCardFile() 寫出的卡片理論上一定通過
+      // 同一份 validateCard())。要測到得故意在寫入後、讀回前弄壞磁碟上的檔案,價值低於複雜度;
+      // if 條件本身(check.ok/check.card)有被別的測試涵蓋,這裡只豁免訊息字串的 mutant。
       throw new Error(`剛寫入的卡片 ${id} 沒有通過 data-layer 驗證器:${check.errors.join('; ')}`);
     }
     return check.card;

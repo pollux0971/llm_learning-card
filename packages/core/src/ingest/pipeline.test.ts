@@ -1,13 +1,12 @@
 /**
  * runIngestPipeline() 的整合測試(見 ingest.ts 裡它上面的大段設計註解)。
- * 目前函式體是 throw new Error('not implemented'),這裡的斷言描述的是它
- * 實作完之後「應該」的行為——紅燈是預期的,下一輪開發 agent 把它填完之後
- * 這份檔案要全綠。涵蓋 docs/integration/i1-content-pipeline.feature 的四個
- * pipeline 層級場景:
+ * 涵蓋 docs/integration/i1-content-pipeline.feature 的 pipeline 層級場景:
  *   1. 產生卡片後接著產生考題、子卡、依賴圖(整條管線串起來)
  *   2. 離線時整個 ingest 拒絕而不是降級(不寫任何卡片)
  *   3. 重跑 ingest 對同一個檔案不重複處理,也不再呼叫 LLM
  *   4. 單卡生成失敗不影響其他卡
+ *   5. 子卡整批生成失敗、依賴圖整批分析失敗:各自吞掉錯誤、記警告,不拖垮已完成的步驟
+ *   6. 省略 category/today 時的預設值推導
  *
  * 不打真的 API——router 一律是這裡注入的假 router,行為對齊
  * features/steps/ingest-pipeline.steps.ts 的 buildResponseText() 寫法。
@@ -18,6 +17,7 @@ import { join } from 'node:path';
 import { parse as yamlParse } from 'yaml';
 import { runIngestPipeline } from './ingest.js';
 import { ensureInitialized } from './init.js';
+import { readLogEvents } from './state.js';
 import type { LlmResult, LlmRouter, LlmTask } from './types.js';
 import { CloudRequiredError as RealCloudRequiredError } from '../llm/errors.js';
 
@@ -67,6 +67,10 @@ interface ScriptedRouterOptions {
   childCountPerParent?: number;
   /** 這些 card id 的 'ingest.questions' 呼叫會丟錯,模擬單卡生成失敗。 */
   questionsFailForCardIds?: string[];
+  /** 讓 'ingest.cards' 的子卡回應筆數不合法(0 筆),模擬整批子卡生成失敗。 */
+  childrenBatchFails?: boolean;
+  /** 讓 'ingest.deps' 回應缺少 edges 陣列,模擬整批依賴圖分析失敗。 */
+  depsBatchFails?: boolean;
   onlineOverride?: boolean;
   /** call() 被呼叫時記錄下來,用於斷言呼叫次數 / 從未被呼叫。 */
   onCall?: (task: LlmTask, prompt: string) => void;
@@ -82,8 +86,17 @@ function scriptedRouter(opts: ScriptedRouterOptions = {}): LlmRouter {
       opts.onCall?.(task, prompt);
 
       if (task === 'ingest.cards') {
-        const text = prompt.includes('parent_id:') ? childCandidatesJson(childCountPerParent) : levelZeroCandidatesJson(levelZeroCount);
-        return { text, provider: 'fake', model: 'scripted', latency_ms: 0, provisional: false };
+        if (prompt.includes('parent_id:')) {
+          const text = opts.childrenBatchFails ? childCandidatesJson(0) : childCandidatesJson(childCountPerParent);
+          return { text, provider: 'fake', model: 'scripted', latency_ms: 0, provisional: false };
+        }
+        return {
+          text: levelZeroCandidatesJson(levelZeroCount),
+          provider: 'fake',
+          model: 'scripted',
+          latency_ms: 0,
+          provisional: false,
+        };
       }
       if (task === 'ingest.questions') {
         const m = /card:\s*(\S+)/.exec(prompt);
@@ -94,7 +107,8 @@ function scriptedRouter(opts: ScriptedRouterOptions = {}): LlmRouter {
         return { text: questionCandidateJson(), provider: 'fake', model: 'scripted', latency_ms: 0, provisional: false };
       }
       if (task === 'ingest.deps') {
-        return { text: depsEdgesJsonFromPrompt(prompt), provider: 'fake', model: 'scripted', latency_ms: 0, provisional: false };
+        const text = opts.depsBatchFails ? JSON.stringify({ notEdges: [] }) : depsEdgesJsonFromPrompt(prompt);
+        return { text, provider: 'fake', model: 'scripted', latency_ms: 0, provisional: false };
       }
       throw new Error(`scriptedRouter 沒有預期到 task=${task}`);
     },
@@ -199,6 +213,11 @@ describe('runIngestPipeline', () => {
     expect(listCardIds(dir)).toHaveLength(0);
     expect(existsSync(join(dir, 'questions'))).toBe(true);
     expect(readdirSync(join(dir, 'questions'))).toHaveLength(0);
+    // 完全沒進 phase-2 三步,emptyPipelineResult() 給的空值原樣回傳。
+    expect(result.questionFailures).toEqual([]);
+    expect(result.childQuestionFailures).toEqual([]);
+    expect(result.depsOrder).toEqual([]);
+    expect(result.cycleRemoved).toBeNull();
   });
 
   it('重跑同一個檔案:card 數不變,也不再呼叫 LLM(含 phase-2 三步)', async () => {
@@ -222,6 +241,12 @@ describe('runIngestPipeline', () => {
     expect(second.alreadyProcessed).toBe(true);
     expect(listCardIds(dir)).toHaveLength(countAfterFirst);
     expect(calls).toBe(0);
+    // 走 emptyPipelineResult() 那條路,phase-2 欄位是空值,不是重算出來的。
+    expect(second.questionFailures).toEqual([]);
+    expect(second.childrenCreated).toEqual([]);
+    expect(second.childQuestionFailures).toEqual([]);
+    expect(second.depsOrder).toEqual([]);
+    expect(second.cycleRemoved).toBeNull();
   });
 
   it('單卡生成失敗不影響其他卡:一張 level 0 卡的考題生成失敗,其餘照常完成', async () => {
@@ -256,5 +281,92 @@ describe('runIngestPipeline', () => {
     // 子卡與依賴圖仍然照常產生 —— 一張卡的考題失敗不拖垮後面的步驟。
     expect(result.childrenCreated.length).toBeGreaterThan(0);
     expect(result.depsOrder.length).toBeGreaterThan(0);
+  });
+
+  it('整批子卡生成失敗:記警告後略過,level 0 卡與考題仍照常完成,依賴圖只涵蓋 level 0 卡', async () => {
+    const router = scriptedRouter({ levelZeroCount: 3, childrenBatchFails: true });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
+
+    expect(result.ok).toBe(true);
+    expect(result.cardsCreated).toHaveLength(3);
+    expect(result.questionFailures).toEqual([]);
+    expect(result.childrenCreated).toEqual([]);
+    expect(result.childQuestionFailures).toEqual([]);
+    // deps 步驟拿到的是「level0 + children」,children 是空陣列時應該只跑 level0。
+    expect(result.depsOrder.sort()).toEqual([...result.cardsCreated].sort());
+
+    const events = readLogEvents(join(dir, 'state/log.jsonl'));
+    const warning = events.find((e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes('子卡產生失敗'));
+    expect(warning, JSON.stringify(events)).toBeTruthy();
+  });
+
+  it('整批依賴圖分析失敗:記警告後略過,level 0 卡、考題、子卡仍照常完成,depsOrder 與 cycleRemoved 給空值', async () => {
+    const router = scriptedRouter({ levelZeroCount: 2, childCountPerParent: 1, depsBatchFails: true });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
+
+    expect(result.ok).toBe(true);
+    expect(result.cardsCreated).toHaveLength(2);
+    expect(result.childrenCreated).toHaveLength(2);
+    expect(result.depsOrder).toEqual([]);
+    expect(result.cycleRemoved).toBeNull();
+
+    const events = readLogEvents(join(dir, 'state/log.jsonl'));
+    const warning = events.find((e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes('依賴圖分析失敗'));
+    expect(warning, JSON.stringify(events)).toBeTruthy();
+  });
+
+  it('省略 category/today:從 rawRelPath 推導分類,today 用系統日期,行為與明確傳入時一致', async () => {
+    const router = scriptedRouter({ levelZeroCount: 2, childCountPerParent: 1 });
+    // 不傳 category / today —— runIngestPipeline() 內部得自己用 inferCategory() 與
+    // new Date() 重新推導一次,不能只靠 runIngest() 內部算過的值。
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, router });
+
+    expect(result.ok).toBe(true);
+    expect(result.cardsCreated).toHaveLength(2);
+    expect(result.childrenCreated).toHaveLength(2);
+    expect(result.depsOrder.sort()).toEqual([...result.cardsCreated, ...result.childrenCreated].sort());
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    for (const id of result.childrenCreated) {
+      const fm = yamlParse(readFileSync(join(dir, 'cards', CATEGORY, `${id}.md`), 'utf8').split('---')[1]!);
+      expect(fm.category).toBe(CATEGORY);
+      expect(fm.created).toBe(todayStr);
+    }
+  });
+
+  it('省略 category,rawRelPath 推導出的分類跟預設值 "security" 不同:runIngestPipeline() 自己用同一個分類跑完 phase-2 三步,不是退回預設', async () => {
+    const otherCategory = 'other-cat';
+    const rawRelPath = `raw/${otherCategory}/other.md`;
+    mkdirSync(join(dir, 'raw', otherCategory), { recursive: true });
+    writeFileSync(join(dir, rawRelPath), '一些原始內容\n'.repeat(20), 'utf8');
+
+    const router = scriptedRouter({ levelZeroCount: 2, childCountPerParent: 1 });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath, router });
+
+    expect(result.ok).toBe(true);
+    expect(result.cardsCreated).toHaveLength(2);
+    expect(result.childrenCreated).toHaveLength(2);
+    // 子卡與依賴圖真的用 other-cat 分類跑完,不是靜靜退回 'security'。
+    for (const id of [...result.cardsCreated, ...result.childrenCreated]) {
+      expect(existsSync(join(dir, 'cards', otherCategory, `${id}.md`)), `${id} 應該在 cards/${otherCategory}/`).toBe(true);
+    }
+    const depsJson = JSON.parse(readFileSync(join(dir, 'graph', 'deps.json'), 'utf8'));
+    expect(depsJson[otherCategory]).toBeDefined();
+    expect(existsSync(join(dir, 'graph', `order-${otherCategory}.json`))).toBe(true);
+  });
+
+  it('省略 category,rawRelPath 不是 3 段式(inferCategory() 判斷不出來):runIngestPipeline() 內部也退回預設 security,跟 runIngest() 一致', async () => {
+    const rawRelPath = 'raw/flat.md';
+    writeFileSync(join(dir, rawRelPath), '一些原始內容\n'.repeat(20), 'utf8');
+
+    const router = scriptedRouter({ levelZeroCount: 2, childCountPerParent: 1 });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath, router });
+
+    expect(result.ok).toBe(true);
+    for (const id of [...result.cardsCreated, ...result.childrenCreated]) {
+      expect(existsSync(join(dir, 'cards', CATEGORY, `${id}.md`)), `${id} 應該在 cards/${CATEGORY}/(預設分類)`).toBe(true);
+    }
+    const depsJson = JSON.parse(readFileSync(join(dir, 'graph', 'deps.json'), 'utf8'));
+    expect(depsJson[CATEGORY]).toBeDefined();
   });
 });

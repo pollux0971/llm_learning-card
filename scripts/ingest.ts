@@ -2,12 +2,11 @@
 /**
  * 02-ingest-pipeline 的 CLI 入口。
  *
- * I1 整合缺口(這輪只設計 + 寫測試,見同目錄之外的
- * packages/core/src/ingest/pipeline.test.ts 與
- * features/steps/i1-content-pipeline.steps.ts,下一輪開發 agent 實作):
+ * I1 整合缺口(runIngestPipeline() 已實作,見 packages/core/src/ingest/ingest.ts
+ * 與 packages/core/src/ingest/pipeline.test.ts、features/steps/i1-content-pipeline.steps.ts):
  * 過去 Wave 0 這裡硬寫死只認 --fake,遇到沒帶 --fake 就直接印訊息 exit 1,
  * 字面上就是在等 03-llm-router 整合完成——現在 LlmRouterImpl 已經做完,
- * 這個入口該換成預設用真的 router,--fake 變成明確要求時才用的選項。
+ * 這個入口預設用真的 router,--fake 變成明確要求時才用的選項。
  *
  * 用法:
  *   npx tsx scripts/ingest.ts --file <raw file> --out <learning dir> [--category <id>]
@@ -24,12 +23,10 @@
  *   覆蓋,契約 §11)。跑之前先 probeOnline() 探測:探測不到就照
  *   「Offline ingest refuses rather than degrading」場景的字面行為——不寫任何
  *   卡片、印出需要雲端模型的訊息、exit 1,不透過 runIngest() 內部的
- *   CloudRequiredError catch(那條 catch 目前只認得 fake-llm.ts 的
- *   CloudRequiredError,認不出 @core/llm/errors.js 的同名 class,是已知但這輪
- *   不修的 bug,見 ingest.ts 的 runIngestPipeline() 註解)。探測到線上就呼叫
- *   runIngestPipeline()——目前那個函式本體是 throw not implemented,所以這條
- *   路徑現在會印出未捕捉例外、exit 1,是預期的紅燈,等下一輪把
- *   runIngestPipeline() 實作完就會變綠。
+ *   CloudRequiredError catch(那條 catch 現在看契約 §7 路由表共用的
+ *   code === 'CLOUD_REQUIRED',fake-llm.ts 與 @core/llm/errors.js 已經統一成
+ *   同一個 class,見 ingest.ts 的 isCloudRequiredError() 註解)。探測到線上就呼叫
+ *   runIngestPipeline(),接上 phase-2 的 questions/children/deps 三步。
  *
  * 退出碼:0 成功(含「已經處理過」);1 失敗(空檔案、找不到檔案、離線)。
  */
