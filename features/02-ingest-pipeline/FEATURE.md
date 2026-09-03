@@ -60,7 +60,7 @@ npx tsx scripts/ingest.ts --fake --file contracts/fixtures/raw/security-basics.m
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | raw → level 0 卡片(FakeLlm)、字數重試、去重 | Wave 0 | done | 2026-09-03 |
-| 2 | 考題、level 1、依賴圖 | I1 | todo | |
+| 2 | 考題、level 1、依賴圖 | I1 | done | 2026-09-03 |
 | 3 | require_raw、無 raw 生成、增量與 stale | I4 | todo | |
 
 ## 驗收方式
