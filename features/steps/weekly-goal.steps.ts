@@ -236,6 +236,6 @@ Then('the state is set to the current week', function (this: LearningWorld) {
   assert.equal(this.weeklyState?.week, isoWeekOf(this.today));
 });
 
-Then(/^it is (\S+)$/, function (this: LearningWorld, week: string) {
+Then(/^it is (\d{4}-W\d{2})$/, function (this: LearningWorld, week: string) {
   assert.equal(this.lastResult, week);
 });

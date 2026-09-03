@@ -191,7 +191,7 @@ Then('that card is not included', function () {
   assert.ok(!dueList.some((d) => d.card === DEFAULT_CARD));
 });
 
-Then(/^they are ([a-z,]+)$/, function (typesStr: string) {
+Then(/^they are ((?:fill|apply)(?:,(?:fill|apply))?)$/, function (typesStr: string) {
   assert.deepEqual(requestedTypes, typesStr.split(','));
 });
 
