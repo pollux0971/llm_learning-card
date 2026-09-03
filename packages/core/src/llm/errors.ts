@@ -35,3 +35,25 @@ export class LlmTimeoutError extends Error {
     this.timeoutMs = timeoutMs;
   }
 }
+
+/** 契約 §7 路由表:任務要求雲端,但目前離線。phase-2 的 routing.ts 依表丟這個。 */
+export class CloudRequiredError extends Error {
+  readonly code = 'CLOUD_REQUIRED';
+  readonly task: string;
+  constructor(task: string) {
+    super(`task "${task}" requires the cloud provider, but it is offline`);
+    this.name = 'CloudRequiredError';
+    this.task = task;
+  }
+}
+
+/** 契約 §7 路由表:離線且沒有可用的本機模型,沒有任何 provider 能接這個任務。 */
+export class NoModelError extends Error {
+  readonly code = 'NO_MODEL';
+  readonly task: string;
+  constructor(task: string) {
+    super(`task "${task}" has no model available: offline and no local model`);
+    this.name = 'NoModelError';
+    this.task = task;
+  }
+}
