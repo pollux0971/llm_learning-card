@@ -34,6 +34,7 @@
  */
 
 import type { LlmTask } from './types.js';
+import { CloudRequiredError, NoModelError } from './errors.js';
 
 export type RouteGroup = 'cloud-only' | 'cloud-or-local' | 'local-only';
 
@@ -66,5 +67,21 @@ export interface RouteDecision {
  * 被改過的表格進來驗證。
  */
 export function decideRoute(input: RouteInput, table: Readonly<Record<LlmTask, RouteGroup>> = ROUTING_TABLE): RouteDecision {
-  throw new Error('not implemented');
+  const { task, online, local } = input;
+  const group = table[task];
+
+  switch (group) {
+    case 'cloud-only':
+      if (online) return { target: 'cloud', provisional: false };
+      throw new CloudRequiredError(task);
+
+    case 'cloud-or-local':
+      if (online) return { target: 'cloud', provisional: false };
+      if (local) return { target: 'local', provisional: true };
+      throw new NoModelError(task);
+
+    case 'local-only':
+      if (local) return { target: 'local', provisional: false };
+      throw new NoModelError(task);
+  }
 }

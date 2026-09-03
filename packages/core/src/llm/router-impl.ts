@@ -50,8 +50,8 @@
  */
 
 import type { CloudAdapter, CloudProvider, LlmResult, LlmRouter, LlmTask } from './types.js';
-import { CloudLlmRouter, type CloudSettings } from './router.js';
-import { ROUTING_TABLE, type RouteGroup } from './routing.js';
+import { CloudLlmRouter, type CloudLlmRouterOptions, type CloudSettings } from './router.js';
+import { decideRoute, ROUTING_TABLE, type RouteGroup } from './routing.js';
 import type { LogAppender } from './log-min.js';
 
 export type LocalProber = () => Promise<{ available: boolean; models: string[] }>;
@@ -93,28 +93,76 @@ const alwaysUnavailable: LocalProber = async () => ({ available: false, models: 
 
 export class LlmRouterImpl implements LlmRouter {
   private readonly opts: LlmRouterImplOptions;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly settings: RouterSettings;
+  private readonly now: () => number;
+  private readonly onlineProbeTtlMs: number;
+  private readonly localProber: LocalProber;
+  private readonly onlineProber: OnlineProber;
+  private readonly routingTable: Readonly<Record<LlmTask, RouteGroup>>;
+  private readonly cloudRouter: CloudLlmRouter;
+  private onlineCache?: { value: boolean; at: number };
 
   constructor(opts: LlmRouterImplOptions = {}) {
     this.opts = opts;
+    this.env = opts.env ?? process.env;
+    this.settings = opts.settings ?? {};
+    this.now = opts.now ?? Date.now;
+    this.onlineProbeTtlMs = opts.onlineProbeTtlMs ?? 60_000;
+    this.localProber = opts.localProber ?? alwaysUnavailable;
+    this.routingTable = opts.routingTable ?? ROUTING_TABLE;
+    this.cloudRouter = opts.cloudRouter ?? new CloudLlmRouter(this.buildCloudRouterOptions(opts));
+    this.onlineProber = opts.onlineProber ?? (() => this.cloudRouter.probeOnline());
+  }
+
+  /** exactOptionalPropertyTypes:只放實際有給的欄位,不要把 undefined 明寫進去。 */
+  private buildCloudRouterOptions(opts: LlmRouterImplOptions): CloudLlmRouterOptions {
+    const cloudOpts: CloudLlmRouterOptions = {};
+    if (opts.env !== undefined) cloudOpts.env = opts.env;
+    if (opts.settings !== undefined) cloudOpts.settings = opts.settings;
+    if (opts.adapters !== undefined) cloudOpts.adapters = opts.adapters;
+    if (opts.defaultTimeoutMs !== undefined) cloudOpts.defaultTimeoutMs = opts.defaultTimeoutMs;
+    if (opts.logPath !== undefined) cloudOpts.logPath = opts.logPath;
+    if (opts.logAppender !== undefined) cloudOpts.logAppender = opts.logAppender;
+    return cloudOpts;
   }
 
   async call(task: LlmTask, prompt: string, opts: { timeoutMs?: number } = {}): Promise<LlmResult> {
-    throw new Error('not implemented');
+    const online = await this.probeOnline();
+    const local = (await this.probeLocal()).available;
+    const decision = decideRoute({ task, online, local }, this.routingTable);
+
+    if (decision.target === 'cloud') {
+      return this.cloudRouter.call(task, prompt, opts);
+    }
+
+    throw new Error('local adapter not implemented until phase-4');
   }
 
   /** 10 秒內只打一次、90 秒後過期重打(phase-2.feature)。 */
   async probeOnline(): Promise<boolean> {
-    throw new Error('not implemented');
+    const now = this.now();
+    if (this.onlineCache && now - this.onlineCache.at < this.onlineProbeTtlMs) {
+      return this.onlineCache.value;
+    }
+
+    const value = await this.onlineProber();
+    this.onlineCache = { value, at: now };
+    return value;
   }
 
   /** 探測器丟錯也接住,回報 unavailable,不讓錯誤往外傳(phase-2.feature)。 */
   async probeLocal(): Promise<{ available: boolean; models: string[] }> {
-    throw new Error('not implemented');
+    try {
+      return await this.localProber();
+    } catch {
+      return { available: false, models: [] };
+    }
   }
 
   /** 契約 §11:LLM_LOCAL_MODEL 環境變數優先於 settings.llm.local_model。 */
   resolveLocalModel(): string | undefined {
-    throw new Error('not implemented');
+    return this.env.LLM_LOCAL_MODEL ?? this.settings.local_model;
   }
 }
 
