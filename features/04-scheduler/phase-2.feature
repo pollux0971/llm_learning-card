@@ -53,6 +53,13 @@ Feature: Failure, repetition and getting stuck
     Then the caller applies one fail transition
     And the history records both answers separately
 
+  Scenario: At stage two both questions passing advances the card once
+    Given a card at stage 2
+    When the fill answer passes and the apply answer passes
+    Then its stage becomes 3
+    And it is next due on 2026-10-10
+    And the history records both passing answers separately
+
   Scenario: Failing appends to the history
     Given a card at stage 2
     When it fails an apply question graded by the cloud

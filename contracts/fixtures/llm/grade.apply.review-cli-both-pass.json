@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "瀏覽器的同源政策為什麼要檢查連接埠",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[true,true],\"feedback\":\"兩個要點都有講到。\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

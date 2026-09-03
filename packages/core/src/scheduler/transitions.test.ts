@@ -35,7 +35,7 @@ describe('applyPassTransition', () => {
     [4, 5, '2027-03-09'],
   ] as [Stage, Stage, string][])('stage %i 通過後變 %i,下次到期 %s', (from, to, due) => {
     const review = reviewAtStage(from);
-    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'fill', grader: 'exact' });
+    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', answers: [{ type: 'fill', grader: 'exact' }] });
     expect(outcome.review.stage).toBe(to);
     expect(outcome.review.next_due).toBe(due);
     expect(outcome.events).toEqual([]);
@@ -43,7 +43,7 @@ describe('applyPassTransition', () => {
 
   it('通過 stage 5 之後歸檔:stage 6、沒有下次到期、emit archived', () => {
     const review = reviewAtStage(5);
-    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'apply', grader: 'cloud' });
+    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', answers: [{ type: 'apply', grader: 'cloud' }] });
     expect(outcome.review.stage).toBe(6);
     expect(outcome.review.next_due).toBeNull();
     expect(outcome.events).toEqual([{ type: 'archived', card: 'sec-0001' }]);
@@ -51,7 +51,7 @@ describe('applyPassTransition', () => {
 
   it('歷史記錄的 stage 是被考的那個 stage(推進前),不是推進後', () => {
     const review = reviewAtStage(2);
-    const outcome = applyPassTransition(review, { card: 'sec-0002', today: '2026-09-10', type: 'apply', grader: 'cloud' });
+    const outcome = applyPassTransition(review, { card: 'sec-0002', today: '2026-09-10', answers: [{ type: 'apply', grader: 'cloud' }] });
     expect(outcome.review.history).toEqual([
       { date: '2026-09-10', stage: 2, type: 'apply', pass: true, grader: 'cloud' },
     ]);
@@ -61,7 +61,7 @@ describe('applyPassTransition', () => {
     const review = reviewAtStage(1, {
       history: [{ date: '2026-09-01', stage: 1, type: 'fill', pass: false, grader: 'exact' }],
     });
-    const outcome = applyPassTransition(review, { card: 'sec-0003', today: '2026-09-10', type: 'fill', grader: 'exact' });
+    const outcome = applyPassTransition(review, { card: 'sec-0003', today: '2026-09-10', answers: [{ type: 'fill', grader: 'exact' }] });
     expect(outcome.review.history).toHaveLength(2);
     expect(outcome.review.history[0]).toEqual({ date: '2026-09-01', stage: 1, type: 'fill', pass: false, grader: 'exact' });
   });
@@ -69,7 +69,7 @@ describe('applyPassTransition', () => {
   it('不修改輸入物件,回傳新物件', () => {
     const review = reviewAtStage(1);
     const snapshot = JSON.stringify(review);
-    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'fill', grader: 'exact' });
+    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', answers: [{ type: 'fill', grader: 'exact' }] });
     expect(JSON.stringify(review)).toBe(snapshot);
     expect(outcome.review).not.toBe(review);
   });
@@ -82,10 +82,36 @@ describe('applyPassTransition', () => {
    */
   it('[phase-2,紅燈,尚未實作] 答對清空連錯數與 stuck,總錯數不變', () => {
     const review = reviewAtStage(3, { fails_in_row: 2, total_fails: 5, stuck: true });
-    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'apply', grader: 'cloud' });
+    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', answers: [{ type: 'apply', grader: 'cloud' }] });
     expect(outcome.review.fails_in_row).toBe(0);
     expect(outcome.review.total_fails).toBe(5);
     expect(outcome.review.stuck).toBe(false);
+  });
+
+  /**
+   * 11-review-cli/phase-1 審核發現的真 bug(REVIEW.md b482ec3):stage 2
+   * checkpoint 兩題都對時,04 舊介面(單一 type/grader)接不住兩筆答案。
+   * 這條測試對稱 applyFailTransition 那條「只回退一次,兩筆各自記 history」
+   * 的測試(見下方 describe('applyFailTransition') 裡「stage 2 同時考兩種
+   * 題型時只回退一次」),驗證通過側也一樣:只推進一次 stage、只算一次
+   * next_due,但兩筆答案各自 append 一條 history entry。
+   */
+  it('stage 2 兩題都過時只推進一次 stage,但兩筆答案都各自記進 history', () => {
+    const review = reviewAtStage(2);
+    const outcome = applyPassTransition(review, {
+      card: 'sec-0001',
+      today: '2026-09-10',
+      answers: [
+        { type: 'fill', grader: 'exact' },
+        { type: 'apply', grader: 'cloud' },
+      ],
+    });
+    expect(outcome.review.stage).toBe(3);
+    expect(outcome.review.next_due).toBe('2026-10-10');
+    expect(outcome.review.history).toEqual([
+      { date: '2026-09-10', stage: 2, type: 'fill', pass: true, grader: 'exact' },
+      { date: '2026-09-10', stage: 2, type: 'apply', pass: true, grader: 'cloud' },
+    ]);
   });
 });
 

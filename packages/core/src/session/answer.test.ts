@@ -5,6 +5,8 @@
  *   - A passing answer advances the schedule immediately
  *   - A failing answer returns the card immediately
  *   - A card at stage two is only resolved after both questions
+ *   - A card at stage two advances after both questions pass(新,見
+ *     features/11-review-cli/REVIEW.md 記錄的 bug;下一輪 answer.ts 實作前是紅燈)
  *   - A grading error leaves the card alone and keeps going
  *   - Answers land one at a time
  *
@@ -253,6 +255,59 @@ describe('submitAnswer — stage 2 checkpoint spans two questions', () => {
     expect(onDisk.history.map((h) => h.type).sort()).toEqual(['apply', 'fill']);
     expect(onDisk.history.every((h) => h.date === TODAY)).toBe(true);
     expect(session.queue).toHaveLength(0);
+    expect(session.current).toBeUndefined();
+  });
+});
+
+describe('submitAnswer — stage 2 checkpoint, both questions pass', () => {
+  /**
+   * 審核發現的真 bug(features/11-review-cli/REVIEW.md,commit b482ec3):兩題
+   * 都對這條最常見的成功路徑,舊的 04-scheduler 介面(單一 type/grader)接不住,
+   * answer.ts 目前直接 throw,讓整個 session 當掉。
+   *
+   * 04-scheduler 的 PassCtx 已經改成接受 answers[](見
+   * packages/core/src/scheduler/transitions.ts),但這裡的呼叫端(answer.ts)
+   * 還沒接上(見 answer.ts 的 TODO 註解)——這條測試現在預期是紅燈,下一輪
+   * 實作 answer.ts 之後應該轉綠,不改動這裡的斷言。
+   */
+  it('[紅燈,下一輪 answer.ts 才實作] advances the stage once and records both answers, instead of throwing', async () => {
+    const card = 'sec-0002';
+    const review: Review = {
+      stage: 2,
+      learned_at: '2026-09-01',
+      next_due: '2026-09-10',
+      fails_in_row: 0,
+      total_fails: 0,
+      stuck: false,
+      history: [],
+    };
+    const dir = makeLearningDir({ [card]: review });
+    const current = stage2Current(card);
+    const session = makeSession(dir, {
+      router: sequentialRouter([textResult(JSON.stringify({ criteria: [true, true], feedback: '兩個要點都有講到' }))]),
+      queue: [{ card, stage: 2, types: ['fill', 'apply'], overdue_days: 0, overdue_ratio: 0, stuck: false }],
+      totalDue: 1,
+      current,
+    });
+
+    const fillOutcome = await submitAnswer(session, '對');
+    expect(fillOutcome.status).toBe('partial');
+    expect(fillOutcome.cardDone).toBe(false);
+
+    const applyOutcome = await submitAnswer(session, '有講到重點,也沒有事實錯誤');
+
+    expect(applyOutcome.status).toBe('passed');
+    expect(applyOutcome.cardDone).toBe(true);
+    expect(applyOutcome.newStage).toBe(3);
+
+    const onDisk = readReviews(dir)[card]!;
+    expect(onDisk.stage).toBe(3);
+    expect(onDisk.history).toHaveLength(2);
+    expect(onDisk.history.map((h) => h.type).sort()).toEqual(['apply', 'fill']);
+    expect(onDisk.history.every((h) => h.pass === true && h.date === TODAY)).toBe(true);
+    expect(session.queue).toHaveLength(0);
+    expect(session.passed).toBe(1);
+    expect(session.failed).toBe(0);
     expect(session.current).toBeUndefined();
   });
 });

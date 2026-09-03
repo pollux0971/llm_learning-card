@@ -75,15 +75,19 @@ export function joinApplyLines(lines: string[]): string {
  *       shift 掉(這個 checkpoint 结束,即使沒有結果);回傳
  *       `{ status: 'error', pass: null, feedback, cardDone: true }`。
  *    b. 否則:overallPass = current.pendingAnswers.every(a => a.pass)。
- *       - overallPass 且 pendingAnswers.length === 1(stage 1/3/4/5 的一般情況)
- *         → 呼叫 applyPassTransition(review, { card, today: session.today,
- *         type: pendingAnswers[0].type, grader: pendingAnswers[0].grader })。
- *       - overallPass 且 pendingAnswers.length > 1(stage 2 兩題都過)→
- *         04 的 applyPassTransition 簽章只接受單一 type/grader,沒有「多題都過、
- *         只推進一次但歷史要記兩筆」的介面——這是已知的介面缺口,回報給使用者
- *         (見這個功能的完成報告),這裡先丟一個清楚的錯誤,不要猜一個可能是錯的
- *         行為。phase-1.feature 沒有測這個路徑(它的 stage-2 場景只測「fill 過、
- *         apply 沒過」這條失敗路徑),所以不影響驗收。
+ *       - overallPass(stage 1/3/4/5 的 pendingAnswers.length===1,或 stage 2
+ *         兩題都過的 pendingAnswers.length===2)→ 呼叫 applyPassTransition(review,
+ *         { card, today: session.today, answers: pendingAnswers })。04 的
+ *         PassCtx 已經對稱 FailCtx 改成接受 answers[](見
+ *         packages/core/src/scheduler/transitions.ts 與
+ *         features/11-review-cli/REVIEW.md 記錄的那個 bug),一次呼叫就能記多筆
+ *         history、只推進一次 stage。
+ *
+ *         [TODO,下一輪實作]:目前 pendingAnswers.length > 1 這條分支還沒接上——
+ *         下面暫時保留丟錯,避免在沒驗過的狀況下猜一個可能是錯的行為。
+ *         對應規格見 answer.test.ts「submitAnswer — stage 2 checkpoint, both
+ *         questions pass」與 phase-1.feature「A card at stage two advances
+ *         after both questions pass」(目前都是紅燈)。
  *       - !overallPass → 呼叫 applyFailTransition(review, { card,
  *         today: session.today, answers: current.pendingAnswers })
  *         (04 的 FailCtx.answers 本來就是設計成一次checkpoint 的多題結果,
@@ -136,10 +140,15 @@ export async function submitAnswer(session: Session, rawAnswer: string): Promise
   let outcome;
   if (overallPass && current.pendingAnswers.length === 1) {
     const answer = current.pendingAnswers[0]!;
-    outcome = applyPassTransition(asSchedulerReview(review), { card: current.card, today: session.today, type: answer.type, grader: answer.grader });
+    outcome = applyPassTransition(asSchedulerReview(review), { card: current.card, today: session.today, answers: [{ type: answer.type, grader: answer.grader }] });
   } else if (overallPass) {
+    // TODO(下一輪實作):04 的 PassCtx 現在已經接受 answers[](見上方 submitAnswer
+    // 文件註解與 transitions.ts),這裡應該改成
+    // applyPassTransition(asSchedulerReview(review), { card: current.card, today: session.today, answers: current.pendingAnswers })。
+    // 這輪(審核/規格)刻意不動這個分支的行為,只設計介面、寫測試——
+    // answer.test.ts 與 phase-1.feature 已經有對應的紅燈規格等下一輪轉綠。
     throw new Error(
-      `已知的 04-scheduler 介面缺口:applyPassTransition 只接受單一 type/grader,無法一次記錄卡片 ${current.card} 這次 checkpoint 的 ${current.pendingAnswers.length} 筆通過答案。見這次功能的完成報告。`,
+      `[TODO 下一輪實作] answer.ts 還沒接上 04 新版的 applyPassTransition({ answers }) 介面,無法記錄卡片 ${current.card} 這次 checkpoint 的 ${current.pendingAnswers.length} 筆通過答案。`,
     );
   } else {
     outcome = applyFailTransition(asSchedulerReview(review), { card: current.card, today: session.today, answers: current.pendingAnswers });

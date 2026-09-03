@@ -232,8 +232,7 @@ When('the pass transition is applied', function (this: LearningWorld) {
   const outcome = applyPassTransition(singleReview, {
     card: DEFAULT_CARD,
     today: this.today,
-    type: 'fill',
-    grader: 'exact',
+    answers: [{ type: 'fill', grader: 'exact' }],
   });
   lastOutcome = outcome;
   this.lastResult = outcome;
@@ -244,8 +243,7 @@ When('it passes a fill question graded exactly', function (this: LearningWorld) 
   lastOutcome = applyPassTransition(singleReview, {
     card: DEFAULT_CARD,
     today: this.today,
-    type: 'fill',
-    grader: 'exact',
+    answers: [{ type: 'fill', grader: 'exact' }],
   });
 });
 
@@ -278,6 +276,28 @@ When('the fill answer passes but the apply answer fails', function (this: Learni
     answers: [
       { type: 'fill', pass: true, grader: 'exact' },
       { type: 'apply', pass: false, grader: 'cloud' },
+    ],
+  });
+  lastOutcome = outcome;
+  this.lastResult = outcome;
+  singleReview = outcome.review;
+});
+
+/**
+ * 對稱上面的「the fill answer passes but the apply answer fails」——這是
+ * 11-review-cli/phase-1 審核發現的真 bug 的規格來源(REVIEW.md b482ec3):
+ * 兩題都過時,04 的舊介面接不住兩筆答案。跟 fail 側一樣呼叫 applyPassTransition
+ * 一次、answers 給兩筆,只推進一次 stage、history 各自記兩筆。
+ */
+When('the fill answer passes and the apply answer passes', function (this: LearningWorld) {
+  assert.ok(singleReview, '還沒有 Given 一張卡片');
+  this.trackInput(singleReview);
+  const outcome = applyPassTransition(singleReview, {
+    card: DEFAULT_CARD,
+    today: this.today,
+    answers: [
+      { type: 'fill', grader: 'exact' },
+      { type: 'apply', grader: 'cloud' },
     ],
   });
   lastOutcome = outcome;
@@ -471,6 +491,14 @@ Then('the history records both answers separately', function (this: LearningWorl
   assert.equal(entries.length, 2, `應該有兩筆 history,實際:${JSON.stringify(entries)}`);
   assert.deepEqual(entries[0], { date: this.today, stage: 2, type: 'fill', pass: true, grader: 'exact' });
   assert.deepEqual(entries[1], { date: this.today, stage: 2, type: 'apply', pass: false, grader: 'cloud' });
+});
+
+Then('the history records both passing answers separately', function (this: LearningWorld) {
+  assert.ok(lastOutcome);
+  const entries = lastOutcome.review.history;
+  assert.equal(entries.length, 2, `應該有兩筆 history,實際:${JSON.stringify(entries)}`);
+  assert.deepEqual(entries[0], { date: this.today, stage: 2, type: 'fill', pass: true, grader: 'exact' });
+  assert.deepEqual(entries[1], { date: this.today, stage: 2, type: 'apply', pass: true, grader: 'cloud' });
 });
 
 Then('a history entry records the failure with that grader', function () {

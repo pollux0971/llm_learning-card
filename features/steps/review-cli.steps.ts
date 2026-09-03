@@ -514,6 +514,62 @@ Then('the history contains both answers', function (this: LearningWorld) {
   );
 });
 
+// -------------------------------------------------------- scenario 8b:stage 2,兩題都對只推進一次
+//
+// [TODO 下一輪實作] answer.ts 目前對 pendingAnswers.length>1 且 overallPass 的
+// 分支還是 throw(見 answer.ts 的 TODO 註解)——這個場景現在預期是紅燈,規格見
+// features/11-review-cli/REVIEW.md。用獨立的 applyQuestion prompt(跟 scenario 8
+// 的「為什麼要重開瀏覽器?」不同)搭配新 fixture
+// grade.apply.review-cli-both-pass.json,避免跟既有的失敗 fixture 撞到
+// prompt_contains(FakeLlmRouter 用最長匹配決勝,共用同一個題目會撞到舊的 fail
+// fixture,見 fake-llm.ts)。
+
+Given('a card at stage 2 is being asked where both answers will pass', function (this: LearningWorld) {
+  const s = stateOf(this);
+  const card = 'sec-stage2-pass';
+  s.currentCard = card;
+  writeReviews(this, {
+    [card]: baseReview({
+      stage: 2,
+      learned_at: '2026-09-01',
+      next_due: this.today,
+      history: [],
+    }),
+  });
+  s.reviewsSnapshotBefore = readFileSync(reviewsPath(this), 'utf8');
+  s.session = {
+    learningDir: this.dir!,
+    today: this.today,
+    dailyCap: 10,
+    router: makeRouter(),
+    queue: [{ card, stage: 2, types: ['fill', 'apply'], overdue_days: 0, overdue_ratio: 0, stuck: false }],
+    reteachQueue: [],
+    totalDue: 1,
+    deferred: 0,
+    passed: 0,
+    failed: 0,
+    errors: 0,
+    current: {
+      card,
+      stage: 2,
+      overdueDays: 0,
+      overdueRatio: 0,
+      stuck: false,
+      types: ['fill', 'apply'],
+      typeIndex: 0,
+      fillQuestion: { prompt: '答案是 ___。', answers: [['對']] },
+      applyQuestion: { prompt: '瀏覽器的同源政策為什麼要檢查連接埠?', rubric: ['有講到重點', '沒有事實錯誤'] },
+      pendingAnswers: [],
+      hadError: false,
+    } satisfies CurrentQuestion,
+  };
+});
+
+When('the apply question is answered correctly', async function (this: LearningWorld) {
+  const s = stateOf(this);
+  s.outcome = await submitAnswer(s.session!, '因為連接埠不同就不算同源,要避免跨站資料外洩');
+});
+
 // ---------------------------------------------------------------- scenario 9:grading 錯誤
 
 Given('the grader returns an error result for the current question', function (this: LearningWorld) {
