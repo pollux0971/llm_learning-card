@@ -2,7 +2,7 @@ import { closeSync, fsyncSync, mkdtempSync, openSync, readdirSync, readFileSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { writeFileAtomic } from './atomic-write.js';
+import { appendLineAtomic, writeFileAtomic } from './atomic-write.js';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
@@ -95,5 +95,90 @@ describe('writeFileAtomic', () => {
     dir = mkdtempSync(join(tmpdir(), 'lc-atomic-'));
     expect(() => writeFileAtomic(join(dir, 'missing', 'x.json'), 'x')).toThrow();
     expect(readdirSync(dir)).toEqual([]);
+    // 目錄不存在時,清暫存檔那步要先短路離開(見 cleanupStrayTmp 的 existsSync 檢查),
+    // 讓真正的錯誤來自後面的 openSync,而不是先在 readdirSync 一個不存在的目錄就爆掉。
+    expect(openSync).toHaveBeenCalled();
+  });
+
+  it('cleans up a stray tmp file left by an interrupted previous write', () => {
+    dir = mkdtempSync(join(tmpdir(), 'lc-atomic-'));
+    const target = join(dir, 'reviews.json');
+    writeFileSync(target, '{"sec-0001":{}}');
+    // 模擬上次寫入在 rename 前中斷:tmp 檔留在同目錄。
+    const stray = join(dir, '.reviews.json.12345.999.tmp');
+    writeFileSync(stray, 'half-written garbage');
+    expect(readdirSync(dir).sort()).toEqual(['.reviews.json.12345.999.tmp', 'reviews.json']);
+
+    writeFileAtomic(target, '{"sec-0001":{},"sec-0002":{}}');
+
+    expect(readFileSync(target, 'utf8')).toBe('{"sec-0001":{},"sec-0002":{}}');
+    expect(readdirSync(dir)).toEqual(['reviews.json']);
+  });
+
+  it('does not touch a stray tmp file belonging to a different target file', () => {
+    dir = mkdtempSync(join(tmpdir(), 'lc-atomic-'));
+    const target = join(dir, 'reviews.json');
+    const otherStray = join(dir, '.weekly.json.1.2.tmp');
+    writeFileSync(otherStray, 'not mine');
+
+    writeFileAtomic(target, '{}');
+
+    expect(readdirSync(dir).sort()).toEqual(['.weekly.json.1.2.tmp', 'reviews.json']);
+  });
+});
+
+describe('appendLineAtomic', () => {
+  it('appends a single line with a trailing newline to a new file', () => {
+    dir = mkdtempSync(join(tmpdir(), 'lc-append-'));
+    const target = join(dir, 'log.jsonl');
+
+    appendLineAtomic(target, '{"ts":"2026-09-02T00:00:00Z","type":"learned","card":"sec-0001"}');
+
+    expect(readFileSync(target, 'utf8')).toBe('{"ts":"2026-09-02T00:00:00Z","type":"learned","card":"sec-0001"}\n');
+  });
+
+  it('does not add a second newline when the line already ends with one', () => {
+    dir = mkdtempSync(join(tmpdir(), 'lc-append-'));
+    const target = join(dir, 'log.jsonl');
+
+    appendLineAtomic(target, '{"a":1}\n');
+
+    expect(readFileSync(target, 'utf8')).toBe('{"a":1}\n');
+  });
+
+  it('appends multiple lines in order without interleaving or truncating', () => {
+    dir = mkdtempSync(join(tmpdir(), 'lc-append-'));
+    const target = join(dir, 'log.jsonl');
+
+    appendLineAtomic(target, '{"n":1}');
+    appendLineAtomic(target, '{"n":2}');
+    appendLineAtomic(target, '{"n":3}');
+
+    const lines = readFileSync(target, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines.map((l) => JSON.parse(l))).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+  });
+
+  it('preserves an existing line when appending a new one', () => {
+    dir = mkdtempSync(join(tmpdir(), 'lc-append-'));
+    const target = join(dir, 'log.jsonl');
+    writeFileSync(target, '{"n":1}\n');
+
+    appendLineAtomic(target, '{"n":2}');
+
+    expect(readFileSync(target, 'utf8')).toBe('{"n":1}\n{"n":2}\n');
+  });
+
+  it('fsyncs and closes the file descriptor exactly once', () => {
+    dir = mkdtempSync(join(tmpdir(), 'lc-append-'));
+    const target = join(dir, 'log.jsonl');
+
+    appendLineAtomic(target, '{"a":1}');
+
+    const fd = openedFd();
+    expect(fsyncSync).toHaveBeenCalledTimes(1);
+    expect(fsyncSync).toHaveBeenCalledWith(fd);
+    expect(closeSync).toHaveBeenCalledTimes(1);
+    expect(closeSync).toHaveBeenCalledWith(fd);
   });
 });

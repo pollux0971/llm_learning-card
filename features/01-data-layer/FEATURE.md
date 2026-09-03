@@ -58,7 +58,7 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | schema、卡片驗證器、字數、init、fixtures | Wave 0 | done | 2026-09-02 |
-| 2 | 考題、狀態檔、log、設定檔 | I1 | in-progress | |
+| 2 | 考題、狀態檔、log、設定檔 | I1 | 待協調者驗收 | |
 | 3 | 依賴圖、循環偵測、拓樸排序 | I1 | todo | |
 
 ## 驗收方式
@@ -93,3 +93,33 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
   - `features/01-data-layer/phase-1.feature` 最後一個 Scenario 的期望值 26 → 23,原因同上。
   - `contracts/fixtures/cards/invalid-body-101-words.md` 的 body 原本實際是 123 個字,不是檔名寫的
     101,已裁到剛好 101(用同一套逐字元演算法驗證過)。
+
+### phase-2
+
+- **`phase-2.feature` 的一句話改了(已直接修,不算範圍變更)**:「A newly learned card gets the
+  contract's initial state」那個 Scenario 裡,`Then its stage is 1` 改成 `Then the initial stage is 1`。
+  原因:`its stage is {int}` 這句 04-scheduler 的 `features/steps/scheduler.steps.ts:164` 已經先定義了
+  (它讀模組內部的 `singleReview` 變數,跟我這裡的 `this.lastResult`(`createInitialReview` 的回傳值)
+  是完全不同的兩件事)。cucumber 的 step 是全域註冊,不分 tag,兩邊字面完全相同就會變成
+  ambiguous——我親自跑過 `--dry-run` 驗證過:不改的話,不只我這個 scenario 會炸,04-scheduler
+  自己 phase-2 的「Failing returns the card to the first checkpoint」也會跟著炸(用得到同一句)。
+  這是唯一動到的一行,語意沒變,只是文字換了讓兩邊步驟不撞名。
+- **潛在的未來字面撞名(還沒發生,先提醒)**:04-scheduler 的 `phase-2.feature` 裡已經有
+  `stuck is false`、`the consecutive count is {int}` 這類字眼,現在 `features/steps/scheduler.steps.ts`
+  還沒實作到那幾句,所以目前是我在 `features/steps/data-layer.steps.ts` 定義的
+  `Then('stuck is false', ...)`(讀 `this.lastResult as Review`)先頂著跑,不會 ambiguous。
+  等 04-scheduler 的 worker 寫到那幾句時,如果他們的 `SchedulerOutcome.review.stuck` 也想用一模一樣
+  的文字,會跟我這句撞名——屆時要嘛他們直接沿用我這個(如果 `this.lastResult` 型別對得上),
+  要嘛需要把這句拉進 `common.steps.ts`(只有協調者能改)。先在這裡點名,免得日後 debug 半天。
+- **`standalone.json`(共用檔,不自己改)建議加第二個驗證入口**:phase-2 新增了好幾個獨立可執行的
+  CLI 子指令(`validate-question` / `validate-review` / `validate-log` / `validate-category` /
+  `validate-settings` / `check-questions`,都在 `packages/core/src/schema/cli.ts`)。目前
+  `standalone.json` 裡 `01-data-layer` 只有一條(phase-1 的 `validate`)。建議加一條,例如:
+  ```json
+  "01-data-layer-questions": {
+    "cmd": "npx tsx packages/core/src/schema/cli.ts validate-question contracts/fixtures/questions/valid-basic.yaml",
+    "interactive": false,
+    "expect": "OK"
+  }
+  ```
+  (對應的 fixture 檔還沒建,一起交給協調者決定要不要連 `contracts/fixtures/questions/` 一起補。)
