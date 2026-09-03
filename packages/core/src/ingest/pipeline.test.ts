@@ -297,6 +297,34 @@ describe('runIngestPipeline', () => {
     expect(result.depsOrder.length).toBeGreaterThan(0);
   });
 
+  // ---------------------------------------------------------------- message 語意
+  //
+  // REVIEW.md §7.6 第 1 點:runIngest() 的 message 只算 level 0 卡,而 CLI 另外
+  // 自己算了一個含子卡的張數,兩個數字背靠背印出來互相矛盾。runIngestPipeline()
+  // 回傳的 message 必須反映這條管線真的建立的全部卡片(level 0 + 子卡),
+  // 「這次建了幾張卡」才只有一個答案。runIngest() 自己的 message 語意不變
+  // (它本來就只做 level 0),見 ingest.test.ts。
+
+  it('message 是 level 0 卡加子卡的總數,不留下只算 level 0 的舊數字', async () => {
+    const router = scriptedRouter({ levelZeroCount: 3, childCountPerParent: 2 });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
+
+    expect(result.cardsCreated).toHaveLength(3);
+    expect(result.childrenCreated).toHaveLength(6);
+    expect(result.message).toBe('建立了 9 張卡');
+    // 只算 level 0 的那個數字不能還留在訊息裡——那正是誤導操作者的第二個數字。
+    expect(result.message).not.toContain('3 張卡');
+  });
+
+  it('沒有子卡時 message 不變:仍然只是 level 0 的張數(回歸)', async () => {
+    const router = scriptedRouter({ levelZeroCount: 3, childrenBatchFails: true });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
+
+    expect(result.cardsCreated).toHaveLength(3);
+    expect(result.childrenCreated).toEqual([]);
+    expect(result.message).toBe('建立了 3 張卡');
+  });
+
   it('整批子卡生成失敗:記警告後略過,level 0 卡與考題仍照常完成,依賴圖只涵蓋 level 0 卡', async () => {
     const router = scriptedRouter({ levelZeroCount: 3, childrenBatchFails: true });
     const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
