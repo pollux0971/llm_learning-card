@@ -11,6 +11,7 @@
  * 互動模式:presentNextCard → node:readline 收輸入 → submitAnswer,循環直到
  * 'done',結束時印 renderSummary。填空單行(逗號分隔)、應用多行(空行結束)。
  */
+import './_env.js';
 import { createInterface } from 'node:readline/promises';
 import { resolve } from 'node:path';
 import { FakeLlmRouter, loadFixturesFromDir } from '../packages/core/src/grading/index.js';

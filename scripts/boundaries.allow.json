@@ -33,5 +33,15 @@
     "from": "11-review-cli",
     "to": "05-grading",
     "reason": "phase-1 是組合層,session/answer.ts 呼叫 05 的 gradeFillQuestion/gradeApply 審核作答,scripts/review.ts 用 05 的 FakeLlmRouter 當預設 router(跟 scripts/grade.ts 同一個模式)"
+  },
+  {
+    "from": "02-ingest-pipeline",
+    "to": "infra",
+    "reason": "scripts/ingest.ts 補上 ADR-034 原本就決定的 .env 載入(只在 CLI 入口),之前沒設環境變數會直接丟沒有前後文的 MissingCredentialError stack trace。共用的 guarded process.loadEnvFile 抽到 scripts/_env.ts,side-effect import,跟 scripts/llm.ts 現有的做法一致"
+  },
+  {
+    "from": "11-review-cli",
+    "to": "infra",
+    "reason": "scripts/review.ts 同上,補 ADR-034 的 .env 載入,side-effect import scripts/_env.ts"
   }
 ]

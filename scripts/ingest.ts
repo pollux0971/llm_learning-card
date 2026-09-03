@@ -30,6 +30,7 @@
  *
  * 退出碼:0 成功(含「已經處理過」);1 失敗(空檔案、找不到檔案、離線)。
  */
+import './_env.js';
 import { mkdirSync, copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { parse as yamlParse } from 'yaml';

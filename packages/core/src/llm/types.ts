@@ -31,7 +31,7 @@ export interface LlmResult {
 }
 
 export interface LlmRouter {
-  call(task: LlmTask, prompt: string, opts?: { timeoutMs?: number }): Promise<LlmResult>;
+  call(task: LlmTask, prompt: string, opts?: { timeoutMs?: number; maxTokens?: number }): Promise<LlmResult>;
   probeOnline(): Promise<boolean>;
   probeLocal(): Promise<{ available: boolean; models: string[] }>;
 }
@@ -50,10 +50,17 @@ export interface CloudAdapterCallArgs {
   model: string;
   apiKey: string;
   signal: AbortSignal;
+  /** 每任務上限(見 token-limits.ts),取代 adapter 內寫死的常數 */
+  maxTokens: number;
 }
 
-/** LlmResult 扣掉 provisional——那是 router 依路由表決定的,不是 adapter 該知道的 */
-export type CloudAdapterResult = Omit<LlmResult, 'provisional'>;
+/**
+ * LlmResult 扣掉 provisional——那是 router 依路由表決定的,不是 adapter 該知道的。
+ * `truncated` 由 adapter 依 provider 自己的截斷訊號設定
+ * (openai: `finish_reason==='length'`;anthropic: `stop_reason==='max_tokens'`)。
+ * router.ts 看到 true 就丟 OutputTruncatedError,不回傳 text。
+ */
+export type CloudAdapterResult = Omit<LlmResult, 'provisional'> & { truncated?: boolean };
 
 export interface CloudAdapter {
   call(args: CloudAdapterCallArgs): Promise<CloudAdapterResult>;

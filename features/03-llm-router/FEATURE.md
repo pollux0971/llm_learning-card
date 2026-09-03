@@ -88,6 +88,41 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 - 雲端逾時 60 秒是否太長?先這樣,用了再調。
 - token 用量要不要做 UI?先只 log。
 
+## i1-integration-fix:真的呼叫 gpt-5.6-luna 生成卡片時發現的洞(截斷)
+
+真的打 API 才發現:openai adapter 的 `MAX_COMPLETION_TOKENS` 寫死 1024,長回應被切斷。
+這次剛好切在 JSON 中間才被抓到——如果切在別的地方,JSON 可能仍合法,會得到一張**少字的卡,
+而且測試全綠**。這輪(測試/審核 agent)只定介面 + 補測試,不碰真的 SDK,分工:
+
+- **已完成(這輪,測試綠燈)**:
+  - `errors.ts`:新增 `OutputTruncatedError`(`code='OUTPUT_TRUNCATED'`,帶 `task` / `maxTokens` / `tokensOut`)。
+  - `types.ts`:`CloudAdapterCallArgs` 加 `maxTokens: number`;`CloudAdapterResult` 加
+    `truncated?: boolean`(adapter 自己判斷、router 看這個欄位決定要不要丟錯,不是 adapter 直接丟)。
+  - `token-limits.ts`(新檔案,跟 `routing.ts` 放一起、故意不共用同一個檔案,避免動到
+    `routing.ts` 既有的嚴格 95% 變異門檻):`TASK_MAX_TOKENS`,7 個 task 各自的上限。
+  - `router.ts` 的 `call()`:`opts.maxTokens ?? TASK_MAX_TOKENS[task]` 查表後傳給 adapter;
+    adapter 回傳 `truncated: true` 就丟 `OutputTruncatedError`(不回傳 text),並且 log 一筆
+    `llm_call` 事件帶 `truncated: true` / `max_tokens` / `tokens_out`,跟現有 `LlmTimeoutError`
+    的 catch 邏輯同一個模式。
+  - `LlmRouter.call()` 簽章(契約 §7 軟約定)加 `opts?.maxTokens`,`contracts/types.md` 已同步。
+  - 測試:`router.test.ts`(用假 adapter 驗證截斷丟錯 + log + 每任務查表 + `opts.maxTokens`
+    覆蓋表格值)、`token-limits.test.ts`(7 個 task 都有、`ingest.cards >= 4096` 回歸鎖)。
+- **留給下一輪開發 agent(真的碰 SDK,未實作,已在檔案內留 TODO 註解)**:
+  - `adapters/openai.ts`:`max_completion_tokens` 從寫死的常數改用 `args.maxTokens`;
+    `response.choices[0]?.finish_reason === 'length'` 時回傳的結果加 `truncated: true`。
+  - `adapters/anthropic.ts`:同上,`max_tokens` 改用 `args.maxTokens`;
+    `response.stop_reason === 'max_tokens'` 時加 `truncated: true`。
+  - 這兩個檔案的邏輯不需要新測試——`router.test.ts` 用假 adapter 已經把 router.ts 這半的行為鎖住,
+    adapter 端做完後用 `@llm`/`@manual` 手動打一次真的 API 確認 `finish_reason`/`stop_reason` 有正確映射即可。
+
+**`.env` 沒有在 CLI 入口載入的洞**:ADR-034 原意是「所有 `scripts/*.ts` 入口都要載入 `.env`」,
+但只有 `scripts/llm.ts` 真的做了,`scripts/ingest.ts`/`scripts/review.ts` 沒有,沒設環境變數時
+直接丟一個沒有前後文的 `MissingCredentialError` stack trace。已抽成 `scripts/_env.ts`
+(guarded `process.loadEnvFile('.env')`,檔案不存在吞掉錯誤),`ingest.ts`/`review.ts` 開頭
+`import './_env.js'`。`scripts/check-boundaries.ts` 的 `OWNERS` 加了 `scripts/_env.ts`(`infra`),
+`boundaries.allow.json` 加了 `02-ingest-pipeline → infra`、`11-review-cli → infra` 兩條。
+純 CLI 入口的 side effect,沒有寫測試(跟 `scripts/llm.ts` 原本的做法一致)。
+
 ## 待協調
 
 - **`cucumber.js`(共用檔,worker 不能自己改)有 bug,擋住所有功能的 `npm run accept:standalone` /
