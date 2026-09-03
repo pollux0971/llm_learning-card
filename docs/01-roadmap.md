@@ -70,7 +70,7 @@ graph TD
 |---|---|
 | 01-data-layer/phase-2 | 考題、狀態檔、設定檔格式、原子寫入 |
 | 01-data-layer/phase-3 | 依賴圖與拓樸排序 |
-| 03-llm-router/phase-2 | 本機 + 路由表 |
+| 03-llm-router/phase-2 | 路由表 + 線上偵測(本機 adapter 延到 phase-4,ADR-037) |
 | 02-ingest-pipeline/phase-2 | 考題、level 1、依賴圖 |
 
 **整合工作**:02 丟掉自己的 FakeLlmRouter 改用 03;02 與 09 改用 01 的驗證器。
@@ -157,11 +157,15 @@ graph TD
 
 | 需要的 phase | 說明 |
 |---|---|
-| 03-llm-router/phase-3 | provisional 佇列 |
-| 05-grading/phase-3 | 離線審核、複審修正、縮短版生成 |
+| 03-llm-router/phase-3 | provisional 佇列(gate:使用者決定裝本機模型,ADR-037,可能延後 I6 本身) |
+| 03-llm-router/phase-4 | 本機 adapter(gate 同上) |
+| 05-grading/phase-3 | 離線審核、複審修正、縮短版生成(離線審核那部分同樣依賴本機模型,gate 同上) |
 | 09-lint/phase-2 | 複審、stuck、重生 |
 
 **整合工作**:09 丟掉自己的最小驗證器改用 01 的完整版。
+
+**注意**:這個整合點的「斷網一天照用」情境依賴本機模型。ADR-037 決定本機模型延後,
+所以 I6 本身可能要等使用者決定裝本機模型才能真正驗收——09-lint 那部分不受影響,可以先做。
 
 **驗收**:[i6-maintenance.feature](integration/i6-maintenance.feature)
 

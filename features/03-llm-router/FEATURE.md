@@ -8,10 +8,10 @@
 
 - 契約 §7 的 `LlmRouter` 實作
 - 雲端 adapter:Anthropic、OpenAI
-- 本機 adapter:Ollama HTTP API
-- 網路與本機可用性偵測(含 60 秒快取)
-- 路由表(契約 §7 的權威表)
-- provisional 標記與複審佇列
+- 本機 adapter:Ollama HTTP API(**ADR-037 延後到 phase-4,gate 是使用者決定裝本機模型**)
+- 網路可用性偵測(含 60 秒快取);本機可用性偵測的邏輯在 phase-2 寫,但固定回傳 unavailable(沒有本機模型可偵測)
+- 路由表(契約 §7 的權威表)——phase-2 用注入的 online/local 布林值測滿,不依賴真的本機模型
+- provisional 標記與複審佇列(phase-3,gate 同上延後)
 - 每次呼叫寫 log
 
 ## 不在範圍
@@ -37,7 +37,8 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 | 後續 phase | 需要 | 原因 |
 |---|---|---|
 | phase-2 | 自身 phase-1 | 路由建立在介面上 |
-| phase-3 | 自身 phase-2、I5 通過 | provisional 只在真的離線用過才有意義 |
+| phase-3 | 自身 phase-2、**使用者決定裝本機模型**(ADR-037) | provisional 只在真的有本機模型可用時才有意義 |
+| phase-4 | 自身 phase-2、**使用者決定裝本機模型**(ADR-037) | 本機 adapter 沒有本機模型可以對,寫了也測不了真的 |
 
 ## Wave 0 的重複
 
@@ -60,8 +61,9 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | 介面、雲端 adapter、log、逾時 | Wave 0 | done | 2026-09-02 |
-| 2 | 本機 adapter、離線偵測、路由表 | I1 | todo | |
-| 3 | provisional 標記與複審佇列 | I6 | todo | |
+| 2 | 離線偵測、路由表(本機永遠回 unavailable) | I1 | todo | |
+| 3 | provisional 標記與複審佇列 | I6 | todo(gate 延後,見 NEXT.md) | |
+| 4 | 本機 adapter(真的呼叫本機模型) | 無(見 NEXT.md) | todo(gate 延後,見 NEXT.md) | |
 
 ## 驗收方式
 
