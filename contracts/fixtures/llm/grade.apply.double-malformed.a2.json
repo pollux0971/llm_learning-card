@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "DOUBLE_MALFORMED_TEST",
+  "attempt": 2,
+  "response": {
+    "text": "第二次還是沒辦法給出結構化的判斷。",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

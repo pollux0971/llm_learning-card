@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "LONG_FEEDBACK_TEST",
+  "attempt": 1,
+  "response": {
+    "text": "{\"criteria\":[true,true,true],\"feedback\":\"這段回饋刻意寫得很長用來測試契約規定的四十字上限是否真的會被截斷並且記錄一筆警告事件到記錄檔案裡供除錯使用還多補幾個字湊\"}",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}

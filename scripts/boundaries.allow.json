@@ -13,5 +13,10 @@
     "from": "03-llm-router",
     "to": "01-data-layer",
     "reason": "router.ts 的 log.jsonl 寫入換成 01 的 recordEvent()(§10/§11b 原子寫入 + schema 驗證的正式實作),取代 Wave 0 的 log-min.ts,清掉 FEATURE.md「Wave 0 的重複」表列的技術債"
+  },
+  {
+    "from": "05-grading",
+    "to": "01-data-layer",
+    "reason": "grade-apply.ts 的 log.jsonl 寫入用 01 的 recordEvent()(§10/§11b 原子寫入),feedback 字數上限用 01 的 countWords()(契約 §2 的權威演算法),不重新發明兩邊都已經有正式實作的東西"
   }
 ]

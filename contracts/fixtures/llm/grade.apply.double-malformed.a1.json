@@ -1,0 +1,9 @@
+{
+  "task": "grade.apply",
+  "prompt_contains": "DOUBLE_MALFORMED_TEST",
+  "attempt": 1,
+  "response": {
+    "text": "嗯我想一下,這題應該是及格的吧。",
+    "provider": "fake", "model": "recorded", "latency_ms": 0, "provisional": false
+  }
+}
