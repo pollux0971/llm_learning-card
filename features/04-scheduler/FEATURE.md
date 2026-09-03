@@ -56,7 +56,7 @@ npx tsx scripts/due.ts --simulate --days 200 --new-per-day 2
 |---|---|---|---|---|
 | 1 | 固定骨架、到期清單、題型對應 | Wave 0 | done | 2026-09-02 |
 | 2 | 錯誤回退、連錯、stuck、reteach | I2 | done | 2026-09-03 |
-| 3 | 每日上限、逾期比例優先序 | I2 | todo | |
+| 3 | 每日上限、逾期比例優先序 | I2 | in-progress | |
 
 ## 驗收方式
 
