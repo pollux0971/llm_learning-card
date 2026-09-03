@@ -283,7 +283,7 @@ Then('each blank is graded separately', function (this: LearningWorld) {
   assert.match(s.outcome!.feedback, /2/);
 });
 
-Then('the result is shown with feedback', function (this: LearningWorld) {
+Then('the fill-question feedback is shown', function (this: LearningWorld) {
   const s = stateOf(this);
   assert.ok(s.outcome!.feedback.length > 0);
 });
@@ -549,7 +549,7 @@ Given('the grader returns an error result for the current question', function (t
   };
 });
 
-When('the result is handled', async function (this: LearningWorld) {
+When('the grading error is handled', async function (this: LearningWorld) {
   const s = stateOf(this);
   s.outcome = await submitAnswer(s.session!, '一些回答');
 });

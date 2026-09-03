@@ -33,7 +33,7 @@ Feature: A usable review session in the terminal
     Given the current question is a fill question with three blanks
     When the person enters three answers separated by commas
     Then each blank is graded separately
-    And the result is shown with feedback
+    And the fill-question feedback is shown
 
   Scenario: An apply question is answered across several lines
     Given the current question is an apply question
@@ -61,7 +61,7 @@ Feature: A usable review session in the terminal
 
   Scenario: A grading error leaves the card alone and keeps going
     Given the grader returns an error result for the current question
-    When the result is handled
+    When the grading error is handled
     Then no transition is written for that card
     And the session reports that grading failed
     And the session continues to the next question
