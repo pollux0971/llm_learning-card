@@ -3,3 +3,4 @@ export * from './dates.js';
 export * from './intervals.js';
 export * from './transitions.js';
 export * from './due.js';
+export * from './select.js';

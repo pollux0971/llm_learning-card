@@ -11,16 +11,24 @@ import {
   applyLearnedTransition,
   applyPassTransition,
   buildDueList,
+  computeOverdueRatio,
+  intervalDaysForStage,
   questionTypesForStage,
+  selectSession,
+  simulateSteadyState,
 } from '../../packages/core/src/scheduler/index.js';
 import type {
   CardId,
   DueItem,
   Grader,
   IsoDate,
+  OverdueCtx,
   QuestionType,
   Review,
+  SchedulableCard,
   SchedulerOutcome,
+  SelectResult,
+  SimulationReport,
   Stage,
 } from '../../packages/core/src/scheduler/index.js';
 
@@ -49,6 +57,25 @@ let reviewState: Record<CardId, Review> | undefined;
 // phase-2:「stage 2 兩題都考」場景用來確認「只回退一次」——記下呼叫前的連錯數。
 let failsInRowBeforeMultiAnswer: number | undefined;
 
+// ---------------------------------------------------------------- phase-3
+let dailyCap: number | undefined;
+let selectDueCards: SchedulableCard[] | undefined;
+let selectDueCardsSnapshot: string | undefined;
+let selectReteach: CardId[] | undefined;
+let selectResult: SelectResult | undefined;
+let selectError: Error | undefined;
+let overdueCardCtx: OverdueCtx | undefined;
+let overdueToday: IsoDate | undefined;
+let overdueRatioResult: number | undefined;
+let simulationReport: SimulationReport | undefined;
+// 「Deferred cards are one day more overdue tomorrow」場景:day1/day2 的到期清單與
+// 「被順延的卡片 id」,給兩個 Then 分別斷言用。
+let rolloverReviews: Record<CardId, Review> | undefined;
+let rolloverDay1: IsoDate | undefined;
+let rolloverDay1Cards: SchedulableCard[] | undefined;
+let rolloverDay2Cards: SchedulableCard[] | undefined;
+let rolloverDeferredIds: CardId[] | undefined;
+
 Before(function () {
   singleReview = undefined;
   learnedAt = undefined;
@@ -57,7 +84,54 @@ Before(function () {
   requestedTypes = undefined;
   reviewState = undefined;
   failsInRowBeforeMultiAnswer = undefined;
+
+  dailyCap = undefined;
+  selectDueCards = undefined;
+  selectDueCardsSnapshot = undefined;
+  selectReteach = undefined;
+  selectResult = undefined;
+  selectError = undefined;
+  overdueCardCtx = undefined;
+  overdueToday = undefined;
+  overdueRatioResult = undefined;
+  simulationReport = undefined;
+  rolloverReviews = undefined;
+  rolloverDay1 = undefined;
+  rolloverDay1Cards = undefined;
+  rolloverDay2Cards = undefined;
+  rolloverDeferredIds = undefined;
 });
+
+/** 逾期比例:day.late / 間隔天數(intervals.ts 的權威表,不重新發明數字)。用在
+ * Given 步驟裡組裝 fixture,跟被測的 computeOverdueRatio 分開,避免用「還沒實作」
+ * 的函式去建立測試資料、把設定階段也一起弄紅。 */
+function ratioForStageAndLateDays(stage: Stage, daysLate: number): number {
+  return daysLate / intervalDaysForStage(stage);
+}
+
+function makeDueCard(id: CardId, overrides: Partial<SchedulableCard> = {}): SchedulableCard {
+  return {
+    card: id,
+    stage: 1,
+    types: questionTypesForStage(1),
+    overdue_days: 1,
+    overdue_ratio: 1,
+    stuck: false,
+    learned_at: '2026-01-01',
+    ...overrides,
+  };
+}
+
+/** N 張卡,overdue_ratio 依序遞減,只用在「幾張卡到期」這類不在乎排序理由的場景。 */
+function makeDueCards(n: number): SchedulableCard[] {
+  return Array.from({ length: n }, (_, i) =>
+    makeDueCard(`sec-${String(i + 1).padStart(4, '0')}`, { overdue_ratio: n - i }),
+  );
+}
+
+function toSchedulableCards(items: DueItem[], reviews: Record<CardId, Review>): SchedulableCard[] {
+  return items.map((item) => ({ ...item, learned_at: reviews[item.card]!.learned_at }));
+}
 
 /** fill 用 exact,apply 用 cloud——跟契約 §5 的 Grader 分組一致,只是預設值。 */
 function defaultGraderFor(type: QuestionType): Grader {
@@ -424,4 +498,224 @@ Then(/^the resulting consecutive count is (\d+)$/, function (after: string) {
 Then(/^the outcomes stuck flag is (true|false)$/, function (stuckAfter: string) {
   assert.ok(lastOutcome);
   assert.equal(lastOutcome.review.stuck, stuckAfter === 'true');
+});
+
+// ============================================================ phase-3
+// 每日上限、逾期比例優先序。對照 features/04-scheduler/phase-3.feature 的 10
+// 個場景。selectSession / computeOverdueRatio / simulateSteadyState 這一輪
+// 全部 throw not implemented(select.ts),所以這裡的場景現在會是紅的——
+// 這是設計/測試輪的預期狀態,留給下一輪實作。
+
+// ---------------------------------------------------------------- Given
+
+Given('the daily cap is {int}', function (cap: number) {
+  dailyCap = cap;
+});
+
+// 涵蓋「15 cards are due today」「8 cards are due」「10 cards are due」等說法。
+Given(/^(\d+) cards are due(?: today)?$/, function (n: string) {
+  selectDueCards = makeDueCards(Number(n));
+});
+
+Given(/^a card at stage (\d+) that is (\d+) days late$/, function (stage: string, late: string) {
+  const s = Number(stage) as Stage;
+  const today = '2026-09-10';
+  overdueToday = today;
+  overdueCardCtx = { stage: s, next_due: addIsoDays(today, -Number(late)) };
+});
+
+Given('a card due today', function (this: LearningWorld) {
+  overdueToday = this.today;
+  overdueCardCtx = { stage: 1, next_due: this.today };
+});
+
+Given('the following due cards:', function (table: DataTable) {
+  selectDueCards = table.hashes().map((row) => {
+    const stage = Number(row.stage) as Stage;
+    const daysLate = Number(row.days_late);
+    return makeDueCard(row.id!, {
+      stage,
+      types: questionTypesForStage(stage),
+      overdue_days: daysLate,
+      overdue_ratio: ratioForStageAndLateDays(stage, daysLate),
+    });
+  });
+});
+
+Given('two stage one cards both one day late', function () {
+  selectDueCards = [
+    makeDueCard('sec-0001', { overdue_days: 1, overdue_ratio: ratioForStageAndLateDays(1, 1) }),
+    makeDueCard('sec-0002', { overdue_days: 1, overdue_ratio: ratioForStageAndLateDays(1, 1) }),
+  ];
+});
+
+Given('the first was learned earlier than the second', function () {
+  assert.ok(selectDueCards && selectDueCards.length === 2, '還沒有 Given 兩張卡片');
+  selectDueCards[0]!.learned_at = '2026-01-01';
+  selectDueCards[1]!.learned_at = '2026-02-01';
+});
+
+Given(/^(\d+) cards are queued for reteach$/, function (n: string) {
+  selectReteach = Array.from({ length: Number(n) }, (_, i) => `rte-${String(i + 1).padStart(4, '0')}`);
+});
+
+Given(/^(\d+) cards were due today and (\d+) were selected$/, function (this: LearningWorld, dueCount: string, _selectedCount: string) {
+  const n = Number(dueCount);
+  const reviews: Record<CardId, Review> = {};
+  for (let i = 1; i <= n; i++) {
+    const id = `sec-${String(i).padStart(4, '0')}`;
+    reviews[id] = {
+      stage: 1,
+      // learned_at 依序遞增,讓比例相同時打平手的順序是確定的(見「the first
+      // was learned earlier」那句同樣的邏輯:早學的排前面 → 晚學的先被順延)。
+      learned_at: addIsoDays('2026-08-01', i),
+      next_due: this.today,
+      fails_in_row: 0,
+      total_fails: 0,
+      stuck: false,
+      history: [],
+    };
+  }
+  rolloverReviews = reviews;
+  rolloverDay1 = this.today;
+});
+
+// ---------------------------------------------------------------- When
+
+When('the session is selected', function () {
+  assert.ok(dailyCap !== undefined, '還沒有 Given 每日上限');
+  selectDueCardsSnapshot = JSON.stringify(selectDueCards ?? []);
+  try {
+    selectResult = selectSession(
+      selectDueCards ?? [],
+      selectReteach ? { dailyCap, reteach: selectReteach } : { dailyCap },
+    );
+    selectError = undefined;
+  } catch (err) {
+    selectError = err as Error;
+    selectResult = undefined;
+  }
+});
+
+When('the session is selected the following day', function () {
+  assert.ok(rolloverReviews && rolloverDay1, '還沒有 Given 「N cards were due today and M were selected」');
+  assert.ok(dailyCap !== undefined, '還沒有 Given 每日上限');
+
+  const day1Cards = toSchedulableCards(buildDueList(rolloverReviews, rolloverDay1), rolloverReviews);
+  const result1 = selectSession(day1Cards, { dailyCap });
+  const selectedIds1 = new Set(result1.due.map((d) => d.card));
+  rolloverDay1Cards = day1Cards;
+  rolloverDeferredIds = day1Cards.map((d) => d.card).filter((id) => !selectedIds1.has(id));
+
+  const day2 = addIsoDays(rolloverDay1, 1);
+  const day2Cards = toSchedulableCards(buildDueList(rolloverReviews, day2), rolloverReviews);
+  rolloverDay2Cards = day2Cards;
+  selectResult = selectSession(day2Cards, { dailyCap });
+});
+
+When(/^the ratio is computed$/, function () {
+  assert.ok(overdueCardCtx && overdueToday, '還沒有 Given 一張卡片');
+  overdueRatioResult = computeOverdueRatio(overdueCardCtx, overdueToday);
+});
+
+When(/^the simulation runs for (\d+) days learning (\d+) cards per day$/, function (days: string, perDay: string) {
+  assert.ok(dailyCap !== undefined, '還沒有 Given 每日上限');
+  simulationReport = simulateSteadyState({ days: Number(days), newCardsPerDay: Number(perDay), dailyCap });
+});
+
+// ---------------------------------------------------------------- Then
+
+Then(/^(\d+)(?: questions)? are returned$/, function (n: string) {
+  assert.ok(selectResult, `session 選取沒有回傳結果;error=${selectError?.message ?? '無'}`);
+  assert.equal(selectResult.due.length, Number(n));
+});
+
+Then(/^(\d+) are reported as deferred$/, function (n: string) {
+  assert.ok(selectResult);
+  assert.equal(selectResult.deferred, Number(n));
+});
+
+Then('none are deferred', function () {
+  assert.ok(selectResult);
+  assert.equal(selectResult.deferred, 0);
+});
+
+Then('the deferred cards keep their state', function () {
+  assert.ok(selectDueCardsSnapshot !== undefined, '還沒有呼叫過 selectSession');
+  assert.equal(JSON.stringify(selectDueCards ?? []), selectDueCardsSnapshot, '輸入的到期卡片被修改了');
+});
+
+Then(/^it is approximately ([\d.]+)$/, function (ratioStr: string) {
+  assert.ok(overdueRatioResult !== undefined, '還沒有計算比例');
+  const expected = Number(ratioStr);
+  assert.ok(
+    Math.abs(overdueRatioResult - expected) < 0.001,
+    `期望約 ${expected},實際 ${overdueRatioResult}`,
+  );
+});
+
+Then('it is zero', function () {
+  assert.ok(overdueRatioResult !== undefined, '還沒有計算比例');
+  assert.equal(overdueRatioResult, 0);
+});
+
+Then(/^the order is (.+)$/, function (idsStr: string) {
+  assert.ok(selectResult);
+  const expected = idsStr.split(',').map((s) => s.trim());
+  assert.deepEqual(selectResult.due.map((d) => d.card), expected);
+});
+
+Then('the one learned earlier comes first', function () {
+  assert.ok(selectResult && selectDueCards);
+  const earlier = selectDueCards.reduce((a, b) => (a.learned_at < b.learned_at ? a : b));
+  assert.equal(selectResult.due[0]?.card, earlier.card);
+});
+
+Then('an error is raised naming the cap', function () {
+  assert.ok(selectError, `應該要丟錯,但沒有;dailyCap=${dailyCap}`);
+  assert.match(selectError.message, new RegExp(String(dailyCap)));
+});
+
+Then(/^the (\d+) reteach cards are returned separately$/, function (n: string) {
+  assert.ok(selectResult);
+  assert.ok(selectReteach, '還沒有 Given reteach 佇列');
+  assert.equal(selectResult.reteach.length, Number(n));
+  assert.deepEqual(selectResult.reteach, selectReteach);
+  for (const id of selectResult.reteach) {
+    assert.ok(!selectResult.due.some((d) => d.card === id), `reteach 卡片 ${id} 不該出現在 due 裡`);
+  }
+});
+
+Then(/^the (\d+) that were skipped are one day later$/, function (n: string) {
+  assert.ok(rolloverDeferredIds, '還沒有跑過「the session is selected the following day」');
+  const deferredIds: CardId[] = rolloverDeferredIds;
+  const day1Cards: SchedulableCard[] = rolloverDay1Cards ?? [];
+  const day2Cards: SchedulableCard[] = rolloverDay2Cards ?? [];
+  assert.equal(deferredIds.length, Number(n));
+  for (const id of deferredIds) {
+    const dayOneEntry = day1Cards.find((d) => d.card === id)!;
+    const dayTwoEntry = day2Cards.find((d) => d.card === id)!;
+    assert.equal(dayTwoEntry.overdue_days, dayOneEntry.overdue_days + 1, `${id} 隔天的逾期天數應該 +1`);
+  }
+});
+
+Then('they take part in the ordering again', function () {
+  assert.ok(rolloverDeferredIds, '還沒有跑過「the session is selected the following day」');
+  const deferredIds: CardId[] = rolloverDeferredIds;
+  const day2Cards: SchedulableCard[] = rolloverDay2Cards ?? [];
+  for (const id of deferredIds) {
+    assert.ok(day2Cards.some((d) => d.card === id), `${id} 應該出現在隔天的到期候選清單裡`);
+  }
+});
+
+Then('it reports the daily question count over time', function () {
+  assert.ok(simulationReport, '還沒有跑模擬');
+  assert.ok(simulationReport.daily.length > 0);
+  assert.ok(simulationReport.daily.every((d) => typeof d.selected_count === 'number'));
+});
+
+Then('it reports how often the cap was reached', function () {
+  assert.ok(simulationReport, '還沒有跑模擬');
+  assert.equal(typeof simulationReport.cap_reached_days, 'number');
+  assert.equal(typeof simulationReport.cap_reached_ratio, 'number');
 });
