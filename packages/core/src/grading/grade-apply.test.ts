@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { LogEvent } from '@contracts/index.js';
 import { countWords } from '@core/schema/word-count.js';
 import {
@@ -63,6 +66,17 @@ function collectingLog(): { logAppender: (event: LogEvent) => void; events: LogE
   return { logAppender: (event) => events.push(event), events };
 }
 
+const tmpDirs: string[] = [];
+function tmpLogPath(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'grade-apply-'));
+  tmpDirs.push(dir);
+  return join(dir, 'log.jsonl');
+}
+
+afterEach(() => {
+  while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
+});
+
 // ---------------------------------------------------------------- buildApplyPrompt
 
 describe('buildApplyPrompt', () => {
@@ -71,6 +85,25 @@ describe('buildApplyPrompt', () => {
     expect(prompt).toContain(QUESTION.prompt);
     for (const line of QUESTION.rubric) expect(prompt).toContain(line);
     expect(prompt).toContain('這是跨來源請求,後端要加 CORS header');
+  });
+
+  it('numbers each rubric line in order, one criterion per own line', () => {
+    const prompt = buildApplyPrompt(QUESTION, 'answer');
+    const lines = prompt.split('\n');
+    QUESTION.rubric.forEach((line, i) => {
+      expect(lines).toContain(`${i + 1}. ${line}`);
+    });
+  });
+
+  it('includes the rubric header and the JSON-format instructions as their own lines', () => {
+    const prompt = buildApplyPrompt(QUESTION, 'answer');
+    const lines = prompt.split('\n');
+    expect(lines).toContain('評分規準(rubric):');
+    expect(lines).toContain(
+      '請針對每一條 rubric 判斷使用者回答是否達成,回傳 JSON,格式為 {"criteria": boolean[], "feedback": string};',
+    );
+    expect(lines).toContain('criteria 陣列的順序與長度必須對應上面 rubric 的順序與條數,一條 rubric 對應一個 boolean;');
+    expect(lines).toContain('feedback 用一句話簡短說明理由。只回傳 JSON,不要有其他文字。');
   });
 });
 
@@ -122,6 +155,21 @@ describe('truncateFeedback', () => {
     const long = '一二三四五六七八九十'.repeat(3);
     const result = truncateFeedback(long, 5);
     expect(countWords(result.text)).toBeLessThanOrEqual(5);
+  });
+
+  it('keeps feedback unchanged when it is exactly at the word limit (boundary)', () => {
+    const exact = '好'.repeat(APPLY_FEEDBACK_WORD_LIMIT);
+    expect(countWords(exact)).toBe(APPLY_FEEDBACK_WORD_LIMIT);
+    const result = truncateFeedback(exact);
+    expect(result).toEqual({ text: exact, truncated: false });
+  });
+
+  it('truncates to exactly the word limit and keeps the original prefix, not one word short or extra junk', () => {
+    const long = '好'.repeat(APPLY_FEEDBACK_WORD_LIMIT + 10);
+    const result = truncateFeedback(long);
+    expect(result.truncated).toBe(true);
+    expect(countWords(result.text)).toBe(APPLY_FEEDBACK_WORD_LIMIT);
+    expect(result.text).toBe(long.slice(0, APPLY_FEEDBACK_WORD_LIMIT));
   });
 });
 
@@ -219,6 +267,27 @@ describe('gradeApply', () => {
     expect(result.pass).toBeNull();
     expect(result.grader).toBe('error');
     expect(result.criteria).toBeUndefined();
+    expect(result.feedback).toBe('模型回應無法解析,略過本次審核');
+  });
+
+  it('logs exactly one retry event, not two, when both attempts are unparseable', async () => {
+    const { logAppender, events } = collectingLog();
+    const { router } = sequentialRouter([textResult('第一次也不是 JSON'), textResult('第二次還是不是 JSON')]);
+    await gradeApply(QUESTION, 'answer', router, { logAppender });
+    const retryEvents = events.filter((e) => e.type === 'warning' && e['task'] === 'grade.apply' && e['reason'] === 'invalid_response_retry');
+    expect(retryEvents).toHaveLength(1);
+  });
+
+  it('writes the retry warning to logPath (file) when given a path instead of an appender', async () => {
+    const logPath = tmpLogPath();
+    const { router } = sequentialRouter([
+      textResult('不是 JSON'),
+      verdictResult([true, true, true], 'ok'),
+    ]);
+    await gradeApply(QUESTION, 'answer', router, { logPath });
+    const events = readFileSync(logPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as LogEvent);
+    const retryEvents = events.filter((e) => e.type === 'warning' && e['task'] === 'grade.apply' && e['reason'] === 'invalid_response_retry');
+    expect(retryEvents).toHaveLength(1);
   });
 
   it('leaves the card untouched when both attempts have a verdict count mismatch', async () => {
@@ -238,7 +307,7 @@ describe('gradeApply', () => {
     const { router } = sequentialRouter([verdictResult([true, true, true], long)]);
     const result = await gradeApply(QUESTION, 'answer', router, { logAppender });
     expect(countWords(result.feedback)).toBeLessThanOrEqual(APPLY_FEEDBACK_WORD_LIMIT);
-    const truncationEvents = events.filter((e) => e.type === 'warning' && e['reason'] === 'feedback_truncated');
+    const truncationEvents = events.filter((e) => e.type === 'warning' && e['task'] === 'grade.apply' && e['reason'] === 'feedback_truncated');
     expect(truncationEvents).toHaveLength(1);
   });
 

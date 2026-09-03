@@ -137,11 +137,14 @@ export function buildApplyPrompt(question: ApplyQuestion, answer: string): strin
  */
 export function parseApplyVerdict(text: string, rubricCriteriaCount: number): ApplyVerdict | null {
   let parsed: unknown;
+  // Stryker disable BlockStatement: 拿掉 catch 區塊(下面那個 try/catch),parsed 留在 undefined,
+  // 下面 safeParse(undefined) 一樣會失敗回傳 null,行為等價
   try {
     parsed = JSON.parse(text);
   } catch {
     return null;
   }
+  // Stryker restore BlockStatement
 
   const result = VerdictShapeSchema.safeParse(parsed);
   if (!result.success) return null;
