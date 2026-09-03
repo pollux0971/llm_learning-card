@@ -60,7 +60,7 @@ Feature: Question, state, log and configuration formats
   Scenario: A newly learned card gets the contract's initial state
     Given a card that has no review entry
     When it is marked learned on 2026-09-02
-    Then its stage is 1
+    Then the initial stage is 1
     And learned_at is 2026-09-02
     And next_due is 2026-09-03
     And both failure counters are zero
@@ -93,9 +93,9 @@ Feature: Question, state, log and configuration formats
 
   Scenario: Settings defaults match the contract
     When a freshly initialised settings file is read
-    Then the daily cap is 10
-    And the weekly target is 7
-    And the short body limit is 50
+    Then the default daily cap is 10
+    And the default weekly target is 7
+    And the default short body limit is 50
     And the llm section contains a cloud provider, a cloud model and a local model
 
   Scenario Outline: Settings values are bounded
