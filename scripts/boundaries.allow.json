@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "from": "02-ingest-pipeline",
+    "to": "01-data-layer",
+    "reason": "phase-2 的依賴圖(§8)重用 01 的 graph.ts(readCategoryGraph/validateGraphEdges/detectCycle/topologicalSort/writeCategoryOrder/computeAndSaveCategoryOrder),考題(§3)重用 01 的 validate-question.ts,不重新發明拓樸排序與 zod 驗證"
+  },
+  {
+    "from": "02-ingest-pipeline",
+    "to": "03-llm-router",
+    "reason": "phase-2 接上 03 的真實 LlmRouter/LlmTask 型別(@core/llm/index.js),取代 Wave 0 的 fake-llm.ts 型別 stub"
+  }
+]

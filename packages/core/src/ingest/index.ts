@@ -6,3 +6,6 @@ export * from './state.js';
 export * from './init.js';
 export * from './generate-cards.js';
 export * from './ingest.js';
+export * from './questions.js';
+export * from './children.js';
+export * from './deps.js';
