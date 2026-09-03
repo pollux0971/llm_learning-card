@@ -5,7 +5,11 @@
  * 這一輪只設計介面:函式本體全部 throw not implemented,由下一輪實作。
  * 三個函式互不依賴呼叫順序,可分開實作與測試。
  */
-import type { CardId, DueItem, IsoDate, Stage } from './types.js';
+import { addIsoDays, isoDaysBetween } from './dates.js';
+import { buildDueList } from './due.js';
+import { intervalDaysForStage } from './intervals.js';
+import { applyLearnedTransition, applyPassTransition } from './transitions.js';
+import type { CardId, DueItem, IsoDate, Review, Stage } from './types.js';
 
 // ------------------------------------------------------------------------
 // computeOverdueRatio
@@ -23,7 +27,8 @@ export interface OverdueCtx {
  * (buildDueList 已經先篩過)。`next_due === today` 回傳 0。
  */
 export function computeOverdueRatio(card: OverdueCtx, today: IsoDate): number {
-  throw new Error('not implemented');
+  const overdueDays = isoDaysBetween(card.next_due, today);
+  return overdueDays / intervalDaysForStage(card.stage);
 }
 
 // ------------------------------------------------------------------------
@@ -65,7 +70,30 @@ export interface SelectResult {
  * message 裡帶出實際收到的 cap 值(場景:「an error is raised naming the cap」)。
  */
 export function selectSession(dueCards: SchedulableCard[], ctx: SelectCtx): SelectResult {
-  throw new Error('not implemented');
+  if (!(ctx.dailyCap > 0)) {
+    throw new Error(`每日上限必須 > 0,收到 ${ctx.dailyCap}`);
+  }
+
+  const sorted = [...dueCards].sort((a, b) => {
+    if (b.overdue_ratio !== a.overdue_ratio) return b.overdue_ratio - a.overdue_ratio;
+    return a.learned_at.localeCompare(b.learned_at);
+  });
+
+  const selected = sorted.slice(0, ctx.dailyCap);
+  const due: DueItem[] = selected.map(({ card, stage, types, overdue_days, overdue_ratio, stuck }) => ({
+    card,
+    stage,
+    types,
+    overdue_days,
+    overdue_ratio,
+    stuck,
+  }));
+
+  return {
+    due,
+    deferred: sorted.length - selected.length,
+    reteach: ctx.reteach ?? [],
+  };
 }
 
 // ------------------------------------------------------------------------
@@ -113,5 +141,54 @@ export interface SimulationReport {
  * 是設計驗證工具(NEXT.md「完成後」段落要求跑這個看穩態)。
  */
 export function simulateSteadyState(ctx: SimulationCtx): SimulationReport {
-  throw new Error('not implemented');
+  const startDate = ctx.startDate ?? '2026-01-01';
+  const reviews: Record<CardId, Review> = {};
+  const daily: DailyLoad[] = [];
+  let cardCounter = 0;
+
+  for (let day = 1; day <= ctx.days; day++) {
+    const date = addIsoDays(startDate, day - 1);
+
+    for (let i = 0; i < ctx.newCardsPerDay; i++) {
+      cardCounter += 1;
+      const id = `sim-${String(cardCounter).padStart(6, '0')}`;
+      reviews[id] = applyLearnedTransition({ card: id, learnedAt: date });
+    }
+
+    const dueItems = buildDueList(reviews, date);
+    const schedulable: SchedulableCard[] = dueItems.map((item) => ({
+      ...item,
+      learned_at: reviews[item.card]!.learned_at,
+    }));
+
+    const result = selectSession(schedulable, { dailyCap: ctx.dailyCap });
+
+    for (const item of result.due) {
+      const review = reviews[item.card]!;
+      const outcome = applyPassTransition(review, {
+        card: item.card,
+        today: date,
+        type: item.types[0]!,
+        grader: 'exact',
+      });
+      reviews[item.card] = outcome.review;
+    }
+
+    daily.push({
+      day,
+      date,
+      due_count: dueItems.length,
+      selected_count: result.due.length,
+      deferred_count: result.deferred,
+      cap_reached: result.deferred > 0,
+    });
+  }
+
+  const capReachedDays = daily.filter((d) => d.cap_reached).length;
+
+  return {
+    daily,
+    cap_reached_days: capReachedDays,
+    cap_reached_ratio: capReachedDays / ctx.days,
+  };
 }
