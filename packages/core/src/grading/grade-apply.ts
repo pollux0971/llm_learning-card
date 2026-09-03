@@ -117,8 +117,17 @@ const VerdictShapeSchema = z.object({
  * 必須包含 question.prompt、每一條 rubric、answer,並要求模型回傳 JSON
  * `{ criteria: boolean[], feedback: string }`,一條 rubric 一個 verdict。
  */
-export function buildApplyPrompt(_question: ApplyQuestion, _answer: string): string {
-  throw new Error('not implemented');
+export function buildApplyPrompt(question: ApplyQuestion, answer: string): string {
+  const rubricLines = question.rubric.map((line, i) => `${i + 1}. ${line}`).join('\n');
+  return [
+    `題目:${question.prompt}`,
+    '評分規準(rubric):',
+    rubricLines,
+    `使用者回答:${answer}`,
+    '請針對每一條 rubric 判斷使用者回答是否達成,回傳 JSON,格式為 {"criteria": boolean[], "feedback": string};',
+    'criteria 陣列的順序與長度必須對應上面 rubric 的順序與條數,一條 rubric 對應一個 boolean;',
+    'feedback 用一句話簡短說明理由。只回傳 JSON,不要有其他文字。',
+  ].join('\n');
 }
 
 /**
@@ -126,26 +135,78 @@ export function buildApplyPrompt(_question: ApplyQuestion, _answer: string): str
  * 或 criteria.length !== rubricCriteriaCount)。不丟例外,呼叫端用 null 判斷
  * 要不要重試。
  */
-export function parseApplyVerdict(_text: string, _rubricCriteriaCount: number): ApplyVerdict | null {
-  throw new Error('not implemented');
+export function parseApplyVerdict(text: string, rubricCriteriaCount: number): ApplyVerdict | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  const result = VerdictShapeSchema.safeParse(parsed);
+  if (!result.success) return null;
+  if (result.data.criteria.length !== rubricCriteriaCount) return null;
+  return result.data;
 }
 
 /**
  * 純函式:feedback 超過契約 §5 的字數上限就截斷。字數用 `countWords`
- * (契約 §2 的權威演算法)計算,不要自己重新發明規則。
+ * (契約 §2 的權威演算法)計算,不要自己重新發明規則——逐字元累加,一算到
+ * 超過上限就停在前一個字元,借此保證跟 countWords() 的判斷永遠一致。
  */
-export function truncateFeedback(_feedback: string, _limit: number = APPLY_FEEDBACK_WORD_LIMIT): { text: string; truncated: boolean } {
-  throw new Error('not implemented');
+export function truncateFeedback(feedback: string, limit: number = APPLY_FEEDBACK_WORD_LIMIT): { text: string; truncated: boolean } {
+  if (countWords(feedback) <= limit) return { text: feedback, truncated: false };
+
+  let result = '';
+  for (const ch of feedback) {
+    const candidate = result + ch;
+    if (countWords(candidate) > limit) break;
+    result = candidate;
+  }
+  return { text: result, truncated: true };
 }
 
 /**
  * 應用題 rubric 逐條審核。見檔案頂端的公開介面清單與行為說明。
  */
 export async function gradeApply(
-  _question: ApplyQuestion,
-  _answer: string,
-  _router: LlmRouter,
-  _opts: GradeApplyOptions = {},
+  question: ApplyQuestion,
+  answer: string,
+  router: LlmRouter,
+  opts: GradeApplyOptions = {},
 ): Promise<ApplyGradeResult> {
-  throw new Error('not implemented');
+  if (answer.trim() === '') {
+    return { pass: false, feedback: '沒有作答', grader: 'empty' };
+  }
+
+  const log = opts.logAppender ?? createFileLogAppender(opts.logPath);
+  const prompt = buildApplyPrompt(question, answer);
+  const rubricCriteriaCount = question.rubric.length;
+
+  let llmResult;
+  let verdict: ApplyVerdict | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    llmResult = await router.call('grade.apply', prompt, opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs });
+    verdict = parseApplyVerdict(llmResult.text, rubricCriteriaCount);
+    if (verdict) break;
+    if (attempt === 0) {
+      log({ ts: new Date().toISOString(), type: 'warning', task: 'grade.apply', reason: 'invalid_response_retry' });
+    }
+  }
+
+  if (!verdict) {
+    return { pass: null, feedback: '模型回應無法解析,略過本次審核', grader: 'error' };
+  }
+
+  const { text: feedback, truncated } = truncateFeedback(verdict.feedback);
+  if (truncated) {
+    log({ ts: new Date().toISOString(), type: 'warning', task: 'grade.apply', reason: 'feedback_truncated' });
+  }
+
+  return {
+    pass: verdict.criteria.every(Boolean),
+    criteria: verdict.criteria,
+    feedback,
+    grader: llmResult!.provisional ? 'local-provisional' : 'cloud',
+  };
 }
