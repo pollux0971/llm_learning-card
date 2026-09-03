@@ -61,7 +61,7 @@ Wave 0 是兩個 placeholder HTML 視窗,不載入任何真的內容。
 
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
-| 1 | Linux 兩視窗、置頂、位置記憶(placeholder) | Wave 0 | ready | |
+| 1 | Linux 兩視窗、置頂、位置記憶(placeholder) | Wave 0 | done | 2026-09-03 |
 | 2 | LearningFs、路徑設定、路徑防護、載入真前端 | I3 | todo | |
 | 3 | 系統列、自啟、縮到系統列 | I5 | todo | |
 | 4 | macOS | I7 | todo | |
