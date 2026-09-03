@@ -138,8 +138,104 @@ stage 1 答對進 stage 2、stage 3 答錯退 stage 1、reteach 提示不算進 
 
 ## 6. 人工確認清單
 
-- [ ] **阻擋項**:04-scheduler 的 `applyPassTransition`/`PassCtx` 需要對稱 `FailCtx` 補上多筆
-      answers 的介面,`answer.ts:140-143` 的 `throw` 才能換成真正的 resolve 邏輯,並補
-      phase-1.feature 的「stage 2 兩題都答對」場景。
+- [x] **阻擋項**:04-scheduler 的 `applyPassTransition`/`PassCtx` 已對稱 `FailCtx` 補上
+      `answers[]` 介面,`answer.ts` 的 resolve 邏輯已換成真正呼叫,見下方第二輪審核。
 - [ ] `@manual` 場景「The session is pleasant enough to use daily」需要真人手動跑,不在這次審核範圍。
-- [ ] 17 個存活變異(第 4 節)雖不擋門檻,建議下一輪處理阻擋項時一併補測試。
+- [ ] 存活變異(第 4 節、第 7 節)雖不擋門檻,建議之後補測試。
+
+---
+
+## 第二輪覆核(2026-09-03,commit 8006957 之後)
+
+範圍擴大為兩個模組:`packages/core/src/scheduler/transitions.ts`(嚴格 95%)、
+`packages/core/src/session/**`(標準 80%,`answer.ts` 本輪改了)。
+
+### 結論:PASS
+
+## 7. 修復驗證
+
+第 1 節的阻擋問題已修復。核對 `packages/core/src/scheduler/transitions.ts` 的
+`PassCtx`/`applyPassTransition`(commit 4b26d11)與 `packages/core/src/session/answer.ts`
+的 `submitAnswer`(commit 8006957):
+
+- `PassCtx` 新增 `answers: PassAnswer[]`,對稱 `FailCtx.answers`。`applyPassTransition`
+  只算一次 `newStage`/`next_due`,但 `history` 用 `ctx.answers.map(...)` 把每一筆答案各自
+  append 一條獨立 `ReviewEntry`(`date`/`stage`/`type`/`pass:true`/`grader`),`stage` 欄位用
+  的是**推進前**的 `review.stage`——符合契約 §4 `ReviewEntry` 的硬約定與檔案頂端註解的說明。
+- `answer.ts` 的 `submitAnswer` 不再 `throw`,`overallPass` 分支呼叫
+  `applyPassTransition(review, { card, today, answers: pendingAnswers })`,跟
+  stage 1/3/4/5(單題)、stage 2 全過(兩題)走同一條路徑,不分岔。
+- 新場景核對(直接讀原始碼 + 跑過,非紙上核對):
+  - `features/04-scheduler/phase-2.feature`「At stage two both questions passing advances
+    the card once」↔ `features/steps/scheduler.steps.ts:292-306` 直接呼叫
+    `applyPassTransition` 兩筆 answers,`Then` 斷言(`:496-502`)`history.length===2` 且兩筆
+    entry 內容各自正確(`stage:2` 對兩筆都成立,因為都是推進前的 stage;`pass:true`;
+    `grader` 分別是 `exact`/`cloud`)、`stage` 只推進到 3(對應間隔表 D30,`next_due` 是
+    2026-10-10 = 2026-09-10 + 30 天)。**沒有「答一題進一階」的痕跡**。
+  - `features/11-review-cli/phase-1.feature`「A card at stage two advances after both
+    questions pass」↔ `features/steps/review-cli.steps.ts:527-568`。這裡刻意只驗證
+    session 層該有的行為(不當機、correctly 推進到下一題),history/stage 細節的重複驗證
+    留給上面 04 的場景(feature 檔案本身的註解說明了這個分工),避免同一件事驗兩次。
+    註:該步驟檔第 511-518 行留有一段舊註解說「這個場景現在預期是紅燈」「TODO 下一輪實作」,
+    是修復前寫的、已經過時(現在是綠燈),建議之後開發順手清掉,不影響本次驗收結論。
+  - `transitions.test.ts` 裡「stage 2 兩題都過時只推進一次 stage,但兩筆答案都各自記進
+    history」與 `answer.test.ts` 裡「stage 2 checkpoint, both questions pass ... advances
+    the stage once and records both answers, instead of throwing」都是真斷言,不是空殼。
+
+### 8. 本輪自動化測試結果
+
+| 項目 | 指令 | 結果 |
+|---|---|---|
+| npm ci | `npm ci` | 成功(433 packages) |
+| boundaries | `npm run boundaries` | ✓ 無違規(掃描 169 檔案) |
+| typecheck | `npm run typecheck` | ✓ 無錯誤 |
+| 單元測試 | `npx vitest run` | ✓ 61 files / **894** tests all passed |
+| cucumber `@review-cli @phase-1` | `cucumber-js --tags "@review-cli and @phase-1 and not @manual"` | ✓ **15** scenarios / 92 steps all passed |
+| cucumber `@scheduler @phase-2` | `cucumber-js --tags "@scheduler and @phase-2 and not @manual"` | ✓ **15** scenarios / 61 steps all passed,04 自己沒有回歸 |
+| cucumber dry-run(全專案) | `cucumber-js --tags "not @manual" --dry-run` | ✓ **0 ambiguous**(164 undefined 屬於未開工的未來整合場景,非本次範圍) |
+
+### 9. 變異測試(Stryker)——兩邊實測
+
+**`packages/core/src/scheduler/transitions.ts`(嚴格 95%)**
+
+```
+npx stryker run --mutate "packages/core/src/scheduler/transitions.ts,!packages/core/src/scheduler/transitions.test.ts"
+```
+
+**分數 100.00%**(23 killed、0 timeout、**0 survived**、0 no coverage,另有 21 個被
+TypeScript checker 判定型別不合法自動排除)。介面改動(`PassCtx.answers[]`)沒有讓分數退步,
+遠超 95% 門檻,沒有存活變異需要處理。
+
+**`packages/core/src/session/**`(標準 80%)**
+
+```
+npx stryker run --mutate "packages/core/src/session/**/*.ts,!packages/core/src/session/**/*.test.ts"
+```
+
+**分數 83.49%**(達 80% 門檻,較上一輪 82.30% 略升):90 killed、1 timeout、16 survived、
+2 no coverage,另有 76 個型別不合法自動排除。
+
+| 檔案 | mutation score |
+|---|---|
+| answer.ts | 86.84% |
+| build.ts | 83.33% |
+| io.ts | 90.48% |
+| present.ts | 70.00%(最低,`present.ts:49` 的 fill/apply 分支跟 `:82` 續問分支沒被精確斷言,沿用上一輪已知缺口) |
+| summary.ts | 83.33% |
+
+門檻已達標,依規範「未達標才需逐條處理」不強制本輪補測試。`answer.ts` 本輪改動
+(`submitAnswer` 呼叫 `applyPassTransition` 的新分支)本身沒有引入新的存活變異——存活的
+16 個裡,`answer.ts` 佔 4 個,都是既有程式碼(`joinApplyLines` 的迴圈邊界 ×2、
+`session.passed`/`session.failed` 計數 ×2),跟本輪改的 `overallPass` resolve 邏輯無關,
+延續上一輪報告已記錄的真漏測分類,不是本輪新增的回歸。
+
+### 10. 結論
+
+**PASS**。兩個模組的門檻都達標且沒有退步:
+
+- `scheduler/transitions.ts`:100.00%(門檻 95%)
+- `session/**`:83.49%(門檻 80%)
+
+第一輪 FAIL 的阻擋問題(stage 2 兩題都過會 throw)已確認修復,新場景是真實作、非投機取巧,
+兩邊 cucumber 全綠、無回歸、無 ambiguous step。存活變異均為已知的低優先級真漏測,可留到
+之後補測試,不擋本次驗收。
