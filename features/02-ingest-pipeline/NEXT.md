@@ -5,17 +5,17 @@
 | 欄位 | 值 |
 |---|---|
 | 已完成 | phase-1(2026-09-03) |
-| 進行中 | 無 |
-| 下一個 | phase-2 |
+| 進行中 | phase-2 |
+| 下一個 | (完成後進 I1 整合驗收) |
 
 ## Gate
 
 **phase-1**:無 gate。用 `FakeLlmRouter` 與自己的最小字數檢查,不等任何人。
 
 **phase-2** 需要:
-- [ ] 自身:phase-1 `done`
-- [ ] 跨資料夾:01 phase-2 與 phase-3 `done`、03 phase-2 `done`
-- [ ] 整合:無(phase-2 **就是** I1 的一部分)
+- [x] 自身:phase-1 `done`
+- [x] 跨資料夾:01 phase-2 與 phase-3 `done`、03 phase-2 `done`
+- [x] 整合:無(phase-2 **就是** I1 的一部分)
 
 **phase-3** 需要:
 - [ ] 自身:phase-2 `done`
