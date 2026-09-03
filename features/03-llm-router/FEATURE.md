@@ -44,7 +44,7 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 
 | 東西 | 位置 | 整合時移除於 |
 |---|---|---|
-| 最小 log appender | `packages/core/src/llm/log-min.ts` | I1(改用 01 的) |
+| 最小 log appender | `packages/core/src/llm/log-min.ts` | 已移除,2026-09-03(router.ts 改呼叫 01 的 `schema/log.ts` recordEvent()) |
 
 ## 技術棧
 

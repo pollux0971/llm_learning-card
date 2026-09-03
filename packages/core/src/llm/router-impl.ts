@@ -52,7 +52,7 @@
 import type { CloudAdapter, CloudProvider, LlmResult, LlmRouter, LlmTask } from './types.js';
 import { CloudLlmRouter, type CloudLlmRouterOptions, type CloudSettings } from './router.js';
 import { decideRoute, ROUTING_TABLE, type RouteGroup } from './routing.js';
-import type { LogAppender } from './log-min.js';
+import type { LogAppender } from './router.js';
 
 export type LocalProber = () => Promise<{ available: boolean; models: string[] }>;
 export type OnlineProber = () => Promise<boolean>;

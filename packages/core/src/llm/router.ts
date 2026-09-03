@@ -9,9 +9,19 @@ import {
   type LlmTask,
 } from './types.js';
 import { LlmTimeoutError, MissingCredentialError, UnknownTaskError, UnsupportedProviderError } from './errors.js';
-import { createFileLogAppender, type LogAppender } from './log-min.js';
 import { anthropicAdapter } from './adapters/anthropic.js';
 import { openaiAdapter } from './adapters/openai.js';
+import type { LogEvent } from '@contracts/index.js';
+import { recordEvent } from '@core/schema/log.js';
+
+/** 寫一筆 log 事件。契約 §10/§11b 的正式實作見 01-data-layer 的 recordEvent()。 */
+export type LogAppender = (event: LogEvent) => void;
+
+/** 沒給 path 就不寫(例如純單元測試);給了就用 01 的 recordEvent() 原子寫入。 */
+function createFileLogAppender(path: string | undefined): LogAppender {
+  if (!path) return () => {};
+  return (event) => recordEvent(path, event);
+}
 
 /** 契約 §7 開放問題:雲端逾時先訂 60 秒,用了再調。 */
 const DEFAULT_TIMEOUT_MS = 60_000;
