@@ -8,12 +8,12 @@ import { generateCards, type CardCandidate, type ParkedCandidate } from './gener
 import { nextCardIds } from './ids.js';
 import { ensureInitialized } from './init.js';
 import { atomicWriteJson, readJsonOr, appendLogEvent } from './state.js';
-import { CloudRequiredError } from './fake-llm.js';
 import type { Card } from '@contracts/index.js';
 import { validateCard } from '@core/schema/validate-card.js';
 import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
 import { generateChildrenForCards } from './children.js';
 import { analyzeDependencies } from './deps.js';
+import type { LlmRouter as CoreLlmRouter } from '@core/llm/index.js';
 
 export interface RunIngestOptions {
   /** learning 根目錄(絕對路徑)。 */
@@ -76,7 +76,7 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
   try {
     generated = await generateCards(opts.router, { relLabel: basename, category, content: raw });
   } catch (err) {
-    if (err instanceof CloudRequiredError) {
+    if (isCloudRequiredError(err)) {
       return fail('ingest 需要雲端模型,目前無法使用雲端,不會降級到本機模型', 1);
     }
     throw err;
@@ -157,6 +157,15 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
   };
 }
 
+/**
+ * fake-llm.ts 與 @core/llm/errors.js 過去各自定義一個 CloudRequiredError class,
+ * instanceof 互相認不出對方(兩邊已經統一成同一個 class,見 fake-llm.ts)。改成
+ * 看契約 §7 路由表共用的 code 值,不管未來還有沒有第三個地方冒出新的 class。
+ */
+function isCloudRequiredError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'CLOUD_REQUIRED';
+}
+
 function fail(message: string, exitCode: number): RunIngestResult {
   return {
     ok: false,
@@ -192,63 +201,15 @@ function sha256Of(content: string): string {
 }
 
 // ============================================================================
-// I1 整合缺口:runIngestPipeline() —— 介面契約(這輪只設計 + 寫測試,下一輪開發
-// agent 實作)。函式體先 throw new Error('not implemented')。行為規格見同目錄
-// pipeline.test.ts 與 docs/integration/i1-content-pipeline.feature。
+// runIngestPipeline():把 phase-1 的 runIngest()(raw → level 0 卡)接上
+// phase-2 的三步(questions.ts / children.ts / deps.ts)。runIngest() 本身不改
+// (--fake 路徑還在用它,FakeLlmRouter 目前沒有 questions/deps 的 fixture)。
+// 行為規格見 pipeline.test.ts 與 docs/integration/i1-content-pipeline.feature。
 //
-// 背景:runIngest()(上面,原封不動)只做 raw → level 0 卡片,這是 phase-1 的
-// 範圍。02-ingest-pipeline/phase-2 已經做完 generateQuestionsForCards()、
-// generateChildrenForCards()、analyzeDependencies() 三個函式(questions.ts /
-// children.ts / deps.ts,全部有測試、100% mutation score),但從來沒有人在
-// runIngest() 裡呼叫它們——這就是 I1 整合驗收發現的缺口。runIngestPipeline()
-// 是把四段串起來的新入口,runIngest() 本身不改(避免動到已經測過、
-// standalone.json 的 --fake 路徑還在用的邏輯)。
-//
-// ---- 流程 ----
-// 1. const level0 = await runIngest(opts)。
-//    - !level0.ok → 直接回傳(不繼續呼叫任何 LLM task);複製 level0 的欄位,
-//      phase-2 相關欄位給空值(見下面 emptyPipelineResult)。
-//    - level0.alreadyProcessed → 同樣直接回傳,不重跑 phase-2 三步——
-//      這是「Re-running ingest changes nothing」的字面意思:重跑不能再呼叫一次
-//      LLM(ingest.test.ts 已經有一個案例斷言「再跑一次同一個檔案,呼叫次數是
-//      0」,phase-1 那個案例只測到 runIngest() 本身;runIngestPipeline() 要保
-//      同一個不變量,往下傳。
-// 2. 把 level0.cardsCreated 從磁碟讀回來,組成 Card[](contracts 型別,不是
-//    這個檔案原本用的 ./types.js 本地型別)。用 @core/schema 的 validateCard()
-//    讀,不要自己重新解析 frontmatter——這正是 feature 說的「ingest 現在用
-//    data-layer 真的驗證器」,失敗(理論上不該發生,剛寫的卡驗證不過代表
-//    generate-cards.ts 或這裡的寫檔邏輯有 bug)直接丟出去,不要吞掉。
-// 3. const questions = await generateQuestionsForCards(outDir, level0Cards, router)。
-//    單卡失敗已經在 questions.ts 內部處理(failures 陣列),這裡只轉發。
-// 4. 子卡:用 try/catch 包 generateChildrenForCards(level0Cards, router, {outDir, today})——
-//    注意 children.ts 的 generateChildrenForCards 本身「沒有」對每個 parent 做
-//    失敗隔離(跟 questions.ts 不同,一個 parent 生成失敗會直接讓整個呼叫
-//    throw)。這裡的 try/catch 是 pipeline 層級的安全網:失敗時記一筆 warning
-//    log 事件,children 當空陣列繼續走完 deps 那步,不要讓一張卡的子卡生成
-//    失敗拖垮已經寫好的 level 0 卡與它們的考題(呼應 i1 feature「Generation
-//    failure for one card does not lose the others」的精神,即使 phase-2.feature
-//    原本那個場景測的是 questions.ts 內部的隔離,這裡是把同一個精神套用到
-//    pipeline 這一層新出現的失敗點)。
-// 5. deps:同樣 try/catch 包 analyzeDependencies(category, [...level0Cards, ...children], router, outDir)。
-//    失敗時 depsOrder 給空陣列、cycleRemoved 給 null,記 warning log,不要讓
-//    deps 分析失敗抹掉前面已經寫好的卡片與考題。
-// 6. 組 RunIngestPipelineResult 回傳(見下面型別)。
-//
-// ---- 已知的既有 bug,不在這輪修,寫測試把它攤出來給下一輪 ----
-// - CloudRequiredError 撞名:fake-llm.ts 匯出的 CloudRequiredError(這個檔案上面
-//   `import { CloudRequiredError } from './fake-llm.js'` 那個)跟 03-llm-router
-//   真的路由邏輯丟的 @core/llm/errors.js 的 CloudRequiredError 是兩個不同的
-//   class,`instanceof` 互相認不出對方。runIngest() 現有的 catch 只認 fake-llm
-//   版本——用真的 LlmRouterImpl 離線時,routing.ts 丟的是 @core/llm 版本,不會
-//   被這裡的 catch 接住,會被當成未預期例外整個往外丟。runIngestPipeline()
-//   (以及理想上 runIngest() 自己)的 catch 判斷要改成看 `(err as
-//   { code?: string }).code === 'CLOUD_REQUIRED'`,不要用 instanceof——這樣
-//   兩個 class 都認得。這輪的 pipeline.test.ts 用真的 @core/llm CloudRequiredError
-//   驗證這個路徑,紅燈是預期的。
-// - FakeLlmRouter 目前只有 'ingest.cards' 的預錄回應(contracts/fixtures/llm/
-//   沒有 ingest.questions / ingest.deps 的 fixture),所以 scripts/ingest.ts 的
-//   `--fake` 路徑刻意只呼叫 runIngest()(level 0),不呼叫
-//   runIngestPipeline()——要接上就得先補 fixture,不是這輪的範圍。
+// FakeLlmRouter 目前只有 'ingest.cards' 的預錄回應(contracts/fixtures/llm/
+// 沒有 ingest.questions / ingest.deps 的 fixture),所以 scripts/ingest.ts 的
+// `--fake` 路徑刻意只呼叫 runIngest()(level 0),不呼叫 runIngestPipeline()——
+// 要接上就得先補 fixture,不是這輪的範圍。
 // ============================================================================
 
 export interface RunIngestPipelineResult extends RunIngestResult {
@@ -289,11 +250,62 @@ function loadWrittenCards(outDir: string, category: string, ids: CardId[]): Card
 }
 
 export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunIngestPipelineResult> {
-  // 型別備忘,避免下一輪忘記用到:emptyPipelineResult / loadWrittenCards 已經備好。
-  void emptyPipelineResult;
-  void loadWrittenCards;
-  void generateQuestionsForCards;
-  void generateChildrenForCards;
-  void analyzeDependencies;
-  throw new Error('not implemented');
+  const level0 = await runIngest(opts);
+  if (!level0.ok || level0.alreadyProcessed) {
+    return emptyPipelineResult(level0);
+  }
+
+  const category = opts.category ?? inferCategory(opts.rawRelPath) ?? 'security';
+  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  const logPath = join(opts.outDir, 'state/log.jsonl');
+
+  const level0Cards = loadWrittenCards(opts.outDir, category, level0.cardsCreated);
+
+  // questions.ts / children.ts / deps.ts 用 @core/llm 的 LlmRouter(見 questions.ts 的
+  // 型別選擇說明);opts.router 的型別是 Wave 0 的 ./types.js LlmRouter,provider 多一個
+  // 'fake' literal(FakeLlmRouter 與測試用的 scripted router 都會回這個值)——兩邊
+  // call()/probeOnline()/probeLocal() 的方法簽章結構相同,差異只在這個 literal union
+  // 更寬,對執行沒有影響,窄化成 phase-2 三個函式期待的型別。
+  const router = opts.router as unknown as CoreLlmRouter;
+
+  const questions = await generateQuestionsForCards(opts.outDir, level0Cards, router);
+
+  let children: Card[] = [];
+  let childQuestionFailures: GenerateQuestionsFailure[] = [];
+  try {
+    const result = await generateChildrenForCards(level0Cards, router, { outDir: opts.outDir, today });
+    children = result.children;
+    childQuestionFailures = result.questionFailures;
+  } catch (err) {
+    appendLogEvent(logPath, {
+      ts: new Date().toISOString(),
+      type: 'warning',
+      file: opts.rawRelPath,
+      message: `子卡產生失敗,已略過:${(err as Error).message}`,
+    });
+  }
+
+  let depsOrder: CardId[] = [];
+  let cycleRemoved: [CardId, CardId] | null = null;
+  try {
+    const result = await analyzeDependencies(category, [...level0Cards, ...children], router, opts.outDir);
+    depsOrder = result.order;
+    cycleRemoved = result.cycleRemoved;
+  } catch (err) {
+    appendLogEvent(logPath, {
+      ts: new Date().toISOString(),
+      type: 'warning',
+      file: opts.rawRelPath,
+      message: `依賴圖分析失敗,已略過:${(err as Error).message}`,
+    });
+  }
+
+  return {
+    ...level0,
+    questionFailures: questions.failures,
+    childrenCreated: children.map((c) => c.frontmatter.id),
+    childQuestionFailures,
+    depsOrder,
+    cycleRemoved,
+  };
 }

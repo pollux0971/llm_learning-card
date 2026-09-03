@@ -9,6 +9,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LlmRouter, LlmTask, LlmResult } from './types.js';
+import { CloudRequiredError } from '../llm/errors.js';
 
 export interface FakeFixtureRecord {
   task: LlmTask;
@@ -17,14 +18,14 @@ export interface FakeFixtureRecord {
   response: LlmResult;
 }
 
-/** 對應契約 §7 路由表:ingest.cards 系列離線時一律 throw CLOUD_REQUIRED,不降級。 */
-export class CloudRequiredError extends Error {
-  readonly code = 'CLOUD_REQUIRED';
-  constructor(task: string) {
-    super(`ingest 需要雲端模型(task=${task}),目前無法使用雲端,且不允許降級到本機模型`);
-    this.name = 'CloudRequiredError';
-  }
-}
+/**
+ * 對應契約 §7 路由表:ingest.cards 系列離線時一律 throw CLOUD_REQUIRED,不降級。
+ * 曾經是這個檔案自己定義的 class,跟 @core/llm/errors.js 的同名 class 是兩個不同
+ * 的 class,instanceof 互相認不出對方(I1 整合發現的 bug)。現在統一 re-export
+ * 那邊的實作——@core/llm/errors.js 被 routing.ts、llm-router.steps.ts 等更多地方
+ * import,這裡改成單一定義來源。
+ */
+export { CloudRequiredError };
 
 export interface FakeLlmRouterOptions {
   /** 從這個目錄讀 *.json 預錄回應,通常是 contracts/fixtures/llm。 */
