@@ -44,9 +44,18 @@
  *   generateQuestionsForCards(opts.outDir, 攤平後的子卡, router) 幫子卡產生考題。
  */
 
-import type { Card } from '@contracts/index.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { stringify as yamlStringify } from 'yaml';
+import type { Card, CardFrontmatter } from '@contracts/index.js';
 import type { LlmRouter } from '@core/llm/index.js';
-import type { GenerateQuestionsFailure } from './questions.js';
+import { nextCardIds } from './ids.js';
+import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
+import { loadPromptTemplate } from './prompts.js';
+
+const CHILDREN_TEMPLATE = loadPromptTemplate('children');
+const MIN_CHILDREN = 1;
+const MAX_CHILDREN = 3;
 
 /** 模型對 'ingest.cards' 的回應形狀(子卡版):一張卡一筆,沒有 lines(不是切自 raw)。 */
 export interface ChildCandidate {
@@ -67,18 +76,95 @@ export interface GenerateChildrenResult {
   questionFailures: GenerateQuestionsFailure[];
 }
 
+function buildChildrenPrompt(parent: Card): string {
+  return [
+    CHILDREN_TEMPLATE,
+    '---',
+    `parent_id: ${parent.frontmatter.id}`,
+    `parent_title: ${parent.frontmatter.title}`,
+    '---',
+    parent.body,
+  ].join('\n');
+}
+
+function parseChildCandidates(text: string): ChildCandidate[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`ingest.cards(子卡)回應不是合法 JSON: ${(err as Error).message}`);
+  }
+  if (!Array.isArray(parsed)) throw new Error('ingest.cards(子卡)回應必須是陣列');
+  if (parsed.length < MIN_CHILDREN || parsed.length > MAX_CHILDREN) {
+    throw new Error(`ingest.cards(子卡)回應筆數必須介於 ${MIN_CHILDREN}..${MAX_CHILDREN},得到 ${parsed.length}`);
+  }
+
+  return parsed.map((raw, i) => {
+    const r = raw as Record<string, unknown>;
+    if (typeof r.title !== 'string' || typeof r.body !== 'string' || !Array.isArray(r.examples)) {
+      throw new Error(`ingest.cards(子卡)回應第 ${i} 筆格式不正確: ${JSON.stringify(raw)}`);
+    }
+    return { title: r.title, body: r.body, examples: r.examples as string[] };
+  });
+}
+
+function writeCardFile(cardsDir: string, card: Card): void {
+  mkdirSync(cardsDir, { recursive: true });
+  const yamlFm = yamlStringify(card.frontmatter).trimEnd();
+  const exampleBlocks = card.examples.map((e) => '```example\n' + e.trim() + '\n```').join('\n\n');
+  const content = `---\n${yamlFm}\n---\n\n${card.body.trim()}\n${exampleBlocks ? '\n' + exampleBlocks + '\n' : ''}`;
+  writeFileSync(join(cardsDir, `${card.frontmatter.id}.md`), content, 'utf8');
+}
+
 export async function generateChildren(
-  _parent: Card,
-  _router: LlmRouter,
-  _opts: GenerateChildrenOptions,
+  parent: Card,
+  router: LlmRouter,
+  opts: GenerateChildrenOptions,
 ): Promise<Card[]> {
-  throw new Error('not implemented');
+  const result = await router.call('ingest.cards', buildChildrenPrompt(parent));
+  const candidates = parseChildCandidates(result.text);
+
+  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  const category = parent.frontmatter.category;
+  const cardsDir = join(opts.outDir, 'cards', category);
+  const ids = nextCardIds(cardsDir, category, candidates.length);
+
+  return ids.map((id, i) => {
+    const candidate = candidates[i]!;
+    const frontmatter: CardFrontmatter = {
+      id,
+      category,
+      title: candidate.title,
+      level: parent.frontmatter.level + 1,
+      source: 'llm',
+      created: today,
+      parent: parent.frontmatter.id,
+      prereqs: [],
+      provisional: false,
+      stale: false,
+      source_missing: false,
+    };
+    return { frontmatter, body: candidate.body, examples: candidate.examples };
+  });
 }
 
 export async function generateChildrenForCards(
-  _parents: Card[],
-  _router: LlmRouter,
-  _opts: GenerateChildrenOptions,
+  parents: Card[],
+  router: LlmRouter,
+  opts: GenerateChildrenOptions,
 ): Promise<GenerateChildrenResult> {
-  throw new Error('not implemented');
+  const children: Card[] = [];
+
+  for (const parent of parents) {
+    const parentChildren = await generateChildren(parent, router, opts);
+    const cardsDir = join(opts.outDir, 'cards', parent.frontmatter.category);
+    for (const child of parentChildren) {
+      writeCardFile(cardsDir, child);
+    }
+    children.push(...parentChildren);
+  }
+
+  const { failures } = await generateQuestionsForCards(opts.outDir, children, router);
+
+  return { children, questionFailures: failures };
 }

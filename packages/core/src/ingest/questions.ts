@@ -41,8 +41,15 @@
  *   failures.length 應等於 cards.length。
  */
 
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { stringify as yamlStringify } from 'yaml';
 import type { ApplyQuestion, Card, CardId, FillQuestion, QuestionFile } from '@contracts/index.js';
 import type { LlmRouter } from '@core/llm/index.js';
+import { validateQuestionFile } from '@core/schema/validate-question.js';
+import { loadPromptTemplate } from './prompts.js';
+
+const QUESTIONS_TEMPLATE = loadPromptTemplate('questions');
 
 /** 模型對 'ingest.questions' 的回應形狀,不含 card id(呼叫端已經知道)。 */
 export interface QuestionCandidate {
@@ -60,18 +67,59 @@ export interface GenerateQuestionsRunResult {
   failures: GenerateQuestionsFailure[];
 }
 
-export async function generateQuestions(_card: Card, _router: LlmRouter): Promise<QuestionFile> {
-  throw new Error('not implemented');
+function buildQuestionsPrompt(card: Card): string {
+  return [QUESTIONS_TEMPLATE, '---', `card: ${card.frontmatter.id}`, `title: ${card.frontmatter.title}`, '---', card.body].join(
+    '\n',
+  );
 }
 
-export function writeQuestionFile(_outDir: string, _file: QuestionFile): void {
-  throw new Error('not implemented');
+export async function generateQuestions(card: Card, router: LlmRouter): Promise<QuestionFile> {
+  const result = await router.call('ingest.questions', buildQuestionsPrompt(card));
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.text);
+  } catch (err) {
+    throw new Error(`ingest.questions 回應不是合法 JSON: ${(err as Error).message}`);
+  }
+
+  const candidate = parsed as Partial<QuestionCandidate>;
+  const file: QuestionFile = {
+    card: card.frontmatter.id,
+    fill: (candidate.fill ?? []) as FillQuestion[],
+    apply: (candidate.apply ?? []) as ApplyQuestion[],
+  };
+
+  const check = validateQuestionFile(file);
+  if (!check.ok) {
+    throw new Error(`ingest.questions 回應未通過 validateQuestionFile:${check.errors.join('; ')}`);
+  }
+  return file;
+}
+
+export function writeQuestionFile(outDir: string, file: QuestionFile): void {
+  const dir = join(outDir, 'questions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${file.card}.yaml`), yamlStringify(file), 'utf8');
 }
 
 export async function generateQuestionsForCards(
-  _outDir: string,
-  _cards: Card[],
-  _router: LlmRouter,
+  outDir: string,
+  cards: Card[],
+  router: LlmRouter,
 ): Promise<GenerateQuestionsRunResult> {
-  throw new Error('not implemented');
+  const written: CardId[] = [];
+  const failures: GenerateQuestionsFailure[] = [];
+
+  for (const card of cards) {
+    try {
+      const file = await generateQuestions(card, router);
+      writeQuestionFile(outDir, file);
+      written.push(card.frontmatter.id);
+    } catch (err) {
+      failures.push({ card: card.frontmatter.id, error: (err as Error).message });
+    }
+  }
+
+  return { written, failures };
 }
