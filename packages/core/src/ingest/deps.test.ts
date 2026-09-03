@@ -7,7 +7,7 @@ import type { Card, CardId } from '@contracts/index.js';
 import type { LlmResult, LlmRouter } from '@core/llm/index.js';
 import type { Graph } from '@core/schema/graph.js';
 import { readLogEvents } from './state.js';
-import { analyzeDependencies, writeCategoryGraph } from './deps.js';
+import { analyzeDependencies, computeDepsMaxTokens, writeCategoryGraph } from './deps.js';
 import { loadPromptTemplate } from './prompts.js';
 
 // ---------------------------------------------------------------- 共用 fixture
@@ -33,14 +33,22 @@ function makeCard(id: CardId, overrides: Partial<Card['frontmatter']> = {}): Car
   };
 }
 
-/** 依呼叫次數回應 'ingest.deps' 的假 router;script[i] 是第 i 次呼叫(0-based)的 edges。 */
-function makeDepsRouter(script: [CardId, CardId][][]): { router: LlmRouter; calls: string[] } {
+type CallOpts = { timeoutMs?: number; maxTokens?: number } | undefined;
+
+/**
+ * 依呼叫次數回應 'ingest.deps' 的假 router;script[i] 是第 i 次呼叫(0-based)的 edges。
+ * 同時記錄每次呼叫收到的 prompt 與 opts,讓測試可以驗證 analyzeDependencies() 是否
+ * 真的把動態算出的 maxTokens 傳進 router.call() 的第三個參數。
+ */
+function makeDepsRouter(script: [CardId, CardId][][]): { router: LlmRouter; calls: string[]; optsCalls: CallOpts[] } {
   const calls: string[] = [];
+  const optsCalls: CallOpts[] = [];
   const router: LlmRouter = {
-    async call(task, prompt): Promise<LlmResult> {
+    async call(task, prompt, opts): Promise<LlmResult> {
       if (task !== 'ingest.deps') throw new Error(`未預期的 task: ${task}`);
       const index = calls.length;
       calls.push(prompt);
+      optsCalls.push(opts);
       const edges = script[index];
       if (!edges) throw new Error(`script 沒有第 ${index} 次呼叫的回應`);
       return { text: JSON.stringify({ edges }), provider: 'anthropic', model: 'test-model', latency_ms: 1, provisional: false };
@@ -52,7 +60,12 @@ function makeDepsRouter(script: [CardId, CardId][][]): { router: LlmRouter; call
       return { available: false, models: [] };
     },
   };
-  return { router, calls };
+  return { router, calls, optsCalls };
+}
+
+/** 產生 count 張互不相干的卡,用來測「卡片數量多時 maxTokens 明顯變大」。 */
+function makeManyCards(count: number): Card[] {
+  return Array.from({ length: count }, (_, i) => makeCard(`sec-${String(i + 1).padStart(4, '0')}` as CardId));
 }
 
 let dir: string;
@@ -70,6 +83,43 @@ function makeOutDir(): string {
 function logEventsOf(outDir: string): Record<string, unknown>[] {
   return readLogEvents(join(outDir, 'state/log.jsonl'));
 }
+
+// ============================================================== computeDepsMaxTokens
+//
+// 公式(見 deps.ts 內的說明):Math.min(16384, Math.max(2048, cardCount * 256))。
+// 下限 2048 對應 token-limits.ts 原本的固定值;上限 16384 避免卡片數量沒有上限時
+// 單次呼叫的預算跟著無限長大;中間用「每卡 256 tokens」蓋過「每條邊 15–25 tokens」
+// 的估計,留數倍安全邊界。
+
+describe('computeDepsMaxTokens', () => {
+  it('stays at the 2048 floor for a small category (3 cards)', () => {
+    // 3 * 256 = 768,遠低於下限,結果必須被拉回 2048,不可以小於它
+    expect(computeDepsMaxTokens(3)).toBe(2048);
+  });
+
+  it('stays at the 2048 floor for zero cards', () => {
+    expect(computeDepsMaxTokens(0)).toBe(2048);
+  });
+
+  it('grows noticeably above the floor for a large category (30 cards)', () => {
+    const result = computeDepsMaxTokens(30);
+    // 30 * 256 = 7680,落在下限與上限之間,不需要再夾一次
+    expect(result).toBe(7680);
+    expect(result).toBeGreaterThan(2048);
+  });
+
+  it('grows further for an even larger category (50 cards) without exceeding the ceiling', () => {
+    const result = computeDepsMaxTokens(50);
+    // 50 * 256 = 12800,仍然小於上限
+    expect(result).toBe(12800);
+    expect(result).toBeLessThanOrEqual(16384);
+  });
+
+  it('caps at 16384 once the per-card estimate would exceed the ceiling', () => {
+    // 1000 * 256 = 256000,遠超上限,必須被夾在 16384
+    expect(computeDepsMaxTokens(1000)).toBe(16384);
+  });
+});
 
 // ============================================================== analyzeDependencies
 
@@ -256,6 +306,36 @@ describe('analyzeDependencies', () => {
     expect(prompt).not.toContain('不能再回同一條路徑');
   });
 
+  // deps-token-scaling:固定 2048 的 token 上限在卡片數量多時會把 'ingest.deps'
+  // 的回應截斷,依賴圖分析整段被跳過。analyzeDependencies() 必須改成依卡片數量算
+  // 動態的 maxTokens 傳進 router.call() 的 opts,取代 token-limits.ts 的固定表格值
+  // (opts.maxTokens 有給就會覆蓋表格,見 router.ts 的 `opts.maxTokens ?? TASK_MAX_TOKENS[task]`)。
+  it('passes a maxTokens computed from the card count into router.call opts', async () => {
+    const outDir = makeOutDir();
+    const cards = makeManyCards(30);
+    const edges: [CardId, CardId][] = cards.slice(1).map((c, i) => [cards[i]!.frontmatter.id, c.frontmatter.id]);
+    const { router, optsCalls } = makeDepsRouter([edges]);
+
+    await analyzeDependencies('security', cards, router, outDir);
+
+    expect(optsCalls).toHaveLength(1);
+    expect(optsCalls[0]?.maxTokens).toBe(computeDepsMaxTokens(30));
+    // 30 張卡片的動態值應該遠大於 token-limits.ts 原本寫死的 2048,不然這個測試
+    // 測不出「真的依卡片數量算」跟「剛好等於舊常數」的差別。
+    expect(optsCalls[0]?.maxTokens).toBeGreaterThan(2048);
+  });
+
+  it('passes a maxTokens near the 2048 floor for a small category (3 cards)', async () => {
+    const outDir = makeOutDir();
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
+    const { router, optsCalls } = makeDepsRouter([[['sec-0001', 'sec-0002']]]);
+
+    await analyzeDependencies('security', cards, router, outDir);
+
+    expect(optsCalls[0]?.maxTokens).toBe(computeDepsMaxTokens(3));
+    expect(optsCalls[0]?.maxTokens).toBeGreaterThanOrEqual(2048);
+  });
+
   it('describes the cycle path in the retry prompt, joined with " -> "', async () => {
     const outDir = makeOutDir();
     const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
@@ -332,6 +412,18 @@ describe('analyzeDependencies', () => {
       await analyzeDependencies('security', cards, router, outDir);
 
       expect(calls).toHaveLength(2);
+    });
+
+    it('passes the same computed maxTokens into both the first call and the cycle-retry call', async () => {
+      const outDir = makeOutDir();
+      const { router, optsCalls } = makeDepsRouter([cyclicEdges, [['sec-0001', 'sec-0002'], ['sec-0002', 'sec-0003']]]);
+
+      await analyzeDependencies('security', cards, router, outDir);
+
+      expect(optsCalls).toHaveLength(2);
+      const expected = computeDepsMaxTokens(cards.length);
+      expect(optsCalls[0]?.maxTokens).toBe(expected);
+      expect(optsCalls[1]?.maxTokens).toBe(expected);
     });
 
     it('does not call the model a second time when the first response has no cycle', async () => {
