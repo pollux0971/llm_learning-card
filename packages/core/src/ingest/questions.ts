@@ -49,6 +49,8 @@ import type { LlmRouter } from '@core/llm/index.js';
 import { validateQuestionFile } from '@core/schema/validate-question.js';
 import { loadPromptTemplate } from './prompts.js';
 
+// Stryker disable next-line all: 模組載入時執行一次的靜態初始化,coverageAnalysis: perTest 下不歸屬任何測試(coveredBy 恆為空),
+// 錯字會讓 readFileSync 在 import 當下就丟 ENOENT、整個測試檔案載入失敗,等同被所有測試殺死,只是 Stryker 的 per-test 模型算不出來。
 const QUESTIONS_TEMPLATE = loadPromptTemplate('questions');
 
 /** 模型對 'ingest.questions' 的回應形狀,不含 card id(呼叫端已經知道)。 */

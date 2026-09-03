@@ -53,6 +53,8 @@ import { nextCardIds } from './ids.js';
 import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
 import { loadPromptTemplate } from './prompts.js';
 
+// Stryker disable next-line all: 模組載入時執行一次的靜態初始化,coverageAnalysis: perTest 下不歸屬任何測試(coveredBy 恆為空),
+// 錯字會讓 readFileSync 在 import 當下就丟 ENOENT、整個測試檔案載入失敗,等同被所有測試殺死,只是 Stryker 的 per-test 模型算不出來。
 const CHILDREN_TEMPLATE = loadPromptTemplate('children');
 const MIN_CHILDREN = 1;
 const MAX_CHILDREN = 3;

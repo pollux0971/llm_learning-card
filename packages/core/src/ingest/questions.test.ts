@@ -7,6 +7,7 @@ import type { Card, QuestionFile } from '@contracts/index.js';
 import type { LlmResult, LlmRouter, LlmTask } from '@core/llm/index.js';
 import { validateQuestionFile } from '@core/schema/validate-question.js';
 import { generateQuestions, generateQuestionsForCards, writeQuestionFile } from './questions.js';
+import { loadPromptTemplate } from './prompts.js';
 
 // ---------------------------------------------------------------- 共用 fixture
 
@@ -183,10 +184,10 @@ describe('generateQuestions', () => {
   it('throws without writing anything when the model response is not valid JSON', async () => {
     const { router } = makeScriptedRouter([() => 'not json at all']);
 
-    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toThrow();
+    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toThrow('不是合法 JSON');
   });
 
-  it('throws when the model response fails validateQuestionFile (e.g. only 1 fill question)', async () => {
+  it('throws with the validator errors when the model response fails validateQuestionFile (e.g. only 1 fill question)', async () => {
     const { router } = makeScriptedRouter([
       () =>
         JSON.stringify({
@@ -195,7 +196,37 @@ describe('generateQuestions', () => {
         }),
     ]);
 
-    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toThrow();
+    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toThrow('未通過 validateQuestionFile');
+  });
+
+  // buildQuestionsPrompt 沒有另外匯出,只能透過送給 router 的 prompt 內容間接驗證
+  it('sends a prompt built from the template, card id, title and body, separated by --- markers', async () => {
+    const { router, calls } = makeAlwaysGoodRouter();
+    const card = makeCard('sec-0001');
+
+    await generateQuestions(card, router);
+
+    const prompt = calls[0]!.prompt;
+    const lines = prompt.split('\n');
+    // 兩個 '---' 分隔線都要在:模板後一個、title 後一個(緊接 card.body)
+    expect(lines.filter((l) => l === '---')).toHaveLength(2);
+    expect(prompt).toContain('\n---\ncard: sec-0001\n');
+    expect(prompt).toContain(`title: ${card.frontmatter.title}\n---\n`);
+    expect(prompt.endsWith(card.body)).toBe(true);
+    expect(prompt.startsWith(loadPromptTemplate('questions'))).toBe(true);
+  });
+
+  it('joins multiple validator errors with "; " in the thrown message', async () => {
+    const { router } = makeScriptedRouter([
+      () =>
+        JSON.stringify({
+          fill: [{ prompt: '只有一個空格 ___', answers: [['答案']] }], // fill 數量不足(需要 2-3)
+          apply: [], // apply 數量不足(需要 1-2)
+        }),
+    ]);
+
+    const rejection = generateQuestions(makeCard('sec-0001'), router);
+    await expect(rejection).rejects.toThrow(/; /);
   });
 });
 
