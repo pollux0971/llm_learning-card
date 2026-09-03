@@ -70,10 +70,17 @@ Feature: Questions, second level cards and the dependency graph
     Then only the security order file is rewritten
 
   Scenario: Generation failure for one card does not lose the others
-    Given question generation fails for the third card
+    Given question generation fails for the third card on both attempts
     When the run completes
     Then the other four question files exist
-    And the failure is reported with the card id
+    And a warning naming the third card and the reason is in the log
+    And the command prints the failed card and exits with a non-zero status
+
+  Scenario: A truncated response is retried once and can still succeed
+    Given question generation for the third card is truncated once and succeeds on retry
+    When the run completes
+    Then all five question files exist
+    And the log records one truncated call
 
   @manual
   Scenario: Blanks fall on the words that matter

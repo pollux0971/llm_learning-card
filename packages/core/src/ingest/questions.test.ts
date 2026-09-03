@@ -5,6 +5,7 @@ import { parse as yamlParse } from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Card, QuestionFile } from '@contracts/index.js';
 import type { LlmResult, LlmRouter, LlmTask } from '@core/llm/index.js';
+import { LlmTimeoutError, OutputTruncatedError } from '@core/llm/index.js';
 import { validateQuestionFile } from '@core/schema/validate-question.js';
 import { generateQuestions, generateQuestionsForCards, writeQuestionFile } from './questions.js';
 import { loadPromptTemplate } from './prompts.js';
@@ -227,6 +228,110 @@ describe('generateQuestions', () => {
 
     const rejection = generateQuestions(makeCard('sec-0001'), router);
     await expect(rejection).rejects.toThrow(/; /);
+  });
+});
+
+// ============================================================== generateQuestions retry on transient errors
+//
+// 真的呼叫還會遇到 OutputTruncatedError / LlmTimeoutError / 網路層的錯誤——這些
+// 是非確定性的(同一個 prompt 重打一次可能就好了),值得重試一次。JSON parse
+// 失敗或 validateQuestionFile 沒過的不重試(那是確定性錯誤,重打也是壞——上面
+// 兩個 describe 區塊已經覆蓋)。見 questions.ts 裡 generateQuestions() 上面的
+// TODO 註解——函式體目前完全沒有重試邏輯,以下大多數案例是紅燈,釘住目標行為
+// 給下一輪開發 agent 接上。
+
+describe('generateQuestions retry on transient errors', () => {
+  it('retries once and succeeds when the first call throws OutputTruncatedError', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw new OutputTruncatedError('ingest.questions', 2048, 2048);
+      },
+      () => goodCandidateJson(),
+    ]);
+
+    const result = await generateQuestions(makeCard('sec-0001'), router);
+
+    expect(calls).toHaveLength(2);
+    expect(result.card).toBe('sec-0001');
+    expect(validateQuestionFile(result).ok).toBe(true);
+  });
+
+  it('retries once and succeeds when the first call throws LlmTimeoutError', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw new LlmTimeoutError('ingest.questions', 30_000);
+      },
+      () => goodCandidateJson(),
+    ]);
+
+    const result = await generateQuestions(makeCard('sec-0001'), router);
+
+    expect(calls).toHaveLength(2);
+    expect(result.card).toBe('sec-0001');
+  });
+
+  it('retries once and succeeds when the first call throws a plain network-layer error', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw new Error('fetch failed: ECONNRESET');
+      },
+      () => goodCandidateJson(),
+    ]);
+
+    const result = await generateQuestions(makeCard('sec-0001'), router);
+
+    expect(calls).toHaveLength(2);
+    expect(result.card).toBe('sec-0001');
+  });
+
+  it('calls onRetry with the reason when the first call is truncated and the retry succeeds', async () => {
+    const { router } = makeScriptedRouter([
+      () => {
+        throw new OutputTruncatedError('ingest.questions', 2048, 2048);
+      },
+      () => goodCandidateJson(),
+    ]);
+    const reasons: string[] = [];
+
+    await generateQuestions(makeCard('sec-0001'), router, (reason) => reasons.push(reason));
+
+    expect(reasons).toEqual(['output_truncated']);
+  });
+
+  it('throws the second error when both attempts throw a retryable error (only one retry, not a loop)', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () => {
+        throw new OutputTruncatedError('ingest.questions', 2048, 2048);
+      },
+      () => {
+        throw new OutputTruncatedError('ingest.questions', 4096, 4096);
+      },
+    ]);
+
+    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toThrow();
+    expect(calls).toHaveLength(2);
+  });
+
+  // 既有行為(回歸測試):JSON parse 失敗不重試——確定性錯誤,重打也是壞。
+  it('does not retry when the response is not valid JSON', async () => {
+    const { router, calls } = makeScriptedRouter([() => 'not json at all']);
+
+    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toThrow('不是合法 JSON');
+    expect(calls).toHaveLength(1);
+  });
+
+  // 既有行為(回歸測試):validateQuestionFile 沒過不重試。
+  it('does not retry when the response fails validateQuestionFile', async () => {
+    const { router, calls } = makeScriptedRouter([
+      () =>
+        JSON.stringify({
+          fill: [{ prompt: '只有一個空格 ___', answers: [['答案']] }],
+          apply: [{ prompt: '應用題', rubric: ['條件一', '條件二'] }],
+        }),
+    ]);
+
+    await expect(generateQuestions(makeCard('sec-0001'), router)).rejects.toThrow('未通過 validateQuestionFile');
+    expect(calls).toHaveLength(1);
   });
 });
 

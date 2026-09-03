@@ -25,11 +25,23 @@
  * interface GenerateQuestionsRunResult { written: CardId[]; failures: GenerateQuestionsFailure[] }
  *
  * ---- 函式 ----
- * generateQuestions(card: Card, router: LlmRouter): Promise<QuestionFile>
+ * generateQuestions(card: Card, router: LlmRouter, onRetry?: (reason) => void): Promise<QuestionFile>
  *   呼叫 router.call('ingest.questions', prompt),把回應文字解析成 QuestionCandidate,
  *   接上 card.frontmatter.id 組成完整 QuestionFile,用 validateQuestionFile() 驗過;
- *   JSON 解析失敗或驗證不過都直接丟錯(不重試——這裡的錯誤代表 prompt/parse 本身
- *   有問題,重試也不會變好,跟 generate-cards.ts 的字數超限重試是不同性質的失敗)。
+ *   JSON 解析失敗或驗證不過都直接丟錯,不重試——這裡的錯誤代表 prompt/parse 本身
+ *   有問題,重試也不會變好,跟 generate-cards.ts 的字數超限重試是不同性質的失敗。
+ *
+ *   TODO(下一輪開發 agent,questions-retry-and-reporting):router.call() 本身丟出
+ *   的 OutputTruncatedError / LlmTimeoutError,以及任何其他直接從 router.call()
+ *   冒出來的錯誤(例如網路層失敗),性質不同——同一個 prompt 重打一次可能就好了,
+ *   值得重試一次。改法:把 router.call() 包一層,第一次丟出這類錯誤時重打一次
+ *   (可以用大一點的 maxTokens,或原樣重打),第二次不管成功失敗都不再重試;
+ *   重試發生時呼叫 onRetry(reason)(reason 是 'output_truncated' | 'llm_timeout' |
+ *   'network' 之一),讓呼叫端(generateQuestionsForCards())把它記進 log.jsonl
+ *   (見 ingest.ts 的同款 TODO)。這裡的參數簽章已經先加上,函式體目前完全忽略
+ *   它、也還沒有任何重試邏輯,先維持舊行為(遇到 router.call() 丟錯就直接往外
+ *   丟)。目標行為見 questions.test.ts 'generateQuestions retry on transient
+ *   errors' 這個 describe 區塊。
  * writeQuestionFile(outDir: string, file: QuestionFile): void
  *   寫到 outDir/questions/<file.card>.yaml,格式同 contracts/fixtures/learning-minimal
  *   既有的 questions/*.yaml(純 writeFileSync,不需要 §11b 的原子寫入——那條硬約定
@@ -69,13 +81,22 @@ export interface GenerateQuestionsRunResult {
   failures: GenerateQuestionsFailure[];
 }
 
+/** 值得重試一次的 router.call() 失敗原因(見 generateQuestions() 上面的 TODO)。 */
+export type RetryableQuestionsReason = 'output_truncated' | 'llm_timeout' | 'network';
+
 function buildQuestionsPrompt(card: Card): string {
   return [QUESTIONS_TEMPLATE, '---', `card: ${card.frontmatter.id}`, `title: ${card.frontmatter.title}`, '---', card.body].join(
     '\n',
   );
 }
 
-export async function generateQuestions(card: Card, router: LlmRouter): Promise<QuestionFile> {
+export async function generateQuestions(
+  card: Card,
+  router: LlmRouter,
+  // TODO(questions-retry-and-reporting):目前函式體完全沒用到這個參數,見上面
+  // generateQuestions() 的介面契約 TODO——重試邏輯接上之後才會真的呼叫它。
+  onRetry?: (reason: RetryableQuestionsReason) => void,
+): Promise<QuestionFile> {
   const result = await router.call('ingest.questions', buildQuestionsPrompt(card));
 
   let parsed: unknown;

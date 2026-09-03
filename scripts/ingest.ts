@@ -107,6 +107,15 @@ async function main(): Promise<void> {
 
   const result = await runIngestPipeline({ outDir: absOut, rawRelPath, category, router });
 
+  // TODO(下一輪開發 agent,questions-retry-and-reporting):
+  // 1. cardsCreated 這裡只印 level 0 卡,漏了子卡——應該改印
+  //    [...result.cardsCreated, ...result.childrenCreated]。
+  // 2. result.hasQuestionFailures 為 true 時(見 ingest.ts 的定義),要把
+  //    result.questionFailures 與 result.childQuestionFailures 的失敗清單
+  //    (哪張卡、什麼原因)印出來,並且整個 process 用非 0 退出碼結束——I1 的
+  //    e2e 場景「every card has a question file with the same id」不接受部分
+  //    成功。目前這裡完全沒讀 hasQuestionFailures,退出碼還是 result.exitCode
+  //    (只反映 level 0 卡本身有沒有建立成功)。
   if (result.cardsCreated.length > 0) {
     console.log(`建立了 ${result.cardsCreated.length} 張卡:`);
     for (const id of result.cardsCreated) console.log(`  ${id}`);

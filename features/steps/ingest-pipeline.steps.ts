@@ -23,6 +23,7 @@ import type { LearningWorld } from './_world.js';
 import type { Card, CardId, QuestionFile } from '../../packages/contracts/src/index.js';
 import {
   CloudLlmRouter,
+  OutputTruncatedError,
   type CloudAdapter,
   type CloudAdapterResult,
   type LlmRouter,
@@ -48,8 +49,12 @@ interface IngestPipelineCtx {
   callCounts: Map<LlmTask, number>;
   /** 依呼叫次數覆寫 'ingest.deps' 的回應(cycle 挑戰場景用)。不給就用預設鏈狀圖。 */
   depsScript?: [CardId, CardId][][];
-  /** 'ingest.questions' 第幾次呼叫要丟錯(Generation failure 場景用,1-based)。 */
-  questionsFailAt?: number;
+  /** 'ingest.questions' 對這張卡的每次呼叫都丟錯(Generation failure 場景用)。 */
+  questionsFailForCardId?: CardId;
+  /** 'ingest.questions' 對這張卡的第一次呼叫丟 OutputTruncatedError,第二次(重試)成功。 */
+  questionsTruncateOnceForCardId?: CardId;
+  /** 'ingest.questions' 每張卡目前呼叫到第幾次(1-based),供截斷重試場景判斷「第一次」。 */
+  questionsCallCountByCard: Map<CardId, number>;
   questionsResult?: GenerateQuestionsRunResult;
   childrenResult?: GenerateChildrenResult;
   depsResult?: AnalyzeDependenciesResult;
@@ -61,7 +66,7 @@ const store = new WeakMap<LearningWorld, IngestPipelineCtx>();
 function ctx(world: LearningWorld): IngestPipelineCtx {
   let c = store.get(world);
   if (!c) {
-    c = { cards: [], callCounts: new Map() };
+    c = { cards: [], callCounts: new Map(), questionsCallCountByCard: new Map() };
     store.set(world, c);
   }
   return c;
@@ -123,9 +128,20 @@ function defaultDepsEdgesJson(c: IngestPipelineCtx): string {
 }
 
 /** 依目前 task 與呼叫次數決定回應文字;拋出的錯誤會原樣往外丟給呼叫端。 */
-function buildResponseText(task: LlmTask, callIndex: number, c: IngestPipelineCtx): string {
+function buildResponseText(task: LlmTask, callIndex: number, prompt: string, c: IngestPipelineCtx): string {
   if (task === 'ingest.questions') {
-    if (c.questionsFailAt === callIndex) throw new Error(`模擬模型呼叫失敗(第 ${callIndex} 次)`);
+    const m = /card:\s*(\S+)/.exec(prompt);
+    const cardId = m?.[1] as CardId | undefined;
+    if (cardId) {
+      if (c.questionsFailForCardId === cardId) {
+        throw new Error(`模擬 ${cardId} 的考題生成失敗(模型無法解析)`);
+      }
+      const n = (c.questionsCallCountByCard.get(cardId) ?? 0) + 1;
+      c.questionsCallCountByCard.set(cardId, n);
+      if (n === 1 && c.questionsTruncateOnceForCardId === cardId) {
+        throw new OutputTruncatedError('ingest.questions', 2048, 2048);
+      }
+    }
     return goodQuestionCandidateJson();
   }
   if (task === 'ingest.cards') {
@@ -150,7 +166,7 @@ function makeAdapter(world: LearningWorld, c: IngestPipelineCtx): { adapter: Clo
       const count = (c.callCounts.get(task) ?? 0) + 1;
       c.callCounts.set(task, count);
       world.networkRequests.push(`anthropic:${args.model}`);
-      const text = buildResponseText(task, count, c);
+      const text = buildResponseText(task, count, args.prompt, c);
       world.llmCalls.push({ task, prompt: args.prompt });
       return { text, provider: 'anthropic', model: args.model, latency_ms: 1 };
     },
@@ -282,8 +298,14 @@ Given('an order file already exists for another category', function (this: Learn
   ctx(this).languageOrderBefore = readFileSync(orderPath, 'utf8');
 });
 
-Given('question generation fails for the third card', function (this: LearningWorld) {
-  ctx(this).questionsFailAt = 3;
+Given('question generation fails for the third card on both attempts', function (this: LearningWorld) {
+  const c = ctx(this);
+  c.questionsFailForCardId = c.cards[2]!.frontmatter.id;
+});
+
+Given('question generation for the third card is truncated once and succeeds on retry', function (this: LearningWorld) {
+  const c = ctx(this);
+  c.questionsTruncateOnceForCardId = c.cards[2]!.frontmatter.id;
 });
 
 // ---------------------------------------------------------------- When
@@ -543,8 +565,53 @@ Then('the other four question files exist', function (this: LearningWorld) {
   }
 });
 
-Then('the failure is reported with the card id', function (this: LearningWorld) {
+Then('a warning naming the third card and the reason is in the log', function (this: LearningWorld) {
   const c = ctx(this);
   const failedId = c.cards[2]!.frontmatter.id;
-  assert.ok(c.questionsResult!.failures.some((f) => f.card === failedId), JSON.stringify(c.questionsResult!.failures));
+  const logPath = join(this.dir!, 'state/log.jsonl');
+  // 這筆 log 是 runIngestPipeline()(packages/core/src/ingest/ingest.ts)的責任,
+  // 不是 generateQuestionsForCards() 自己的事(見 questions.ts 的介面契約)。這個
+  // 場景的 When 只跑到 generateQuestionsForCards() 這層(見上面「the run
+  // completes」),所以現在這裡一定找不到對應的 warning——這是刻意留的紅燈,
+  // 真正的接線與斷言在 pipeline.test.ts 對 runIngestPipeline() 的整合測試裡
+  // (describe('question generation failures are logged'))。
+  const events = existsSync(logPath)
+    ? readFileSync(logPath, 'utf8')
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+    : [];
+  const warning = events.find(
+    (e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes(failedId),
+  );
+  assert.ok(warning, JSON.stringify(events));
+});
+
+Then('the command prints the failed card and exits with a non-zero status', function () {
+  // TODO(下一輪開發 agent,questions-retry-and-reporting):這個場景還沒接到真的
+  // scripts/ingest.ts CLI 呼叫——「When the run completes」目前只跑
+  // generateQuestionsForCards() 這層(見上面),沒有印出失敗清單、也沒有退出碼
+  // 可斷言。接上 CLI 之後(見 scripts/ingest.ts 與 ingest.ts 的 hasQuestionFailures
+  // 欄位),這裡改成透過 this.runCommand() 或等價方式真的跑一次 CLI,斷言 stdout
+  // 印出 failedId、status 非 0。先留一個明確會紅的斷言,不要悄悄放行。
+  assert.fail('CLI 尚未接上失敗清單印出與非 0 退出碼(commit2 任務描述,下一輪開發 agent 補)');
+});
+
+Then('all five question files exist', function (this: LearningWorld) {
+  const c = ctx(this);
+  for (const card of c.cards) {
+    assert.ok(existsSync(join(this.dir!, 'questions', `${card.frontmatter.id}.yaml`)), `缺少 ${card.frontmatter.id} 的考題檔`);
+  }
+});
+
+Then('the log records one truncated call', function (this: LearningWorld) {
+  const logPath = join(this.dir!, 'state/log.jsonl');
+  const events = existsSync(logPath)
+    ? readFileSync(logPath, 'utf8')
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+    : [];
+  const truncated = events.filter((e) => e.type === 'llm_call' && e.retry_reason === 'output_truncated');
+  assert.equal(truncated.length, 1, JSON.stringify(events));
 });
