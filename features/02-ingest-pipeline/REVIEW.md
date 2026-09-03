@@ -208,3 +208,85 @@ npx stryker run --mutate "packages/core/src/ingest/questions.ts,packages/core/sr
 
 - 等 12-prompt-quality/phase-2 決定 golden 評分維度後,把 `ingest.questions` /
   `ingest.cards` / `ingest.deps` 登記進 `golden-sets/registry.ts`。
+
+---
+
+## 6. deps.ts 動態 maxTokens 驗收(commit `87e37c8`)
+
+審核對象:`packages/core/src/ingest/deps.ts` 的 `computeDepsMaxTokens()` 與
+`analyzeDependencies()` 兩處 `router.call('ingest.deps', ...)` 呼叫點。標準級
+模組,變異門檻 80%。
+
+worktree 確認:
+
+```
+$ pwd
+/home/pollux/orca/workspaces/llm_learning-cards/deps-token-scaling
+$ git branch --show-current
+pollux0971/deps-token-scaling
+```
+
+### 6.1 邏輯對照
+
+背景 bug:`ingest.deps` 原本吃固定 2048 token 上限,卡片數量一多回應被截斷,
+依賴圖分析整段被跳過。修法:`computeDepsMaxTokens(cardCount)` 算出
+`clamp(2048, cardCount*256, 16384)`,在 `analyzeDependencies()` 開頭只算一次
+(`maxTokens = computeDepsMaxTokens(cards.length)`),兩次 `fetchEdges()` 呼叫
+(第一次、cycle 偵測到後的重試那次)都吃同一個 `maxTokens`、都真的傳進
+`router.call(..., { maxTokens })` 的 opts——不是只改了第一次呼叫、重試那次還
+留著舊值這種投機取巧。讀原始碼(`deps.ts:219-229`)確認兩個呼叫點的
+`maxTokens` 是同一個變數,不是各自重算或其中一個漏改。
+
+`deps.test.ts` 邊界測試:
+
+- `computeDepsMaxTokens`:3 張卡(2048,下限)、0 張卡(2048,下限)、30 張卡
+  (7680,精確值非只驗證範圍)、50 張卡(12800)、1000 張卡(16384,上限)。
+- `analyzeDependencies`:`passes a maxTokens computed from the card count into
+  router.call opts`(30 張卡場景,一般路徑)、`passes a maxTokens near the
+  2048 floor for a small category`(3 張卡)、`passes the same computed
+  maxTokens into both the first call and the cycle-retry call`——這一個直接
+  用真的循環邊集(3 張卡構成 A→B→C→A)逼出 cycle-retry 分支,斷言
+  `optsCalls[0].maxTokens === optsCalls[1].maxTokens === computeDepsMaxTokens(3)`,
+  是這次驗收的關鍵測試,確認兩次呼叫真的帶同一個算出來的值,不是巧合相等。
+
+邏輯是真的實作,不是投機取巧。
+
+### 6.2 標準檢查
+
+```
+npm ci            → 433 packages,無錯誤(僅既有 EBADENGINE / deprecated 警告)
+npm run boundaries → 掃描 173 個檔案,✓ 無違規
+npm run typecheck  → 無輸出,0 錯誤
+npx vitest run     → 64 test files, 950 tests 全過
+```
+
+### 6.3 Stryker
+
+```
+npx stryker run --mutate "packages/core/src/ingest/deps.ts,!packages/core/src/ingest/deps.test.ts"
+```
+
+**變異分數:100.00%**(門檻 80%,級別:標準)。118 個變異點,85 killed +
+33 errors(視為 killed)、0 survived、0 timeout、0 no coverage。不需要處理
+存活變異(沒有存活的)。
+
+### 6.4 Cucumber dry-run
+
+```
+NODE_OPTIONS=--import=tsx npx cucumber-js --tags "not @manual" --dry-run
+```
+
+452 scenarios(164 undefined、288 skipped)、**0 ambiguous**。undefined 的
+164 個是既有的、尚未實作的未來 integration 場景(I8 Windows 等),跟這次改動
+無關,不影響判定。
+
+### 6.5 判定
+
+**PASS**。
+
+- `computeDepsMaxTokens()` 公式與邊界測試(3/0/30/50/1000)精確值全對。
+- `analyzeDependencies()` 兩次 `router.call`(含 cycle 重試)都真的帶上同一個
+  算出來的 `maxTokens`,有測試直接鎖住這個不變量,不是巧合或投機取巧。
+- boundaries / typecheck / vitest(950/950)/ Stryker(**100.00%**,遠高於
+  80% 門檻,0 survived)/ cucumber dry-run(0 ambiguous)全過。
+- 沒有發現需要處理的存活變異、沒有邏輯缺陷、沒有新增的技術債。
