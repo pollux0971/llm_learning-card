@@ -11,6 +11,8 @@ export const anthropicAdapter: CloudAdapter = {
     );
     const latency_ms = Date.now() - started;
     const textBlock = response.content.find((block) => block.type === 'text');
+    // Stryker disable next-line ConditionalExpression: textBlock 是用 block.type === 'text' 找到的,
+    // truthy 時 .type 必為 'text',再檢查一次恆真——等價變異,不是真的分支。
     const text = textBlock && textBlock.type === 'text' ? textBlock.text : '';
 
     const result: CloudAdapterResult = { text, provider: 'anthropic', model: response.model, latency_ms };
