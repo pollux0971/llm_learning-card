@@ -74,32 +74,17 @@ describe('applyPassTransition', () => {
     expect(outcome.review).not.toBe(review);
   });
 
-  it('phase-1 不碰 fails_in_row / stuck,原封不動傳遞', () => {
+  /**
+   * phase-1 當時故意留白(標題原本是「phase-1 不碰 fails_in_row / stuck,原封不動
+   * 傳遞」),phase-2 的範圍就是把這件事實作出來:答對要清空連錯數與 stuck,
+   * 總錯數不變。這條測試已更新為 phase-2 的真實規格(協調者確認過不是規格衝突,
+   * 只是這條骨架測試過時了)。目前是紅燈,因為 applyPassTransition 本體還沒改。
+   */
+  it('[phase-2,紅燈,尚未實作] 答對清空連錯數與 stuck,總錯數不變', () => {
     const review = reviewAtStage(3, { fails_in_row: 2, total_fails: 5, stuck: true });
     const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'apply', grader: 'cloud' });
-    expect(outcome.review.fails_in_row).toBe(2);
-    expect(outcome.review.total_fails).toBe(5);
-    expect(outcome.review.stuck).toBe(true);
-  });
-
-  /**
-   * 注意:下面兩個期待跟上面「phase-1 不碰 fails_in_row / stuck」那個測試互斥——
-   * phase-2.feature 要求答對要清空連錯數與 stuck,phase-1 那個測試要求原封不動。
-   * 兩者不可能同時對同一個 applyPassTransition 實作成立。這是刻意留下的紅燈:
-   * 下一輪實作 phase-2 時,要嘛更新/刪掉上面那個 phase-1 測試,要嘛換一個不同的
-   * 函式承接「答對清空連錯」的語意——這個決定不在這次測試骨架的範圍內,
-   * 已經在 worker_done 回報裡跟協調者說明。
-   */
-  it('[phase-2,紅燈,跟上面那個 phase-1 測試互斥] 答對清空連錯數,保留總錯數', () => {
-    const review = reviewAtStage(3, { fails_in_row: 2, total_fails: 2 });
-    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'apply', grader: 'cloud' });
     expect(outcome.review.fails_in_row).toBe(0);
-    expect(outcome.review.total_fails).toBe(2);
-  });
-
-  it('[phase-2,紅燈,跟上面那個 phase-1 測試互斥] 答對清除 stuck', () => {
-    const review = reviewAtStage(3, { fails_in_row: 3, total_fails: 3, stuck: true });
-    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'apply', grader: 'cloud' });
+    expect(outcome.review.total_fails).toBe(5);
     expect(outcome.review.stuck).toBe(false);
   });
 });
