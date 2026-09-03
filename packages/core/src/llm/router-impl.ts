@@ -127,7 +127,7 @@ export class LlmRouterImpl implements LlmRouter {
     return cloudOpts;
   }
 
-  async call(task: LlmTask, prompt: string, opts: { timeoutMs?: number } = {}): Promise<LlmResult> {
+  async call(task: LlmTask, prompt: string, opts: { timeoutMs?: number; maxTokens?: number } = {}): Promise<LlmResult> {
     const online = await this.probeOnline();
     const local = (await this.probeLocal()).available;
     const decision = decideRoute({ task, online, local }, this.routingTable);

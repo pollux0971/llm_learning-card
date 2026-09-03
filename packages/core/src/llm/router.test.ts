@@ -3,7 +3,14 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CloudLlmRouter } from './router.js';
-import { LlmTimeoutError, MissingCredentialError, UnknownTaskError, UnsupportedProviderError } from './errors.js';
+import {
+  LlmTimeoutError,
+  MissingCredentialError,
+  OutputTruncatedError,
+  UnknownTaskError,
+  UnsupportedProviderError,
+} from './errors.js';
+import { TASK_MAX_TOKENS } from './token-limits.js';
 import type { CloudAdapter, CloudAdapterResult } from './types.js';
 
 function fakeAdapter(result: Partial<CloudAdapterResult> = {}): CloudAdapter {
@@ -255,6 +262,95 @@ describe('CloudLlmRouter.call', () => {
 
     const [a, b] = await Promise.all([routerA.call('deepen', 'hi'), routerB.call('deepen', 'hi')]);
     expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
+  });
+});
+
+describe('CloudLlmRouter.call — truncation (真的洞:寫死的 token 上限把回應切斷,不能靜默回半截文字)', () => {
+  it('throws OutputTruncatedError — not a half-cut LlmResult — when the adapter reports truncated output (openai finish_reason==="length" or anthropic stop_reason==="max_tokens", surfaced via CloudAdapterResult.truncated)', async () => {
+    const adapter = fakeAdapter({ truncated: true, tokens_out: 512 });
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: adapter },
+    });
+
+    const err = await router.call('ingest.cards', 'hi').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OutputTruncatedError);
+    const truncErr = err as OutputTruncatedError;
+    expect(truncErr.task).toBe('ingest.cards');
+    expect(truncErr.maxTokens).toBe(TASK_MAX_TOKENS['ingest.cards']);
+    expect(truncErr.tokensOut).toBe(512);
+  });
+
+  it('does not resolve with a text value when the adapter reports truncated output', async () => {
+    const adapter = fakeAdapter({ truncated: true, text: 'half a sent' });
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: adapter },
+    });
+
+    await expect(router.call('deepen', 'hi')).rejects.toThrow(OutputTruncatedError);
+  });
+
+  it('logs a llm_call event with truncated: true instead of a normal result event', async () => {
+    const logPath = tmpLogPath();
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: fakeAdapter({ truncated: true, tokens_out: 256 }) },
+      logPath,
+    });
+
+    await expect(router.call('reteach.short', 'hi')).rejects.toThrow(OutputTruncatedError);
+    const lines = readFileSync(logPath, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const event = JSON.parse(lines[0]!);
+    expect(event).toMatchObject({
+      type: 'llm_call',
+      task: 'reteach.short',
+      truncated: true,
+      max_tokens: TASK_MAX_TOKENS['reteach.short'],
+      tokens_out: 256,
+    });
+  });
+
+  it('does not log anything for a normal (non-truncated) call', async () => {
+    const logPath = tmpLogPath();
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: fakeAdapter({ truncated: false }) },
+      logPath,
+    });
+
+    await router.call('deepen', 'hi');
+    const event = JSON.parse(readFileSync(logPath, 'utf8').trim());
+    expect(event).not.toHaveProperty('truncated');
+  });
+});
+
+describe('CloudLlmRouter.call — per-task max tokens (契約 §7 開放問題:上限按任務給,不是全域一個數)', () => {
+  it.each(Object.keys(TASK_MAX_TOKENS) as (keyof typeof TASK_MAX_TOKENS)[])(
+    'looks up the token-limits table for task=%s when opts.maxTokens is not given',
+    async (task) => {
+      const adapter = fakeAdapter();
+      const router = new CloudLlmRouter({
+        env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+        adapters: { openai: adapter },
+      });
+
+      await router.call(task, 'hi');
+      expect(adapter.call).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: TASK_MAX_TOKENS[task] }));
+    },
+  );
+
+  it('lets opts.maxTokens override the table value — the adapter receives the opts value, not the table one', async () => {
+    const adapter = fakeAdapter();
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: adapter },
+    });
+
+    await router.call('ingest.cards', 'hi', { maxTokens: 42 });
+    expect(adapter.call).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 42 }));
+    expect(42).not.toBe(TASK_MAX_TOKENS['ingest.cards']);
   });
 });
 

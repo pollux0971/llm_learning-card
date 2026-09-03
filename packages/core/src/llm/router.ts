@@ -8,9 +8,16 @@ import {
   type LlmRouter,
   type LlmTask,
 } from './types.js';
-import { LlmTimeoutError, MissingCredentialError, UnknownTaskError, UnsupportedProviderError } from './errors.js';
+import {
+  LlmTimeoutError,
+  MissingCredentialError,
+  OutputTruncatedError,
+  UnknownTaskError,
+  UnsupportedProviderError,
+} from './errors.js';
 import { anthropicAdapter } from './adapters/anthropic.js';
 import { openaiAdapter } from './adapters/openai.js';
+import { TASK_MAX_TOKENS } from './token-limits.js';
 import type { LogEvent } from '@contracts/index.js';
 import { recordEvent } from '@core/schema/log.js';
 
@@ -78,7 +85,7 @@ export class CloudLlmRouter implements LlmRouter {
     this.log = opts.logAppender ?? createFileLogAppender(opts.logPath);
   }
 
-  async call(task: LlmTask, prompt: string, opts: { timeoutMs?: number } = {}): Promise<LlmResult> {
+  async call(task: LlmTask, prompt: string, opts: { timeoutMs?: number; maxTokens?: number } = {}): Promise<LlmResult> {
     if (!isLlmTask(task)) {
       throw new UnknownTaskError(task);
     }
@@ -95,13 +102,14 @@ export class CloudLlmRouter implements LlmRouter {
 
     const model = this.resolveModel();
     const timeoutMs = opts.timeoutMs ?? this.defaultTimeoutMs;
+    const maxTokens = opts.maxTokens ?? TASK_MAX_TOKENS[task];
     const adapter = this.adapters[providerName];
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     try {
       const result = await Promise.race([
-        adapter.call({ prompt, model, apiKey, signal: controller.signal }),
+        adapter.call({ prompt, model, apiKey, signal: controller.signal, maxTokens }),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
             controller.abort();
@@ -109,6 +117,10 @@ export class CloudLlmRouter implements LlmRouter {
           }, timeoutMs);
         }),
       ]);
+
+      if (result.truncated) {
+        throw new OutputTruncatedError(task, maxTokens, result.tokens_out ?? 0);
+      }
 
       const llmResult: LlmResult = { ...result, provisional: false };
       this.log({
@@ -132,6 +144,17 @@ export class CloudLlmRouter implements LlmRouter {
           model,
           timeout: true,
           timeout_ms: timeoutMs,
+        });
+      } else if (err instanceof OutputTruncatedError) {
+        this.log({
+          ts: new Date().toISOString(),
+          type: 'llm_call',
+          task,
+          provider: providerName,
+          model,
+          truncated: true,
+          max_tokens: err.maxTokens,
+          tokens_out: err.tokensOut,
         });
       }
       throw err;

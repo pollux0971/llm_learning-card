@@ -57,3 +57,23 @@ export class NoModelError extends Error {
     this.task = task;
   }
 }
+
+/**
+ * 截斷的輸出絕不能靜默回傳給呼叫端(半截的 JSON 可能剛好合法,會得到一張少字
+ * 的卡而且測試全綠)。adapter 偵測到 finish_reason==='length'(openai)或
+ * stop_reason==='max_tokens'(anthropic)時,router.ts 的 call() 一律丟這個,
+ * 不回傳 text。
+ */
+export class OutputTruncatedError extends Error {
+  readonly code = 'OUTPUT_TRUNCATED';
+  readonly task: string;
+  readonly maxTokens: number;
+  readonly tokensOut: number;
+  constructor(task: string, maxTokens: number, tokensOut: number) {
+    super(`task "${task}" output was truncated: maxTokens=${maxTokens}, tokensOut=${tokensOut}`);
+    this.name = 'OutputTruncatedError';
+    this.task = task;
+    this.maxTokens = maxTokens;
+    this.tokensOut = tokensOut;
+  }
+}

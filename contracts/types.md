@@ -210,7 +210,7 @@ interface LlmResult {
 }
 
 interface LlmRouter {
-  call(task: LlmTask, prompt: string, opts?: { timeoutMs?: number }): Promise<LlmResult>;
+  call(task: LlmTask, prompt: string, opts?: { timeoutMs?: number; maxTokens?: number }): Promise<LlmResult>;
   probeOnline(): Promise<boolean>;
   probeLocal(): Promise<{ available: boolean; models: string[] }>;
 }
@@ -225,6 +225,12 @@ interface LlmRouter {
 | grade.fill.llm | local | local | throw `NO_MODEL` |
 
 **Wave 0 的 stub**:每個需要 LLM 的功能自備 `FakeLlmRouter implements LlmRouter`,從 `contracts/fixtures/llm/` 讀預錄回應。這是各功能能單獨跑的關鍵。
+
+**`opts.maxTokens`(軟約定,函式簽章)**:每個 task 的預設上限見 `packages/core/src/llm/token-limits.ts`
+的 `TASK_MAX_TOKENS`(對照這裡的 7 個 `LlmTask`)。`call()` 沒收到 `opts.maxTokens` 時查這張表;
+收到就覆蓋表格值。動機:adapter 原本寫死一個全域 1024,真的呼叫時回應被截斷——如果切斷點剛好切壞
+JSON 才會被抓到,切在別的地方 JSON 可能仍合法,會靜默回傳一張少字的卡。截斷本身視為錯誤
+(`OutputTruncatedError`,`packages/core/src/llm/errors.ts`),不回傳半截 text。
 
 ## 8. 依賴圖
 
