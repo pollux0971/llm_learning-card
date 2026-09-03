@@ -35,6 +35,11 @@ Wave 0 已經在 `common.steps.ts` 定義好的句子(**worker 不要再定義**
 | `the result is <X>`(含 `a pass` / `a failure`) | 把結果放 `this.lastResult`;不是原始值就設 `this.resultText` |
 | `a learning directory populated by the I1 pipeline` | 讀 `this.dir` |
 
+**`the result is …` 這個前綴整個屬於 common(cucumber expression 的 `{}` 吃掉後面任何字)。
+新場景不准再寫「the result is X」開頭的句子,不管 X 是什麼,一定會跟這句撞名——
+已經撞過兩次(23cfb4c、11-review-cli/phase-1)。斷言具體結果請用有名詞的句子,
+例如 `the verdict is …`、`the due list has …`、`the feedback says …`。**
+
 規則:
 - **只用在 `@manual` 場景的句子不要定義**(自動測試會跳過它們,定義了只會跟別人撞)
 - 你需要新的通用句子:寫在自己 FEATURE.md 的「待協調」段,合併時協調者加進 `common.steps.ts`
