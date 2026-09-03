@@ -37,8 +37,12 @@ description: 驗收一個整合點。當某個整合點的所有 phase 都完成
 ## 第四步:自動場景
 
 ```
-npx cucumber-js docs/integration --tags "@<in> and not @manual"
+NODE_OPTIONS=--import=tsx npx cucumber-js --tags "@<in> and not @manual"
 ```
+
+位置路徑(`docs/integration`)拿掉——`cucumber.js` 的 `paths` 與 CLI 位置路徑是合併不是覆蓋,
+路徑本身不會縮小範圍,靠 `--tags` 才是真的在篩選(ADR-036/037)。`NODE_OPTIONS=--import=tsx`
+前綴不可省,沒有它會 `ERR_UNKNOWN_FILE_EXTENSION` 直接掛掉。
 
 分開回報三類:
 - 一般場景:這個整合點的新能力

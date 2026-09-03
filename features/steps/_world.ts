@@ -7,6 +7,17 @@ import { join, resolve } from 'node:path';
 /** repo 根目錄(features/steps/ 的上兩層) */
 export const ROOT = resolve(import.meta.dirname, '../..');
 
+/**
+ * cucumber 本身用 NODE_OPTIONS=--import=tsx 啟動(ADR-033)。這個變數會被子程序繼承,
+ * 但 standalone.json 的指令是「使用者自己在 shell 打的東西」,不該被 cucumber 的載入器
+ * 汙染環境——子程序若解析不到 tsx 的位置會假紅,而且跟使用者手動執行的環境不一致。
+ * runCommand / startDevServer 一律用這份乾淨的 env。
+ */
+function withoutNodeOptions(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { NODE_OPTIONS, ...rest } = env;
+  return rest;
+}
+
 type Manifest = Record<string, { cmd: string; interactive: boolean; expect?: string }>;
 
 export interface RunResult {
@@ -110,7 +121,7 @@ export class LearningWorld extends World {
       shell: true,
       encoding: 'utf8',
       timeout: opts.timeoutMs ?? 120_000,
-      env: { ...process.env, ...opts.env },
+      env: { ...withoutNodeOptions(process.env), ...opts.env },
     });
     const stdout = r.stdout ?? '';
     const stderr = r.stderr ?? '';
@@ -139,7 +150,7 @@ export class LearningWorld extends World {
     const timeoutMs = opts.timeoutMs ?? 60_000;
 
     return new Promise<RunResult>((resolveRun) => {
-      const child = spawn(entry.cmd, { cwd: ROOT, shell: true, env: process.env, detached: true });
+      const child = spawn(entry.cmd, { cwd: ROOT, shell: true, env: withoutNodeOptions(process.env), detached: true });
       let stdout = '';
       let stderr = '';
       let settled = false;

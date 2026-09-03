@@ -21,8 +21,13 @@ description: 驗收一個 phase。當使用者說某個 phase 做完了、寫完
 ## 第三步:自動場景
 
 ```
-npx cucumber-js features/<NN-name>/phase-<N>.feature --tags "not @manual"
+NODE_OPTIONS=--import=tsx npx cucumber-js --tags "@<name> and @phase-<N> and not @manual"
 ```
+
+`<name>` 是資料夾名稱去掉編號前綴(例如 `04-scheduler` → `scheduler`,`01-data-layer` → `data-layer`)。
+**不要用位置路徑參數限定範圍**——`cucumber.js` 的 `paths` 與 CLI 位置路徑是合併(concat)不是覆蓋,
+給了路徑一樣會跑全 repo 的 453 個場景,只有 `--tags` 才真的縮小範圍(ADR-036/037)。
+也不要漏掉 `NODE_OPTIONS=--import=tsx` 前綴,沒有它會直接 `ERR_UNKNOWN_FILE_EXTENSION` 掛掉,不是靜默的假結果。
 
 `features/steps/` 為空時改跑 `npx vitest run`,並把每個非 `@manual` 場景對照到測試名稱,
 回報哪些場景沒有對應測試。
