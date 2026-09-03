@@ -19,7 +19,7 @@ import { runIngestPipeline } from './ingest.js';
 import { ensureInitialized } from './init.js';
 import { readLogEvents } from './state.js';
 import type { LlmResult, LlmRouter, LlmTask } from './types.js';
-import { CloudRequiredError as RealCloudRequiredError } from '../llm/errors.js';
+import { CloudRequiredError as RealCloudRequiredError, OutputTruncatedError } from '../llm/errors.js';
 
 const CATEGORY = 'security';
 const RAW_REL_PATH = `raw/${CATEGORY}/web-basics.md`;
@@ -65,8 +65,10 @@ function depsEdgesJsonFromPrompt(prompt: string): string {
 interface ScriptedRouterOptions {
   levelZeroCount?: number;
   childCountPerParent?: number;
-  /** 這些 card id 的 'ingest.questions' 呼叫會丟錯,模擬單卡生成失敗。 */
+  /** 這些 card id 的 'ingest.questions' 呼叫每次都會丟錯,模擬單卡生成徹底失敗。 */
   questionsFailForCardIds?: string[];
+  /** 這些 card id 的 'ingest.questions' 第一次呼叫丟 OutputTruncatedError,第二次(重試)成功。 */
+  truncateOnceForCardIds?: string[];
   /** 讓 'ingest.cards' 的子卡回應筆數不合法(0 筆),模擬整批子卡生成失敗。 */
   childrenBatchFails?: boolean;
   /** 讓 'ingest.deps' 回應缺少 edges 陣列,模擬整批依賴圖分析失敗。 */
@@ -80,6 +82,8 @@ function scriptedRouter(opts: ScriptedRouterOptions = {}): LlmRouter {
   const levelZeroCount = opts.levelZeroCount ?? 3;
   const childCountPerParent = opts.childCountPerParent ?? 2;
   const failIds = new Set(opts.questionsFailForCardIds ?? []);
+  const truncateOnceIds = new Set(opts.truncateOnceForCardIds ?? []);
+  const questionsCallCountByCard = new Map<string, number>();
 
   return {
     async call(task: LlmTask, prompt: string): Promise<LlmResult> {
@@ -103,6 +107,13 @@ function scriptedRouter(opts: ScriptedRouterOptions = {}): LlmRouter {
         const cardId = m?.[1];
         if (cardId && failIds.has(cardId)) {
           throw new Error(`模擬 ${cardId} 的考題生成失敗`);
+        }
+        if (cardId) {
+          const n = (questionsCallCountByCard.get(cardId) ?? 0) + 1;
+          questionsCallCountByCard.set(cardId, n);
+          if (n === 1 && truncateOnceIds.has(cardId)) {
+            throw new OutputTruncatedError('ingest.questions', 2048, 2048);
+          }
         }
         return { text: questionCandidateJson(), provider: 'fake', model: 'scripted', latency_ms: 0, provisional: false };
       }
@@ -175,7 +186,8 @@ describe('runIngestPipeline', () => {
     expect(result.questionFailures).toEqual([]);
     expect(result.childrenCreated).toHaveLength(3 * 2);
     expect(result.childQuestionFailures).toEqual([]);
-    expect(result.cycleRemoved).toBeNull();
+    expect(result.edgesRemoved).toEqual([]);
+    expect(result.cycleUnresolved).toBeNull();
 
     const allIds = listCardIds(dir);
     expect(allIds).toHaveLength(3 + 3 * 2);
@@ -217,7 +229,8 @@ describe('runIngestPipeline', () => {
     expect(result.questionFailures).toEqual([]);
     expect(result.childQuestionFailures).toEqual([]);
     expect(result.depsOrder).toEqual([]);
-    expect(result.cycleRemoved).toBeNull();
+    expect(result.edgesRemoved).toEqual([]);
+    expect(result.cycleUnresolved).toBeNull();
   });
 
   it('重跑同一個檔案:card 數不變,也不再呼叫 LLM(含 phase-2 三步)', async () => {
@@ -246,7 +259,8 @@ describe('runIngestPipeline', () => {
     expect(second.childrenCreated).toEqual([]);
     expect(second.childQuestionFailures).toEqual([]);
     expect(second.depsOrder).toEqual([]);
-    expect(second.cycleRemoved).toBeNull();
+    expect(second.edgesRemoved).toEqual([]);
+    expect(second.cycleUnresolved).toBeNull();
   });
 
   it('單卡生成失敗不影響其他卡:一張 level 0 卡的考題生成失敗,其餘照常完成', async () => {
@@ -308,7 +322,8 @@ describe('runIngestPipeline', () => {
     expect(result.cardsCreated).toHaveLength(2);
     expect(result.childrenCreated).toHaveLength(2);
     expect(result.depsOrder).toEqual([]);
-    expect(result.cycleRemoved).toBeNull();
+    expect(result.edgesRemoved).toEqual([]);
+    expect(result.cycleUnresolved).toBeNull();
 
     const events = readLogEvents(join(dir, 'state/log.jsonl'));
     const warning = events.find((e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes('依賴圖分析失敗'));
@@ -368,5 +383,97 @@ describe('runIngestPipeline', () => {
     }
     const depsJson = JSON.parse(readFileSync(join(dir, 'graph', 'deps.json'), 'utf8'));
     expect(depsJson[CATEGORY]).toBeDefined();
+  });
+
+  // ---------------------------------------------------------------- question generation failures are logged
+  //
+  // 真的跑一次文章時撞到:questions.failures 與 childQuestionFailures 只收在
+  // 記憶體裡,完全沒有寫進 log.jsonl。這幾個測試釘住「每筆失敗都要各自被記一筆
+  // warning(含 card id 與完整 error 訊息)」的目標行為——見 ingest.ts 裡
+  // runIngestPipeline() 的 TODO 註解,目前還沒接線,以下大多是紅燈。
+  // hasQuestionFailures 這個欄位是這輪真的實作的(不是 TODO),相關斷言是綠燈。
+
+  it('logs a warning naming the card id and the error for a level 0 card whose question generation fails', async () => {
+    const probe = await runIngestPipeline({
+      outDir: dir,
+      rawRelPath: RAW_REL_PATH,
+      category: CATEGORY,
+      router: scriptedRouter({ levelZeroCount: 3 }),
+    });
+    expect(probe.ok).toBe(true);
+    const failingCardId = probe.cardsCreated[0]!;
+    rmSync(dir, { recursive: true, force: true });
+    dir = setup();
+
+    const router = scriptedRouter({ levelZeroCount: 3, childCountPerParent: 1, questionsFailForCardIds: [failingCardId] });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
+
+    expect(result.hasQuestionFailures).toBe(true);
+    const events = readLogEvents(join(dir, 'state/log.jsonl'));
+    const warning = events.find(
+      (e) =>
+        e.type === 'warning' &&
+        typeof e.message === 'string' &&
+        (e.message as string).includes(failingCardId) &&
+        (e.message as string).includes('模擬'),
+    );
+    expect(warning, JSON.stringify(events)).toBeTruthy();
+  });
+
+  it('logs a warning naming the card id when a child card question generation fails', async () => {
+    const probe = await runIngestPipeline({
+      outDir: dir,
+      rawRelPath: RAW_REL_PATH,
+      category: CATEGORY,
+      router: scriptedRouter({ levelZeroCount: 2, childCountPerParent: 1 }),
+    });
+    expect(probe.ok).toBe(true);
+    const failingChildId = probe.childrenCreated[0]!;
+    rmSync(dir, { recursive: true, force: true });
+    dir = setup();
+
+    const router = scriptedRouter({ levelZeroCount: 2, childCountPerParent: 1, questionsFailForCardIds: [failingChildId] });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
+
+    expect(result.hasQuestionFailures).toBe(true);
+    expect(result.childQuestionFailures.some((f) => f.card === failingChildId)).toBe(true);
+    const events = readLogEvents(join(dir, 'state/log.jsonl'));
+    const warning = events.find(
+      (e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes(failingChildId),
+    );
+    expect(warning, JSON.stringify(events)).toBeTruthy();
+  });
+
+  it('a card truncated once and succeeding on retry does not end up in the final failure list', async () => {
+    const probe = await runIngestPipeline({
+      outDir: dir,
+      rawRelPath: RAW_REL_PATH,
+      category: CATEGORY,
+      router: scriptedRouter({ levelZeroCount: 3 }),
+    });
+    expect(probe.ok).toBe(true);
+    const truncatedCardId = probe.cardsCreated[0]!;
+    rmSync(dir, { recursive: true, force: true });
+    dir = setup();
+
+    const router = scriptedRouter({ levelZeroCount: 3, childCountPerParent: 1, truncateOnceForCardIds: [truncatedCardId] });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
+
+    expect(result.hasQuestionFailures).toBe(false);
+    expect(result.questionFailures).toEqual([]);
+    for (const id of result.cardsCreated) {
+      expect(existsSync(join(dir, 'questions', `${id}.yaml`)), `缺少 ${id} 的考題檔`).toBe(true);
+    }
+  });
+
+  it('does not set hasQuestionFailures or write any warning when nothing fails', async () => {
+    const router = scriptedRouter({ levelZeroCount: 3, childCountPerParent: 1 });
+    const result = await runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router });
+
+    expect(result.hasQuestionFailures).toBe(false);
+    const events = readLogEvents(join(dir, 'state/log.jsonl'));
+    expect(events.some((e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes('考題'))).toBe(
+      false,
+    );
   });
 });

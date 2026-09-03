@@ -14,7 +14,7 @@
  */
 import { Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
@@ -23,16 +23,19 @@ import type { LearningWorld } from './_world.js';
 import type { Card, CardId, QuestionFile } from '../../packages/contracts/src/index.js';
 import {
   CloudLlmRouter,
+  OutputTruncatedError,
   type CloudAdapter,
   type CloudAdapterResult,
   type LlmRouter,
   type LlmTask,
 } from '../../packages/core/src/llm/index.js';
-import { checkPrereqConsistency, type Graph } from '../../packages/core/src/schema/graph.js';
+import { checkPrereqConsistency, detectCycle, type Graph } from '../../packages/core/src/schema/graph.js';
 import { validateQuestionFile } from '../../packages/core/src/schema/validate-question.js';
 import { generateQuestionsForCards, type GenerateQuestionsRunResult } from '../../packages/core/src/ingest/questions.js';
 import { generateChildrenForCards, type GenerateChildrenResult } from '../../packages/core/src/ingest/children.js';
 import { analyzeDependencies, type AnalyzeDependenciesResult } from '../../packages/core/src/ingest/deps.js';
+import { runIngestPipeline, type RunIngestOptions, type RunIngestPipelineResult } from '../../packages/core/src/ingest/ingest.js';
+import { ensureInitialized } from '../../packages/core/src/ingest/init.js';
 
 // ---------------------------------------------------------------- 場景內狀態
 
@@ -48,11 +51,17 @@ interface IngestPipelineCtx {
   callCounts: Map<LlmTask, number>;
   /** 依呼叫次數覆寫 'ingest.deps' 的回應(cycle 挑戰場景用)。不給就用預設鏈狀圖。 */
   depsScript?: [CardId, CardId][][];
-  /** 'ingest.questions' 第幾次呼叫要丟錯(Generation failure 場景用,1-based)。 */
-  questionsFailAt?: number;
+  /** 'ingest.questions' 對這張卡的每次呼叫都丟錯(Generation failure 場景用)。 */
+  questionsFailForCardId?: CardId;
+  /** 'ingest.questions' 對這張卡的第一次呼叫丟 OutputTruncatedError,第二次(重試)成功。 */
+  questionsTruncateOnceForCardId?: CardId;
+  /** 'ingest.questions' 每張卡目前呼叫到第幾次(1-based),供截斷重試場景判斷「第一次」。 */
+  questionsCallCountByCard: Map<CardId, number>;
   questionsResult?: GenerateQuestionsRunResult;
   childrenResult?: GenerateChildrenResult;
   depsResult?: AnalyzeDependenciesResult;
+  /** 「the run completes」跑完整 runIngestPipeline() 之後的結果。 */
+  pipelineResult?: RunIngestPipelineResult;
   languageOrderBefore?: string;
 }
 
@@ -61,7 +70,7 @@ const store = new WeakMap<LearningWorld, IngestPipelineCtx>();
 function ctx(world: LearningWorld): IngestPipelineCtx {
   let c = store.get(world);
   if (!c) {
-    c = { cards: [], callCounts: new Map() };
+    c = { cards: [], callCounts: new Map(), questionsCallCountByCard: new Map() };
     store.set(world, c);
   }
   return c;
@@ -114,22 +123,54 @@ function goodChildCandidatesJson(): string {
   ]);
 }
 
-/** 預設的 'ingest.deps' 回應:把傳入的 cards 串成一條鏈,保證「圖包含每張卡」。 */
-function defaultDepsEdgesJson(c: IngestPipelineCtx): string {
-  const ids = c.cards.map((card) => card.frontmatter.id);
+/** 'ingest.cards' 的 level 0 回應(prompt 沒有 parent_id: 那一行時)。 */
+function levelZeroCandidatesJson(count: number): string {
+  return JSON.stringify(
+    Array.from({ length: count }, (_, i) => ({
+      title: `第 ${i + 1} 個概念`,
+      body: `這是第 ${i + 1} 張卡的正文內容,描述同源政策的其中一個面向。`,
+      examples: [],
+      lines: [i * 2 + 1, i * 2 + 2],
+    })),
+  );
+}
+
+/**
+ * 預設的 'ingest.deps' 回應:把 prompt 裡「- <id>: <title>」列出的卡片串成一條鏈,
+ * 保證「圖包含每張卡」且無循環。
+ *
+ * 讀 prompt 而不是讀 ctx.cards:走 runIngestPipeline() 的場景裡,deps 拿到的是
+ * level 0 卡「加上」子卡,ctx.cards 只有前者——照 ctx.cards 回答會漏掉子卡,圖就
+ * 不含每張卡了。只跑 analyzeDependencies() 的場景兩者結果相同。
+ */
+function defaultDepsEdgesJson(prompt: string): string {
+  const ids = [...prompt.matchAll(/^- (\S+):/gm)].map((m) => m[1] as CardId);
   const edges: [CardId, CardId][] = [];
   for (let i = 0; i + 1 < ids.length; i++) edges.push([ids[i]!, ids[i + 1]!]);
   return JSON.stringify({ edges });
 }
 
 /** 依目前 task 與呼叫次數決定回應文字;拋出的錯誤會原樣往外丟給呼叫端。 */
-function buildResponseText(task: LlmTask, callIndex: number, c: IngestPipelineCtx): string {
+function buildResponseText(task: LlmTask, callIndex: number, prompt: string, c: IngestPipelineCtx): string {
   if (task === 'ingest.questions') {
-    if (c.questionsFailAt === callIndex) throw new Error(`模擬模型呼叫失敗(第 ${callIndex} 次)`);
+    const m = /card:\s*(\S+)/.exec(prompt);
+    const cardId = m?.[1] as CardId | undefined;
+    if (cardId) {
+      if (c.questionsFailForCardId === cardId) {
+        throw new Error(`模擬 ${cardId} 的考題生成失敗(模型無法解析)`);
+      }
+      const n = (c.questionsCallCountByCard.get(cardId) ?? 0) + 1;
+      c.questionsCallCountByCard.set(cardId, n);
+      if (n === 1 && c.questionsTruncateOnceForCardId === cardId) {
+        throw new OutputTruncatedError('ingest.questions', 2048, 2048);
+      }
+    }
     return goodQuestionCandidateJson();
   }
   if (task === 'ingest.cards') {
-    return goodChildCandidatesJson();
+    // children.ts 的 prompt 帶 parent_id:,generate-cards.ts 的 level 0 prompt 沒有——
+    // 兩者共用同一個 LlmTask(契約 §7 路由表),只能靠 prompt 分辨。
+    return prompt.includes('parent_id:') ? goodChildCandidatesJson() : levelZeroCandidatesJson(c.cards.length);
   }
   if (task === 'ingest.deps') {
     if (c.depsScript) {
@@ -137,7 +178,7 @@ function buildResponseText(task: LlmTask, callIndex: number, c: IngestPipelineCt
       if (!edges) throw new Error(`depsScript 沒有第 ${callIndex} 次呼叫的回應`);
       return JSON.stringify({ edges });
     }
-    return defaultDepsEdgesJson(c);
+    return defaultDepsEdgesJson(prompt);
   }
   throw new Error(`ingest-pipeline.steps.ts 的假 adapter 沒有預期到 task=${task}`);
 }
@@ -150,7 +191,7 @@ function makeAdapter(world: LearningWorld, c: IngestPipelineCtx): { adapter: Clo
       const count = (c.callCounts.get(task) ?? 0) + 1;
       c.callCounts.set(task, count);
       world.networkRequests.push(`anthropic:${args.model}`);
-      const text = buildResponseText(task, count, c);
+      const text = buildResponseText(task, count, args.prompt, c);
       world.llmCalls.push({ task, prompt: args.prompt });
       return { text, provider: 'anthropic', model: args.model, latency_ms: 1 };
     },
@@ -236,8 +277,43 @@ Given('the model returns edges containing a cycle on the first attempt', functio
     [ids[2]!, ids[0]!],
   ];
   // 兩次都回循環的邊,對應「if the second attempt still cycles」這個分支。
+  // 下面兩個場景專屬的 Given 會覆寫 depsScript[1](重試回應),depsScript[0]
+  // (第一次的循環,單純用來觸發挑戰)維持不變。
   c.depsScript = [cyclicEdges, cyclicEdges];
 });
+
+Given('the second attempt still returns two independent cycles that share no card or edge', function (this: LearningWorld) {
+  const c = ctx(this);
+  assert.ok(c.depsScript, '要先跑過 "the model returns edges containing a cycle on the first attempt"');
+  const ids = c.cards.map((card) => card.frontmatter.id);
+  // sec-0001..0003 的三卡循環(跟第一次攻擊用的一樣)+ sec-0004/sec-0005 的
+  // 兩卡循環——兩者不共用任何節點或邊。
+  const cycleA: [CardId, CardId][] = [
+    [ids[0]!, ids[1]!],
+    [ids[1]!, ids[2]!],
+    [ids[2]!, ids[0]!],
+  ];
+  const cycleB: [CardId, CardId][] = [
+    [ids[3]!, ids[4]!],
+    [ids[4]!, ids[3]!],
+  ];
+  c.depsScript![1] = [...cycleA, ...cycleB];
+});
+
+Given(
+  'the second attempt keeps forming a new cycle after each edge is dropped, up to the card count limit',
+  function (this: LearningWorld) {
+    const c = ctx(this);
+    assert.ok(c.depsScript, '要先跑過 "the model returns edges containing a cycle on the first attempt"');
+    const ids = c.cards.map((card) => card.frontmatter.id);
+    // 5 個自環(各自佔一次丟邊)+ 一個把全部 5 張卡串起來的循環:自環排在每張卡
+    // 鄰接表的最前面,本地迴圈會先把 5 個自環各丟一次,丟滿 cards.length(=5)
+    // 的上限時,五卡循環本身完全沒被碰到,依然是殘留的循環。
+    const selfLoops: [CardId, CardId][] = ids.map((id) => [id, id]);
+    const bigCycle: [CardId, CardId][] = ids.map((id, i) => [id, ids[(i + 1) % ids.length]!]);
+    c.depsScript![1] = [...selfLoops, ...bigCycle];
+  },
+);
 
 Given('an order file already exists for another category', function (this: LearningWorld) {
   const languageGraph: Graph = { nodes: ['lan-0001', 'lan-0002'], edges: [['lan-0001', 'lan-0002']] };
@@ -247,8 +323,14 @@ Given('an order file already exists for another category', function (this: Learn
   ctx(this).languageOrderBefore = readFileSync(orderPath, 'utf8');
 });
 
-Given('question generation fails for the third card', function (this: LearningWorld) {
-  ctx(this).questionsFailAt = 3;
+Given('question generation fails for the third card on both attempts', function (this: LearningWorld) {
+  const c = ctx(this);
+  c.questionsFailForCardId = c.cards[2]!.frontmatter.id;
+});
+
+Given('question generation for the third card is truncated once and succeeds on retry', function (this: LearningWorld) {
+  const c = ctx(this);
+  c.questionsTruncateOnceForCardId = c.cards[2]!.frontmatter.id;
 });
 
 // ---------------------------------------------------------------- When
@@ -258,9 +340,44 @@ When('question generation runs', async function (this: LearningWorld) {
   c.questionsResult = await generateQuestionsForCards(this.dir!, c.cards, c.router!);
 });
 
+/**
+ * 「the run completes」是完整的一次 ingest,不是只有考題那一步:考題失敗的 warning
+ * 依 questions.ts 的介面契約是 runIngestPipeline() 的責任(generateQuestionsForCards()
+ * 只把失敗收進 failures,不寫 log),所以這個 When 一定要跑到 pipeline 這一層,
+ * 否則「a warning naming the third card」永遠驗不到真東西。
+ *
+ * runIngestPipeline() 是從 raw 檔開始跑的,自己會生 level 0 卡,所以這裡另開一個
+ * 乾淨的 learning 目錄(Background 手寫的那五張卡只用來讓 Given 算出「第三張卡」
+ * 的 id);新目錄裡 level 0 的編號一樣從 sec-0001 開始,兩邊對得上——下面的
+ * assert 把這個耦合寫死,對不上就當場紅,不會靜悄悄跑成別的東西。
+ */
 When('the run completes', async function (this: LearningWorld) {
   const c = ctx(this);
-  c.questionsResult = await generateQuestionsForCards(this.dir!, c.cards, c.router!);
+  const dir = mkdtempSync(join(tmpdir(), 'lc-ingest-pipeline-run-'));
+  ensureInitialized(dir);
+  const rawRelPath = `raw/${CATEGORY}/web-basics.md`;
+  mkdirSync(join(dir, 'raw', CATEGORY), { recursive: true });
+  writeFileSync(join(dir, rawRelPath), '一些原始內容\n'.repeat(20), 'utf8');
+
+  rmSync(this.dir!, { recursive: true, force: true });
+  this.dir = dir;
+
+  c.pipelineResult = await runIngestPipeline({
+    outDir: dir,
+    rawRelPath,
+    category: CATEGORY,
+    today: this.today,
+    // runIngestPipeline() 的 router 型別是 ingest/types.ts 的 Wave 0 版(provider 多一個
+    // 'fake' literal),c.router 是 @core/llm 的版本;call/probeOnline/probeLocal 的簽章
+    // 結構相同,只有那個 literal union 寬窄不同,對執行沒有影響。
+    router: c.router as unknown as RunIngestOptions['router'],
+  });
+
+  assert.deepEqual(
+    c.pipelineResult.cardsCreated,
+    c.cards.map((card) => card.frontmatter.id),
+    'pipeline 產生的 level 0 卡片編號要跟 Background 的五張對得上,場景專屬的 Given 才指得到「第三張卡」',
+  );
 });
 
 When('child generation runs', async function (this: LearningWorld) {
@@ -421,21 +538,58 @@ Then('the model is called again with the cycle described', function (this: Learn
   assert.equal(c.callCounts.get('ingest.deps'), 2, 'ingest.deps 應該被呼叫兩次');
 });
 
-Then('if the second attempt still cycles the offending edge is dropped', function (this: LearningWorld) {
+Then('if the second attempt still cycles, edges are dropped one at a time until the graph is acyclic', function (this: LearningWorld) {
   const c = ctx(this);
-  assert.notEqual(c.depsResult!.cycleRemoved, null, '應該有一條邊被丟棄');
-  assert.ok(
-    !c.depsResult!.graph.edges.some(([f, t]) => f === c.depsResult!.cycleRemoved![0] && t === c.depsResult!.cycleRemoved![1]),
-    '被丟棄的邊不該還留在最終的圖裡',
-  );
+  assert.ok(c.depsResult!.edgesRemoved.length > 0, '應該至少有一條邊被丟棄');
+  assert.equal(detectCycle(c.depsResult!.graph).hasCycle, false, '本地迴圈丟完邊之後的圖不該還有循環');
 });
 
-Then('a cycle removed event is logged', function (this: LearningWorld) {
+Then('each dropped edge is logged as a cycle removed event', function (this: LearningWorld) {
+  const c = ctx(this);
   const events = readFileSync(join(this.dir!, 'state/log.jsonl'), 'utf8')
     .split('\n')
     .filter((l) => l.trim().length > 0)
     .map((l) => JSON.parse(l) as Record<string, unknown>);
-  assert.ok(events.some((e) => e.type === 'cycle_removed'), JSON.stringify(events));
+  const removedEvents = events.filter((e) => e.type === 'cycle_removed');
+  assert.equal(removedEvents.length, c.depsResult!.edgesRemoved.length, JSON.stringify(events));
+});
+
+Then('the graph file and the order file are written together or not at all', function (this: LearningWorld) {
+  const depsExists = existsSync(join(this.dir!, 'graph', 'deps.json'));
+  const orderExists = existsSync(join(this.dir!, 'graph', `order-${CATEGORY}.json`));
+  assert.equal(depsExists, orderExists, `deps.json 存在=${depsExists},order 存在=${orderExists},兩者應該一致`);
+});
+
+Then('both offending edges are dropped', function (this: LearningWorld) {
+  const c = ctx(this);
+  assert.equal(c.depsResult!.edgesRemoved.length, 2, JSON.stringify(c.depsResult!.edgesRemoved));
+  assert.equal(detectCycle(c.depsResult!.graph).hasCycle, false, '兩條邊都丟掉之後的圖不該還有循環');
+});
+
+Then('the order file exists and lists each card exactly once', function (this: LearningWorld) {
+  const c = ctx(this);
+  const orderPath = join(this.dir!, 'graph', `order-${CATEGORY}.json`);
+  assert.ok(existsSync(orderPath));
+  const order = JSON.parse(readFileSync(orderPath, 'utf8')) as CardId[];
+  assert.deepEqual([...order].sort(), c.cards.map((card) => card.frontmatter.id).sort());
+});
+
+Then('the graph file and the order file are not written', function (this: LearningWorld) {
+  assert.equal(existsSync(join(this.dir!, 'graph', 'deps.json')), false, 'deps.json 不該被寫出');
+  assert.equal(existsSync(join(this.dir!, 'graph', `order-${CATEGORY}.json`)), false, 'order 檔不該被寫出');
+});
+
+Then('a warning naming the remaining cycle is logged', function (this: LearningWorld) {
+  const c = ctx(this);
+  const events = readFileSync(join(this.dir!, 'state/log.jsonl'), 'utf8')
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const firstId = c.cards[0]!.frontmatter.id;
+  assert.ok(
+    events.some((e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes(firstId)),
+    JSON.stringify(events),
+  );
 });
 
 Then('an order file exists for the category', function (this: LearningWorld) {
@@ -471,8 +625,97 @@ Then('the other four question files exist', function (this: LearningWorld) {
   }
 });
 
-Then('the failure is reported with the card id', function (this: LearningWorld) {
+Then('a warning naming the third card and the reason is in the log', function (this: LearningWorld) {
   const c = ctx(this);
   const failedId = c.cards[2]!.frontmatter.id;
-  assert.ok(c.questionsResult!.failures.some((f) => f.card === failedId), JSON.stringify(c.questionsResult!.failures));
+  const logPath = join(this.dir!, 'state/log.jsonl');
+  // 這筆 log 是 runIngestPipeline()(packages/core/src/ingest/ingest.ts)的責任,
+  // 不是 generateQuestionsForCards() 自己的事(見 questions.ts 的介面契約),所以
+  // 上面的 When 跑的是完整 pipeline。
+  const events = existsSync(logPath)
+    ? readFileSync(logPath, 'utf8')
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+    : [];
+  const warning = events.find(
+    (e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes(failedId),
+  );
+  assert.ok(warning, JSON.stringify(events));
+  // 「and the reason」:光有 card id 不算,訊息要帶上失敗原因本身。
+  const failure = c.pipelineResult!.questionFailures.find((f) => f.card === failedId);
+  assert.ok(failure, JSON.stringify(c.pipelineResult!.questionFailures));
+  assert.ok(
+    (warning!.message as string).includes(failure!.error),
+    `warning 沒有帶上失敗原因: ${String(warning!.message)}`,
+  );
+});
+
+/**
+ * 「the command」是真的那支 CLI(scripts/ingest.ts),所以這裡真的把它 spawn 起來,
+ * 不是在程序內模擬一次。CLI 沒有注入 router 的縫(它自己 `new LlmRouterImpl(...)`),
+ * 而參數解析、複製 raw、印出清單、退出碼正是這一句要驗的東西,不能繞過去——所以
+ * 改在最外層的網路邊界造假:`--import features/steps/_fake-cloud.mjs` 換掉子程序的
+ * globalThis.fetch,LlmRouterImpl / CloudLlmRouter / anthropicAdapter / Anthropic SDK
+ * 全部跑真的,只是不打真網路(細節見那個檔案的檔頭)。
+ *
+ * 上面的 When 跑的是程序內的 runIngestPipeline(),拿不到退出碼,所以這一句自己
+ * 另外跑一次 CLI(另一個乾淨目錄),故意讓同一張卡失敗。
+ */
+Then('the command prints the failed card and exits with a non-zero status', function (this: LearningWorld) {
+  const c = ctx(this);
+  const failedId = c.cards[2]!.frontmatter.id;
+  const cliOut = mkdtempSync(join(tmpdir(), 'lc-ingest-cli-'));
+  try {
+    const run = this.runCommand(
+      `npx tsx --import ./features/steps/_fake-cloud.mjs scripts/ingest.ts` +
+        ` --file contracts/fixtures/raw/security-basics.md --out "${cliOut}" --category ${CATEGORY}`,
+      {
+        env: {
+          LLM_CLOUD_PROVIDER: 'anthropic',
+          LLM_CLOUD_MODEL: 'test-model',
+          ANTHROPIC_API_KEY: 'test-anthropic-key',
+          FAKE_CLOUD_LEVEL0_COUNT: String(c.cards.length),
+          FAKE_CLOUD_QUESTIONS_FAIL_CARD: failedId,
+        },
+        timeoutMs: 180_000,
+      },
+    );
+
+    // 先確認這一跑真的走到底(卡片有建出來),否則任何早期崩潰都會是「非 0」而假綠。
+    assert.ok(run.output.includes(c.cards[0]!.frontmatter.id), `CLI 沒有印出建立的卡片:\n${run.output}`);
+    assert.ok(run.output.includes(failedId), `CLI 沒有印出失敗的卡片 ${failedId}:\n${run.output}`);
+    assert.notEqual(run.status, 0, `退出碼應該非 0,實際是 ${run.status}:\n${run.output}`);
+    assert.notEqual(run.status, null, `CLI 沒有正常結束(逾時或無法啟動):\n${run.output}`);
+    // 失敗的那張卡不該留下考題檔,其餘的要留下——「不失去其他卡」在 CLI 這一路也成立。
+    assert.equal(existsSync(join(cliOut, 'questions', `${failedId}.yaml`)), false, `${failedId} 不該有考題檔`);
+    for (const card of c.cards) {
+      if (card.frontmatter.id === failedId) continue;
+      assert.ok(
+        existsSync(join(cliOut, 'questions', `${card.frontmatter.id}.yaml`)),
+        `CLI 這一路缺少 ${card.frontmatter.id} 的考題檔`,
+      );
+    }
+  } finally {
+    rmSync(cliOut, { recursive: true, force: true });
+  }
+});
+
+Then('all five question files exist', function (this: LearningWorld) {
+  const c = ctx(this);
+  for (const card of c.cards) {
+    assert.ok(existsSync(join(this.dir!, 'questions', `${card.frontmatter.id}.yaml`)), `缺少 ${card.frontmatter.id} 的考題檔`);
+  }
+});
+
+Then('the log records one truncated call', function (this: LearningWorld) {
+  const logPath = join(this.dir!, 'state/log.jsonl');
+  const events = existsSync(logPath)
+    ? readFileSync(logPath, 'utf8')
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+    : [];
+  const truncated = events.filter((e) => e.type === 'llm_call' && e.retry_reason === 'output_truncated');
+  assert.equal(truncated.length, 1, JSON.stringify(events));
 });

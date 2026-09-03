@@ -37,12 +37,27 @@ Feature: Questions, second level cards and the dependency graph
     And each card's prereqs field agrees with the edges
     And every level one card lists its parent as a prerequisite
 
-  Scenario: A cycle returned by the model is challenged once
+  Scenario: A cycle returned by the model is challenged once, then repaired locally
     Given the model returns edges containing a cycle on the first attempt
     When dependency analysis runs
     Then the model is called again with the cycle described
-    And if the second attempt still cycles the offending edge is dropped
-    And a cycle removed event is logged
+    And if the second attempt still cycles, edges are dropped one at a time until the graph is acyclic
+    And each dropped edge is logged as a cycle removed event
+    And the graph file and the order file are written together or not at all
+
+  Scenario: Two independent cycles in the retry response are both repaired
+    Given the model returns edges containing a cycle on the first attempt
+    And the second attempt still returns two independent cycles that share no card or edge
+    When dependency analysis runs
+    Then both offending edges are dropped
+    And the order file exists and lists each card exactly once
+
+  Scenario: Repeated cycles exhaust the local drop limit
+    Given the model returns edges containing a cycle on the first attempt
+    And the second attempt keeps forming a new cycle after each edge is dropped, up to the card count limit
+    When dependency analysis runs
+    Then the graph file and the order file are not written
+    And a warning naming the remaining cycle is logged
 
   Scenario: The order file is produced
     When dependency analysis runs
@@ -55,10 +70,17 @@ Feature: Questions, second level cards and the dependency graph
     Then only the security order file is rewritten
 
   Scenario: Generation failure for one card does not lose the others
-    Given question generation fails for the third card
+    Given question generation fails for the third card on both attempts
     When the run completes
     Then the other four question files exist
-    And the failure is reported with the card id
+    And a warning naming the third card and the reason is in the log
+    And the command prints the failed card and exits with a non-zero status
+
+  Scenario: A truncated response is retried once and can still succeed
+    Given question generation for the third card is truncated once and succeeds on retry
+    When the run completes
+    Then all five question files exist
+    And the log records one truncated call
 
   @manual
   Scenario: Blanks fall on the words that matter

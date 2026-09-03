@@ -290,3 +290,144 @@ NODE_OPTIONS=--import=tsx npx cucumber-js --tags "not @manual" --dry-run
 - boundaries / typecheck / vitest(950/950)/ Stryker(**100.00%**,遠高於
   80% 門檻,0 survived)/ cucumber dry-run(0 ambiguous)全過。
 - 沒有發現需要處理的存活變異、沒有邏輯缺陷、沒有新增的技術債。
+
+---
+
+## 7. 循環本地修復 + 考題失敗回報審核輪(commit `0184f54` / `b9cd4b8` / `a4b6437` / `9b982b9`)
+
+審核對象是「真的跑一次 OpenAI 呼叫才浮出來、fake router 測不到」的兩個 bug:
+
+1. 依賴圖有多個獨立循環時,舊邏輯只丟一條邊就寫 `graph/deps.json`,order 檔卻因
+   `topologicalSort()` 丟錯而沒寫,磁碟留下自相矛盾的狀態。
+2. 考題產生失敗完全沒有 log、CLI 沒印、退出碼還是 0,靜默失敗(真跑時 sec-0022
+   少了考題檔,只能事後數檔案才發現)。
+
+### 7.1 補完兩個永遠紅燈的步驟定義
+
+上一輪測試 agent 在 `features/steps/ingest-pipeline.steps.ts` 留了兩個註解裡自己
+承認未完成的步驟,讓 phase-2 的 `Generation failure for one card does not lose the
+others` 恆紅。這一輪補完:
+
+**`When('the run completes')`** 從只跑 `generateQuestionsForCards()` 改成跑完整的
+`runIngestPipeline()`。考題失敗的 warning 依 `questions.ts` 的介面契約是
+pipeline 的責任(批次函式只把失敗收進 `failures`,不寫 log),不跑到那一層就永遠
+驗不到真東西。`runIngestPipeline()` 是從 raw 檔開始跑的,所以這個 When 另開一個
+乾淨的 learning 目錄(Background 手寫的五張卡只用來讓 Given 算出「第三張卡」的
+id);新目錄的 level 0 編號一樣從 `sec-0001` 起算,步驟裡用一個 `assert.deepEqual`
+把這個耦合寫死,對不上就當場紅。
+
+**`Then('the command prints the failed card and exits with a non-zero status')`**
+從一句無條件的 `assert.fail()` 改成真的用 `this.runCommand()` spawn
+`scripts/ingest.ts`,斷言輸出含失敗卡片 id、退出碼非 0、失敗那張卡沒有考題檔、
+其餘卡片都有。
+
+CLI 沒有注入 router 的縫(它自己 `new LlmRouterImpl(...)`),而參數解析、複製
+raw、印出清單、退出碼正是這一句要驗的東西,不能繞過去。所以改在**最外層的網路
+邊界**造假:新增 `features/steps/_fake-cloud.mjs`,子程序用
+`npx tsx --import ./features/steps/_fake-cloud.mjs` 啟動,只換掉
+`globalThis.fetch`——`LlmRouterImpl` / `CloudLlmRouter` / `anthropicAdapter` /
+Anthropic SDK 全部跑真的,整個測試不打真網路。副檔名刻意用 `.mjs`,
+`cucumber.js` 的 `import: ['features/steps/**/*.ts']` 不會把它載進 cucumber 自己的
+程序(載進去的話,覆寫 fetch 的副作用會汙染所有場景)。
+
+**兩個步驟都做過反向驗證**,不是「補到綠就算」:
+
+| 故意弄壞 | 結果 |
+|---|---|
+| `scripts/ingest.ts` 的 `if (result.hasQuestionFailures)` 改成恆假 | 該場景紅(退出碼斷言失敗) |
+| `ingest.ts` 裡逐筆寫 warning 的迴圈改成不跑 | 該場景紅(warning 斷言失敗) |
+
+另外把 `a warning naming the third card and the reason is in the log` 加強成
+真的檢查「and the reason」:除了 card id,還斷言 warning 訊息含
+`questionFailures` 裡那筆的完整 error 字串。
+
+### 7.2 實作品質審核
+
+| 檢查項 | 結果 |
+|---|---|
+| 丟邊是確定性的 | ✅ `detectCycle()` 的 `buildAdjacency()` 只照 `nodes`/`edges` 的陣列順序建鄰接表,`Map`/`Set` 只做成員查詢不決定走訪順序;`removeCyclesLocally()` 用 `Array.filter()` 保留其餘邊的相對順序,沒有排序、沒有物件 key 迭代 |
+| 上限是 `cards.length` | ✅ `removeCyclesLocally({ nodes, edges }, cards.length)`,不是寫死的小數字 |
+| 達上限時 deps.json **與** order 檔都不寫 | ✅ `repaired.unresolved` 非 null 時 early return,`writeCategoryGraph` / `writeUpdatedPrereqs` / `computeAndSaveCategoryOrder` 三個全部跳過 |
+| 每丟一條邊各自一筆 `cycle_removed` | ✅ 格式 `{ts, type, category, edge}`,契約 §10 的 `LogEvent` 允許額外欄位 |
+| 達上限的 warning 含殘留環路徑 | ✅ `unresolved.join(' -> ')`,`file` 欄位是 `graph/deps.json` |
+| 重試只針對非確定性錯誤 | ✅ `try` 區塊只包 `router.call()` 那一行,JSON parse 與 `validateQuestionFile` 天然在重試範圍外 |
+| 只重試一次 | ✅ 沒有迴圈,第二次不管成敗都往外丟 |
+| 網路層判斷夠窄 | ✅ `NETWORK_ERROR_PATTERN` 只認 `fetch failed` / `ECONNRESET` / … ,同時比對 `err.message` 與 `err.cause.code`;模型自己回報的失敗(`model unavailable for this card`)不命中,已補測試釘住 |
+| 每筆考題失敗各一筆 warning(level 0 + 子卡) | ✅ `[...questions.failures, ...childQuestionFailures]` 逐筆;沒有失敗就一筆都不寫(空陣列迴圈不跑) |
+| CLI 的 `cardsCreated` 含子卡 | ✅ `[...result.cardsCreated, ...result.childrenCreated]`,實跑印出 10 張(5 level 0 + 5 子卡) |
+| 有沒有投機取巧 | ✅ 沒有硬寫死 fixture 值、沒有把上限縮成測試用的小數字 |
+
+### 7.3 存活變異逐條處理
+
+#### `deps.ts`:95.96% → **100.00%**(第一次跑 4 個存活,全部是真漏測)
+
+| # | 變異 | 分類 | 處置 |
+|---|---|---|---|
+| 1 | `file: 'graph/deps.json'` → `""` | 真漏測 | 「達上限」的測試沒有斷言 warning 的 `file` 欄位。補 `expect(warning!.file).toBe('graph/deps.json')` |
+| 2 | `unresolved.join(' -> ')` → `join("")` | 真漏測 | 只斷言訊息「含 sec-0001」,分隔符怎麼接沒被檢查。補 `toContain('sec-0001 -> sec-0002 -> sec-0003 -> sec-0001')` |
+| 3 | `order: []` → `["Stryker was here"]` | 真漏測 | 只驗了磁碟上沒有 order 檔,沒驗回傳值。補 `expect(result.order).toEqual([])` |
+| 4 | `cardsUpdated: []` → `["Stryker was here"]` | 真漏測 | 同上。補 `expect(result.cardsUpdated).toEqual([])` |
+
+#### `questions.ts`:76.00% → **100.00%**(第一次跑 11 個存活 + 1 個 no coverage)
+
+| # | 變異 | 分類 | 處置 |
+|---|---|---|---|
+| 1 | (no coverage)`if (!(err instanceof Error)) return false` → `return true` | 真漏測 | 沒有測試丟出非 Error 的值。補 `does not retry when the router throws a value that is not an Error`:丟字串時不重試,只呼叫一次 |
+| 2 | `TASK_MAX_TOKENS['ingest.questions'] * 2` → `/ 2` | 真漏測 | 重試的預算完全沒被斷言。`makeScriptedRouter` 改成連 `opts` 一起記,補 `doubles the token budget on the truncation retry …` |
+| 3–6 | `reason === 'output_truncated' ? { maxTokens } : undefined` 的 4 個變異(`true ?`、`false ?`、`!==`、`{}`) | 真漏測 | 同一個洞的四面。補三個測試:截斷重打時 `opts` 是 `{ maxTokens: 預設 * 2 }`、第一次呼叫不帶 `opts`、逾時與網路重打時 `opts` 是 `undefined` |
+| 7–11 | `generateQuestionsForCards()` 裡 `onRetry` 寫 `llm_call` 的整段(BlockStatement 移除、ObjectLiteral 清空、`type: ''`、`task: ''`、`retry: false`) | 真漏測 | 這筆 log 只在 cucumber 驗過,vitest 一個都沒有。補 `appends one llm_call event naming the card and the retry reason …`(逐欄位比對,`ts` 另外驗型別)與 `writes no llm_call event when no card needs a retry` |
+| 12 | `const causeCode = … : ''` → `"Stryker was here!"` | **真等價** | 這個 `''` 只是「沒有 `cause.code`」的佔位字串,唯一用途是餵給 `NETWORK_ERROR_PATTERN.test()`。換成任何不含 `fetch failed` / `ECONNRESET` / … 特徵的字面值,`test()` 結果一樣是 `false`,對每一種輸入都不可觀測。加 `// Stryker disable next-line StringLiteral` 並寫明理由 |
+
+沒有「死程式」類的存活變異(沒有刪掉任何東西)。
+
+### 7.4 另外強化的測試
+
+`deps.test.ts` 的 `is deterministic: the same graph run twice drops the same edges in the same order` 原本只比較同一個 process 裡跑兩次的結果——靠 `Set`/`Map`
+迭代順序決定丟哪條邊的實作也會兩次一樣,這個斷言擋不住。改成連「丟的是哪兩條」
+一起釘死(`['sec-0003','sec-0001']` 與 `['sec-0006','sec-0004']`,也就是每個環裡
+DFS 最後走到的那條回邊),確定性才真的被鎖住。
+
+### 7.5 驗收實測
+
+| 項目 | 結果 |
+|---|---|
+| `npm ci` | ✅ |
+| `npm run boundaries` | ✅ 掃描 173 個檔案,允許例外 9 條,無違規 |
+| `npm run typecheck` | ✅ 無輸出 |
+| `npx vitest run` | ✅ **64 檔 / 975 測試全綠**(968 + 這輪補的 7 個) |
+| cucumber `not @manual` | ✅ **455 場景:291 綠、164 undefined、0 紅** |
+| cucumber phase-2 | ✅ **12 場景全綠 / 74 步驟全綠** |
+| cucumber `--dry-run` | ✅ **0 ambiguous** |
+| Stryker `deps.ts` | ✅ **100.00%**(98 killed + 1 timeout + 45 errors,0 survived、0 no coverage) |
+| Stryker `questions.ts` | ✅ **100.00%**(49 killed + 31 errors,0 survived、0 no coverage) |
+
+164 個 undefined 是未來 wave 的既有狀態(I8 Windows 等),與這輪無關。
+
+### 7.6 審核中發現、但沒有改的事(留給使用者判斷)
+
+1. **CLI 連著印出兩個不同的卡片數。** `scripts/ingest.ts` 先印
+   `建立了 10 張卡:`(level 0 + 子卡,這一輪剛修對的),下一行接著
+   `console.log(result.message)`,而 `result.message` 來自 `runIngest()`、只算
+   level 0,內容是 `建立了 5 張卡`。兩個數字背靠背出現,使用者會困惑。
+   不是正確性 bug(任務要求的「`cardsCreated` 含子卡」已經滿足),但值得順手修
+   ——`runIngestPipeline()` 應該覆寫 `message`,或 CLI 不要再印一次 `message`。
+
+2. **達上限時舊的 deps.json / order 檔會留在磁碟上。** early return 只保證
+   「這一次不寫」,如果上一次成功的 run 已經寫過檔,那兩個舊檔還在。契約 §8 的
+   「要嘛都寫、要嘛都不寫」對這一次的寫入成立,但讀檔的人會拿到過期的圖,而且
+   看不出來它過期了。要不要在這個情況下刪檔(或寫一個 stale 標記)是個取捨,
+   照 CLAUDE.md 的「做決定時」規則不該由我默默選一個,列在這裡等決定。
+
+### 7.7 判定
+
+**PASS**。
+
+- 兩個永遠紅燈的步驟定義補完,而且都做過反向驗證(弄壞實作會紅),不是靠放水
+  斷言換綠燈。
+- 實作沒有找到邏輯缺陷:丟邊確定性、上限是 `cards.length`、達上限時兩個檔都不
+  寫、log 格式合契約 §10、重試範圍精準且只一次、失敗回報逐筆、CLI 退出碼與清單
+  都對。
+- 兩個嚴格級模組的變異分數都是 **100.00%**;15 個存活/未覆蓋變異裡 14 個是真漏
+  測(全部補測試)、1 個是真等價(加 disable 並寫明理由),沒有用「等價變異」
+  一句話帶過。
+- 7.6 的兩點是體驗/取捨問題,不影響這一輪的驗收。

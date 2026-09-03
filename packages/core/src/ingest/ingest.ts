@@ -224,8 +224,18 @@ export interface RunIngestPipelineResult extends RunIngestResult {
   childQuestionFailures: GenerateQuestionsFailure[];
   /** analyzeDependencies() 算出的分類排序;deps 步驟整個失敗時給 []。 */
   depsOrder: CardId[];
-  /** 二次挑戰仍循環而被丟棄的邊;沒有循環或 deps 步驟整個失敗時給 null。 */
-  cycleRemoved: [CardId, CardId] | null;
+  /** 本地迴圈依丟棄順序記錄的邊;沒有循環或 deps 步驟整個失敗時給 []。 */
+  edgesRemoved: [CardId, CardId][];
+  /** 丟邊次數達上限仍有循環時的殘留路徑;否則(含 deps 步驟整個失敗時)給 null。 */
+  cycleUnresolved: CardId[] | null;
+  /**
+   * questionFailures 或 childQuestionFailures 任一非空時為 true——不管是 level 0
+   * 卡還是子卡,只要有一筆考題產生失敗,I1 的 e2e 場景「every card has a question
+   * file with the same id」就不算過。不覆寫 exitCode/ok(卡片本身確實建立成功,
+   * 只是部分考題失敗),CLI(scripts/ingest.ts)依這個欄位另外決定退出碼——目前
+   * CLI 還沒接上,見 scripts/ingest.ts 的 TODO。
+   */
+  hasQuestionFailures: boolean;
 }
 
 /** !level0.ok 或 level0.alreadyProcessed 時,補上 phase-2 欄位的空值,原樣回傳。 */
@@ -236,7 +246,9 @@ function emptyPipelineResult(level0: RunIngestResult): RunIngestPipelineResult {
     childrenCreated: [],
     childQuestionFailures: [],
     depsOrder: [],
-    cycleRemoved: null,
+    edgesRemoved: [],
+    cycleUnresolved: null,
+    hasQuestionFailures: false,
   };
 }
 
@@ -291,12 +303,26 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     });
   }
 
+  // 兩批考題失敗(level 0 與子卡)各自記一筆 warning。只收在記憶體裡的話,I1 的
+  // e2e 場景「every card has a question file with the same id」形同虛設——磁碟上
+  // 少了考題檔,log 卻一片安靜。沒有失敗就一筆都不寫。
+  for (const failure of [...questions.failures, ...childQuestionFailures]) {
+    appendLogEvent(logPath, {
+      ts: new Date().toISOString(),
+      type: 'warning',
+      file: opts.rawRelPath,
+      message: `考題產生失敗:${failure.card} — ${failure.error}`,
+    });
+  }
+
   let depsOrder: CardId[] = [];
-  let cycleRemoved: [CardId, CardId] | null = null;
+  let edgesRemoved: [CardId, CardId][] = [];
+  let cycleUnresolved: CardId[] | null = null;
   try {
     const result = await analyzeDependencies(category, [...level0Cards, ...children], router, opts.outDir);
     depsOrder = result.order;
-    cycleRemoved = result.cycleRemoved;
+    edgesRemoved = result.edgesRemoved;
+    cycleUnresolved = result.cycleUnresolved;
   } catch (err) {
     appendLogEvent(logPath, {
       ts: new Date().toISOString(),
@@ -312,6 +338,8 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     childrenCreated: children.map((c) => c.frontmatter.id),
     childQuestionFailures,
     depsOrder,
-    cycleRemoved,
+    edgesRemoved,
+    cycleUnresolved,
+    hasQuestionFailures: questions.failures.length > 0 || childQuestionFailures.length > 0,
   };
 }
