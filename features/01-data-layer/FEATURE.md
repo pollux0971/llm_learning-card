@@ -58,7 +58,7 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | schema、卡片驗證器、字數、init、fixtures | Wave 0 | done | 2026-09-02 |
-| 2 | 考題、狀態檔、log、設定檔 | I1 | todo | |
+| 2 | 考題、狀態檔、log、設定檔 | I1 | in-progress | |
 | 3 | 依賴圖、循環偵測、拓樸排序 | I1 | todo | |
 
 ## 驗收方式
