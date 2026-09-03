@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyLearnedTransition, applyPassTransition } from './transitions.js';
+import { applyFailTransition, applyLearnedTransition, applyPassTransition } from './transitions.js';
 import type { Review, Stage } from './types.js';
 
 function reviewAtStage(stage: Stage, overrides: Partial<Review> = {}): Review {
@@ -80,5 +80,151 @@ describe('applyPassTransition', () => {
     expect(outcome.review.fails_in_row).toBe(2);
     expect(outcome.review.total_fails).toBe(5);
     expect(outcome.review.stuck).toBe(true);
+  });
+
+  /**
+   * 注意:下面兩個期待跟上面「phase-1 不碰 fails_in_row / stuck」那個測試互斥——
+   * phase-2.feature 要求答對要清空連錯數與 stuck,phase-1 那個測試要求原封不動。
+   * 兩者不可能同時對同一個 applyPassTransition 實作成立。這是刻意留下的紅燈:
+   * 下一輪實作 phase-2 時,要嘛更新/刪掉上面那個 phase-1 測試,要嘛換一個不同的
+   * 函式承接「答對清空連錯」的語意——這個決定不在這次測試骨架的範圍內,
+   * 已經在 worker_done 回報裡跟協調者說明。
+   */
+  it('[phase-2,紅燈,跟上面那個 phase-1 測試互斥] 答對清空連錯數,保留總錯數', () => {
+    const review = reviewAtStage(3, { fails_in_row: 2, total_fails: 2 });
+    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'apply', grader: 'cloud' });
+    expect(outcome.review.fails_in_row).toBe(0);
+    expect(outcome.review.total_fails).toBe(2);
+  });
+
+  it('[phase-2,紅燈,跟上面那個 phase-1 測試互斥] 答對清除 stuck', () => {
+    const review = reviewAtStage(3, { fails_in_row: 3, total_fails: 3, stuck: true });
+    const outcome = applyPassTransition(review, { card: 'sec-0001', today: '2026-09-10', type: 'apply', grader: 'cloud' });
+    expect(outcome.review.stuck).toBe(false);
+  });
+});
+
+describe('applyFailTransition(phase-2,紅燈,尚未實作)', () => {
+  function reviewAtStage(stage: Stage, overrides: Partial<Review> = {}): Review {
+    return {
+      stage,
+      learned_at: '2026-01-01',
+      next_due: stage === 6 ? null : '2026-01-02',
+      fails_in_row: 0,
+      total_fails: 0,
+      stuck: false,
+      history: [],
+      ...overrides,
+    };
+  }
+
+  it('答錯永遠回到 stage 1(第一個檢查點),不管原本在哪個 stage', () => {
+    const outcome = applyFailTransition(reviewAtStage(4), {
+      card: 'sec-0001',
+      today: '2026-09-10',
+      answers: [{ type: 'apply', pass: false, grader: 'cloud' }],
+    });
+    expect(outcome.review.stage).toBe(1);
+    expect(outcome.review.next_due).toBe('2026-09-11');
+  });
+
+  it('連錯數與總錯數各 +1', () => {
+    const outcome = applyFailTransition(reviewAtStage(3, { fails_in_row: 1, total_fails: 4 }), {
+      card: 'sec-0001',
+      today: '2026-09-10',
+      answers: [{ type: 'apply', pass: false, grader: 'cloud' }],
+    });
+    expect(outcome.review.fails_in_row).toBe(2);
+    expect(outcome.review.total_fails).toBe(5);
+  });
+
+  it.each([
+    [0, 1, false, [] as string[]],
+    [1, 2, false, ['reteach_queued']],
+    [2, 3, true, ['stuck']],
+    [3, 4, true, []],
+  ] as [number, number, boolean, string[]][])(
+    '連錯邊界:%i 次再錯一次變 %i 次,stuck=%s,events=%j',
+    (before, after, stuckAfter, eventTypes) => {
+      const outcome = applyFailTransition(reviewAtStage(3, { fails_in_row: before, stuck: before >= 3 }), {
+        card: 'sec-0001',
+        today: '2026-09-10',
+        answers: [{ type: 'apply', pass: false, grader: 'cloud' }],
+      });
+      expect(outcome.review.fails_in_row).toBe(after);
+      expect(outcome.review.stuck).toBe(stuckAfter);
+      expect(outcome.events.map((e) => e.type)).toEqual(eventTypes);
+    },
+  );
+
+  it('不修改輸入物件,回傳新物件', () => {
+    const input = reviewAtStage(3);
+    const snapshot = JSON.stringify(input);
+    const outcome = applyFailTransition(input, {
+      card: 'sec-0001',
+      today: '2026-09-10',
+      answers: [{ type: 'apply', pass: false, grader: 'cloud' }],
+    });
+    expect(JSON.stringify(input)).toBe(snapshot);
+    expect(outcome.review).not.toBe(input);
+  });
+
+  it('stage 2 同時考兩種題型時只回退一次,但兩筆答案都各自記進 history', () => {
+    const outcome = applyFailTransition(reviewAtStage(2), {
+      card: 'sec-0001',
+      today: '2026-09-10',
+      answers: [
+        { type: 'fill', pass: true, grader: 'exact' },
+        { type: 'apply', pass: false, grader: 'cloud' },
+      ],
+    });
+    expect(outcome.review.fails_in_row).toBe(1);
+    expect(outcome.review.history).toEqual([
+      { date: '2026-09-10', stage: 2, type: 'fill', pass: true, grader: 'exact' },
+      { date: '2026-09-10', stage: 2, type: 'apply', pass: false, grader: 'cloud' },
+    ]);
+  });
+
+  it('history 如實記錄評分者:cloud 評分的 apply 失敗', () => {
+    const outcome = applyFailTransition(reviewAtStage(3), {
+      card: 'sec-0001',
+      today: '2026-09-10',
+      answers: [{ type: 'apply', pass: false, grader: 'cloud' }],
+    });
+    expect(outcome.review.history.at(-1)).toEqual({
+      date: '2026-09-10',
+      stage: 3,
+      type: 'apply',
+      pass: false,
+      grader: 'cloud',
+    });
+  });
+
+  it('history 如實記錄評分者:離線 local-provisional 評分的 apply 失敗', () => {
+    const outcome = applyFailTransition(reviewAtStage(3), {
+      card: 'sec-0001',
+      today: '2026-09-10',
+      answers: [{ type: 'apply', pass: false, grader: 'local-provisional' }],
+    });
+    expect(outcome.review.history.at(-1)).toEqual({
+      date: '2026-09-10',
+      stage: 3,
+      type: 'apply',
+      pass: false,
+      grader: 'local-provisional',
+    });
+  });
+
+  it('保留既有的歷史紀錄,新的附加在後面', () => {
+    const input = reviewAtStage(3, {
+      history: [{ date: '2026-09-01', stage: 3, type: 'apply', pass: true, grader: 'cloud' }],
+    });
+    const outcome = applyFailTransition(input, {
+      card: 'sec-0001',
+      today: '2026-09-10',
+      answers: [{ type: 'apply', pass: false, grader: 'cloud' }],
+    });
+    expect(outcome.review.history).toHaveLength(2);
+    expect(outcome.review.history[0]).toEqual({ date: '2026-09-01', stage: 3, type: 'apply', pass: true, grader: 'cloud' });
   });
 });
