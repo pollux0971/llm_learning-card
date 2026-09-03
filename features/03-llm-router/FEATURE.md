@@ -63,7 +63,7 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 | 1 | 介面、雲端 adapter、log、逾時 | Wave 0 | done | 2026-09-02 |
 | 2 | 離線偵測、路由表(本機永遠回 unavailable) | I1 | todo | |
 | 3 | provisional 標記與複審佇列 | I6 | todo(gate 延後,見 NEXT.md) | |
-| 4 | 本機 adapter(真的呼叫本機模型) | 無(見 NEXT.md) | todo(gate 延後,見 NEXT.md) | |
+| 4 | 本機 adapter(真的呼叫本機模型) | gate:使用者決定 | todo | |
 
 ## 驗收方式
 
