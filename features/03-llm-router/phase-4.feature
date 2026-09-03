@@ -28,4 +28,3 @@ Feature: The local model adapter
     When the network is disconnected and a deepen call is made
     Then a result returns within a few seconds
     And it is marked provisional
-</content>

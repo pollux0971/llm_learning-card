@@ -46,4 +46,3 @@ Feature: Offline detection and task routing
     When a deepen call is made while offline
     Then it raises the cloud required error
     And no other change was needed to make that happen
-</content>
