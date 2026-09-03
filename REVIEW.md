@@ -153,13 +153,13 @@ packages/core/src/llm/routing.ts
 
 ## 下一輪要重看的清單
 
-1. `routing.ts` 第 73–87 行的 `switch`：改掉 fallthrough 結構,殺掉第 81 行那個
-   存活 mutant,重跑 `npx stryker run --mutate "packages/core/src/llm/routing.ts,!packages/core/src/llm/routing.test.ts"` 確認 ≥95%。
+1. ~~`routing.ts` 第 73–87 行的 `switch`：改掉 fallthrough 結構,殺掉第 81 行那個
+   存活 mutant~~ **已完成,見下方第三輪記錄。**
 2. ~~`router-impl.test.ts`:補 `call()` 的 cloud/local 兩條分支測試,補
    `probeOnline()` 剛好等於 TTL 邊界的測試。~~ **已完成,見下方第二輪記錄。**
-3. 上面兩項都過門檻後,其餘檢查(typecheck / boundaries / 662 單元測試 / 15 個
-   phase-2 cucumber 場景 / dry-run 無 ambiguous / 未動到 router.ts 等)這輪都已
-   確認過,不用重跑,除非下一輪又改了邏輯本體。
+3. **上面兩項都已過門檻。** 其餘檢查(typecheck / boundaries / 666 單元測試 /
+   15 個 phase-2 cucumber 場景 / dry-run 無 ambiguous / 未動到 router.ts 等)
+   這輪都已確認過。**下一輪應直接進最終驗收(/phase-done),不用再修邏輯。**
 
 ---
 
@@ -206,3 +206,58 @@ Final mutation score of 100.00 is greater than or equal to break threshold 60
 `router-impl.ts` 這項的門檻(≥80%)已過。`routing.ts` 的 switch fallthrough
 (清單第 1 項)這輪**沒有動**——那是本體邏輯改動,不在這輪測試 agent 的範圍內,
 留給下一輪。
+
+---
+
+## 第三輪(開發 agent,只改 `routing.ts` 一個檔案)
+
+只改了 `packages/core/src/llm/routing.ts` 的 `decideRoute()` 本體,把沒有 `break`
+(靠 `return`/`throw` 跳出)的 `switch` 改成 `if / else if / else` 三個互斥區塊。
+
+**為什麼能解決問題**:原本的 `switch` 沒有 `break`,`cloud-or-local` 分支結尾的
+`throw new NoModelError(task)`(第 81 行)被拿掉後,JS 的 fallthrough 語意會讓
+執行「掉進」下一個 `case 'local-only'` 的程式碼繼續跑;而 `local-only` 分支
+剛好也是走到 `throw new NoModelError(task)` 收尾,對測試輸入來說結果一樣,
+所以這個 mutant「存活」——不是邏輯錯,是兩個 case 共用同一段 fallthrough 路徑
+造成的巧合。改成 `if / else if / else` 後,三個分支是各自獨立、互斥的程式碼區塊,
+不共用任何路徑:某個分支裡的 `throw` 被拿掉,執行只會落到整個
+if-else-if-else 結構外面(函式隱含回傳 `undefined`),不會意外跑到另一個分支
+的邏輯裡去,兩者的行為必然不同,mutant 一定會被殺掉。
+
+**行為完全沒變**:三個分支的判斷順序、條件、回傳值、丟的錯誤類型都跟原本
+一模一樣,只是換了控制流的寫法(`switch`→`if/else if/else`),對照
+`routing.test.ts` 的 11 組 Examples 沒有任何一組結果不同。
+
+### 重跑結果(全部貼真實輸出)
+
+```
+$ npx vitest run packages/core/src/llm/routing.test.ts
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+
+$ npm run typecheck
+> tsc --noEmit
+(無輸出,乾淨過)
+
+$ npm run boundaries
+boundaries: 掃描 145 個檔案,允許例外 0 條
+✓ 無違規
+
+$ npm test
+ Test Files  50 passed (50)
+      Tests  666 passed (666)
+
+$ npx stryker run --mutate "packages/core/src/llm/routing.ts,!packages/core/src/llm/routing.test.ts"
+...
+All files   | 100.00 |  100.00 |       17 |         0 |          0 |        0 |       26
+Final mutation score of 100.00 is greater than or equal to break threshold 60
+```
+
+**分數變化:93.75% → 100.00%**(0 survived、0 no-coverage;第 81 行那個原本存活
+的 mutant 已被殺掉)。
+
+`git diff --stat` 確認只動了 `packages/core/src/llm/routing.ts` 一個檔案,沒有碰
+`routing.test.ts`、`router-impl.ts` 或任何其他檔案。
+
+**兩個待辦項目(清單第 1、2 項)都已完成。下一輪應直接進最終驗收
+(`/phase-done`),不需要再改邏輯或補測試。**

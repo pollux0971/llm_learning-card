@@ -70,18 +70,15 @@ export function decideRoute(input: RouteInput, table: Readonly<Record<LlmTask, R
   const { task, online, local } = input;
   const group = table[task];
 
-  switch (group) {
-    case 'cloud-only':
-      if (online) return { target: 'cloud', provisional: false };
-      throw new CloudRequiredError(task);
-
-    case 'cloud-or-local':
-      if (online) return { target: 'cloud', provisional: false };
-      if (local) return { target: 'local', provisional: true };
-      throw new NoModelError(task);
-
-    case 'local-only':
-      if (local) return { target: 'local', provisional: false };
-      throw new NoModelError(task);
+  if (group === 'cloud-only') {
+    if (online) return { target: 'cloud', provisional: false };
+    throw new CloudRequiredError(task);
+  } else if (group === 'cloud-or-local') {
+    if (online) return { target: 'cloud', provisional: false };
+    if (local) return { target: 'local', provisional: true };
+    throw new NoModelError(task);
+  } else {
+    if (local) return { target: 'local', provisional: false };
+    throw new NoModelError(task);
   }
 }
