@@ -215,6 +215,10 @@ function sha256Of(content: string): string {
 // 要接上就得先補 fixture,不是這輪的範圍。
 // ============================================================================
 
+/**
+ * 繼承 RunIngestResult,但 `message` 的語意更寬:成功時算的是 level 0 卡 **加上子卡**
+ * 的總數,不是 runIngest() 那個只算 level 0 的數字。失敗與「已經處理過」的訊息原樣轉發。
+ */
 export interface RunIngestPipelineResult extends RunIngestResult {
   /** level 0 卡的考題產生失敗清單(card id + 錯誤訊息),來自 questions.ts,只轉發。 */
   questionFailures: GenerateQuestionsFailure[];
@@ -332,10 +336,18 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     });
   }
 
+  // level0.message 是 runIngest() 寫的,只算 level 0 卡——那是 runIngest() 自己的
+  // 正確語意(它就只做 level 0),但對這條管線來說是半個數字:子卡也是這次真的
+  // 建立出來的卡。覆寫成 level 0 + 子卡的總數,「這次建了幾張卡」才只有一個答案。
+  // 不覆寫失敗與「已經處理過」的路徑——那兩條走 emptyPipelineResult() 提前回傳,
+  // 訊息本來就對。(REVIEW.md §7.6 第 1 點)
+  const childrenCreated = children.map((c) => c.frontmatter.id);
+
   return {
     ...level0,
+    message: `建立了 ${level0.cardsCreated.length + childrenCreated.length} 張卡`,
     questionFailures: questions.failures,
-    childrenCreated: children.map((c) => c.frontmatter.id),
+    childrenCreated,
     childQuestionFailures,
     depsOrder,
     edgesRemoved,
