@@ -23,6 +23,17 @@ import {
 import { validateReview, createInitialReview } from '@core/schema/review.js';
 import { validateLogEvent, recordEvent, parseLogLines } from '@core/schema/log.js';
 import { validateCategory, validateSettings } from '@core/schema/validate-config.js';
+import {
+  checkPrereqConsistency,
+  computeAndSaveCategoryOrder,
+  detectCycle,
+  readCategoryGraph,
+  topologicalSort,
+  validateGraphEdges,
+  type CardPrereqs,
+  type CycleResult,
+  type Graph,
+} from '@core/schema/graph.js';
 import { ROOT, type LearningWorld } from './_world.js';
 
 /** phase-2「the validator runs」要對付好幾種格式,用這個 tagged union 決定要呼叫哪個驗證器。 */
@@ -47,6 +58,14 @@ interface DataLayerWorld extends LearningWorld {
   logPath?: string;
   lastLogEvent?: Record<string, unknown>;
   settingsUnderTest?: Record<string, unknown>;
+  // ---- phase-3:依賴圖 ----
+  graphNodes?: CardId[];
+  graphEdges?: [CardId, CardId][];
+  graphNoEdgePair?: [string, string];
+  pendingGraphValidation?: boolean;
+  expectedGraph?: Graph;
+  prereqCards?: CardPrereqs[];
+  languageOrderSnapshot?: string;
 }
 
 /** stage 6 就是 next_due 必須 null,其他 stage 給一個合法日期,單純只測 stage 的邊界。 */
@@ -79,6 +98,27 @@ const BASE_FRONTMATTER = (overrides: Record<string, string> = {}): string[] => {
   };
   return Object.entries(fields).map(([k, v]) => `${k}: ${v}`);
 };
+
+/** Background「the category security contains the cards sec-0001 through sec-0004」的固定素材。 */
+const SECURITY_CARDS: CardId[] = ['sec-0001', 'sec-0002', 'sec-0003', 'sec-0004'];
+
+/** phase-3 的 Given 步驟只累積 graphNodes / graphEdges,實際的 Graph 在 When 步驟時才組起來。 */
+function currentGraph(world: DataLayerWorld): Graph {
+  return { nodes: world.graphNodes ?? [...SECURITY_CARDS], edges: world.graphEdges ?? [] };
+}
+
+/**
+ * 解析「A to B, C to D and E to F」這種邊描述,回傳 [from, to] 陣列。
+ * 先把「, X and Y」/「X and Y」統一成逗號分隔,再逐段用 " to " 拆開。
+ */
+function parseEdgeSpec(spec: string): [CardId, CardId][] {
+  const commaSeparated = spec.replace(/,?\s+and\s+/g, ', ');
+  return commaSeparated.split(',').map((part) => {
+    const [from, to] = part.trim().split(/\s+to\s+/);
+    assert.ok(from && to, `無法解析邊描述:"${part}"`);
+    return [from as CardId, to as CardId];
+  });
+}
 
 function assembleCardText(world: DataLayerWorld): string {
   if (world.cardFrontmatterLines) {
@@ -146,6 +186,10 @@ Given(/^a body containing (.*)$/, function (this: DataLayerWorld, content: strin
 // ---------------------------------------------------------------- 驗證器:When
 
 When('the validator runs', function (this: DataLayerWorld) {
+  if (this.pendingGraphValidation) {
+    this.lastResult = validateGraphEdges(currentGraph(this));
+    return;
+  }
   const pending = this.pendingValidation;
   if (!pending) {
     this.lastResult = validateCard(assembleCardText(this));
@@ -361,6 +405,10 @@ Given('a card exists with no matching question file', function (this: DataLayerW
 });
 
 When('the consistency check runs', function (this: DataLayerWorld) {
+  if (this.prereqCards) {
+    this.lastResult = checkPrereqConsistency(this.prereqCards, currentGraph(this));
+    return;
+  }
   assert.ok(this.dir, '尚未建立 learning 目錄');
   this.lastResult = findCardsMissingQuestions(this.dir);
 });
@@ -635,4 +683,211 @@ Then('neither line is interleaved with the other', function (this: DataLayerWorl
   const events = parseLogLines(readFileSync(this.logPath, 'utf8'));
   assert.equal(events[0]?.['card'], 'sec-0001');
   assert.equal(events[1]?.['card'], 'sec-0002');
+});
+
+// ================================================================== phase-3
+
+function ensureGraphDir(world: DataLayerWorld): string {
+  if (!world.dir) world.dir = mkdtempSync(join(tmpdir(), 'lc-graph-'));
+  mkdirSync(join(world.dir, 'graph'), { recursive: true });
+  return world.dir;
+}
+
+// ---------------------------------------------------------------- Background
+
+Given('the category security contains the cards sec-0001 through sec-0004', function (this: DataLayerWorld) {
+  this.graphNodes = [...SECURITY_CARDS];
+  this.graphEdges = [];
+});
+
+// ---------------------------------------------------------------- 分類篩選:Given/When/Then
+
+Given('the graph file contains both security and language', function (this: DataLayerWorld) {
+  const dir = ensureGraphDir(this);
+  const securityGraph: Graph = { nodes: this.graphNodes ?? [...SECURITY_CARDS], edges: [['sec-0001', 'sec-0002']] };
+  const languageGraph: Graph = { nodes: ['lan-0001', 'lan-0002'], edges: [['lan-0001', 'lan-0002']] };
+  writeFileSync(join(dir, 'graph/deps.json'), JSON.stringify({ security: securityGraph, language: languageGraph }));
+  this.graphEdges = securityGraph.edges;
+  this.expectedGraph = securityGraph;
+});
+
+When('the security graph is read', function (this: DataLayerWorld) {
+  assert.ok(this.dir, '尚未建立 graph 檔案');
+  this.lastResult = readCategoryGraph(this.dir, 'security');
+});
+
+Then('only the nodes and edges for security are returned', function (this: DataLayerWorld) {
+  const result = this.lastResult as Graph;
+  assert.deepEqual(result, this.expectedGraph);
+  assert.ok(!result.nodes.some((id) => id.startsWith('lan-')), '不該混入 language 分類的節點');
+  assert.ok(!result.edges.some(([a, b]) => a.startsWith('lan-') || b.startsWith('lan-')), '不該混入 language 分類的邊');
+});
+
+// ---------------------------------------------------------------- 邊的組成:Given(多個場景共用)
+
+Given(/^edges from (.+)$/, function (this: DataLayerWorld, spec: string) {
+  this.graphNodes = this.graphNodes ?? [...SECURITY_CARDS];
+  this.graphEdges = parseEdgeSpec(spec);
+});
+
+Given(/^an edge from (\S+) to itself$/, function (this: DataLayerWorld, cardId: string) {
+  this.graphNodes = this.graphNodes ?? [...SECURITY_CARDS];
+  this.graphEdges = [[cardId as CardId, cardId as CardId]];
+});
+
+Given(/^an edge from (\S+) to a card that does not exist$/, function (this: DataLayerWorld, from: string) {
+  this.graphNodes = this.graphNodes ?? [...SECURITY_CARDS];
+  this.expectedMissingId = 'sec-9999';
+  this.graphEdges = [[from as CardId, this.expectedMissingId]];
+  this.pendingGraphValidation = true;
+});
+
+// ---------------------------------------------------------------- 邊驗證:Then
+
+Then('the error names the missing card', function (this: DataLayerWorld) {
+  const result = this.lastResult as ValidationResult;
+  assert.ok(
+    result.errors.some((e) => e.includes(this.expectedMissingId!)),
+    `錯誤應點名缺的卡片 ${this.expectedMissingId},實際:${JSON.stringify(result.errors)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 循環偵測:When/Then
+
+When('cycle detection runs', function (this: DataLayerWorld) {
+  this.lastResult = detectCycle(currentGraph(this));
+});
+
+Then('the cycle is reported as a path through all three cards', function (this: DataLayerWorld) {
+  const result = this.lastResult as CycleResult;
+  assert.equal(result.hasCycle, true, '應該偵測到循環');
+  assert.equal(result.path[0], result.path[result.path.length - 1], '路徑頭尾應該是同一張卡');
+  const middle = [...new Set(result.path.slice(0, -1))].sort();
+  assert.deepEqual(middle, ['sec-0001', 'sec-0002', 'sec-0003']);
+});
+
+Then('a cycle is reported', function (this: DataLayerWorld) {
+  const result = this.lastResult as CycleResult;
+  assert.equal(result.hasCycle, true, '應該偵測到循環');
+});
+
+// ---------------------------------------------------------------- 拓樸排序:Given/When/Then
+
+Given(/^(\S+) and (\S+) have no edge between them$/, function (this: DataLayerWorld, a: string, b: string) {
+  this.graphNodes = this.graphNodes ?? [...SECURITY_CARDS];
+  this.graphEdges = this.graphEdges ?? [];
+  this.graphNoEdgePair = [a, b];
+});
+
+Given(/^(\S+) appears earlier in the raw material$/, function (this: DataLayerWorld, earlier: string) {
+  const pair = this.graphNoEdgePair;
+  assert.ok(pair, '要先呼叫 "... have no edge between them"');
+  const other = pair.find((id) => id !== earlier)!;
+  const nodes = this.graphNodes ?? [...SECURITY_CARDS];
+  const insertAt = Math.min(nodes.indexOf(earlier), nodes.indexOf(other));
+  const rest = nodes.filter((id) => id !== earlier && id !== other);
+  rest.splice(insertAt, 0, earlier as CardId, other as CardId);
+  this.graphNodes = rest;
+});
+
+Given('the category has no edges', function (this: DataLayerWorld) {
+  this.graphNodes = this.graphNodes ?? [...SECURITY_CARDS];
+  this.graphEdges = [];
+});
+
+When('the topological sort runs', function (this: DataLayerWorld) {
+  this.lastResult = topologicalSort(currentGraph(this));
+});
+
+Then(/^(\S+) comes after both (\S+) and (\S+)$/, function (this: DataLayerWorld, target: string, a: string, b: string) {
+  const order = this.lastResult as CardId[];
+  assert.ok(order.indexOf(a) < order.indexOf(target), `${target} 應該排在 ${a} 之後,實際順序:${JSON.stringify(order)}`);
+  assert.ok(order.indexOf(b) < order.indexOf(target), `${target} 應該排在 ${b} 之後,實際順序:${JSON.stringify(order)}`);
+});
+
+Then(/^(\S+) comes after (\S+)$/, function (this: DataLayerWorld, target: string, other: string) {
+  const order = this.lastResult as CardId[];
+  assert.ok(order.indexOf(other) < order.indexOf(target), `${target} 應該排在 ${other} 之後,實際順序:${JSON.stringify(order)}`);
+});
+
+Then(/^(\S+) comes before (\S+)$/, function (this: DataLayerWorld, a: string, b: string) {
+  const order = this.lastResult as CardId[];
+  assert.ok(order.indexOf(a) < order.indexOf(b), `${a} 應該排在 ${b} 之前,實際順序:${JSON.stringify(order)}`);
+});
+
+Then('the order matches the order the cards appear in the raw material', function (this: DataLayerWorld) {
+  const order = this.lastResult as CardId[];
+  assert.deepEqual(order, this.graphNodes ?? [...SECURITY_CARDS]);
+});
+
+// ---------------------------------------------------------------- prereqs 一致性:Given/Then
+
+Given(/^(\S+) lists (\S+) as a prerequisite$/, function (this: DataLayerWorld, cardId: string, prereqId: string) {
+  this.prereqCards = this.prereqCards ?? [];
+  const existing = this.prereqCards.find((c) => c.id === cardId);
+  if (existing) existing.prereqs.push(prereqId as CardId);
+  else this.prereqCards.push({ id: cardId as CardId, prereqs: [prereqId as CardId] });
+});
+
+Given(/^the graph only has an edge from (\S+) to (\S+)$/, function (this: DataLayerWorld, from: string, to: string) {
+  this.graphNodes = this.graphNodes ?? [...SECURITY_CARDS];
+  this.graphEdges = [[from as CardId, to as CardId]];
+});
+
+Then(/^the disagreement is reported for (\S+)$/, function (this: DataLayerWorld, cardId: string) {
+  const result = this.lastResult as ValidationResult;
+  assert.equal(result.ok, false, '應該回報不一致');
+  assert.ok(
+    result.errors.some((e) => e.includes(cardId)),
+    `錯誤應點名 ${cardId},實際:${JSON.stringify(result.errors)}`,
+  );
+});
+
+// ---------------------------------------------------------------- 寫入 order 檔:When/Then
+
+When('the topological sort for security is saved', function (this: DataLayerWorld) {
+  const dir = ensureGraphDir(this);
+  writeFileSync(join(dir, 'graph/deps.json'), JSON.stringify({ security: currentGraph(this) }));
+  this.lastResult = computeAndSaveCategoryOrder(dir, 'security');
+});
+
+Then('a file named for that category exists under the graph directory', function (this: DataLayerWorld) {
+  assert.ok(this.dir, '尚未建立 graph 檔案');
+  assert.ok(existsSync(join(this.dir, 'graph/order-security.json')), 'graph/order-security.json 應該存在');
+});
+
+Then('it contains an ordered array of card ids', function (this: DataLayerWorld) {
+  assert.ok(this.dir, '尚未建立 graph 檔案');
+  const content = JSON.parse(readFileSync(join(this.dir, 'graph/order-security.json'), 'utf8'));
+  assert.ok(Array.isArray(content), 'order 檔應該是一個陣列');
+  for (const id of content) assert.equal(typeof id, 'string');
+});
+
+Then('every card in the category appears exactly once', function (this: DataLayerWorld) {
+  assert.ok(this.dir, '尚未建立 graph 檔案');
+  const content = JSON.parse(readFileSync(join(this.dir, 'graph/order-security.json'), 'utf8')) as string[];
+  const expected = this.graphNodes ?? [...SECURITY_CARDS];
+  assert.deepEqual([...content].sort(), [...expected].sort());
+  assert.equal(new Set(content).size, content.length, '不該有重複的卡片');
+});
+
+// ---------------------------------------------------------------- 只動目標分類:Given/When/Then
+
+Given('an order file already exists for language', function (this: DataLayerWorld) {
+  const dir = ensureGraphDir(this);
+  const content = JSON.stringify(['lan-0002', 'lan-0001']);
+  writeFileSync(join(dir, 'graph/order-language.json'), content);
+  this.languageOrderSnapshot = content;
+});
+
+When('the security order is regenerated', function (this: DataLayerWorld) {
+  const dir = ensureGraphDir(this);
+  writeFileSync(join(dir, 'graph/deps.json'), JSON.stringify({ security: currentGraph(this) }));
+  this.lastResult = computeAndSaveCategoryOrder(dir, 'security');
+});
+
+Then('the language order file is unchanged', function (this: DataLayerWorld) {
+  assert.ok(this.dir, '尚未建立 graph 檔案');
+  const content = readFileSync(join(this.dir, 'graph/order-language.json'), 'utf8');
+  assert.equal(content, this.languageOrderSnapshot);
 });
