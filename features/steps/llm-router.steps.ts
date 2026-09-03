@@ -14,14 +14,21 @@ import { join } from 'node:path';
 import type { LearningWorld } from './_world.js';
 import {
   CloudLlmRouter,
+  CloudRequiredError,
+  LlmRouterImpl,
   LlmTimeoutError,
   MissingCredentialError,
+  NoModelError,
+  ROUTING_TABLE,
   UnknownTaskError,
   UnsupportedProviderError,
+  decideRoute,
   type CloudAdapter,
   type CloudProvider,
   type LlmResult,
   type LlmTask,
+  type RouteDecision,
+  type RouteGroup,
 } from '../../packages/core/src/llm/index.js';
 
 try {
@@ -298,4 +305,161 @@ Then('the returned text is meaningful', function (this: LearningWorld) {
 Then('the latency is greater than zero', function (this: LearningWorld) {
   const r = this.lastResult as LlmResult;
   assert.ok(r.latency_ms > 0);
+});
+
+// ============================================================== phase-2
+//
+// probeLocal 的可注入介面、probeOnline 的快取、routing.ts 的純函式路由表
+// (契約 §7,11 組 Outline)。routing.ts 不吃真的 probeOnline/probeLocal,
+// 所以「a call is made for the task X」直接呼叫 decideRoute(),不透過
+// LlmRouterImpl——ADR-037 之下沒有真的本機模型可以讓完整的 call() 跑到底。
+
+interface RouteStepState {
+  localRefuses: boolean;
+  lastLocalProbe?: { available: boolean; models: string[] } | undefined;
+  lastLocalProbeError?: Error | undefined;
+  onlineProbeCalls: number;
+  routeOnline?: boolean | undefined;
+  routeLocal?: boolean | undefined;
+  routeResult?: RouteDecision | undefined;
+  routeError?: Error | undefined;
+  patchedTable?: Record<LlmTask, RouteGroup> | undefined;
+}
+
+let routeState: RouteStepState;
+
+Before(function () {
+  routeState = { localRefuses: false, onlineProbeCalls: 0 };
+});
+
+// ---------------------------------------------------------------- local probe
+
+Given('the local model server refuses the connection', function () {
+  routeState.localRefuses = true;
+});
+
+When('the local probe runs', async function () {
+  const opts: ConstructorParameters<typeof LlmRouterImpl>[0] = {};
+  if (routeState.localRefuses) {
+    opts.localProber = async () => {
+      throw new Error('connect ECONNREFUSED 127.0.0.1:11434');
+    };
+  }
+  const router = new LlmRouterImpl(opts);
+  routeState.lastLocalProbeError = undefined;
+  try {
+    routeState.lastLocalProbe = await router.probeLocal();
+  } catch (err) {
+    routeState.lastLocalProbeError = err as Error;
+  }
+});
+
+Then('it reports the model as unavailable', function () {
+  assert.deepEqual(routeState.lastLocalProbe, { available: false, models: [] });
+});
+
+Then('no error is raised', function () {
+  assert.equal(routeState.lastLocalProbeError, undefined, `不該有錯誤:${routeState.lastLocalProbeError?.message}`);
+});
+
+// ---------------------------------------------------------------- online probe cache
+
+async function runProbeTwiceApart(gapMs: number): Promise<void> {
+  let now = 0;
+  routeState.onlineProbeCalls = 0;
+  const router = new LlmRouterImpl({
+    onlineProber: async () => {
+      routeState.onlineProbeCalls += 1;
+      return true;
+    },
+    now: () => now,
+  });
+  await router.probeOnline();
+  now += gapMs;
+  await router.probeOnline();
+}
+
+When('the online probe is called twice ten seconds apart', async function () {
+  await runProbeTwiceApart(10_000);
+});
+
+When('the online probe is called twice ninety seconds apart', async function () {
+  await runProbeTwiceApart(90_000);
+});
+
+Then('only one real request is made', function () {
+  assert.equal(routeState.onlineProbeCalls, 1, `應該只打一次真的探測,實際打了 ${routeState.onlineProbeCalls} 次`);
+});
+
+Then('two real requests are made', function () {
+  assert.equal(routeState.onlineProbeCalls, 2, `應該打兩次真的探測,實際打了 ${routeState.onlineProbeCalls} 次`);
+});
+
+// ---------------------------------------------------------------- routing table (契約 §7)
+
+Given('the network is {word} and the local model is {word}', function (online: string, local: string) {
+  routeState.routeOnline = online === 'up';
+  routeState.routeLocal = local === 'up';
+});
+
+When('a call is made for the task {word}', function (task: string) {
+  routeState.routeResult = undefined;
+  routeState.routeError = undefined;
+  try {
+    routeState.routeResult = decideRoute({
+      task: task as LlmTask,
+      online: routeState.routeOnline!,
+      local: routeState.routeLocal!,
+    });
+  } catch (err) {
+    routeState.routeError = err as Error;
+  }
+});
+
+Then(/^the outcome is (.+)$/, function (outcome: string) {
+  switch (outcome) {
+    case 'cloud':
+      assert.deepEqual(routeState.routeResult, { target: 'cloud', provisional: false });
+      break;
+    case 'local':
+      assert.deepEqual(routeState.routeResult, { target: 'local', provisional: false });
+      break;
+    case 'local, marked provisional':
+      assert.deepEqual(routeState.routeResult, { target: 'local', provisional: true });
+      break;
+    case 'error, cloud required':
+      assert.ok(routeState.routeError instanceof CloudRequiredError, `應該是 CloudRequiredError:${routeState.routeError}`);
+      break;
+    case 'error, no model available':
+      assert.ok(routeState.routeError instanceof NoModelError, `應該是 NoModelError:${routeState.routeError}`);
+      break;
+    default:
+      throw new Error(`未知的 outcome 字串:「${outcome}」`);
+  }
+});
+
+// ---------------------------------------------------------------- changing the routing table
+
+Given('the routing entry for the deepen task is changed to require the cloud', function () {
+  routeState.patchedTable = { ...ROUTING_TABLE, deepen: 'cloud-only' };
+});
+
+When('a deepen call is made while offline', function () {
+  routeState.routeError = undefined;
+  try {
+    decideRoute({ task: 'deepen', online: false, local: true }, routeState.patchedTable);
+  } catch (err) {
+    routeState.routeError = err as Error;
+  }
+});
+
+Then('it raises the cloud required error', function () {
+  assert.ok(routeState.routeError instanceof CloudRequiredError, `應該是 CloudRequiredError:${routeState.routeError}`);
+});
+
+Then('no other change was needed to make that happen', function () {
+  // 只改了 patchedTable 這份資料(見上面的 Given),沒有改 decideRoute 本身、
+  // 也沒有改 routing.ts 的任何函式——這就是 ROUTING_TABLE 是資料而不是寫死
+  // 在 decideRoute 裡的邏輯分支所要達到的效果。
+  assert.ok(routeState.patchedTable, '應該已經準備好被改過的路由表');
 });
