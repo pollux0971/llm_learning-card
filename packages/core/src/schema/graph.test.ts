@@ -255,6 +255,17 @@ describe('detectCycle', () => {
     expect(result.hasCycle).toBe(true);
   });
 
+  // 邊界:一張卡只在某條邊的「後學」端出現,不在 nodes 裡,也從來不是任何一條邊的
+  // 「先備」端(純終點,沒有出邊)——這種卡完全靠邊驗證那端的 register 才會被登記進
+  // 鄰接表;沒登記到的話,之後拜訪到它時會找不到鄰接表而噴例外,不是回傳錯誤的結果。
+  it('safely visits an edge target that never appears as a source or in nodes', () => {
+    const g = graph(['sec-0001'], [['sec-0001', 'sec-9999']]);
+
+    const result = detectCycle(g);
+
+    expect(result).toEqual({ hasCycle: false, path: [] });
+  });
+
   // 邊界:buildAdjacency 的文件註解說「邊裡出現但不在 nodes 的卡也會被收進去」——
   // 確認這條路徑真的有效,不是只是註解說說而已。
   it('detects a cycle formed through cards that only appear in edges, not in nodes', () => {
@@ -267,6 +278,41 @@ describe('detectCycle', () => {
     const result = detectCycle(g);
 
     expect(result.hasCycle).toBe(true);
+  });
+
+  // 邊界:同一張卡的兩個鄰居,第一個是完全不相關的死路(會被正常走完、退回),
+  // 第二個才連回循環——確保死路分支退回時真的從堆疊上移除,不會殘留混進回報的路徑。
+  it('excludes an unrelated dead-end sibling branch that was already explored and backtracked from', () => {
+    const g = graph(SECURITY_NODES, [
+      ['sec-0001', 'sec-0002'], // 死路:sec-0002 沒有出邊
+      ['sec-0001', 'sec-0003'],
+      ['sec-0003', 'sec-0001'], // 循環:sec-0001 -> sec-0003 -> sec-0001
+    ]);
+
+    const result = detectCycle(g);
+
+    expect(result.hasCycle).toBe(true);
+    const middle = new Set(result.path.slice(0, -1));
+    expect(middle).toEqual(new Set(['sec-0001', 'sec-0003']));
+    expect(middle.has('sec-0002')).toBe(false);
+  });
+
+  // 邊界:圖裡有兩個各自獨立的循環,nodes 陣列的順序刻意跟邊出現的順序不同——
+  // 確保 DFS 起點依 nodes(graph.nodes)原始順序決定,先找到 nodes 裡先出現的那個循環,
+  // 不是被邊出現的順序牽著走。
+  it('starts the search in nodes array order, not edge-appearance order, when multiple independent cycles exist', () => {
+    const g = graph(['sec-0003', 'sec-0004', 'sec-0001', 'sec-0002'], [
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0001'],
+      ['sec-0003', 'sec-0004'],
+      ['sec-0004', 'sec-0003'],
+    ]);
+
+    const result = detectCycle(g);
+
+    expect(result.hasCycle).toBe(true);
+    const middle = new Set(result.path.slice(0, -1));
+    expect(middle).toEqual(new Set(['sec-0003', 'sec-0004']));
   });
 
   // 邊界:DFS 堆疊上,循環開始「之前」造訪過的祖先卡不能混進回報的路徑裡

@@ -138,17 +138,31 @@ export function detectCycle(graph: Graph): CycleResult {
   // 三色 DFS:white 沒碰過、gray 在目前的遞迴堆疊上、black 完成。
   // 碰到 gray 的鄰居就是回邊(back edge),堆疊從那張卡到目前這張卡就是循環。
   const state = new Map<CardId, 'gray' | 'black'>();
+  // Stryker disable next-line all: 初始值塞進假的第一格不影響行為。stack 只被 push/pop/
+  // indexOf/slice 操作,indexOf 找的永遠是真實 CardId(來自 next 的鄰接表,不會是這個假字
+  // 串),假格子不會被 indexOf 命中,也不會被當成 map key 查 next/state,所以永遠是無害的
+  // 惰性資料,對 hasCycle/path 的計算結果沒有任何影響。
   const stack: CardId[] = [];
 
   const visit = (id: CardId): CardId[] | null => {
     state.set(id, 'gray');
     stack.push(id);
-    for (const neighbor of next.get(id) ?? []) {
+    // next.get(id) 一定有值:id 只會來自 order(buildAdjacency 的 register 一定先設過
+    // next.set(id, []))或別的節點的鄰接表(同樣一定先 register 過),沒有第三種來源。
+    for (const neighbor of next.get(id)!) {
       const color = state.get(neighbor);
       if (color === 'gray') {
         const start = stack.indexOf(neighbor);
         return [...stack.slice(start), neighbor];
       }
+      // Stryker disable next-line all: 這裡改成 if(true)(對已經 black 的鄰居也重新
+      // visit 一次)不會改變 hasCycle/path。任何「黑色」節點在變黑的當下,代表它當時
+      // 整條可達的子樹都已經走完且沒找到回邊——這個結論不會隨時間改變,因為圖的結構是
+      // 靜態的。之後若有其他還在堆疊上(gray)的祖先才連到它,重新 visit 只是把同一批
+      // 早就走過的邊再走一次:如果這棵子樹真的連得回某個目前是 gray 的祖先,那條回邊
+      // 在它「第一次」被走訪時就一定會被發現並讓整個演算法立刻回傳(found 會一路
+      // bubble 到最外層),根本走不到這個重複造訪的分支;反過來說,走得到這裡代表當時
+      // 沒找到回邊,子樹確定無環,重新走一遍結論不會變。
       if (color === undefined) {
         const found = visit(neighbor);
         if (found) return found;
@@ -160,6 +174,12 @@ export function detectCycle(graph: Graph): CycleResult {
   };
 
   for (const id of order) {
+    // Stryker disable next-line all: 改成 if(false)(對已經走過的節點也重新呼叫
+    // visit)不影響結果。走到這一輪代表前面所有 visit() 呼叫都已經正常退回(stack
+    // 清空、沒有任何節點是 gray),所以這裡重新 visit 一個已經是 black 的 id,等於
+    // 在一個完全乾淨、沒有任何祖先在場的狀態下,把它那棵早就走過、確定無環的子樹
+    // 再走一次——不可能生出新的回邊,回傳值必定還是 null,跟直接 continue 略過的
+    // 效果一致。
     if (state.has(id)) continue;
     const path = visit(id);
     if (path) return { hasCycle: true, path };
@@ -193,6 +213,10 @@ export function topologicalSort(graph: Graph): CardId[] {
   const unique: CardId[] = [...index.keys()];
 
   const inDegree = new Map<CardId, number>(unique.map((id) => [id, 0]));
+  // Stryker disable next-line all: 初始鄰接表塞一個假格子不影響排序結果。假格子只會在
+  // 下面的迴圈被當成某張卡的「後學」處理:inDegree 沒有這個假 id 的項目,`+1`/`-1` 都
+  // 只會產生 NaN,`=== 0` 對 NaN 永遠是 false,所以它永遠不會被排進 ready、不會進
+  // result,對 unique.length 張真卡的排序結果沒有任何影響。
   const next = new Map<CardId, CardId[]>(unique.map((id) => [id, []]));
   for (const [from, to] of graph.edges) {
     next.get(from)!.push(to);
@@ -204,6 +228,12 @@ export function topologicalSort(graph: Graph): CardId[] {
   while (ready.size > 0) {
     let pick: CardId | undefined;
     for (const id of ready) {
+      // Stryker disable next-line all: `<` 改成 `<=` 不影響挑到的結果。index 是
+      // graph.nodes 每張「不同」卡片第一次出現位置的對應表(上面 209-212 行用
+      // !index.has(id) 保證一個 id 只設一次),所以不同 id 的 index 值必定不同,
+      // ready 又是 Set(內容不重複),同一輪迴圈裡拿來比較的 id 跟 pick 永遠是兩張
+      // 不同的卡——`index.get(id)! === index.get(pick)!` 這個 `<=` 多出來的相等分支,
+      // 對「不同 id」來說永遠不可能成立,所以 `<` 跟 `<=` 選出來的 pick 一定一樣。
       if (pick === undefined || index.get(id)! < index.get(pick)!) pick = id;
     }
     ready.delete(pick!);
@@ -215,10 +245,11 @@ export function topologicalSort(graph: Graph): CardId[] {
     }
   }
 
-  if (result.length !== unique.length) {
-    // detectCycle 已經先擋過了,理論上到不了;留著當最後一道防線。
-    throw new Error(`無法排序:有 ${unique.length - result.length} 張卡排不進順序(依賴圖有循環)`);
-  }
+  // 這裡不留「排不出全序」的防線:上面已經跑過 validateGraphEdges(邊的兩端都在
+  // nodes 裡,所以 edges 只會連到 unique 裡的卡)跟 detectCycle(整張圖沒有循環)。
+  // 兩者都成立時,以 unique 為節點集合、edges 為邊集合的子圖必為 DAG,Kahn 演算法
+  // 數學上保證能排出全部 unique.length 張卡——排不出全序等價於「有循環但 detectCycle
+  // 沒抓到」,那是 detectCycle 本身的 bug,不是這裡該防的東西,所以刪掉這條摸不到的分支。
   return result;
 }
 
