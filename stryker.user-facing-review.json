@@ -9,7 +9,8 @@
   "concurrency": 4,
   "timeoutMS": 120000,
   "mutate": [
-    "scripts/review.ts:89-110",
+    "scripts/review.ts:89-95",
+    "scripts/review.ts:98-110",
     "packages/core/src/session/summary.ts:75-91",
     "packages/core/src/session/io.ts:102-116"
   ],

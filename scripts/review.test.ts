@@ -103,6 +103,21 @@ function runDryRun(dir: string, today = TODAY): { code: number; output: string }
   return { code: r.status ?? -1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 
+/**
+ * 不帶 `--dry-run` 的那條路徑。stdin 直接關掉(`input: ''`),所以只在
+ * 「今天沒有任何卡到期」的 vault 上用——那種情況根本不會進 readline 迴圈。
+ * 用途是釘住 `if (dryRun)` 這個分支真的分得開兩條路,不是兩邊印一樣的東西。
+ */
+function runInteractive(dir: string, today = TODAY): { code: number; output: string } {
+  const r = spawnSync('npx', ['tsx', 'scripts/review.ts', '--dir', dir, '--today', today], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    input: '',
+    timeout: SPAWN_TIMEOUT_MS,
+  });
+  return { code: r.status ?? -1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+}
+
 /** 從輸出裡撈一個「N <單位>」的數字。撈不到回傳 null,測試就指著缺的那個數字紅。 */
 function count(output: string, unit: string): number | null {
   const m = new RegExp(`(\\d+)\\s*${unit}`).exec(output);
@@ -176,6 +191,14 @@ describe('review.ts --dry-run:0 張卡不是空閒日', () => {
     expect(output).toMatch(/沒有卡片|一張卡片也沒有/);
   }, SPAWN_TIMEOUT_MS);
 
+  it('0 張卡 → 訊息指名的是 <dir>/cards 這個目錄,不是 vault 本身', () => {
+    const dir = vault({ cards: false });
+    const { output } = runDryRun(dir);
+
+    // 使用者要拿著這條路徑去 ls。指到 vault 本身等於叫他去看一個「明明就在」的目錄。
+    expect(output).toContain(join(dir, 'cards'));
+  }, SPAWN_TIMEOUT_MS);
+
   it('cards/ 整個不存在也是 0 張卡,走同一條路徑', () => {
     const dir = vault({ reviews: {} });
     rmSync(join(dir, 'cards'), { recursive: true, force: true });
@@ -191,6 +214,19 @@ describe('review.ts --dry-run:0 張卡不是空閒日', () => {
 
     expect(empty.output).not.toBe(quiet.output);
     expect(empty.code).not.toBe(quiet.code);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('基數那一行只屬於 --dry-run:不帶旗標的實際複習不可以印它', () => {
+    const dir = vault({ reviews: { 'sec-0001': review('2026-12-01') } });
+
+    const dry = runDryRun(dir);
+    const interactive = runInteractive(dir);
+
+    // --dry-run 是「先看一眼」,所以要基數;真的坐下來複習是另一條路徑。
+    // 兩邊印一樣的東西,代表那個分支根本沒有在分。
+    expect(dry.output).toContain('張未排程');
+    expect(interactive.output).not.toContain('張未排程');
+    expect(interactive.output).toContain(NOTHING_DUE);
   }, SPAWN_TIMEOUT_MS);
 
   it('有卡但 0 張到期仍然 exit 0——正常的空閒日不可以被改成紅燈', () => {

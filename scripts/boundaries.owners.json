@@ -167,6 +167,10 @@
     [
       "features/steps/",
       "steps"
+    ],
+    [
+      "features/support/",
+      "steps"
     ]
   ],
   "glue": [

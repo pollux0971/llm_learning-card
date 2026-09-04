@@ -236,6 +236,29 @@ describe('lint.ts 掃到 0 張卡一律 FAIL,而且三種 0 分得出來', () =>
     }
   }, SPAWN_TIMEOUT_MS);
 
+  it('0 張卡的時候也要印清點摘要——使用者要看到掃描器確實看過別的東西', () => {
+    for (const dir of [noCardsDir(), noCategoryDir(), emptyCategoryDir()]) {
+      const { output } = run(dir);
+      // formatScanSummary 那一行。摘要被拿掉的話使用者只看得到「0 張卡」,
+      // 看不到「類別 / 考題 / graph 各掃到幾個」,診斷就少了一半。
+      expect(output).toContain('lint: 掃描');
+      expect(output).toMatch(/掃描 \d+ 個類別/);
+      expect(output).toMatch(/\d+ 份考題/);
+    }
+  }, SPAWN_TIMEOUT_MS);
+
+  it('0 張卡的時候就停在那裡:不繼續跑 lint(),不寫報告,也不噴 stack trace', () => {
+    for (const dir of [noCardsDir(), noCategoryDir(), emptyCategoryDir()]) {
+      const { output } = run(dir);
+      // 少了 process.exit(1) 就會一路走到 lint() 與 atomicWriteFileSync:
+      // 不是噴出 node 的 stack trace,就是留下一份「0 problems found.」的報告
+      // 當作日後的誤導證據。兩種都不可以。
+      expect(output).not.toContain('    at ');
+      expect(output).not.toContain('report written to');
+      expect(output).not.toContain(OLD_CLEAN_LINE);
+    }
+  }, SPAWN_TIMEOUT_MS);
+
   it('健康的 vault 不可以被誤判成掃描器壞了', () => {
     const { code, output } = run(healthyVault());
     expect(code).toBe(0);
@@ -251,6 +274,22 @@ describe('lint.ts --dir 指到不存在的目錄', () => {
     expect(code).toBe(1);
     expect(output).toContain(missing);
     expect(output).toMatch(/不存在|找不到/);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('說的是 --dir 這條路徑不存在,不是掉下去變成「cards/ 不存在」的診斷', () => {
+    const missing = join(tmpRoot(), 'does-not-exist');
+    const { output } = run(missing);
+
+    // --dir 打錯與「vault 在但 cards/ 沒了」是兩種完全不同的修法,不可以共用一句話。
+    expect(output).toContain('--dir');
+    expect(output).not.toContain(join(missing, 'cards'));
+    expect(output).not.toContain(SCANNER_BROKEN);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('順便說明為什麼不幫忙建——那句話是這個決定的理由,不可以留白', () => {
+    const { output } = run(join(tmpRoot(), 'does-not-exist'));
+
+    expect(output).toContain('不會幫你建出來');
   }, SPAWN_TIMEOUT_MS);
 
   it('不可以順手把不存在的目錄建出來(今天會建 <dir>/state/ 再寫報告進去)', () => {
