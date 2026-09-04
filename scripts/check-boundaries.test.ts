@@ -13,7 +13,7 @@
  * 這要求 CLI 多一個 `--root <dir>`:把掃描的根目錄指到別處(預設仍是 repo 根)。
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -31,9 +31,19 @@ const SPAWN_TIMEOUT_MS = 60_000;
 
 const tmpDirs: string[] = [];
 
+/**
+ * 模板 v1.2.0 起,落點表 / glue / alias / 掃描範圍搬到 `scripts/boundaries.owners.json`
+ * (程式跟設定分開,`sync-gates.sh` 不覆蓋這份設定)。掃描器現在讀不到這份設定就直接紅,
+ * 所以每個 fixture root 都要先有一份。這裡直接用這個 repo 自己的那份,
+ * 底下每條測試對落點的期待(schema / scheduler / scripts 的歸屬)才跟正式執行一致。
+ */
+const OWNERS_JSON = readFileSync(join(REPO_ROOT, 'scripts/boundaries.owners.json'), 'utf8');
+
 function fixtureRoot(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'lc-boundaries-'));
   tmpDirs.push(root);
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  writeFileSync(join(root, 'scripts/boundaries.owners.json'), OWNERS_JSON, 'utf8');
   for (const [rel, content] of Object.entries(files)) {
     const full = join(root, rel);
     mkdirSync(dirname(full), { recursive: true });
@@ -165,8 +175,22 @@ describe('check-boundaries 掃得到檔案但一個都沒真的檢查', () => {
   it('--root 指到不存在的目錄:0 個檔案 → FAIL,不是當機也不是綠燈', () => {
     const { code, output } = runBoundaries(join(tmpdir(), 'lc-boundaries-absolutely-no-such-dir'));
 
+    // 模板 v1.2.0 起,那裡連 boundaries.owners.json 都讀不到,所以先撞上「找不到設定檔」
+    // 這道更早的紅。這條守的是「絕對不可以是綠燈」,不是某一句特定的字。
     expect(code).toBe(1);
-    expect(output).toContain(SCANNER_BROKEN);
+    expect(output).toContain('boundaries.owners.json');
+    expect(output).not.toContain('✓ 無違規');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('root 存在但沒有 boundaries.owners.json:報找不到設定檔,不是綠燈', () => {
+    const root = mkdtempSync(join(tmpdir(), 'lc-boundaries-nocfg-'));
+    tmpDirs.push(root);
+
+    const { code, output } = runBoundaries(root);
+
+    expect(code).toBe(1);
+    expect(output).toContain('boundaries.owners.json');
+    expect(output).not.toContain('✓ 無違規');
   }, SPAWN_TIMEOUT_MS);
 });
 

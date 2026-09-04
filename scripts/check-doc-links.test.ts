@@ -574,7 +574,9 @@ describe('哪些目標不算相對連結', () => {
 });
 
 describe('掃描範圍的邊界', () => {
-  it('根目錄的 README-zh.md 也掃,但 NOTES.md 不掃', () => {
+  // 模板 v1.2.0 把根目錄的掃描範圍從 main 的「只有 README*.md」放寬成「所有根目錄 *.md」
+  // (不遞迴)。這是變寬不是變窄——CLAUDE.md、MEMORY.md 這類根目錄文件現在也受檢查。
+  it('根目錄的 *.md 都掃,README-zh.md 與 NOTES.md 都算', () => {
     const { code, output } = run({
       'README-zh.md': '[x](./nope-readme-zh.md)\n',
       'NOTES.md': '[x](./nope-notes.md)\n',
@@ -582,7 +584,7 @@ describe('掃描範圍的邊界', () => {
 
     expect(code).toBe(1);
     expect(output).toContain('./nope-readme-zh.md');
-    expect(output).not.toContain('./nope-notes.md');
+    expect(output).toContain('./nope-notes.md');
   });
 
   it('根目錄的 readme 目錄(不是檔案)不算', () => {
@@ -609,6 +611,9 @@ describe('掃描範圍的邊界', () => {
     expect(linkCount(output)).toBe(1);
   });
 
+  // 模板 v1.2.0/v1.2.1 一度掉了這四個排除(建置產物與 git 內部檔被當成專案文件檢查),
+  // 這條測試把它擋了下來;v1.2.2 起放回內建預設,並開放 gates.config.json 的
+  // docLinks.skipSegments 再追加。
   it('dist/ 與 .git/ 底下的 markdown 不掃', () => {
     const { code, output } = run({
       'docs/dist/x.md': '[x](./nope-dist.md)\n',
@@ -656,7 +661,7 @@ describe('不帶 --root 時的既有行為', () => {
 
     expect(code).toBe(0);
     expect(linkCount(output)).toBeGreaterThan(0);
-    expect(output).toContain('✓ 連結全部都在');
+    expect(output).toContain('✓ 無壞掉的連結');
   });
 
   it('--verbose 之類不認得的參數不會被當成 root', () => {
@@ -784,21 +789,28 @@ describe('根目錄只撿 readme*.md', () => {
 });
 
 describe('輸出的完整格式(訊息本身就是這張工單的產出)', () => {
-  it('全綠:第一行是統計,第二行是 ✓,沒有多餘的東西', () => {
+  // 模板 v1.3.0 起,第一行多印一行「生效中的排除清單」(內建預設 + gates.config.json 追加)。
+  // 那行是刻意的:排除清單現在可設定,看不到它就沒辦法判斷「掃到的檔數為什麼是這個數字」。
+  const SKIP_LINE =
+    'doc-links: 排除片段 [node_modules, .stryker-tmp, dist, .git, target, .svelte-kit, archive]、' +
+    '排除前綴 [.claude/worktrees, contracts/fixtures]';
+
+  it('全綠:排除清單、統計、✓,沒有多餘的東西', () => {
     const { code, output } = run({
       'docs/a.md': '[b](./b.md)\n',
       'docs/b.md': '# b\n',
     });
 
     expect(code).toBe(0);
-    expect(output).toBe('doc-links: 掃描 2 個 markdown 檔,1 條相對連結\n✓ 連結全部都在');
+    expect(output).toBe(`${SKIP_LINE}\ndoc-links: 掃描 2 個 markdown 檔,1 條相對連結\n✓ 無壞掉的連結`);
   });
 
-  it('有壞連結:統計、空行、✗ 標題、每條一行、最後是怎麼修', () => {
+  it('有壞連結:排除清單、統計、空行、✗ 標題、每條一行、最後是怎麼修', () => {
     const { code, output } = run({ 'docs/a.md': '[沒有](./missing.md)\n' });
 
     expect(code).toBe(1);
     expect(output.split('\n')).toEqual([
+      SKIP_LINE,
       'doc-links: 掃描 1 個 markdown 檔,1 條相對連結',
       '',
       '✗ 1 條連結指到不存在的檔案:',
@@ -808,11 +820,12 @@ describe('輸出的完整格式(訊息本身就是這張工單的產出)', () =>
     ]);
   });
 
-  it('0 條連結:統計一行、掃描器壞了一行,就這兩行', () => {
+  it('0 條連結:排除清單、統計一行、掃描器壞了一行', () => {
     const { code, output } = run({ 'docs/a.md': '# 沒有連結\n' });
 
     expect(code).toBe(1);
     expect(output.split('\n')).toEqual([
+      SKIP_LINE,
       'doc-links: 掃描 1 個 markdown 檔,掃描到 0 條相對連結',
       `${SCANNER_BROKEN}。掃描範圍 SCAN_DIRS、副檔名、或 stripCode 挖太多時就長這樣。`,
     ]);

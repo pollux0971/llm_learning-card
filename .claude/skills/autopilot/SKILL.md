@@ -38,6 +38,13 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
    ```bash
    npm run boundaries && npm run typecheck && npm run lint:docs && npm test && npm run accept:standalone && npm run standalone
    npm run accept:dry        # 必看「0 ambiguous」:步驟定義撞名不會讓任何測試變紅,只有這步抓得到
+   npm run check:steps       # 每句 gherkin 恰好一個步驟定義
+   npm run check:gherkin-dup # 重複的 gherkin 場景(⚠️ 採用模板時就是紅的:3 組逐字重複,另開工單處理,不要放寬規則讓它變綠)
+   npm run accept:coverage   # 每個 phase-N.feature 用自己的 tag 至少比對到 1 個場景;tag 打錯字只有這步抓得到
+   # 守門漂移偵測:本地 scripts/ 的守門與模板版本或內容不一致就紅
+   # TEMPLATE_DIR 指向模板 repo 的 template/(目前在 llm_learning-cards 的模板 worktree 底下)
+   # 目前同步到 v1.3.0;check-phase-coverage.ts 有本地 HOTFIX(見檔頭第 2 行),模板修好要回流
+   "$TEMPLATE_DIR/scripts/sync-gates.sh" "$(git rev-parse --show-toplevel)" scripts --check
    ```
    全綠 → tag、清 worktree、通知技術顧問「驗推」;FAIL 的照 test→dev→review 循環派 debug session。
 2. **算 ready**:照 sprint-planning 的規則讀所有 NEXT.md。三種 gate 全滿足 → ready。
