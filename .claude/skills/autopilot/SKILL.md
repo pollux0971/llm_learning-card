@@ -12,7 +12,7 @@ description: 讓協調者不停推進專案,把使用者當成只要成果的老
 
 ```bash
 cd <repo 根目錄> && pwd && git branch --show-current   # P-19:確認在根、在 main
-git status --short | head                              # 根目錄不該有未 commit 的東西
+git status --short --untracked-files=no | head          # 根目錄不該有「已追蹤檔案」的未 commit 變更;未追蹤的產出目錄不算
 npx tsx scripts/llm-spend.ts --today                   # 今日 OpenAI 花費;退出碼 1 = 已達上限(花費 ≥ 上限就算達到)
                                                        # 檔案還不存在(03/phase-4 未合併)→ 跳過這步,不當煞車
 grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最大 ADR 號;派工說明裡寫「ADR-下一號 = 這個+1」,worker 不自己猜
@@ -60,7 +60,7 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 - 同一張工單連續 **3** 輪 FAIL → 該 phase 標 `blocked`,原因寫 NEXT.md,問技術顧問
 - 當日 OpenAI 花費達上限 → 所有 @llm 工作停,非 LLM 工作繼續
 - 完整檢查在 main 上紅 → **先修 main**,不派新工
-- 根目錄有未 commit 變更或不在 main → 停,查是誰(P-12 / P-19)
+- 根目錄有**已追蹤檔案**的未 commit 變更,或不在 main → 停,查是誰(P-12 / P-19);未追蹤目錄(例如產出資料)不觸發,但要確認它在 .gitignore 裡
 - 技術顧問 session 不在(`ListAgents` 找不到)→ 技術決策改成「保守選項 + ADR 待覆核」,不問使用者
 - 同時進行的 worktree 已達 3 → 不派新工,先收割
 
