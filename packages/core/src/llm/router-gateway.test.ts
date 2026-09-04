@@ -26,6 +26,12 @@ import {
 } from './errors.js';
 import { GatewayClient } from './adapters/gateway.js';
 import { GatewayLlmRouter, isCloudFailure } from './router-gateway.js';
+import {
+  FALLBACK_TABLE,
+  decideFallback,
+  type FallbackDecision,
+  type FallbackGroup,
+} from './fallback.js';
 import type { CloudAdapter, LlmTask } from './types.js';
 import type { DailySpend, SpendPrices } from './spend.js';
 
@@ -450,5 +456,71 @@ describe('GATEWAY_FAILED 不從 router 的公開介面外洩', () => {
     expect(err).not.toBe(NOTHING_THROWN);
     expect(err).not.toBeInstanceOf(GatewayCallError);
     expect(codeOf(err)).not.toBe('GATEWAY_FAILED');
+  });
+});
+
+
+// ==================================================== 收尾輪:router-gateway.ts
+//                                       的備援重試分支裡那個到不了的 if
+//
+// `call()` 的 catch 裡是這樣:
+//
+//     const retry = decideFallback({ task, cloud: 'failed', ... }, this.fallbackTable);
+//     if (retry.target !== 'gateway') throw err;      // ← 到不了
+//     return this.callGateway(task, prompt, retry, opts, err);
+//
+// `cloud` 在這裡是**寫死的 `'failed'`**,而 `decideFallback` 在 `cloud === 'failed'`
+// 時三個分組的結果分別是:gateway-always → gateway、gateway-fallback → gateway、
+// cloud-only → **丟 CloudRequiredError**。沒有任何一條路會回 `target: 'cloud'`,
+// 所以那個 if 永遠是 false。
+//
+// 換句話說 `ingest.*` 拿到 CLOUD_REQUIRED 靠的是 decideFallback **丟出來**的錯誤
+// (它會蓋掉原本的 err),不是那個 if。這一輪把「不會回到 cloud」這個前提用測試
+// 鎖起來:下一輪可以放心刪掉那一行,而如果將來有人讓 decideFallback 在 'failed'
+// 時回 cloud,這裡會先變紅。
+//
+// 查證方式(不是只信轉述):把那一行實際從原始碼刪掉跑全套,71 個檔案 1209 個
+// 測試全綠。
+describe('備援重試:cloud "failed" 永遠不會回到 cloud(router-gateway.ts 的死分支)', () => {
+  // 這一份 Record 是**編譯期**的窮舉檢查:FallbackGroup 多一個成員時,少列的那個
+  // 會讓 tsc 直接紅——不然新分組會從下面的迴圈裡靜靜溜掉。
+  const EVERY_GROUP: Record<FallbackGroup, true> = {
+    'gateway-always': true,
+    'gateway-fallback': true,
+    'cloud-only': true,
+  };
+  const GROUPS = Object.keys(EVERY_GROUP) as FallbackGroup[];
+
+  const cases = ALL_TASKS.flatMap((task) => GROUPS.map((group) => ({ task, group })));
+
+  it.each(cases)('$group 的 $task:回 gateway 或丟錯,不會回 cloud', ({ task, group }) => {
+    const table = Object.fromEntries(ALL_TASKS.map((t) => [t, group])) as Record<LlmTask, FallbackGroup>;
+    let decision: FallbackDecision;
+    try {
+      decision = decideFallback({ task, cloud: 'failed' }, table);
+    } catch (err) {
+      // cloud-only:decideFallback 自己丟 CloudRequiredError,函式根本沒回傳,
+      // 所以那個 if 連被求值的機會都沒有。
+      expect(err).toBeInstanceOf(CloudRequiredError);
+      return;
+    }
+    expect(decision.target).toBe('gateway');
+  });
+
+  it.each(ALL_TASKS)('預設的 FALLBACK_TABLE:%s 也一樣', (task) => {
+    let decision: FallbackDecision;
+    try {
+      decision = decideFallback({ task, cloud: 'failed' }, FALLBACK_TABLE);
+    } catch (err) {
+      expect(err).toBeInstanceOf(CloudRequiredError);
+      return;
+    }
+    expect(decision.target).toBe('gateway');
+  });
+
+  it('FALLBACK_TABLE 沒有用到上面那三組以外的分組', () => {
+    // 上面的窮舉靠 GROUPS;這條擋的是「表裡塞了一個不在型別裡的字串」那種繞過。
+    expect(Object.values(FALLBACK_TABLE).every((g) => GROUPS.includes(g))).toBe(true);
+    expect(Object.keys(FALLBACK_TABLE).sort()).toEqual([...ALL_TASKS].sort());
   });
 });

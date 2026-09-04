@@ -166,7 +166,13 @@ export class GatewayLlmRouter implements LlmRouter {
         { task, cloud: 'failed', spentUsd: spend.usd, capUsd: this.capUsd },
         this.fallbackTable,
       );
-      // 還是回 cloud 就代表這個 task 根本沒有備援,把原本的錯誤往外丟。
+      // TODO(收尾輪,下一輪刪):**這一行到不了**。`cloud` 在這裡是寫死的
+      // `'failed'`,而 decideFallback 在 'failed' 時 gateway-always / gateway-fallback
+      // 都回 gateway、cloud-only 直接丟 CloudRequiredError——沒有任何一條路會回
+      // `target: 'cloud'`。`ingest.*` 拿到 CLOUD_REQUIRED 靠的是上面那個
+      // decideFallback **丟出來**的錯誤(它會蓋掉 err),不是這個 if。
+      // 前提由 router-gateway.test.ts 的「備援重試:cloud "failed" 永遠不會回到
+      // cloud」窮舉鎖住;實際刪掉跑過全套,1209 個測試全綠。
       if (retry.target !== 'gateway') throw err;
       return this.callGateway(task, prompt, retry, opts, err);
     }
