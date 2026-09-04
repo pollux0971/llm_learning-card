@@ -14,7 +14,9 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     passWithNoTests: true,
-    include: ['packages/**/*.test.ts', 'apps/**/*.test.ts'],
+    // scripts/ 底下是掃描器(boundaries / standalone / doc-links)。它們的測試也要跑,
+    // 否則「掃到 0 個就 FAIL」那條規則沒有人守。
+    include: ['packages/**/*.test.ts', 'apps/**/*.test.ts', 'scripts/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       // 行覆蓋率只是及格線。真正的品質由 mutation testing 決定,見
