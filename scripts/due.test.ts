@@ -30,7 +30,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 const SPAWN_TIMEOUT_MS = 60_000;
@@ -67,6 +67,18 @@ function runDue(statePath: string): { code: number; output: string } {
 /** node 把例外丟到頂層時長這樣。使用者不該看到這個。 */
 const STACK_TRACE = /^\s+at .+:\d+:\d+\)?$/m;
 
+/**
+ * 把暫存路徑換成固定字樣,剩下的才是「訊息本身」。
+ *
+ * 三個案例用三個不同的暫存路徑,不去掉路徑的話,只要訊息印了路徑就永遠兩兩不同——
+ * 把三句話全部清空仍然綠。「三種 0 兩兩不同」比的是訊息,不是輸出。
+ */
+function withoutPath(output: string, ...paths: string[]): string {
+  let s = output;
+  for (const p of paths) s = s.split(p).join('<PATH>').split(dirname(p)).join('<DIR>');
+  return s;
+}
+
 /** 「今天沒事」那句話。空表 / 缺檔 / 壞檔都不可以說它。 */
 const NOTHING_DUE = /沒有到期的卡片/;
 
@@ -99,14 +111,22 @@ describe('scripts/due.ts:算得成的時候', () => {
     expect(output).toMatch(/2\s*張/);
   }, SPAWN_TIMEOUT_MS);
 
-  it('有卡片到期 → exit 0,照舊列出來(現在就綠,回歸鎖)', () => {
+  it('有卡片到期 → exit 0,照舊列出來,標題帶分母,STUCK 只掛在卡住的那張後面', () => {
     const state = stateFile(
-      JSON.stringify({ 'sec-0001': review('2026-09-01') }),
+      JSON.stringify({
+        'sec-0001': { ...review('2026-09-01', 1), stuck: true },
+        'sec-0002': review('2026-09-01', 2),
+      }),
     );
     const { code, output } = runDue(state);
 
     expect(code).toBe(0);
-    expect(output).toContain('sec-0001');
+    expect(output).toContain('到期 2 張(讀到 2 張卡)');
+    // 卡住的那張:行尾是 STUCK。
+    expect(output).toMatch(/^ {2}sec-0001 {2}stage=1 {2}types=fill .*overdue_ratio=\d+\.\d{3} {2}STUCK$/m);
+    // 沒卡住的那張:overdue_ratio 之後什麼都沒有。
+    // stage 2 有兩種題型,types 用逗號接。
+    expect(output).toMatch(/^ {2}sec-0002 {2}stage=2 {2}types=fill,apply .*overdue_ratio=\d+\.\d{3}$/m);
   }, SPAWN_TIMEOUT_MS);
 });
 
@@ -118,6 +138,9 @@ describe('scripts/due.ts:三種 0', () => {
     expect(output).not.toMatch(NOTHING_DUE);
     // 要說清楚是「一張卡都沒有」,不是「今天沒事」。
     expect(output).toMatch(/0\s*張|一張.*都沒有|沒有任何/);
+    // 兩句補充各有用途:一句說這不是「今天沒事」,一句說剛 init 完是正常的、否則去查路徑。
+    expect(output).toContain('沒有複習資料可以算');
+    expect(output).toContain('init');
   }, SPAWN_TIMEOUT_MS);
 
   it('檔案不存在 → exit 1,一句人話,不噴 stack trace', () => {
@@ -128,6 +151,9 @@ describe('scripts/due.ts:三種 0', () => {
     expect(output).not.toMatch(STACK_TRACE);
     expect(output).not.toMatch(NOTHING_DUE);
     expect(output).toContain(missing);
+    expect(output).toContain('讀不到');
+    // 作業系統給的原因也要在,不然「讀不到」可能是權限也可能是不存在。
+    expect(output).toMatch(/ENOENT|no such file/);
   }, SPAWN_TIMEOUT_MS);
 
   it('不是合法 JSON → exit 1,一句人話,不噴 stack trace', () => {
@@ -136,30 +162,50 @@ describe('scripts/due.ts:三種 0', () => {
     expect(code).toBe(1);
     expect(output).not.toMatch(STACK_TRACE);
     expect(output).not.toMatch(NOTHING_DUE);
+    expect(output).toContain('不是合法的 JSON');
+    // JSON.parse 的原因與檔案開頭都要在——使用者才知道是哪個檔、壞在哪。
+    expect(output).toMatch(/Unexpected token|is not valid JSON/);
+    expect(output).toContain('它開頭長這樣:NOT JSON {{{');
   }, SPAWN_TIMEOUT_MS);
 
-  it('三種 0 的輸出兩兩不同', () => {
-    const outputs = [
-      runDue(stateFile('{}')).output,
-      runDue(join(tmpDir(), 'nope.json')).output,
-      runDue(stateFile('NOT JSON {{{\n')).output,
+  it('不是合法 JSON 而且很長 → 只印開頭 80 個字元,不把整個檔倒出來', () => {
+    const long = `NOT JSON ${'長'.repeat(300)}`;
+    const { output } = runDue(stateFile(long));
+
+    expect(output).toContain(long.slice(0, 80));
+    expect(output).not.toContain(long);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('三種 0 的訊息兩兩不同(路徑正規化之後比,不是比輸出)', () => {
+    const emptyPath = stateFile('{}');
+    const missingPath = join(tmpDir(), 'nope.json');
+    const brokenPath = stateFile('NOT JSON {{{\n');
+    const messages = [
+      withoutPath(runDue(emptyPath).output, emptyPath),
+      withoutPath(runDue(missingPath).output, missingPath),
+      withoutPath(runDue(brokenPath).output, brokenPath),
     ];
-    expect(new Set(outputs).size, `三種 0 有兩種長一樣:\n${outputs.join('\n---\n')}`).toBe(3);
+
+    // 每一種 0 都要真的有話說;三句去掉路徑之後仍然兩兩不同。
+    for (const m of messages) expect(m.trim(), '有一種 0 一句話都沒說').not.toBe('');
+    expect(new Set(messages).size, `三種 0 有兩種長一樣:\n${messages.join('\n---\n')}`).toBe(3);
   }, SPAWN_TIMEOUT_MS);
 });
 
 describe('scripts/due.ts:合法 JSON 但不是 Review 表', () => {
   // 這一組全部走過 JSON.parse 但型別不對。現況是 `as Record<CardId, Review>` 直接
   // 相信,結果不是憑空捏造出「沒有到期」就是在 buildDueList 深處噴 stack。
-  const cases: [string, string][] = [
-    ['[] 是陣列不是物件', '[]'],
-    ['null', 'null'],
-    ['字串', '"hi"'],
-    ['數字', '42'],
-    ['物件的值不是 Review', '{"sec-0001": "yesterday"}'],
+  // 第三欄是「第一個對不上的地方」該指到哪:根層用「(根)」,巢狀路徑用 `.` 接。
+  const cases: [string, string, string][] = [
+    ['[] 是陣列不是物件', '[]', '(根): '],
+    ['null', 'null', '(根): '],
+    ['字串', '"hi"', '(根): '],
+    ['數字', '42', '(根): '],
+    ['物件的值不是 Review', '{"sec-0001": "yesterday"}', 'sec-0001: '],
+    ['Review 裡面的欄位型別不對', '{"sec-0001": {"stage": "x"}}', 'sec-0001.stage: '],
   ];
 
-  for (const [name, raw] of cases) {
+  for (const [name, raw, where] of cases) {
     it(`${name} → exit 1,不噴 stack,也不說「沒有到期的卡片」`, () => {
       const { code, output } = runDue(stateFile(raw));
 
@@ -167,7 +213,23 @@ describe('scripts/due.ts:合法 JSON 但不是 Review 表', () => {
       expect(output).not.toMatch(STACK_TRACE);
       expect(output).not.toMatch(NOTHING_DUE);
     }, SPAWN_TIMEOUT_MS);
+
+    it(`${name} → 說「不是一份 reviews.json」、印它實際是什麼、指出第一個對不上的地方`, () => {
+      const { output } = runDue(stateFile(raw));
+
+      expect(output).toContain('不是一份 reviews.json');
+      expect(output).toContain(`它實際是:${raw.slice(0, 80)}`);
+      expect(output).toContain(`第一個對不上的地方:${where}`);
+    }, SPAWN_TIMEOUT_MS);
   }
+
+  it('不是 Review 表而且很長 → 「它實際是」只印前 80 個字元', () => {
+    const long = `{"sec-0001": "${'長'.repeat(300)}"}`;
+    const { output } = runDue(stateFile(long));
+
+    expect(output).toContain(long.slice(0, 80));
+    expect(output).not.toContain(long);
+  }, SPAWN_TIMEOUT_MS);
 });
 
 describe('scripts/due.ts:用法', () => {

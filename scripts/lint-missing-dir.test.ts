@@ -43,6 +43,9 @@ afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
 });
 
+/** node 把例外丟到頂層時長這樣。使用者不該看到這個。 */
+const STACK_TRACE = /^\s+at .+:\d+:\d+\)?$/m;
+
 function runLint(dir: string): { code: number; output: string } {
   const r = spawnSync('npx', ['tsx', 'scripts/lint.ts', '--dir', dir], {
     cwd: REPO_ROOT,
@@ -79,7 +82,27 @@ describe('scripts/lint.ts --dir 指到不存在的目錄', () => {
     expect(output).toContain('目錄不存在');
     expect(output).toContain(missing);
     expect(output).toContain('init');
+    // 「不會幫你建出來」是這條守門的承諾本身,不是裝飾。
+    expect(output).toContain('不會幫你建出來');
+    // 守門之後要收工,不能印完人話再掉進 statSync 的 ENOENT stack。
+    expect(output).not.toMatch(STACK_TRACE);
   }, SPAWN_TIMEOUT_MS);
+
+  it('守門不誤傷真的目錄:剛 init 完的 vault 不會被說成「不存在」或「不是目錄」', () => {
+    // 只盯守門這半邊(exit 0 + 兩句守門話都沒出現);成功時報告長什麼樣歸 lint.steps.ts。
+    const dir = join(tmpDir(), 'vault');
+    const init = spawnSync('npx', ['tsx', 'packages/core/src/schema/cli.ts', 'init', dir], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: SPAWN_TIMEOUT_MS,
+    });
+    expect(init.status).toBe(0);
+
+    const { code, output } = runLint(dir);
+    expect(code).toBe(0);
+    expect(output).not.toContain('目錄不存在');
+    expect(output).not.toContain('不是目錄');
+  }, SPAWN_TIMEOUT_MS * 2);
 
   it('絕不說「乾淨」——0 problems 是一句只有健檢真的跑過才配印的話', () => {
     const { output } = runLint(join(tmpDir(), 'nope'));
@@ -96,6 +119,22 @@ describe('scripts/lint.ts --dir 指到不存在的目錄', () => {
     expect(output).not.toMatch(/0 problems|沒有問題/);
   }, SPAWN_TIMEOUT_MS);
 
+  it('路徑是檔案時,是守門的那句人話,不是掉進 mkdirSync 的 ENOTDIR stack', () => {
+    // 上一條測試整條刪掉守門也照樣綠:沒守門會掉進 lint() → mkdirSync(<file>/state)
+    // 丟 ENOTDIR,node 一樣 exit 1、一樣不印「0 problems」。所以那條守不住守門。
+    // 這條盯的是守門**本身**:一句說得出「不是目錄」與路徑、指到 init、而且沒有 stack。
+    const file = join(tmpDir(), 'learning.md');
+    writeFileSync(file, '這是一個檔案,不是 learning 目錄\n', 'utf8');
+
+    const { code, output } = runLint(file);
+    expect(code).toBe(1);
+    expect(output).toContain('不是目錄');
+    expect(output).toContain(file);
+    expect(output).toContain('init');
+    expect(output).not.toMatch(STACK_TRACE);
+    expect(output).not.toContain('ENOTDIR');
+  }, SPAWN_TIMEOUT_MS);
+
   it('沒給 --dir 仍然是 exit 2(用法錯誤,跟「目錄不存在」分得開)', () => {
     // 回歸鎖:現在就是這個行為,改「目錄不存在」那條路徑時不要順手動到它。
     const r = spawnSync('npx', ['tsx', 'scripts/lint.ts'], {
@@ -104,5 +143,6 @@ describe('scripts/lint.ts --dir 指到不存在的目錄', () => {
       timeout: SPAWN_TIMEOUT_MS,
     });
     expect(r.status).toBe(2);
+    expect(`${r.stdout ?? ''}${r.stderr ?? ''}`).toContain('用法');
   }, SPAWN_TIMEOUT_MS);
 });

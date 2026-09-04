@@ -33,7 +33,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../../..');
 const CLI = 'packages/core/src/schema/cli.ts';
@@ -58,6 +58,18 @@ function run(dir: string): { code: number; output: string } {
     timeout: SPAWN_TIMEOUT_MS,
   });
   return { code: r.status ?? -1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+}
+
+/**
+ * 把暫存路徑換成固定字樣,剩下的才是「訊息本身」。
+ *
+ * 三個案例用三個不同的暫存目錄,不去掉路徑的話,只要訊息印了路徑就永遠兩兩不同——
+ * 把三句話全部清空仍然綠。「三種 0 兩兩不同」比的是訊息,不是輸出。
+ */
+function withoutPath(output: string, ...paths: string[]): string {
+  let s = output;
+  for (const p of paths) s = s.split(p).join('<PATH>').split(dirname(p)).join('<DIR>');
+  return s;
 }
 
 /** 一個有 cards/ 與 questions/ 的 learning 樹。`cards` 是 `{ 分類: [卡片 id] }`。 */
@@ -104,6 +116,21 @@ describe('check-questions:三種 0', () => {
     expect(code).toBe(2);
     expect(output).not.toMatch(/^OK/m);
     expect(output).toContain(missing);
+    expect(output).toContain('沒有檢查任何東西');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('路徑存在但是一個檔案 → exit 2,說「不是目錄」,不是掉進 readdirSync 的 ENOTDIR stack', () => {
+    const file = join(tmpDir(), 'learning.md');
+    writeFileSync(file, '這是一個檔案,不是 learning 目錄\n', 'utf8');
+    const { code, output } = run(file);
+
+    expect(code).toBe(2);
+    expect(output).not.toMatch(/^OK/m);
+    expect(output).toContain('不是目錄');
+    expect(output).toContain(file);
+    expect(output).not.toMatch(/^\s+at .+:\d+:\d+\)?$/m);
+    // 一種 0 只講一件事:守門之後就收工,不會接著又說「底下沒有 cards/」。
+    expect(output).not.toContain('沒有 cards/');
   }, SPAWN_TIMEOUT_MS);
 
   it('目錄在但沒有 cards/ → exit 2,而且說得出是少了 cards/', () => {
@@ -114,6 +141,10 @@ describe('check-questions:三種 0', () => {
     expect(code).toBe(2);
     expect(output).toContain('cards');
     expect(output).not.toMatch(/^OK/m);
+    // 使用者要做的事:還沒 init 就 init,不然去確認路徑。
+    expect(output).toContain('init');
+    // 一種 0 只講一件事:說完「沒有 cards/」就收工,不會接著又說「檢查了 0 張卡」。
+    expect(output).not.toMatch(/0\s*張卡/);
   }, SPAWN_TIMEOUT_MS);
 
   it('cards/ 在但一張卡都沒有 → exit 2,而且印「檢查了 0 張卡」', () => {
@@ -123,6 +154,8 @@ describe('check-questions:三種 0', () => {
 
     expect(code).toBe(2);
     expect(output).toMatch(/0\s*張卡/);
+    // 這是最像「正常」的空,所以要明講:空的 vault 不算「全部都有考題」。
+    expect(output).toContain('空的 vault');
   }, SPAWN_TIMEOUT_MS);
 
   it('cards/ 底下有分類目錄但裡面沒有 .md → 一樣是「0 張卡」的 exit 2', () => {
@@ -134,16 +167,23 @@ describe('check-questions:三種 0', () => {
     expect(output).toMatch(/0\s*張卡/);
   }, SPAWN_TIMEOUT_MS);
 
-  it('三種 0 的輸出兩兩不同', () => {
-    const noDir = run(join(tmpDir(), 'nope'));
+  it('三種 0 的訊息兩兩不同(路徑正規化之後比,不是比輸出)', () => {
+    const noDir = join(tmpDir(), 'nope');
 
     const noCards = tmpDir();
     mkdirSync(join(noCards, 'questions'), { recursive: true });
 
     const emptyCards = vault({ security: [] }, []);
 
-    const outputs = [noDir.output, run(noCards).output, run(emptyCards).output];
-    expect(new Set(outputs).size, `三種 0 有兩種長一樣:\n${outputs.join('\n---\n')}`).toBe(3);
+    const messages = [
+      withoutPath(run(noDir).output, noDir),
+      withoutPath(run(noCards).output, noCards),
+      withoutPath(run(emptyCards).output, emptyCards),
+    ];
+
+    // 每一種 0 都要真的有話說;三句去掉路徑之後仍然兩兩不同。
+    for (const m of messages) expect(m.trim(), '有一種 0 一句話都沒說').not.toBe('');
+    expect(new Set(messages).size, `三種 0 有兩種長一樣:\n${messages.join('\n---\n')}`).toBe(3);
   }, SPAWN_TIMEOUT_MS);
 
   it('沒給目錄參數仍是 exit 2 的用法錯誤(現在就綠,回歸鎖)', () => {

@@ -30,7 +30,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 const SPAWN_TIMEOUT_MS = 60_000;
@@ -55,13 +55,27 @@ function stateFile(raw: string): string {
   return path;
 }
 
-function runWeekly(statePath: string): { code: number; output: string } {
+function runWeekly(statePath: string): { code: number; output: string; stdout: string; stderr: string } {
   const r = spawnSync(
     'npx',
     ['tsx', 'scripts/weekly.ts', '--state', statePath, '--event', 'pass-d1', '--card', 'sec-0001', '--today', TODAY],
     { cwd: REPO_ROOT, encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS },
   );
-  return { code: r.status ?? -1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+  const stdout = r.stdout ?? '';
+  const stderr = r.stderr ?? '';
+  return { code: r.status ?? -1, output: `${stdout}${stderr}`, stdout, stderr };
+}
+
+/**
+ * 把暫存路徑換成固定字樣,剩下的才是「訊息本身」。
+ *
+ * 兩個案例用兩個不同的暫存路徑,不去掉路徑的話,只要訊息印了路徑就永遠「不一樣」——
+ * 把兩句話全部清空仍然綠。比較的對象是訊息,不是輸出。
+ */
+function withoutPath(output: string, ...paths: string[]): string {
+  let s = output;
+  for (const p of paths) s = s.split(p).join('<PATH>').split(dirname(p)).join('<DIR>');
+  return s;
 }
 
 /** node 把例外丟到頂層時長這樣。使用者不該看到這個。 */
@@ -96,7 +110,11 @@ describe('scripts/weekly.ts:合法 JSON 但不是 Weekly —— 不准憑空捏�
     ['42 數字', '42'],
     ['null', 'null'],
     ['有 week 但少了 target / counted', '{"week":"2026-W37","learned":1}'],
-    ['欄位型別不對(learned 是字串)', '{"week":"2026-W37","target":7,"learned":"lots","passed_d1":0,"counted":[]}'],
+    // ⚠️ 這個 raw 刻意**不含** `"passed_d1"`:下面第二條斷言要求輸出不含 `"passed_d1"`,
+    // 第三條又要求輸出含 `raw.slice(0, 80)`;raw 自己帶著 `"passed_d1"` 的話兩條在數學上
+    // 不可能同時成立。「learned 型別錯 + 原檔本身就有 passed_d1」的組合另外用
+    // stdout / stderr 分開看的那條測試蓋(見下方),那條不靠子字串當代理指標。
+    ['欄位型別不對(learned 是字串)', '{"week":"2026-W37","target":7,"learned":"lots","counted":[]}'],
   ];
 
   for (const [name, raw] of cases) {
@@ -121,6 +139,22 @@ describe('scripts/weekly.ts:合法 JSON 但不是 Weekly —— 不准憑空捏�
       expect(output).not.toMatch(STACK_TRACE);
     }, SPAWN_TIMEOUT_MS);
   }
+
+  it('欄位型別不對而且原檔本身就有 passed_d1 → stdout 一個字都沒有,回聲只在 stderr', () => {
+    // 上面參數化那組用「輸出不含 "passed_d1"」當「沒有捏造 Weekly」的代理指標,
+    // 所以塞不進一個本來就帶 passed_d1 的原檔。這條直接看被代理的那件事:
+    // 捏造出來的 Weekly 走 stdout(成功路徑印 JSON 的地方),而回聲走 stderr。
+    // 原檔帶著 passed_d1 反而是最像「正常」的壞檔,正是最需要擋的那種。
+    const raw = '{"week":"2026-W37","target":7,"learned":"lots","passed_d1":0,"counted":[]}';
+    const { code, stdout, stderr } = runWeekly(stateFile(raw));
+
+    expect(code).toBe(1);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('Weekly');
+    expect(stderr).toContain(raw.slice(0, 80));
+    expect(stderr).not.toContain('"target_met"');
+    expect(stderr).not.toMatch(STACK_TRACE);
+  }, SPAWN_TIMEOUT_MS);
 
   it('很長的內容只印前 80 個字元,不把整個檔倒出來', () => {
     const long = `{"week":"2026-W37","note":"${'長'.repeat(300)}"}`;
@@ -149,10 +183,16 @@ describe('scripts/weekly.ts:讀不到檔', () => {
     expect(output).not.toMatch(STACK_TRACE);
   }, SPAWN_TIMEOUT_MS);
 
-  it('「不是 Weekly」與「讀不到檔」的訊息不一樣', () => {
-    const notWeekly = runWeekly(stateFile('{}')).output;
-    const unreadable = runWeekly(join(tmpDir(), 'nope.json')).output;
+  it('「不是 Weekly」與「讀不到檔」的訊息不一樣(路徑正規化之後比,不是比輸出)', () => {
+    const notWeeklyPath = stateFile('{}');
+    const unreadablePath = join(tmpDir(), 'nope.json');
+    const notWeekly = withoutPath(runWeekly(notWeeklyPath).output, notWeeklyPath);
+    const unreadable = withoutPath(runWeekly(unreadablePath).output, unreadablePath);
 
+    // 兩句都要真的有話,而且去掉路徑之後仍然不同。只比 output 的話,兩個不同的暫存
+    // 路徑就足以讓它永遠過——把兩句話全部清空仍然綠。
+    expect(notWeekly.trim()).not.toBe('');
+    expect(unreadable.trim()).not.toBe('');
     expect(notWeekly).not.toBe(unreadable);
   }, SPAWN_TIMEOUT_MS);
 });

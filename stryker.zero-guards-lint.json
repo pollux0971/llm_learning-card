@@ -1,0 +1,14 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='scripts/lint-missing-dir.test.ts' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": ["clear-text", "progress-append-only"],
+  "coverageAnalysis": "off",
+  "concurrency": 4,
+  "timeoutMS": 300000,
+  "mutate": ["scripts/lint.ts"],
+  "thresholds": { "high": 90, "low": 70, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "target", "apps/desktop/src-tauri"]
+}
