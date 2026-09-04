@@ -290,9 +290,52 @@ CLI 印出單一卡片數(25),無失敗清單,退出碼 0。
 1. `deps.json` 損壞時 `JSON.parse` 會丟錯,蓋掉原本要記的 warning。
 2. `atomicWriteJson()` 失敗時會留下 `.tmp` 殘檔,且不 fsync 目錄。
 
-## 7. 待使用者人工確認
+## 7. 人工確認:**兩條皆 PASS**
 
-- `@manual`「The cards read like one concept each」:打開任三張卡,
-  每張只講一個概念,example 是具體案例而非重述 body。
-  建議樣本:`learning/cards/security/sec-0003.md`、`sec-0012.md`、`sec-0021.md`。
-- `@e2e` 最後一條:用 markdown 檢視器(例如 Obsidian)開 `learning/` 讀得順。
+使用者將觀感判定授權給技術顧問 session(2026-09-04)。判定結果:
+
+### 7.1 `@manual`「The cards read like one concept each」—— PASS
+
+判定依據:讀 `sec-0003` / `sec-0012` / `sec-0021` 全文,另掃 25 張的標題與例子。
+三張都是一句話一個概念;例子分別是網址對比、銀行表單與 fetch 兩個情境、
+`fetch` 呼叫加回應標頭,皆非重述 body。
+
+`sec-0021` 只有一個 example 不算問題——場景沒有規定數量,那一個例子就是最具體的形式。
+
+### 7.2 `@e2e`「the person can open any card in a markdown viewer and read it」—— PASS
+
+標準 YAML frontmatter + 短 body + ```example 圍欄,任何 viewer 都能開。
+圍欄在通用 viewer 顯示為 code block,遞迴渲染是 **07 的渲染器**的責任
+(契約 §2),不是 I1 的問題。`prereqs` 是 id 清單而非 wiki link,
+所以 Obsidian 不會自動連出關聯圖——「讀得順」不含「連得起來」。
+
+## 8. 驗收中發現、**不擋 I1** 的兩件事
+
+### 8.1 子卡與主卡近乎重複(約 8/25 張)
+
+四對:
+
+| A | B |
+|---|---|
+| `sec-0007` 預檢請求 | `sec-0015` CORS 預檢請求 |
+| `sec-0006` 帶憑證的跨來源請求 | `sec-0016` 攜帶憑證的 CORS |
+| `sec-0003` 的例子之一 | `sec-0013` |
+| `sec-0003` 的例子之二 | `sec-0014` |
+
+單張看都合格,合起來是 25 張裡約 8 張在講重複的事。**影響**:之後每天的
+複習量會被灌水。
+
+**歸屬**:
+1. **12-prompt-quality/phase-2** 的 golden 維度加「重複率」——`ingest.children`
+   的 prompt 要求「子卡不得重述父卡或同層 level-0 卡」。改 `prompts/` 要跑
+   golden run(硬規則 4)。
+2. **09-lint** 之後加「近重複標題」檢查。
+
+這是 12/phase-2 的 gate 解開後**第一件該做的事**。
+
+### 8.2 level-0 卡把 level-1 子卡當 prereq
+
+`sec-0003`(L0)的 `prereqs` 是 `sec-0011`(L1)。契約允許,但圖的形狀怪
+(主卡依賴別人的子卡),教學順序會**先教子卡**。
+
+**歸屬**:09-lint 的圖形狀檢查,或 `ingest.deps` 的 prompt 加約束。先記著。

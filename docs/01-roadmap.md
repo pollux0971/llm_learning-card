@@ -9,10 +9,10 @@
 
 | 欄位 | 值 |
 |---|---|
-| 目前階段 | I1 · 內容管線——自動驗收全過,等使用者確認 @e2e/@manual;I2 需要的 phase 已 4/5 done,最後一個(12-prompt-quality/phase-2)卡在同一個使用者確認 |
-| 目前 sprint | 2026-W36 — 04/phase-2+3、05/phase-2、11/phase-1 全部完成;I1 與 I2 都卡在同一個人工確認點 |
+| 目前階段 | **I1 · 內容管線 —— 通過**(2026-09-04,tag `I1`)。第四次真呼叫 `@e2e @llm` 全綠,兩條人工確認由技術顧問判定 PASS。下一步:12-prompt-quality/phase-2 的 gate 解除,之後 `/integrate I2` |
+| 目前 sprint | 2026-W36 — 04/phase-2+3、05/phase-2、11/phase-1 完成;I1 通過;03/phase-4(閘道本機 adapter,ADR-039)與寫入完整性(ADR-040/041)進行中 |
 | 契約版本 | 1.1.0(凍結) |
-| 最後更新 | 2026-09-03 |
+| 最後更新 | 2026-09-04 |
 
 ## 全貌
 
@@ -75,9 +75,13 @@ graph TD
 
 **整合工作**:02 丟掉自己的 FakeLlmRouter 改用 03;02 與 09 改用 01 的驗證器。
 
-**驗收**:[i1-content-pipeline.feature](integration/i1-content-pipeline.feature)
+**驗收**:[i1-content-pipeline.feature](integration/i1-content-pipeline.feature) —— **已通過 2026-09-04**,
+紀錄見 [I1-REVIEW.md](integration/I1-REVIEW.md)。第四次真呼叫產出 25 張卡 / 25 份考題 /
+order 齊全 / 驗證器 25/25,三筆 `cycle_removed` 證明多重循環修復在真資料上生效。
 
 **通過後立刻做**:把你手上三個類別的 raw 全部餵進去。
+**但先做 12-prompt-quality/phase-2**——I1 驗收時發現約 8/25 張卡在講重複的事
+(見 I1-REVIEW.md 第 8 節),先餵會放大這個問題。
 
 ---
 
