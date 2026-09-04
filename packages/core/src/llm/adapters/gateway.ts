@@ -40,12 +40,15 @@
  *     - `now?: () => number`(token 快取的時鐘,預設 Date.now)
  *     - `probeTimeoutMs?: number`
  * - `class GatewayClient`
- *     - `token(): Promise<string>`:快取。快取還沒過期就直接回,不打
- *       `/auth/token/exchange`;過期(或還沒換過)才換一次。
+ *     - `token(signal?): Promise<string>`:快取。快取還沒過期就直接回,不打
+ *       `/auth/token/exchange`;過期(或還沒換過)才換一次。`signal` 給 `probe()`
+ *       用,讓 probe 的逾時也管得到換 token 那一步。
  *     - `probe(): Promise<GatewayProbeResult>`:換 token → `GET /gateway/models`,
  *       回 `{ available: true, models: Object.keys(body.models) }`。
  *       **401(key 錯)、連線被拒、逾時一律回 `{ available: false, models: [] }`,
  *       不 throw**——沿用 phase-2「本機模型不在不是錯誤」的行為。
+ *       `GATEWAY_PROBE_TIMEOUT_MS` 涵蓋**兩個**請求(換 token + `/gateway/models`),
+ *       所以 auth 端點掛住時也會準時回不可用,不會無限期卡住。
  *     - `chat(args): Promise<GatewayChatResult>`:`POST /gateway/chat`。
  *       403 → `GatewayModelRejectedError`;401 → 重換 token 後**重試一次**,
  *       再 401 就丟 `GatewayCallError`;其他非 2xx / 連線失敗 → `GatewayCallError`。
@@ -172,8 +175,15 @@ export class GatewayClient {
     this.probeTimeoutMs = opts.probeTimeoutMs ?? GATEWAY_PROBE_TIMEOUT_MS;
   }
 
-  /** 快取到過期前重用;過期(或還沒換過)才打 `/auth/token/exchange`。 */
-  async token(): Promise<string> {
+  /**
+   * 快取到過期前重用;過期(或還沒換過)才打 `/auth/token/exchange`。
+   *
+   * `signal` 是給 `probe()` 用的:換 token 也要被 probe 的逾時管到,不然閘道的
+   * auth 端點掛住時(封包被防火牆黑洞吃掉,連 ECONNREFUSED 都不會回來)這個
+   * fetch 會掛到 OS 預設的 TCP timeout,`GATEWAY_PROBE_TIMEOUT_MS` 形同虛設。
+   * 不給就跟以前一樣不帶 signal。
+   */
+  async token(signal?: AbortSignal): Promise<string> {
     const now = this.now();
     if (this.cached && now < this.cached.expiresAt) return this.cached.accessToken;
 
@@ -183,6 +193,7 @@ export class GatewayClient {
         method: 'POST',
         // 換 token 用的是**明文 key**,不是 JWT——這是唯一一個這樣的端點。
         headers: { authorization: `Bearer ${this.config.apiKey}`, 'content-type': 'application/json' },
+        ...(signal ? { signal } : {}),
       });
     } catch (err) {
       throw new GatewayCallError(`token exchange failed: ${describe(err)}`);
@@ -208,12 +219,18 @@ export class GatewayClient {
     this.cached = undefined;
   }
 
-  /** 換 token → `GET /gateway/models`。任何失敗都回 unavailable,不 throw。 */
+  /**
+   * 換 token → `GET /gateway/models`。任何失敗都回 unavailable,不 throw。
+   *
+   * 逾時涵蓋**整個流程**:同一個 controller 的 signal 兩個 fetch 都帶,所以
+   * 「換 token 那一步掛住」也會在 `probeTimeoutMs` 之後被 abort。只包第二個
+   * fetch 的話,auth 端點掛住時 probe() 會無限期卡住。
+   */
   async probe(): Promise<GatewayProbeResult> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.probeTimeoutMs);
     try {
-      const token = await this.token();
+      const token = await this.token(controller.signal);
       const response = await this.fetchImpl(`${this.config.baseUrl}/gateway/models`, {
         headers: { authorization: `Bearer ${token}` },
         signal: controller.signal,

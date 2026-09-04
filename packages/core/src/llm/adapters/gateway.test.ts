@@ -48,6 +48,17 @@ interface FakeOpts {
   chatBody?: unknown;
   /** /gateway/models 回應前先等這麼久(測 probe 的逾時) */
   modelsDelayMs?: number;
+  /**
+   * `/auth/token/exchange` 回應前先等這麼久(**會**正常回,不像 `tokenHangs` 永遠掛著)。
+   * 用來分辨「一個計時器管兩段」與「兩段各開一個計時器」——後者每一段都在自己的
+   * 額度內就都不會逾時,前者看的是兩段加起來。
+   */
+  tokenDelayMs?: number;
+  /**
+   * `/auth/token/exchange` 永不回應——只有 abort 能結束它。重現「閘道的 auth
+   * 端點掛住」:封包被防火牆黑洞吃掉,連 ECONNREFUSED 都不會回來。
+   */
+  tokenHangs?: boolean;
   /** 回一段不是 JSON 的原始內容(例如反向代理的 502 HTML 錯誤頁) */
   rawOn?: 'token' | 'models' | 'chat';
   rawStatus?: number;
@@ -60,8 +71,8 @@ interface FakeFetch {
   chatCalls: number;
   chatBodies: { prompt?: string; model?: string; service?: string }[];
   authHeaders: string[];
-  /** 每一次請求的形狀:method / content-type / authorization / url */
-  requests: { url: string; method: string; contentType: string; authorization: string }[];
+  /** 每一次請求的形狀:method / content-type / authorization / url / 有沒有帶 signal */
+  requests: { url: string; method: string; contentType: string; authorization: string; hasSignal: boolean }[];
 }
 
 function json(body: unknown, status = 200): Response {
@@ -104,11 +115,30 @@ function makeFetch(opts: FakeOpts = {}): FakeFetch {
       method: init?.method ?? 'GET',
       contentType: headers.get('content-type') ?? '',
       authorization: headers.get('authorization') ?? '',
+      hasSignal: init?.signal != null,
     });
 
     if (opts.throwOn === 'all') throw new TypeError('fetch failed: connect ECONNREFUSED');
 
     if (url.includes('/auth/token/exchange')) {
+      if (opts.tokenHangs) {
+        state.tokenCalls += 1;
+        // 只有 abort 能讓這個 promise 結束。沒有 signal 的話它永遠掛著——
+        // 那正是「probe 的逾時管不到換 token」現在的樣子。
+        await new Promise<never>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      }
+      if (opts.tokenDelayMs !== undefined) {
+        // 跟 modelsDelayMs 同一個形狀:時間到就正常回,但中途被 abort 就立刻 reject。
+        await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(resolve, opts.tokenDelayMs);
+          init?.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        });
+      }
       if (opts.rawOn === 'token') {
         state.tokenCalls += 1;
         return html(opts.rawStatus ?? 200);
@@ -723,5 +753,178 @@ describe('createGatewayClient — 契約 §11 的環境變數', () => {
   it('沒有 LLM_LOCAL_MODEL 就用 .env.example 的預設 qwen2.5:32b', () => {
     const c = createGatewayClient({ GATEWAY_BASE_URL: BASE, GATEWAY_API_KEY: KEY });
     expect(c.config.model).toBe('qwen2.5:32b');
+  });
+});
+
+
+// ================================================ 收尾輪:probe 的逾時涵蓋範圍
+//
+// `probe()` 開的 AbortController 只傳給 `/gateway/models` 的 fetch;`token()` 打
+// `/auth/token/exchange` 的那個 fetch **沒有 signal**。也就是閘道的 auth 端點掛住
+// 時,`probe()` 會無限期卡住,`GATEWAY_PROBE_TIMEOUT_MS = 5000` 完全沒作用。
+//
+// 現在 `GATEWAY_BASE_URL` 是 `localhost:8787`,沒人聽就是立刻 ECONNREFUSED,所以
+// 看不出來。但 ADR-039 明說「啟用只需閘道可達,不用改程式」,而且 Consequences
+// 特別要求「probeLocal() 的逾時要短(當可用性檢查用)」——換成網域之後封包被防火牆
+// 黑洞吃掉,`token()` 會掛到 OS 預設的 TCP timeout(可能兩分鐘)。這是**啟用當天
+// 就會踩到**的東西,不是理論問題。
+//
+// 這一輪只寫測試,實作留給下一輪,所以下面是預期的紅燈。
+describe('GatewayClient.probe — 逾時要涵蓋換 token 那一步', () => {
+  it('換 token 永不回應時,probe 仍在逾時內回不可用,不會一直掛著', async () => {
+    // 用假計時器,不真的等 5 秒。
+    vi.useFakeTimers();
+    try {
+      const fake = makeFetch({ tokenHangs: true });
+      let settled: unknown;
+      void client(fake, { probeTimeoutMs: GATEWAY_PROBE_TIMEOUT_MS })
+        .probe()
+        .then(
+          (result) => {
+            settled = result;
+          },
+          // probe() 契約上不 throw;真的丟了要看得出來,不能讓它假裝成「還沒回來」。
+          (err: unknown) => {
+            settled = err;
+          },
+        );
+
+      // 推進到遠超過逾時。逾時真的管得到換 token 的話,這時候早就回來了。
+      await vi.advanceTimersByTimeAsync(GATEWAY_PROBE_TIMEOUT_MS * 10);
+
+      expect(settled).toEqual({ available: false, models: [] });
+      // 而且真的有打出去過——不是靠「根本沒發請求」蒙混過關。
+      expect(fake.tokenCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('probe 打的換 token 請求要帶 AbortSignal(逾時管得到它的前提)', async () => {
+    // 上一條測的是行為,這條測的是機制:少了 signal,逾時就只是一個沒人聽的計時器。
+    const fake = makeFetch();
+    await client(fake).probe();
+    const tokenRequest = fake.requests.find((r) => r.url.includes('/auth/token/exchange'));
+    expect(tokenRequest).toBeDefined();
+    expect(tokenRequest?.hasSignal).toBe(true);
+  });
+
+  it('換 token 掛住不會留下逾時計時器', async () => {
+    // finally 的 clearTimeout 在逾時路徑上也要有效,不然短命的 CLI 程序
+    // (scripts/llm.ts --probe)還是要多掛著。
+    vi.useFakeTimers();
+    try {
+      const fake = makeFetch({ tokenHangs: true });
+      let done = false;
+      void client(fake, { probeTimeoutMs: GATEWAY_PROBE_TIMEOUT_MS })
+        .probe()
+        .then(
+          () => {
+            done = true;
+          },
+          () => {
+            done = true;
+          },
+        );
+      await vi.advanceTimersByTimeAsync(GATEWAY_PROBE_TIMEOUT_MS * 10);
+      expect(done).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ============================== 審核補洞:一個計時器管兩段 vs 兩段各開一個計時器
+//
+// 上面那三條**分辨不出來**實作是哪一種:
+//
+//   - `tokenHangs` 那條:換 token 永遠不回。兩段各開一個 5 秒計時器的話,換 token
+//     那一段自己的計時器一樣會在 5 秒 abort 它 → 一樣回不可用 → 一樣綠。
+//   - `hasSignal` 那條:兩種做法都會**帶** signal,只是帶的是不是同一個。
+//   - `getTimerCount` 那條:兩種做法最後都會清乾淨。
+//
+// 差別只在**額度是共用還是各算**。所以要一個「每一段都在額度內、但加起來超過」的
+// 情境才分得出來:換 token 花 4 秒、`/gateway/models` 再花 2 秒,總共 6 秒。
+//
+//   - 一個計時器管兩段(現在的實作):5 秒到的時候第二個請求還在飛 → abort → 不可用。
+//   - 兩段各開一個 5 秒的計時器:4 < 5、2 < 5,兩段都沒逾時 → 回**可用**。
+//
+// 這是「逾時涵蓋整個 probe 流程」這句話真正的意思。少了這條,把 `probe()` 改成
+// 各開一個 controller 仍然全綠,而閘道換成網域之後(auth 端點慢、models 端點也慢)
+// probe 就會拖到接近兩倍的時間才回答一個「可不可用」的問題。
+describe('GatewayClient.probe — 逾時是整段流程共用一份額度,不是每段各一份', () => {
+  it('換 token 4 秒 + models 2 秒(各自都沒超過 5 秒,加起來超過)→ 回不可用', async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFetch({ tokenDelayMs: 4_000, modelsDelayMs: 2_000 });
+      let settled: unknown;
+      void client(fake, { probeTimeoutMs: GATEWAY_PROBE_TIMEOUT_MS })
+        .probe()
+        .then(
+          (result) => {
+            settled = result;
+          },
+          (err: unknown) => {
+            settled = err;
+          },
+        );
+
+      await vi.advanceTimersByTimeAsync(GATEWAY_PROBE_TIMEOUT_MS * 10);
+
+      // 兩段各算一份額度的實作在這裡會拿到 { available: true, models: [...] }。
+      expect(settled).toEqual({ available: false, models: [] });
+      // 兩段都真的打出去過——不是在第一段就掛掉、根本沒走到第二段。
+      expect(fake.tokenCalls).toBe(1);
+      expect(fake.modelCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('對照組:同樣的 4 秒 + 2 秒,額度放寬到 10 秒就回可用', async () => {
+    // 沒有這一條的話,上面那條可能是被「假的延遲根本回不來」這種理由弄綠的,
+    // 而不是被逾時。兩條一起看才證明分辨的是**額度**,不是別的東西。
+    vi.useFakeTimers();
+    try {
+      const fake = makeFetch({ tokenDelayMs: 4_000, modelsDelayMs: 2_000 });
+      let settled: unknown;
+      void client(fake, { probeTimeoutMs: 10_000 })
+        .probe()
+        .then(
+          (result) => {
+            settled = result;
+          },
+          (err: unknown) => {
+            settled = err;
+          },
+        );
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(settled).toEqual({ available: true, models: Object.keys(MODELS) });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('probe 的兩個請求帶的是**同一個** AbortSignal(共用額度的機制前提)', async () => {
+    // 上面兩條測行為,這條測機制。兩個 fetch 各拿各的 controller 的話,
+    // 「共用一份額度」就只是巧合,下一個人重構時沒有東西擋著。
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const inner = makeFetch();
+    const spying = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(init?.signal);
+      return inner.fetchImpl(input, init);
+    }) as typeof fetch;
+
+    await new GatewayClient({
+      config: { baseUrl: BASE, apiKey: KEY, model: MODEL },
+      fetchImpl: spying,
+    }).probe();
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+    expect(seen[1]).toBe(seen[0]);
   });
 });
