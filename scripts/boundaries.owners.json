@@ -101,6 +101,10 @@
       "11-review-cli"
     ],
     [
+      "scripts/review.test.ts",
+      "11-review-cli"
+    ],
+    [
       "scripts/prompt-check.ts",
       "12-prompt-quality"
     ],
