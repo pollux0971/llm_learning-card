@@ -44,6 +44,10 @@
  *          `fallback: "gateway"` 與 `fallback_reason`(`cloud_failed` /
  *          `budget_exhausted`)的 `llm_call` 事件,並記下原本的錯誤訊息
  *          (`fallback_from` / `error`)。
+ *       6. 閘道呼叫失敗(`GatewayCallError`)一律轉成契約 §7 的 `NoModelError`,
+ *          原始錯誤放 `cause`。閘道就是 ADR-039 決策 1 的「本機」,所以打不通就是
+ *          §7 的「離線+無本機」那一格;`GATEWAY_FAILED` 只留在 adapter 內部,
+ *          不外洩到這個介面。403(`GatewayModelRejectedError`)不轉,原樣往外丟。
  *     - `probeOnline()`:直接委派底層(快取行為不變)。
  *     - `probeLocal()`:委派 `GatewayClient.probe()`;任何錯誤接住回
  *       `{ available: false, models: [] }`。
@@ -58,7 +62,7 @@ import type { LogEvent } from '@contracts/index.js';
 import { recordEvent } from '@core/schema/log.js';
 import { LlmRouterImpl, type LlmRouterImplOptions } from './router-impl.js';
 import { GatewayClient, createGatewayClient } from './adapters/gateway.js';
-import { NoModelError } from './errors.js';
+import { GatewayCallError, NoModelError } from './errors.js';
 import { FALLBACK_TABLE, decideFallback, type CloudStatus, type FallbackDecision, type FallbackGroup } from './fallback.js';
 import {
   dayOf,
@@ -233,6 +237,19 @@ export class GatewayLlmRouter implements LlmRouter {
         model: client.config.model,
         ...(timer === undefined ? {} : { signal: controller.signal }),
       });
+    } catch (err) {
+      // 契約 §7 路由表第三欄「離線+無本機」只認 `NO_MODEL`。閘道就是 ADR-039
+      // 決策 1 定義的「本機」,所以「閘道這次打不通」**就是**那一格,不是一種新的
+      // 失敗種類。`GATEWAY_FAILED` 是閘道 adapter 的內部詞彙(「那台代理這次不行」),
+      // 只留在 `cause` 裡當診斷資訊,不外洩到 router 的公開介面——不然每一個消費者
+      // 都要多處理一個錯誤碼。訊息仍然說得清是閘道不可達,資訊不丟掉。
+      //
+      // 403(`GatewayModelRejectedError`)**不**在此列:那是設定錯誤(填了雲端模型名),
+      // ADR-039 明寫要原樣往外丟,包起來只會讓錯誤設定藏著。
+      if (err instanceof GatewayCallError) {
+        throw new NoModelError(task, { detail: `local gateway unreachable: ${err.message}`, cause: err });
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }

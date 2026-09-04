@@ -47,12 +47,24 @@ export class CloudRequiredError extends Error {
   }
 }
 
-/** 契約 §7 路由表:離線且沒有可用的本機模型,沒有任何 provider 能接這個任務。 */
+/**
+ * 契約 §7 路由表:離線且沒有可用的本機模型,沒有任何 provider 能接這個任務。
+ *
+ * `detail` 補一句「為什麼沒有本機模型」(例:本機閘道不可達),`cause` 放下層真正
+ * 丟出來的那個錯誤。這兩個是給人看的診斷資訊,**不是**給呼叫端分支用的:§7 是
+ * 硬約定,消費者(05-grading 的離線審核、11-review、之後的 06)只認 `NO_MODEL`
+ * 這一個名字。閘道層的 `GATEWAY_FAILED` 這種內部詞彙一律降級成 `cause`——實作
+ * 發明第二個名字,等於讓每一個消費者都多一個 case 要處理。
+ */
 export class NoModelError extends Error {
   readonly code = 'NO_MODEL';
   readonly task: string;
-  constructor(task: string) {
-    super(`task "${task}" has no model available: offline and no local model`);
+  constructor(task: string, options: { detail?: string; cause?: unknown } = {}) {
+    super(
+      `task "${task}" has no model available: offline and no local model` +
+        (options.detail === undefined ? '' : ` (${options.detail})`),
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
     this.name = 'NoModelError';
     this.task = task;
   }
