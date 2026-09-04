@@ -60,6 +60,19 @@ npm run boundaries
 
 順帶確認 `FEATURE.md` 的「Wave 0 的重複」表有列出這個 phase 造的 stub。漏了就補。
 
+## 第五步之二:文件與守門檢查
+
+```
+npm run lint:docs          # markdown 相對連結指到的檔案要真的存在
+npm run accept:dry         # 必看「0 ambiguous」
+```
+
+`accept:dry` 是這個專案唯一抓得到「步驟定義撞名」的檢查——撞名**不會讓任何測試變紅**,
+場景會安靜地跑到錯的步驟去。`lint:docs` 同理:壞掉的相對連結不會讓任何測試變紅。
+
+**兩支都適用「掃到 0 個東西就是掃描器壞了」的規則**(P-28):`lint:docs` 印出的連結數
+是 0、或 `accept:dry` 的場景數是 0,那不是很乾淨,是檢查壞了,當成 FAIL 處理。
+
 ## 第六步:變異測試
 
 依 `FEATURE.md` 的變異門檻欄位:
