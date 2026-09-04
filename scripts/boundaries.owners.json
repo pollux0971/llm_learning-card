@@ -101,6 +101,10 @@
       "09-lint"
     ],
     [
+      "scripts/lint-missing-dir.test.ts",
+      "09-lint"
+    ],
+    [
       "scripts/review.ts",
       "11-review-cli"
     ],
