@@ -175,6 +175,30 @@ describe('LEARNING_GITIGNORE', () => {
   });
 });
 
+// ---------------------------------------------------------------- 給人看的訊息
+//
+// 下面每個 `expect(result.hint).toBe(NOT_A_REPO_HINT)` 都是拿常數比常數,常數被清空
+// 也照樣綠。這幾條盯的是「裡面到底寫了什麼」——訊息沒說清楚要做什麼,使用者就卡住了。
+
+describe('the hints and warnings', () => {
+  it('tells the person git is missing and that they can re-run init later', () => {
+    expect(GIT_UNAVAILABLE_WARNING).toContain('warning');
+    expect(GIT_UNAVAILABLE_WARNING).toContain('找不到 git 命令');
+    expect(GIT_UNAVAILABLE_WARNING).toContain('§11b');
+    expect(GIT_UNAVAILABLE_WARNING).toContain('再跑一次 init');
+  });
+
+  it('tells the person the directory is missing and points at --dir', () => {
+    expect(MISSING_DIR_HINT).toContain('不存在');
+    expect(MISSING_DIR_HINT).toContain('--dir');
+  });
+
+  it('tells the person the directory is not its own repo and points at the init command', () => {
+    expect(NOT_A_REPO_HINT).toContain('不是它自己的 git repo');
+    expect(NOT_A_REPO_HINT).toContain('cli.ts init');
+  });
+});
+
 // ---------------------------------------------------------------- isGitAvailable / isOwnGitRepo
 
 describe('isGitAvailable', () => {
@@ -334,14 +358,24 @@ describe('initGitRepo', () => {
     git(dir, 'init', '-q');
     git(dir, 'config', 'user.name', 'Someone Real');
     git(dir, 'config', 'user.email', 'someone@example.com');
-    // 已經是 repo 了,所以 initGitRepo 會跳過——自己做一次 commit 驗身分沒被蓋掉
+    // 已經是 repo 了,所以 initGitRepo 會跳過。身分要驗到,就得讓**我們的程式**真的
+    // 做出一個 commit——所以先鋪一個底,再製造變更讓 snapshot 非 commit 不可。
+    // (helper git() 一律帶 `-c user.email=…`,而 `-c` 的優先權高於 repo local config,
+    //  所以由 helper 做的 commit 驗不到 identityArgs();HEAD 必須是程式做的那一個。)
     writeFileSync(join(dir, '.gitignore'), LEARNING_GITIGNORE, 'utf8');
     git(dir, 'add', '-A');
     git(dir, 'commit', '-q', '-m', INIT_COMMIT_MESSAGE);
+    writeFileSync(join(dir, 'state/reviews.json'), '{"sec-0001":{"stage":2}}\n', 'utf8');
 
     const result = snapshotLearningDir(dir, { today: new Date(2026, 8, 4) });
-    expect(result.status).toBe('no-changes');
+
+    expect(result.status).toBe('committed');
+    expect(commitMessages(dir)).toEqual(['snapshot 2026-09-04', INIT_COMMIT_MESSAGE]);
+    // 這一行才是重點:HEAD 是 snapshotLearningDir() 做的 commit,
+    // 它的身分必須是使用者設在這個 repo 上的那一個,不是 FALLBACK_IDENTITY。
     expect(git(dir, 'log', '-1', '--format=%ae').trim()).toBe('someone@example.com');
+    expect(git(dir, 'log', '-1', '--format=%an').trim()).toBe('Someone Real');
+    expect(git(dir, 'log', '-1', '--format=%ae').trim()).not.toBe(FALLBACK_IDENTITY.email);
   });
 });
 
@@ -467,6 +501,21 @@ describe('snapshotLearningDir', () => {
     const result = snapshotLearningDir(dir);
 
     expect(result.message).toBe(snapshotMessage(new Date()));
+  });
+
+  it('throws instead of quietly reporting success when a git command fails', () => {
+    const dir = initialised();
+    writeFileSync(join(dir, 'state/reviews.json'), '{"sec-0001":{"stage":2}}\n', 'utf8');
+    // 卡住索引 → `git add -A` 一定失敗。這一步安靜吞掉的話,使用者會以為今天的
+    // snapshot 建好了,真正需要回溯的那一天才發現什麼都沒有。
+    writeFileSync(join(dir, '.git/index.lock'), '', 'utf8');
+    try {
+      expect(() => snapshotLearningDir(dir, { today: new Date(2026, 8, 4) })).toThrow(/git add 失敗/);
+    } finally {
+      rmSync(join(dir, '.git/index.lock'), { force: true });
+    }
+    // 而且真的沒有多出一個 commit
+    expect(commitCount(dir)).toBe(1);
   });
 
   it('works when the machine has no configured git identity', () => {

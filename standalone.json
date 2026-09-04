@@ -9,6 +9,11 @@
     "interactive": false,
     "expect": "OK"
   },
+  "01-data-layer-snapshot": {
+    "cmd": "npx tsx packages/core/src/schema/cli.ts init ./tmp-learning && printf '{\"sec-0001\":{\"stage\":2}}\\n' > ./tmp-learning/state/reviews.json && npx tsx scripts/snapshot.ts --dir ./tmp-learning",
+    "interactive": false,
+    "expect": "snapshot 已建立"
+  },
   "02-ingest-pipeline": {
     "cmd": "npx tsx scripts/ingest.ts --fake --file contracts/fixtures/raw/security-basics.md --out ./tmp-learning",
     "interactive": false,

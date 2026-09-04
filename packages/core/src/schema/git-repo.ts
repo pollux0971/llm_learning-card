@@ -137,6 +137,9 @@ export function snapshotMessage(today: Date): string {
  */
 function runGit(dir: string, args: string[], leading: string[] = []): { status: number | null; out: string } {
   const r = spawnSync('git', [...leading, '-C', dir, ...args], { encoding: 'utf8' });
+  // Stryker disable next-line all: `?? ''` 只在 spawn 本身失敗(這台機器沒有 git)時會用到,
+  // 而那種情況 status 也是 null——isOwnGitRepo 只在 status === 0 時讀 out,identityArgs 不讀,
+  // mustGit 讀的是自己丟出去的錯誤訊息。換掉 fallback 沒有任何呼叫端看得到的行為差異。
   return { status: r.status, out: (r.stdout ?? '').trim() };
 }
 
@@ -184,6 +187,8 @@ export function isOwnGitRepo(dir: string): boolean {
 
 /** 這台機器上有沒有可用的 git 命令。 */
 export function isGitAvailable(): boolean {
+  // Stryker disable next-line all: 這裡只讀 .status。encoding 只決定 stdout 是 string 還是
+  // Buffer,而 stdout 根本沒有被讀——拿掉它沒有任何可觀察的行為差異。
   return spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
 }
 
