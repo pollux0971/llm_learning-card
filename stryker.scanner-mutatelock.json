@@ -1,0 +1,12 @@
+{
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "reporters": ["clear-text", "progress-append-only"],
+  "coverageAnalysis": "off",
+  "concurrency": 4,
+  "timeoutMS": 90000,
+  "vitest": { "configFile": "vitest.scanner-mutatelock.config.ts", "related": false },
+  "mutate": ["scripts/mutate.ts", "!scripts/mutate.test.ts"],
+  "thresholds": { "high": 90, "low": 70, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "target", "apps/desktop/src-tauri"]
+}

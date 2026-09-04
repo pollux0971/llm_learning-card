@@ -99,7 +99,7 @@ $ npx vitest run scripts/mutate.test.ts          # 參考實作,基準
 ## 6. 一個沒被規格涵蓋的缺口
 
 鎖只保護**走 `npm run mutate` 的人**。repo 裡現有文件(`REVIEW.md`、各 `FEATURE.md`、
-`.claude/skills/phase-acceptance/SKILL.md`)寫的幾乎都是 `npx stryker run --mutate "..."`,
+`.claude/skills/phase-acceptance/SKILL.md`)寫的幾乎都是直接叫 stryker CLI 的那條路,
 **那條路繞過鎖**。`strykerArgs` 已經設計成能吃這些寫法:
 
 ```

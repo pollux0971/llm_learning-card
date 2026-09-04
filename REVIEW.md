@@ -59,7 +59,7 @@ $ NODE_OPTIONS=--import=tsx npx cucumber-js --tags "@llm-router and @phase-2 and
 #### routing.ts(嚴格 95% 門檻)—— 93.75%,**未達標**
 
 ```
-$ npx stryker run --mutate "packages/core/src/llm/routing.ts,!packages/core/src/llm/routing.test.ts"
+$ npm run mutate -- --mutate "packages/core/src/llm/routing.ts,!packages/core/src/llm/routing.test.ts"
 ...
 [Survived] CallExpression
 packages/core/src/llm/routing.ts:81:7
@@ -82,7 +82,7 @@ if-else-if 鏈,或每個 case 包一層 block 並在結尾加上不會被巧合�
 #### router-impl.ts(標準 80% 門檻)—— 53.33%(以「覆蓋的 mutant」算是 80%,但含未覆蓋的算全部只有 53.33%),**明顯漏洞,遠低於門檻**
 
 ```
-$ npx stryker run --mutate "packages/core/src/llm/router-impl.ts,!packages/core/src/llm/router-impl.test.ts"
+$ npm run mutate -- --mutate "packages/core/src/llm/router-impl.ts,!packages/core/src/llm/router-impl.test.ts"
 ...
 [NoCoverage] ConditionalExpression  router-impl.ts:135:9   (if (decision.target === 'cloud'))  x3 種變異
 [NoCoverage] BlockStatement         router-impl.ts:135:38  (整個 if block 被清空)
@@ -194,7 +194,7 @@ $ npm run boundaries
 boundaries: 掃描 145 個檔案,允許例外 0 條
 ✓ 無違規
 
-$ npx stryker run --mutate "packages/core/src/llm/router-impl.ts,!packages/core/src/llm/router-impl.test.ts"
+$ npm run mutate -- --mutate "packages/core/src/llm/router-impl.ts,!packages/core/src/llm/router-impl.test.ts"
 ...
 All files       | 100.00 |  100.00 |       15 |         0 |          0 |        0 |       44
 Final mutation score of 100.00 is greater than or equal to break threshold 60
@@ -247,7 +247,7 @@ $ npm test
  Test Files  50 passed (50)
       Tests  666 passed (666)
 
-$ npx stryker run --mutate "packages/core/src/llm/routing.ts,!packages/core/src/llm/routing.test.ts"
+$ npm run mutate -- --mutate "packages/core/src/llm/routing.ts,!packages/core/src/llm/routing.test.ts"
 ...
 All files   | 100.00 |  100.00 |       17 |         0 |          0 |        0 |       26
 Final mutation score of 100.00 is greater than or equal to break threshold 60

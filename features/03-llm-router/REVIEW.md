@@ -79,7 +79,7 @@ npx vitest run          938 個測試全過(64 個測試檔;原 916 + 本次新�
 意外互相影響。
 
 ```
-npx stryker run --mutate "packages/core/src/llm/routing.ts,!packages/core/src/llm/routing.test.ts"
+npm run mutate -- --mutate "packages/core/src/llm/routing.ts,!packages/core/src/llm/routing.test.ts"
 → 100.00%(17 killed / 0 survived)
 ```
 
