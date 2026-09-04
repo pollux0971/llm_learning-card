@@ -11,7 +11,7 @@
  * 雲端 adapter 用注入的假的,閘道用注入的假 fetch,兩邊都不打真網路。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LogEvent } from '@contracts/index.js';
@@ -851,6 +851,10 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'gpt-5.6-luna', OPENAI_API_KEY: 'k', LLM_LOCAL_MODEL: LOCAL_MODEL },
       adapters: { openai: cloudAdapter },
       onlineProber: async () => true,
+      // 明確注入底層的 localProber(跟預設值同義:本機不可用,ADR-039 之後閘道才是「本機」)。
+      // 這一組測的是花費,不是 prober;不注入的話每一次 call 都會借道
+      // llm.router-impl.local-prober-default 那條退化分支,讓對照組被算成「走了退化分支」。
+      localProber: async () => ({ available: false, models: [] }),
       gateway: new GatewayClient({ config: { baseUrl: BASE, apiKey: 'gk', model: LOCAL_MODEL }, fetchImpl }),
       dailyCapUsd: CAP,
       prices: PRICES,
@@ -877,6 +881,10 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
 
   it('對照:同樣的三次呼叫,只要有 logPath,第二次就在花錢之前被 DailyBudgetExceededError 擋下', async () => {
     await withTmpLog(async (logPath) => {
+      // 對照組要測的是「有 log 時第二次被擋」,不是「log 檔不存在當 0」。所以先放一個
+      // 真實存在、零筆條目的 log 檔:第一次放行靠的是「讀到 0 筆 = 花費 0」這條正路,
+      // 不再借道 llm.spend.log-unreadable-zero 那條退化分支(ADR-044)。
+      writeFileSync(logPath, '');
       const h = spendHarness({ logPath });
       await h.router.call('ingest.cards', '第 1 次');
       const second = await caught(() => h.router.call('ingest.cards', '第 2 次'));

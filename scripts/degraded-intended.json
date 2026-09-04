@@ -11,13 +11,6 @@
     },
     {
       "file": "packages/core/src/llm/router-gateway.test.ts",
-      "test": "GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero) > 對照:同樣的三次呼叫,只要有 logPath,第二次就在花錢之前被 DailyBudgetExceededError 擋下",
-      "signal": "llm.spend.log-unreadable-zero",
-      "reason": "spend-no-log-zero 的對照組:有 logPath 時第二次要被擋,前提是第一次在 log 尚不存在時被放行——放行靠的就是「log 讀不到當 0」這條;測試刻意從空 log 起跑",
-      "since": "2026-09-05"
-    },
-    {
-      "file": "packages/core/src/llm/router-gateway.test.ts",
       "test": "GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero) > gateway-fallback 任務:沒 log 時三次都走雲端、都不是暫定,閘道一次都沒被打到",
       "signal": "llm.gateway-router.spend-no-log-zero",
       "reason": "同一條分支的 gateway-fallback 面:沒 log 時預算永遠不會耗盡,所以三次都是雲端、都不是暫定、閘道 0 次",
