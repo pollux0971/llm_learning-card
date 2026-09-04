@@ -13,3 +13,20 @@ export {
 export { validateReview, createInitialReview, nextCalendarDay } from './review.js';
 export { validateLogEvent, recordEvent, parseLogLines } from './log.js';
 export { validateCategory, validateSettings } from './validate-config.js';
+export {
+  initGitRepo,
+  snapshotLearningDir,
+  snapshotMessage,
+  isGitAvailable,
+  isOwnGitRepo,
+  LEARNING_GITIGNORE,
+  INIT_COMMIT_MESSAGE,
+  FALLBACK_IDENTITY,
+  GIT_UNAVAILABLE_WARNING,
+  NOT_A_REPO_HINT,
+  MISSING_DIR_HINT,
+  type GitInitResult,
+  type GitInitStatus,
+  type SnapshotResult,
+  type SnapshotStatus,
+} from './git-repo.js';

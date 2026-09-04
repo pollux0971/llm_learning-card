@@ -50,6 +50,15 @@ function runInit(dir: string | undefined): void {
   const result = initLearningDir(dir);
   for (const p of result.created) console.log(`created  ${p}`);
   for (const p of result.skipped) console.log(`skipped  ${p} (already exists)`);
+  // TODO(ADR-042):目錄樹建完之後把 learning/ 變成它自己的 git repo(契約 §11b)。
+  // 這一輪只寫 ADR + 測試,行為維持現況;下一輪開發 agent 打開下面這段:
+  //
+  //   const git = initGitRepo(dir);
+  //   if (git.warning) console.warn(git.warning);
+  //   else if (git.status === 'created') console.log('created  .gitignore\ncreated  git repo (commit: init)');
+  //   else console.log('skipped  git repo (already a repo)');
+  //
+  // 對應規格 features/01-data-layer/phase-4.feature,單元測試 schema/git-repo.test.ts。
   process.exit(0);
 }
 
