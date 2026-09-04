@@ -1,6 +1,6 @@
 {
   "$comment": "零輸入守門的棘輪基準(ADR-045)。每一條是一個既有入口的洞,記進來那天就已經存在,不是新增的風險。三道鎖在 scripts/zero-input-guard.test.ts 的 describe('棘輪基準'):不在這裡的檢查必須過;在這裡的檢查必須仍然紅,變綠就從這裡拿掉;條數 ≤ max,只准減不准增,每還一批就把 max 改小。還債順序見 ADR-045 的 Consequences。",
-  "max": 89,
+  "max": 66,
   "entries": [
     {
       "command": "scripts/check-boundaries.ts · check-boundaries",
@@ -137,13 +137,6 @@
     },
     {
       "command": "scripts/due.ts · due",
-      "probe": "reviews.json 是 {}",
-      "category": "同quiet",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/due.ts · due",
       "probe": "reviews.json 是空檔",
       "category": "裸stack",
       "since": "2026-09-05",
@@ -159,34 +152,6 @@
     {
       "command": "scripts/due.ts · due",
       "probe": "reviews.json 是壞 JSON",
-      "category": "裸stack",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/due.ts · due",
-      "probe": "reviews.json 是陣列",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/due.ts · due",
-      "probe": "reviews.json 是陣列",
-      "category": "同quiet",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/due.ts · due",
-      "probe": "reviews.json 是字串",
-      "category": "裸stack",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/due.ts · due",
-      "probe": "review 的 stage 是字串",
       "category": "裸stack",
       "since": "2026-09-05",
       "reason": "現況"
@@ -283,62 +248,6 @@
       "reason": "現況"
     },
     {
-      "command": "scripts/llm-spend.ts · llm-spend",
-      "probe": "--log 不存在",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/llm-spend.ts · llm-spend",
-      "probe": "--log 不存在",
-      "category": "沒指名路徑",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/llm-spend.ts · llm-spend",
-      "probe": "log.jsonl 每一行都是壞 JSON",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/llm-spend.ts · llm-spend",
-      "probe": "log.jsonl 每一行都是壞 JSON",
-      "category": "同quiet",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/llm-spend.ts · llm-spend",
-      "probe": "log.jsonl 每一行都是數字",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/llm-spend.ts · llm-spend",
-      "probe": "log.jsonl 每一行都是數字",
-      "category": "同quiet",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/llm-spend.ts · llm-spend",
-      "probe": "log.jsonl 是一個 JSON 陣列",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/llm-spend.ts · llm-spend",
-      "probe": "log.jsonl 是一個 JSON 陣列",
-      "category": "同quiet",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
       "command": "scripts/prompt-check.ts · prompt-check --golden",
       "probe": "--out 指到一個檔案",
       "category": "裸stack",
@@ -398,27 +307,6 @@
       "command": "scripts/snapshot.ts · snapshot",
       "probe": "--dir 不存在",
       "category": "沒指名路徑",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/weekly.ts · weekly",
-      "probe": "weekly.json 是 {}",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/weekly.ts · weekly",
-      "probe": "weekly.json 是陣列",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "scripts/weekly.ts · weekly",
-      "probe": "target 是字串、counted 是數字",
-      "category": "裸stack",
       "since": "2026-09-05",
       "reason": "現況"
     },
@@ -566,55 +454,6 @@
       "command": "packages/core/src/schema/cli.ts · validate-settings",
       "probe": "壞 yaml",
       "category": "裸stack",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "packages/core/src/schema/cli.ts · check-questions",
-      "probe": "空目錄",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "packages/core/src/schema/cli.ts · check-questions",
-      "probe": "空目錄",
-      "category": "同healthy",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "packages/core/src/schema/cli.ts · check-questions",
-      "probe": "cards/ 沒有卡",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "packages/core/src/schema/cli.ts · check-questions",
-      "probe": "cards/ 沒有卡",
-      "category": "同healthy",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "packages/core/src/schema/cli.ts · check-questions",
-      "probe": "目錄不存在",
-      "category": "退出碼",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "packages/core/src/schema/cli.ts · check-questions",
-      "probe": "目錄不存在",
-      "category": "同healthy",
-      "since": "2026-09-05",
-      "reason": "現況"
-    },
-    {
-      "command": "packages/core/src/schema/cli.ts · check-questions",
-      "probe": "目錄不存在",
-      "category": "沒指名路徑",
       "since": "2026-09-05",
       "reason": "現況"
     },
