@@ -1057,8 +1057,11 @@ describe('runMutate 的預設值與例外', () => {
     });
     expect(code).toBe(0);
     expect(seen).toBe(strykerLockPath());
-    // 鎖必須在主 repo 那一份,不是各 worktree 自己的根。
-    expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'));
+    // 鎖必須在主 repo 那一份。在 worktree 裡跑時,那跟「這個 worktree 的根」不同;
+    // 在主 repo 裡跑時兩者本來就相同 —— 所以只在真的身處 worktree 時才斷言不相等,
+    // 否則這條會在 main 上永遠紅(它假設了「一定在 worktree 裡跑」)。
+    const inWorktree = strykerLockPath() !== join(REPO_ROOT, '.stryker.lock');
+    if (inWorktree) expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'));
   });
 
   it('不給 acquire 時走真的 acquireLock', async () => {
@@ -1274,7 +1277,12 @@ describe('文件裡不准出現繞過鎖的指令', () => {
     }
   }
 
-  const SKIP_DIRS = new Set(['node_modules', '.git', '.stryker-tmp', 'dist', 'target', 'reports', 'coverage']);
+  // `.claude/worktrees` 底下是**別的 repo 的簽出**(模板),不是我們的檔案 —— 跟 node_modules 同一類。
+  // 掃它會把模板自己的文件當成我們在教人繞過鎖,而我們也改不動它(它有版本標頭)。
+  const SKIP_DIRS = new Set([
+    'node_modules', '.git', '.stryker-tmp', 'dist', 'target', 'reports', 'coverage',
+    'worktrees',
+  ]);
 
   /** 掃 repo 裡會被人照抄的文字檔(md / json / sh)。回相對路徑。 */
   function docFiles(): string[] {

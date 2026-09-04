@@ -454,7 +454,7 @@ fixture 被動到不會靜默換掉基準,會是五個紅燈。
 
 **沒有跑 `--live`**(工單交代由協調者跑)。
 
-### 7. Stryker(`npm run mutate --`,不是 `npx stryker`)
+### 7. Stryker(一律 `npm run mutate --`,不要直接叫 Stryker CLI —— 那會繞過鎖)
 
 用 `MUTATE_TEST_GLOB='packages/core/src/prompt-quality/**/*.test.ts'`、一個檔一次。
 
