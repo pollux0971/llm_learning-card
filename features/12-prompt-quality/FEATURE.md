@@ -66,7 +66,7 @@ npx tsx scripts/prompt-check.ts --diff prompts/golden/ingest.cards/2026-09-10 pr
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | golden 框架、結構性檢查、diff(FakeLlm) | Wave 0 | done | 2026-09-02 |
-| 2 | 真模型 golden run、評分表、回歸流程 | I2 | done | 2026-09-04 |
+| 2 | 真模型 golden run、評分表、回歸流程 | I2 | in-progress | |
 
 ## 什麼時候該跑
 
@@ -200,3 +200,21 @@ learning 目錄不在 repo 裡、也會隨之後的 ingest 改變,而基準必�
   (3) 先前誤 commit 進 git 的 demo run `golden/grade.apply/2026-09-02/`(meta 還寫著
   `promptFileGitCommit: uncommitted`,是開發中跑測試留下的產物)已移除。
   跑 `npm test` 與 `prompt-check.ts --golden --fake` 之後 `git status` 都是乾淨的。
+
+## phase 2 為什麼從 done 退回 in-progress(2026-09-04)
+
+框架寫完了、測試 1508 全綠、四個檔案的變異分數都過 80%,但
+`golden-sets/registry.ts` **只登記了 Wave 0 留下的一組 demo 自我測試**
+(`grade.apply` 配三句 `[PQ_DEMO_1]` 假學生答案)。
+
+真的 prompt(`packages/core/prompts/ingest/` 底下五個檔)**一個都沒被登記**。
+registry 的檔頭註解自己寫著「phase-2 會登記真的任務」——那件事沒做。
+
+phase-2 自己的 `@manual @llm` 場景寫的是「a live golden run is performed
+**for the ingest tasks**」。沒登記 ingest 就是沒做完。
+
+**如果照原樣跑 `--live`**,會產生一個看起來像基準、實際上什麼都沒鎖住的檔案:
+之後有人改 `prompts/ingest/cards.md` 再比對,會拿到「沒有變化」,因為根本沒在比
+那個 prompt。**「改了 prompt 沒人發現品質變差」正是這個資料夾存在的唯一理由。**
+
+不另立 phase 3——那等於把「沒做完」改名。補登記後才算 done。

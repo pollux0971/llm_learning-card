@@ -44,6 +44,26 @@ NODE_OPTIONS=--import=tsx npx cucumber-js --tags "@<name> and @phase-<N> and not
 
 `standalone.json` 沒有這個功能的項目 → 提醒補上,但不擋。
 
+## 第四步之二:這個東西現在守著什麼?(P-42)
+
+**測試全綠、變異達標、場景全過,不代表系統在做它該做的事。** 框架可以完美運作,
+而它守著的是一組 demo 假資料。
+
+問一句,並且要求**列出具體對象**:
+
+> 這個 phase 做出來的東西,**現在**守著 / 處理 / 驗證的是**哪些真實對象**?列出來。
+
+答案如果是 demo、fixture、self-test、範例資料 → **不算 done**。
+
+真的發生過:12-prompt-quality/phase-2 的 golden 框架寫得很好(1508 測試全綠、
+四檔變異 83–91%、審核輪還抓出 ADR 裡兩個編造的數字),但 `registry.ts` 只登記了
+Wave 0 的 demo,`prompts/ingest/` 底下五個真的 prompt 一個都沒被引用。
+差一點就花錢跑出一個什麼都沒鎖住的「基準」。
+
+**能列出來的東西就寫成守門**,不要靠下次有人記得問。上面那個案例的守門是:
+測試斷言「`packages/core/prompts/**/*.md` 每一個檔都被某個 golden set 引用」,
+沒被引用就紅。
+
 ## 第五步:Wave 0 的獨立性檢查(選配)
 
 **只在該 phase 屬於 Wave 0 時執行。**
