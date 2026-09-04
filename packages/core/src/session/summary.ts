@@ -59,3 +59,33 @@ export function renderDryRun(due: { card: string; stage: number; overdueDays: nu
   if (due.length === 0) return 'Nothing is due today.';
   return due.map((d) => `${d.card}  stage ${d.stage}  overdue ${d.overdueDays}d`).join('\n');
 }
+
+/**
+ * `--dry-run` 的第一行:基數。形狀比照 check-boundaries 的
+ * 「boundaries: 掃描 195 個檔案,允許例外 11 條」。
+ *
+ * 為什麼三個數字都要:0 張到期同時是「今天剛好沒排到」與「卡片全部消失」的
+ * 答案,而「全部未排程」與「全部排好但今天安靜」也都是 0 張到期。三個數字
+ * 一起印才分得開——使用者每天看到的那句 Nothing is due today. 才有意義。
+ *
+ * `unscheduled` 是磁碟上有卡但 reviews.json 沒有紀錄的張數。那是**正常**狀態
+ * (剛 ingest 出來的新卡就是這樣,真 vault 現在 25 張全部如此),所以只是報數,
+ * 不是紅燈。
+ */
+export function renderDryRunHeader(input: { cards: number; due: number; unscheduled: number }): string {
+  return `掃描 ${input.cards} 張卡,${input.due} 張到期,${input.unscheduled} 張未排程。`;
+}
+
+/**
+ * 0 張卡的診斷。這是 P-28 在 11-review-cli 的核心:0 張卡**不是**空閒日,
+ * 絕對不可以印 Nothing is due today.——那句話是使用者每天看到的安心訊息,
+ * 卡片消失時原封不動地再印一次,他會連續好幾天都不知道。
+ *
+ * `cardsDir` 由呼叫端算好路徑傳進來(這個檔案不碰磁碟也不組路徑)。
+ */
+export function renderNoCards(cardsDir: string): string {
+  return [
+    `✗ review: 掃描到 0 張卡——這個 vault 沒有卡片(${cardsDir} 底下沒有任何 .md)。`,
+    '這不是很乾淨,是掃描器壞了。--dir 指錯地方、目錄被搬走或同步刪掉時就長這樣。',
+  ].join('\n');
+}

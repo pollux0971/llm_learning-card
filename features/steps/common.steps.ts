@@ -67,6 +67,20 @@ Then('it exits with status {int}', function (this: LearningWorld, code: number) 
   );
 });
 
+/**
+ * 02 與 I2 都用這句,所以只能定義一次(README 的規則:跨資料夾的句子放 common)。
+ * 兩邊產生退出碼的方式不同:02-ingest 直接呼叫函式、把 exitCode 放進
+ * `world.lastResult`;I2 spawn 真的 `scripts/review.ts`,退出碼在 `lastRun.status`。
+ * 先看 lastResult.exitCode(有明確設值的那一種),沒有才看 lastRun。
+ */
+Then('it exits with a non zero status', function (this: LearningWorld) {
+  const returned = (this.lastResult as { exitCode?: number } | undefined)?.exitCode;
+  const code = typeof returned === 'number' ? returned : this.lastRun?.status;
+  assert.notEqual(code, undefined, 'When 要留下退出碼(lastResult.exitCode 或 runCommand 的 lastRun)');
+  assert.notEqual(code, null, '指令沒有正常結束(逾時或啟動失敗)');
+  assert.notEqual(code, 0, `退出碼應該非 0,實際 ${code}\n${this.lastRun?.output ?? ''}`);
+});
+
 Then('the server starts', function (this: LearningWorld) {
   assert.ok(this.lastRun, '還沒有啟動 dev server');
   assert.equal(this.lastRun.status, 0, `dev server 沒有在時限內 ready:\n${this.lastRun.output.slice(-800)}`);

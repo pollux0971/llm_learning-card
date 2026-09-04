@@ -32,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import matter from 'gray-matter';
 import { ROOT, type LearningWorld } from './_world.js';
+import { resolveRenamedAwayRouter } from '../support/_router-guard.js';
 import type { CardId } from '../../packages/contracts/src/index.js';
 import { runIngestPipeline, type RunIngestPipelineResult } from '../../packages/core/src/ingest/ingest.js';
 import { CloudLlmRouter, type CloudAdapter, type CloudAdapterResult, type LlmRouter, type LlmTask } from '../../packages/core/src/llm/index.js';
@@ -49,6 +50,8 @@ const DEFAULT_RAW_REL_PATH = `raw/${CATEGORY}/web-basics.md`;
 
 interface I1Ctx {
   router?: LlmRouter;
+  /** I1 的 Background「a cloud LLM provider is configured and reachable」跑過了。 */
+  cloudProviderConfigured?: boolean;
   rawRelPath: string;
   pipelineResult?: RunIngestPipelineResult;
   wordCountFixtureIngestCount?: number;
@@ -225,7 +228,9 @@ Given('the category {string} is configured with require_raw true', async functio
 });
 
 Given('a cloud LLM provider is configured and reachable', function (this: LearningWorld) {
-  ctx(this).router = buildReachableCloudRouter(this);
+  const c = ctx(this);
+  c.cloudProviderConfigured = true;
+  c.router = buildReachableCloudRouter(this);
 });
 
 // ---------------------------------------------------------------- Given(場景專屬)
@@ -241,8 +246,15 @@ Given('the fake router fixtures directory is renamed away', function (this: Lear
   // 頂替網路),從來沒有讀過 contracts/fixtures/llm,所以這裡不需要真的去搬動
   // 那個共用目錄(會影響同時在跑的其他測試檔案)。用一個明確的斷言記錄「此時
   // 用的 router 確實不是靠 fixture 重播」,取代真的搬檔案。
-  const router = ctx(this).router;
-  assert.ok(router, '尚未執行 Background 的 "a cloud LLM provider is configured and reachable"');
+  //
+  // I2 也用這句(i2-review-loop-headless.feature 的「Grading works without any
+  // fake in the loop」),但 I2 的 Background 只鋪 learning 目錄,不設 router,
+  // 所以沒跑過 I1 Background 的場景要就地建一個。那個「就地建」不可以無條件——
+  // 無條件版本實測會把「I1 Background 不再留下 router」從紅變綠(見
+  // `_router-guard.ts` 與 `_router-guard.test.ts`)。規則寫在那支純函式裡。
+  const state = ctx(this);
+  state.router = resolveRenamedAwayRouter(state, () => buildReachableCloudRouter(this));
+  assert.ok(state.router, '無法取得 cloud router');
 });
 
 Given('the network is unavailable', function (this: LearningWorld) {

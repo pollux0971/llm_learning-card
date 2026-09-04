@@ -13,7 +13,7 @@
  *   yaml 的 parse、@contracts 的 ReviewSchema / QuestionFileSchema /
  *   SettingsSchema、@core/schema/atomic-write.js 的 writeFileAtomic。
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import {
@@ -88,6 +88,31 @@ export function findCardFile(learningDir: string, card: CardId, opts: { short?: 
     }
   }
   throw new Error(`找不到卡片檔案:${filename}(learningDir=${learningDir})`);
+}
+
+/**
+ * `cards/<類別>/<id>.md` 的卡片 id 清單(排序過,不含 `.short.md`)。
+ * `cards/` 不存在時回傳空陣列——「目錄不見了」與「目錄空的」對呼叫端是同一件事:
+ * 這個 vault 沒有卡片。
+ *
+ * 為什麼需要它:`--dry-run` 以前只知道「今天有幾張到期」,而 0 張到期同時是
+ * 「今天沒排到」與「卡片全部消失」的答案。基數要從磁碟數出來才分得開,
+ * reviews.json 幫不上忙——真 vault 現在 25 張卡、連 reviews.json 都還沒有。
+ */
+export function listCardIds(learningDir: string): CardId[] {
+  const cardsDir = join(learningDir, 'cards');
+  if (!existsSync(cardsDir)) return [];
+
+  const ids: CardId[] = [];
+  for (const category of readdirSync(cardsDir)) {
+    const categoryDir = join(cardsDir, category);
+    if (!statSync(categoryDir).isDirectory()) continue;
+    for (const name of readdirSync(categoryDir)) {
+      if (!name.endsWith('.md') || name.endsWith('.short.md')) continue;
+      ids.push(name.slice(0, -'.md'.length));
+    }
+  }
+  return ids.sort();
 }
 
 /**

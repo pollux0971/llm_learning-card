@@ -1,0 +1,18 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "npx vitest run --bail=1 --config vitest.user-facing-lint.config.ts"
+  },
+  "reporters": ["clear-text", "progress-append-only"],
+  "coverageAnalysis": "off",
+  "concurrency": 4,
+  "timeoutMS": 120000,
+  "mutate": [
+    "scripts/lint.ts:38-59",
+    "packages/core/src/lint/report.ts:58-94",
+    "packages/core/src/lint/scan.ts:116-153"
+  ],
+  "thresholds": { "high": 90, "low": 70, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "target", "apps/desktop/src-tauri"]
+}

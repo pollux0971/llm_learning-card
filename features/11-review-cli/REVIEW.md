@@ -239,3 +239,357 @@ npm run mutate -- --mutate "packages/core/src/session/**/*.ts,!packages/core/src
 第一輪 FAIL 的阻擋問題(stage 2 兩題都過會 throw)已確認修復,新場景是真實作、非投機取巧,
 兩邊 cucumber 全綠、無回歸、無 ambiguous step。存活變異均為已知的低優先級真漏測,可留到
 之後補測試,不擋本次驗收。
+
+---
+---
+
+# 第三輪審核 — P-29 使用者資料的 0 值守門(2026-09-05)
+
+> 上面第一、二輪審的是 11-review-cli/phase-1 的互動 session 邏輯(2026-09-03)。
+> 這一輪審的是另一件事:`review.ts --dry-run` 的 0 值守門,分支
+> `pollux0971/user-facing-zero-guard`。兩輪之間沒有推翻關係。
+
+
+分支 `pollux0971/user-facing-zero-guard`,審核起點 `efa0f95`。
+審核 agent 撰寫,對應 commit `efa0f95`(11-review-cli 那一半)。
+
+09-lint 那一半寫在 `features/09-lint/REVIEW.md`。**兩個 steps 檔的覆核寫在那一份**
+(第 3 節),這裡不重複,只在第 3 節放一句話結論與指向。
+第 6 節的完整驗收清單是**兩份共用**的,放在這一份。
+
+> 這一輪的審核在中途被暫停(WIP commit `7cc0449`),由接手的審核 agent 完成
+> `accept:coverage`、`accept:integration` 與這份報告。前一段的實測結論已複驗,
+> 沒有推翻。
+
+---
+
+## 1. 結論
+
+**PASS。**
+
+| 項目 | 結果 |
+|---|---|
+| `review` 變異分數 | **100.00%**(47 個變異,0 存活;基準 75.51%) |
+| `lint` 變異分數 | **100.00%**(88 個變異,0 存活;基準 60.23%) |
+| `state.router ??= build()` 的判定 | **會讓該紅的變綠**,已改成旗標分流的更小版本 + 4 條單元測試,實測回到紅 |
+| `common.steps.ts` 的搬移 | 照 `features/steps/README.md` 規則,**留下** |
+| 真 vault `--dry-run` | 印 **25 張卡,0 張到期,25 張未排程**;`state/` 沒有多出 `reviews.json` |
+| `standalone.json` | 沒有動 |
+| 完整驗收(第 6 節) | 全綠,唯一的紅來自 **base 比 main 舊**,不是這一輪(第 7 節) |
+
+---
+
+## 2. 這一輪修的是什麼
+
+`review.ts --dry-run` 對兩種截然不同的世界印同一句話:
+
+```
+25 張卡、今天沒有到期 → Nothing is due today.   exit=0
+0 張卡(卡片全部消失) → Nothing is due today.   exit=0
+```
+
+第一句是使用者**每天**看到的安心訊息。卡片被同步刪掉、`--dir` 指錯地方、
+目錄被搬走的那幾天,他看到的是一模一樣的綠燈,而且會連續好幾天都不知道。
+
+修法兩件:
+
+1. **基數上移**。`--dry-run` 先印 `掃描 N 張卡,N 張到期,N 張未排程。`
+   三個數字缺一不可——「0 張到期」同時是「今天剛好沒排到」「全部未排程」
+   「卡片全部消失」三種情況的答案。
+2. **0 張卡 → exit 1**,說「這個 vault 沒有卡片」,而且**絕不**印
+   `Nothing is due today.`。判斷放在 `buildTodaySession` **之前**:
+   卡片不見時排程本身也已經沒有意義。互動模式走同一條路徑。
+
+---
+
+## 3. 兩個 steps 檔的覆核(結論)
+
+開發 agent 動了兩個依規矩不該動的檔案並主動申報。完整論證見
+`features/09-lint/REVIEW.md` 第 3 節,這裡只放結論:
+
+| 檔案 | 判定 |
+|---|---|
+| `features/steps/common.steps.ts` | **留下**。跨資料夾的句子照 README 就是搬到 common,`npm run check:steps` 綠 |
+| `features/steps/i1-content-pipeline.steps.ts` | **會讓該紅的變綠,已改小**。改成 Background 旗標分流 + 4 條單元測試,實測從 1 passed 回到 1 failed |
+
+**一句話總結**:`state.router ??= buildReachableCloudRouter(this)` 是實測有害的——
+破壞 I1 的 Background 之後,那個唯一在講 router 的場景會自己就地生一個 router
+安靜地變綠(`fd81d46` 1 failed → `efa0f95` **1 passed**),改成旗標分流之後回到 1 failed。
+
+---
+
+## 4. ⚠️ 必辦:變異分數
+
+### 4.1 完整指令
+
+```bash
+npm run mutate -- stryker.user-facing-review.json
+```
+
+`package.json` 的 `mutate` = `stryker run`,所以實際執行的是
+`stryker run stryker.user-facing-review.json`。
+
+另一半(對照用,完整指令一樣寫在這裡):
+
+```bash
+npm run mutate -- stryker.user-facing-lint.json
+```
+
+### 4.2 分數
+
+| 設定檔 | 基準(開發交付) | 最終 | 變異數 | 存活 |
+|---|---|---|---|---|
+| `stryker.user-facing-review.json` | 75.51% | **100.00%** | 47 | **0** |
+| `stryker.user-facing-lint.json` | 60.23% | **100.00%** | 88 | **0** |
+
+review 這半邊的基準分數逐檔:
+
+| 檔案 | 基準 |
+|---|---|
+| `scripts/review.ts` | 83.33% |
+| `packages/core/src/session/io.ts` | 70.83% |
+| `packages/core/src/session/summary.ts` | 71.43% |
+
+### 4.3 `mutate` 範圍改過,要說清楚
+
+`stryker.user-facing-review.json` 的 `mutate` 這一輪動了一行,**變異總數從 49 變成 47**:
+
+```diff
+-    "scripts/review.ts:89-110",
++    "scripts/review.ts:89-95",
++    "scripts/review.ts:98-110",
+```
+
+挖掉的是 `scripts/review.ts` 的第 96–97 行:
+
+```ts
+const router = new FakeLlmRouter(loadFixturesFromDir(resolve(ROOT, 'contracts/fixtures/llm')));
+const session = await buildTodaySession({ learningDir: dir, today, router });
+```
+
+`git log -L 96,97:scripts/review.ts` 顯示這兩行來自 `82aaad1`(這個檔第一次寫出來的
+那個 commit),**不是 P-29 加的**。原本的 `89-110` 是一段連續範圍,順手把它們掃進去了。
+挖掉它們等於把範圍收回「這一輪新增的程式碼」,對應 09-lint 報告 4.3 的**分類 D**。
+
+**這不是為了衝分數**:47 個變異裡 0 存活,那兩行留著也只會多兩個跟本輪無關的
+既有邏輯變異。收窄的理由要寫在這裡,是因為「分母變小、分數變好看」這件事
+不能只留在 diff 裡不解釋。
+
+### 4.4 12 個存活變異逐條處理
+
+開發交付時 12 個存活,分三類,**全部殺掉,沒有一個被歸成「不值得測」**。
+
+#### 分類 A:真漏測 —— `listCardIds()` 完全沒有單元測試
+
+`packages/core/src/session/io.ts:102-116` 的存活變異。根因跟 09-lint 一樣:
+這一層**只有**經由 `scripts/review.test.ts` spawn 真 CLI 的端到端測試,
+而那層的 fixture 分不出細節。
+
+活下來的典型:
+
+- `if (!existsSync(cardsDir)) return []` → `if (false)`
+- `!name.endsWith('.md')` → `endsWith('')` / 換方法 / `true` / `false`
+- `name.endsWith('.short.md')` 那半條拿掉 —— **fixture 裡根本沒有 `.short.md` 檔**
+- `join(learningDir, 'cards')` → `join(learningDir, '')`
+- `!statSync(categoryDir).isDirectory()` 的 `continue` 拿掉
+- `name.slice(0, -'.md'.length)` 的邊界
+
+**處理**:新增 `packages/core/src/session/zero-guard.test.ts`,`listCardIds()` 7 條,
+直接對純函式斷言:
+
+1. `cards/` 不存在 → 空陣列(不丟例外,也不憑空生項目)
+2. `cards/` 在但沒有類別 → 空陣列
+3. 回傳的是卡片 id 不是檔名(`.md` 要去掉)
+4. `.short.md` 是同一張卡的縮短版,**不另外算一張**(← 補上 fixture 缺的那個檔)
+5. 非 `.md` 的檔案不算卡片
+6. `cards/` 底下的**檔案**不會被當成類別目錄(不可以炸掉也不可以算進去)
+7. 跨類別收齊,而且排序過
+
+#### 分類 B:真漏測 —— 兩支 render 函式的字串沒有逐字斷言
+
+`packages/core/src/session/summary.ts:75-91`。`renderDryRunHeader()` 的三個數字
+可以互換、`renderNoCards()` 的整句可以變成 `''`,CLI 的鬆斷言照樣通過。
+
+**處理**:`zero-guard.test.ts` 再加 10 條:
+
+- `renderDryRunHeader()` 3 條:三個數字都印且各自對得上名稱;數字跟著輸入走不是寫死的;
+  **三個位置不可以互換**(「幾張卡」跟「幾張到期」講的不是同一件事)
+- `renderNoCards()` 5 條:說出「這個 vault 沒有卡片」並指名是哪個目錄;
+  帶上三支守門掃描器共用的「掃描器壞了」那句話;說明可能的原因;
+  兩行結構(第一行事實、第二行方向與原因);
+  **絕對不可以出現使用者每天看到的那句安心訊息**
+
+CLI 那一層補 1 條(`scripts/review.test.ts`):
+0 張卡的訊息指名的是 `<dir>/cards`,**不是 vault 本身**——使用者要拿著這條路徑去 `ls`,
+指到 vault 本身等於叫他去看一個「明明就在」的目錄。
+
+#### 分類 C:等價變異 → 改成可觀測
+
+兩個,都是「在真環境裡不可觀測」而不是「測試寫得爛」:
+
+**C-1 `listCardIds()` 結尾的 `.sort()` 被拿掉。**
+跟 09-lint 同一個根因:**這台機器的檔案系統 readdir 本來就回傳字母序**,
+所以「真的建檔案再斷言結果是排序的」永遠殺不掉它。
+
+處理:新增 `packages/core/src/session/list-card-ids-order.test.ts`,
+把 `node:fs` 換成假的讓 `readdirSync` 保證回傳**倒序**,再斷言 id 是字母序。
+2 條:單一類別倒序、跨類別(要驗的是**一份總排序**,不是每個類別各自排完接起來)。
+`vi.mock` 整檔生效,所以另開一支檔案,`zero-guard.test.ts` 繼續用真的檔案系統。
+
+**C-2 `if (dryRun)` 這個分支拿掉。**
+`scripts/review.test.ts` 原本**一律帶 `--dry-run`**,所以把分支條件改成 `true`
+兩條路印一樣的東西,測試分不出來。
+
+處理:`scripts/review.test.ts` 加一條 + 一個 `runInteractive()` helper
+(不帶 `--dry-run`、`input: ''` 把 stdin 關掉,所以只在「今天沒有任何卡到期」的
+vault 上用——那種情況根本不會進 readline 迴圈):
+
+```
+dry.output         要有「張未排程」
+interactive.output 不可以有「張未排程」,但要有 Nothing is due today.
+```
+
+兩邊印一樣的東西,就代表那個分支根本沒有在分。
+
+---
+
+## 5. 要驗的行為
+
+### 5.1 真 vault(`/data/python/llm_learning-cards/learning`),`--dry-run` 只讀不寫
+
+```
+$ npx tsx scripts/review.ts --dir /data/python/llm_learning-cards/learning \
+    --today 2026-09-05 --dry-run
+掃描 25 張卡,0 張到期,25 張未排程。
+Nothing is due today.
+exit=0
+```
+
+**25 張卡**,跟磁碟一致,也跟 `lint.ts` 那一支印的數字一致。
+以前這裡**只有第二行**。
+
+跑完 `state/` 仍然是原本那三個檔案,**沒有生出 `reviews.json`**(硬規則 2):
+
+```
+$ ls -1 /data/python/llm_learning-cards/learning/state/
+ingested.json
+lint-report-2026-09-04.md
+log.jsonl
+```
+
+`25 張未排程` 是**正常**狀態,不是紅燈——真 vault 現在 25 張全部是剛 ingest 出來的新卡,
+連 `reviews.json` 都還沒有。它只是報數。
+
+### 5.2 三個數字缺一不可
+
+| 情況 | 卡 | 到期 | 未排程 | exit |
+|---|---|---|---|---|
+| 有卡、今天剛好沒排到 | N | 0 | 0 | 0 |
+| 有卡、全部還沒排程 | N | 0 | N | 0 |
+| 卡片全部消失 | 0 | — | — | **1**,走 `renderNoCards()` |
+
+只看「0 張到期」時,前兩列跟第三列長得一模一樣——這就是這一輪要修的東西。
+
+### 5.3 `reviews.json` 的三個邊界
+
+| 邊界 | 行為 |
+|---|---|
+| 檔案不存在 vs 檔案是 `{}` | 輸出**逐字相同**。`loadReviews` 兩種都給 `{}`,摘要行不含路徑,所以天生一致。差別只在磁碟上有沒有那個檔案,對使用者沒有意義 |
+| 卡片在、部分卡沒有 review 紀錄 | 正常,exit 0,但要說出「N 張未排程」——不然分不出「排程是空的」跟「今天剛好沒排到」 |
+| 0 張卡 + 沒有 `reviews.json` | 「沒有卡片」贏,**exit 1**,不是「還沒排程」 |
+
+### 5.4 既有行為的護欄(不可以退化)
+
+- 到期清單本身一個字沒改:`id`、`stage N`、`overdue Nd` 照舊,摘要行不帶任何卡片 id
+- 有卡但 0 張到期**仍然 exit 0**——正常的空閒日不可以被改成紅燈
+- `Nothing is due today.` 那一行在安閒日**保留**(I2 的 `@regression` 場景
+  「it says nothing is due today」這樣要求)
+- `standalone.json` **沒有動**。11-review-cli 的 expect 是 `"due"`,
+  安閒日輸出仍含那一行、有到期時清單本來就有 `overdue`,兩種情況都含 `due`
+
+---
+
+## 6. 完整驗收(兩份共用)
+
+「本輪複驗」= 接手的審核 agent 這一輪親自跑過;
+「前段」= WIP commit `7cc0449` 那一段跑的,這一輪沒有重跑。
+
+| 檢查 | 指令 | 結果 | 誰跑的 |
+|---|---|---|---|
+| 單元測試 | `npx vitest run` | **86 檔 / 1594 條全綠**,exit 0 | 本輪複驗 |
+| gherkin 無歧義 | `npm run accept:dry` | 498 場景、**0 ambiguous**(154 undefined、344 skipped) | 本輪複驗 |
+| 步驟定義無重複 | `npm run check:steps` | ✓ 無重複定義(46 個 `.feature`、1943 句、17 個步驟檔、754 個定義) | 本輪複驗 |
+| **phase 涵蓋率** | `npm run accept:coverage` | **✓ 38 個 phase 檔全部至少涵蓋 1 個場景**,exit 0 | **本輪(前段被中斷)** |
+| **整合場景** | `npm run accept:integration` | **498 場景、0 failed**、344 passed、154 undefined(exit 1 來自 undefined,見下) | **本輪(前段被中斷)** |
+| 單獨執行 | `npm run standalone` | 12/12 綠,11-review-cli ✓ | 前段 |
+| standalone gherkin | `npm run accept:standalone` | 158/158 | 前段 |
+| `review` 變異 | `npm run mutate -- stryker.user-facing-review.json` | **100.00%**(47 變異,0 存活) | 前段 |
+| `lint` 變異 | `npm run mutate -- stryker.user-facing-lint.json` | **100.00%**(88 變異,0 存活) | 前段 |
+| 真 vault(`review.ts`) | `npx tsx scripts/review.ts --dir <真 vault> --today 2026-09-05 --dry-run` | 25 張卡、0 到期、25 未排程;`state/` 沒多出 `reviews.json` | 本輪複驗 |
+| 真 vault(`lint.ts`) | 見 09-lint 報告 5.1 | 25 張卡 | 前段 |
+| `--dir` 不建目錄 | 見 09-lint 報告 5.3 | 反向驗證通過 | 前段 |
+
+### 6.1 `accept:integration` 的 exit 1 要怎麼看
+
+```
+498 scenarios (154 undefined, 344 passed)
+2278 steps (619 undefined, 66 skipped, 1593 passed)
+EXIT=1
+```
+
+**0 failed。** exit 1 完全來自 **undefined**(還沒實作的整合場景),
+cucumber 對 undefined 也回非 0。這 154 個 undefined 是**這條分支之前就存在**的既有狀態:
+`efa0f95` 的 commit message 記的是「原 157 → 154」,也就是這一輪把三個 undefined 變成了 passed,
+沒有製造任何新的 undefined,也沒有任何 failed。
+
+輸出裡那個 `Failures:` 區塊是 cucumber 用來列 undefined 場景的,逐條看過都是
+`? Given/When/Then … Undefined. Implement with the following snippet:`,
+**沒有一條是斷言失敗**。
+
+### 6.2 I2 的兩個 zero-guard 場景確實綠了
+
+`docs/integration/i2-review-loop-headless.feature` 有 16 個非 `@manual` 場景。
+在 `accept:integration` 的 undefined 清單裡出現的是第 15/27/34/41/47/54/59/66/72/78/85/92 行
+那 12 個(I2 本體還沒實作),**沒有出現**的是:
+
+| 行 | 場景 | 狀態 |
+|---|---|---|
+| 97 | `@regression` **An empty or missing card directory is reported, not shown as nothing due** | **passed** |
+| 105 | `@regression` **Having cards but none scheduled today is an ordinary quiet day** | **passed** |
+| 112 | Every standalone entry point still runs | passed |
+
+這兩個 `@regression` 場景就是 P-28/P-29 要守的東西,而且它們刻意 **spawn 真的 CLI**
+(`this.runCommand`),不像 `review-cli.steps.ts` 直接呼叫 session 模組:
+要守的是使用者在終端機看到的字與退出碼,繞過 CLI 等於繞過受測物。
+
+---
+
+## 7. base 比 main 舊 —— 沒有造成任何紅
+
+main 現在是 `8081fc9`,比這條分支的 base 多了模板守門 v1.3.4 的同步。
+交辦時提醒可能會看到兩種紅,**兩種都沒有發生**,原因是那些檔案在這個 worktree 裡根本還不存在:
+
+| 提醒的紅 | 實測 |
+|---|---|
+| `scripts/mutate.test.ts` 兩條測試(寫死 `T0 = 2026-09-04 12:00 UTC` 卻走真實時鐘,過了兩小時殘鎖門檻就被判成殘鎖 → 昨天綠今天紅) | `npx vitest run scripts/mutate.test.ts` → **No test files found**。這個檔在 base 上還沒有,所以 `npx vitest run` 的 1594 條裡不含它 |
+| `sync-gates.sh --check` 不一致 | `scripts/sync-gates.sh` 在 base 上不存在(`scripts/` 底下沒有任何 `.sh`),跑不起來 |
+| `scripts/py/` 被 `--prune` 清掉 | base 上沒有 `scripts/py/` |
+
+**結論:第 6 節那張表沒有一格的紅是 base 舊造成的。** 合併到 main 之後
+`scripts/mutate.test.ts` 會一起進來,那兩條的修法已經在 main 上,不需要這條分支處理。
+
+---
+
+## 8. 我改了什麼(接手這一段)
+
+| 檔案 | 改動 |
+|---|---|
+| `features/11-review-cli/REVIEW.md` | **附加**這一段(第三輪)。原本的第一、二輪審核報告原封不動留在上面 |
+| `features/09-lint/REVIEW.md` | 只改第 6 節那一句交叉引用,指明是「第三輪」那一段的第 6 節 |
+
+**沒有改**:`contracts/`、`raw/`、`prompts/`、`standalone.json`、任何程式碼或測試檔。
+**沒有 push。**
+`/data/python/llm_learning-cards/learning/` 只讀不寫:唯一碰它的是 `--dry-run`,
+跑完 `state/` 仍是原本三個檔案。
+
+WIP commit `7cc0449` 那一段改的檔案清單見 `features/09-lint/REVIEW.md` 第 7 節。
