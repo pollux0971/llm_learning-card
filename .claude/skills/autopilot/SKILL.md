@@ -55,7 +55,7 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 
    全綠 → tag、清 worktree、通知技術顧問「驗推」;FAIL 的照 test→dev→review 循環派 debug session。
 2. **算 ready**:照 sprint-planning 的規則讀所有 NEXT.md。三種 gate 全滿足 → ready。
-3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。滿載時不派新工,回到 1 收割;收割不到東西就做維護清單(§3)等下一輪。**同時處於審核輪(跑變異測試)的 worktree ≤ 1**——變異測試是唯一吃重的工作,三個同時跑會互相 OOM(P-34);有 Stryker 檔案鎖之後這條才可放寬。每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
+3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。滿載時不派新工,回到 1 收割;收割不到東西就做維護清單(§3)等下一輪。~~同時處於審核輪的 worktree ≤ 1~~ **已放寬回 3**(2026-09-04):`scripts/mutate.ts` 的跨 worktree 檔案鎖合併後,變異測試會自己排隊,不再需要靠派工節流(P-34)。**`npm run mutate` 是唯一入口**,審核與開發都只准用它 —— 直接叫 Stryker CLI 會繞過鎖(有四條測試守著)。**分數要附完整指令**(設定檔、範圍、旗標),不附指令的分數不算數。每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
 4. **整合點**:某個 IN 需要的 phase 全 done → **先開「整合工作」工單**(P-20:roadmap 該段的整合工作欄 + 各 FEATURE.md「Wave 0 的重複」表),合併後 `/integrate IN`;`@e2e @llm` 在預算內自動跑,結果貼進 `docs/integration/IN-REVIEW.md`;`@manual` 進「等老闆」清單。IN 的人工確認未完成前,gate 是「IN 通過」的 phase 維持 todo——這是刻意的,不要繞。
 5. **沒有 ready 的 phase** → 做維護清單(§3),做完一項就回到 2。
 6. **回報**(§5 格式),睡。
@@ -83,7 +83,7 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 - 根目錄有**已追蹤檔案**的未 commit 變更,或不在 main → 停,查是誰(P-12 / P-19);未追蹤目錄(例如產出資料)不觸發,但要確認它在 .gitignore 裡
 - 技術顧問 session 不在(`ListAgents` 找不到)→ 技術決策改成「保守選項 + ADR 待覆核」,不問使用者
 - 同時進行的 worktree 已達 3 → 不派新工,先收割
-- 已有一個審核輪在跑變異測試 → 其他審核輪先做不含變異的部分,或等待;agent 看到 stryker 退出碼 137 / 144 一律重跑,絕不把當次結果當分數(P-34)
+- ~~已有一個審核輪在跑變異測試 → 其他先等~~ **由檔案鎖取代**(P-34)。仍然成立的:agent 看到 stryker 退出碼 137 / 144 一律**重跑**,**絕不把當次結果當分數**。
 
 ## 4a. 什麼**不是**停止條件(容易誤判成停止的狀況)
 
@@ -106,6 +106,20 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
   → **不是**,那些是未來 phase 的既有狀態。**要看的是 `ambiguous` 是不是 0。**
 
 真正該停的只有 §4 那幾條。**把上面這些誤判成停止,比漏掉一個真煞車更常發生。**
+
+## 4c. 「分支上全綠、合併後紅」的兩種形狀(P-49)
+
+分支全綠**不等於**合併後全綠。除了「main 多了分支沒有的守門」(§2.1),還有兩種**測試自身**的形狀:
+
+1. **測試把「一定在 worktree 裡跑」內建成假設** → 到 main 就**永遠紅**。
+   實例:`expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'))` —— 在 worktree 裡兩者不同所以綠,
+   在主 repo 裡兩者本來就相同所以紅。**涉及路徑的斷言要在 worktree 與 main 兩種位置各跑一次。**
+2. **main 上有分支看不到的檔案被規則掃到** —— 別的 repo 的簽出(`.claude/worktrees/`)、
+   協調者自己寫的文件(它可能為了**描述**一個錯誤而引用那個錯誤的字串)。
+   **掃描類測試的 SKIP 清單要含 `.claude/worktrees`。**
+
+**協調者為了修 main 紅燈而動測試檔**:可以先修(§4「先修 main」優先),但**同一輪必須開一張 review 工單事後覆核**,
+工單裡逐處列出「為什麼是測試錯不是實作錯」。覆核者判定任一處其實是**放寬** → **退回**。
 
 ## 4b. 平台操作備忘(Orca,實際踩過的)
 
