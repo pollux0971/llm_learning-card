@@ -77,6 +77,14 @@
       "03-llm-router"
     ],
     [
+      "scripts/llm-spend.test.ts",
+      "03-llm-router"
+    ],
+    [
+      "scripts/llm-spend.js",
+      "03-llm-router"
+    ],
+    [
       "scripts/due.ts",
       "04-scheduler"
     ],
