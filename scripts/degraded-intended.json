@@ -1,0 +1,69 @@
+{
+  "$comment": "退化路徑見證器(ADR-044)的「刻意」登記表。每一條是一個測試,它存在的目的就是要走那條退化分支,所以它觸發那個訊號不算「未標記」。四條規則在 scripts/degraded-report.ts 檔頭與 scripts/degraded-report.test.ts:(1) 每一條都要對應一個真實存在、而且實際觸發該 signal 的測試,不觸發就 FAIL「登記過期」——登記表不准腐爛;(2) reason 必填;(3) unmarkedBaseline 只准降,不准升;(4) 條數沒有上限,但每次新增都要在 commit 說明裡交代。這張表不動任何測試碼;等 opt-in 標記的語意定了,整張表一次性遷移過去。放在 scripts/ 而不是 reports/degraded/:它是彙總的輸入,不是產物,跟 zero-input-guard.baseline.json 同一個落點。",
+  "unmarkedBaseline": 152,
+  "entries": [
+    {
+      "file": "packages/core/src/llm/router-gateway.test.ts",
+      "test": "GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero) > cloud-only 任務:沒 log 時打了三次、花了 7.5 美元,仍然一次也沒被 1 美元的預算擋下",
+      "signal": "llm.gateway-router.spend-no-log-zero",
+      "reason": "這個測試的目的就是釘住「沒 log 就當花費 0」:三次雲端呼叫累積 7.5 美元仍不被 1 美元預算擋,斷言的正是那條分支的行為",
+      "since": "2026-09-05"
+    },
+    {
+      "file": "packages/core/src/llm/router-gateway.test.ts",
+      "test": "GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero) > 對照:同樣的三次呼叫,只要有 logPath,第二次就在花錢之前被 DailyBudgetExceededError 擋下",
+      "signal": "llm.spend.log-unreadable-zero",
+      "reason": "spend-no-log-zero 的對照組:有 logPath 時第二次要被擋,前提是第一次在 log 尚不存在時被放行——放行靠的就是「log 讀不到當 0」這條;測試刻意從空 log 起跑",
+      "since": "2026-09-05"
+    },
+    {
+      "file": "packages/core/src/llm/router-gateway.test.ts",
+      "test": "GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero) > gateway-fallback 任務:沒 log 時三次都走雲端、都不是暫定,閘道一次都沒被打到",
+      "signal": "llm.gateway-router.spend-no-log-zero",
+      "reason": "同一條分支的 gateway-fallback 面:沒 log 時預算永遠不會耗盡,所以三次都是雲端、都不是暫定、閘道 0 次",
+      "since": "2026-09-05"
+    },
+    {
+      "file": "packages/core/src/llm/router-gateway.test.ts",
+      "test": "GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero) > 對照:gateway-fallback 任務有 logPath 時,第二次改走閘道且回 provisional=true",
+      "signal": "llm.fallback.budget-exhausted",
+      "reason": "對照組:有 logPath 時第二次要因預算耗盡改走閘道、provisional=true、log 有 fallback_reason=budget_exhausted——斷言的就是 budget-exhausted 這條備援分支",
+      "since": "2026-09-05"
+    },
+    {
+      "file": "packages/core/src/llm/router-gateway.test.ts",
+      "test": "GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero) > 沒 log 時 spend 被當 0 是「每次呼叫都重新當 0」,不是只有第一次:第 10 次仍打雲端",
+      "signal": "llm.gateway-router.spend-no-log-zero",
+      "reason": "釘住「每次呼叫都重新當 0」而不是只有第一次:第 10 次仍打雲端,訊號要被觸發 10 次",
+      "since": "2026-09-05"
+    },
+    {
+      "file": "packages/core/src/prompt-quality/fake-llm.test.ts",
+      "test": "FakeLlmRouter — 第 N 次呼叫沒有 attempt=N 的 fixture 時重播 attempt=1(ADR-044 attempt-fallback-first) > 只錄了 attempt=1:第 2、3 次呼叫都重播 attempt=1,不丟 FixtureNotFoundError",
+      "signal": "prompt-quality.fake.attempt-fallback-first",
+      "reason": "這個測試的目的就是釘住「缺 attempt=N 就重播 attempt=1」:第 2、3 次都重播、不丟 FixtureNotFoundError",
+      "since": "2026-09-05"
+    },
+    {
+      "file": "packages/core/src/prompt-quality/fake-llm.test.ts",
+      "test": "FakeLlmRouter — 第 N 次呼叫沒有 attempt=N 的 fixture 時重播 attempt=1(ADR-044 attempt-fallback-first) > 錄了 attempt=1、2:第 3 次重播的是 attempt=1,不是最後一份 attempt=2",
+      "signal": "prompt-quality.fake.attempt-fallback-first",
+      "reason": "釘住替身是 attempt=1 而不是「最後一份」:錄了 1、2,第 3 次重播的是 1",
+      "since": "2026-09-05"
+    },
+    {
+      "file": "packages/core/src/prompt-quality/fake-llm.test.ts",
+      "test": "FakeLlmRouter — 第 N 次呼叫沒有 attempt=N 的 fixture 時重播 attempt=1(ADR-044 attempt-fallback-first) > 重播的是 attempt=1 那一份,跟 fixture 檔案的排列順序無關(attempt=2 的檔排在前面也一樣)",
+      "signal": "prompt-quality.fake.attempt-fallback-first",
+      "reason": "釘住替身的選擇不靠檔案排列順序:attempt=2 的檔排前面,重播的仍是 attempt=1",
+      "since": "2026-09-05"
+    },
+    {
+      "file": "packages/core/src/prompt-quality/fake-llm.test.ts",
+      "test": "FakeLlmRouter — 第 N 次呼叫沒有 attempt=N 的 fixture 時重播 attempt=1(ADR-044 attempt-fallback-first) > 計數是 task+marker 各自算的:一個 marker 進入重播,不影響另一個 marker 的 attempt 序",
+      "signal": "prompt-quality.fake.attempt-fallback-first",
+      "reason": "釘住重播的計數單位是 task+marker:一個 marker 進入重播分支,另一個 marker 的 attempt 序不受影響",
+      "since": "2026-09-05"
+    }
+  ]
+}

@@ -1,16 +1,34 @@
 /**
- * 退化路徑見證器的彙總(ADR-044)。**報告模式,不執法**:退出碼永遠是 0,
- * 除非彙總本身壞掉(掃到 0 個測試、找不到輸入)。
+ * 退化路徑見證器的彙總(ADR-044)。**報告模式**:哪些測試走了退化分支只報告、不執法。
+ * 退出碼非 0 只有三種情況:彙總本身壞掉(掃到 0 個測試、找不到輸入)、**登記表過期**、
+ * **未標記數超過基準**(後兩條是技術顧問對「152 → 161」的裁定,見下)。
  *
  * 用法:
  *   npx tsx scripts/degraded-report.ts                 # 跑一次 vitest(全部)再彙總
  *   npx tsx scripts/degraded-report.ts -- <vitest 參數>  # 例:-- packages/core/src/llm/router-gateway.test.ts
  *   npx tsx scripts/degraded-report.ts --in <dir>      # 不跑 vitest,彙總既有的 <dir>/*.jsonl
  *   npx tsx scripts/degraded-report.ts --out <path.md> # 報告落點,預設 reports/degraded/<sha>.md
+ *   npx tsx scripts/degraded-report.ts --intended <p>  # 登記表,預設 scripts/degraded-intended.json
+ *   npx tsx scripts/degraded-report.ts --in <dir> --full # <dir> 是整套跑出來的:比基準、沒跑到的登記算過期
  *
  * 流程:設 `DEGRADED_WITNESS_DIR=reports/degraded/.raw/<時戳>/` 跑 vitest
  * (`scripts/degraded-witness.setup.ts` 會在那裡一個 worker 寫一個 JSONL),再讀回來彙總。
  * 報告旁邊同時寫一份 `<sha>.json`,只有數字,給之後「未標記數只准降」比對用。
+ *
+ * **「刻意」登記表(`scripts/degraded-intended.json`)**:有些測試存在的目的就是要走某條
+ * 退化分支(ADR-044 補的那 9 個就是)。它們登記在表裡,報告把它們從「未標記」扣掉,
+ * 變成第四桶「刻意」。這張表不動任何測試碼,也不是 opt-in 標記機制——標記的語意還沒定,
+ * 定了之後整張表一次性遷移。四條規則:
+ *
+ *   1. **每一條都要對應一個真實存在、而且實際觸發該 signal 的測試。** 測試不見了、改名了、
+ *      被 skip 了、不再走那條分支了 → FAIL「登記過期」。跟零輸入守門的鎖 2 同形:
+ *      登記表不准腐爛。只跑部分測試(`-- <vitest 參數>` 或 `--in`)時,沒跑到的檔案不判
+ *      (標「這次沒跑到」),但檔案在磁碟上不存在仍然算過期。
+ *   2. **`reason` 必填**,空字串、只有空白都算沒填。
+ *   3. **「未標記」基準(`unmarkedBaseline`)只准降,不准升。** 全套跑完未標記數 > 基準 → FAIL;
+ *      < 基準 → 提示可以把基準改小。上調基準沒有機械理由擋得住下一次,所以不開這個例。
+ *   4. **「刻意」桶不設上限**,但每一次新增都要在 commit 說明裡交代那個測試為什麼是刻意的。
+ *      判準:**這個測試存在的目的就是要走那條退化分支**才算;不是為了讓數字好看。
  *
  * <sha> 是 `git rev-parse --short HEAD`;工作樹髒的時候後綴 `-dirty`,免得一份量到一半的
  * 報告被當成某個 commit 的正式基準。
@@ -102,29 +120,36 @@ export class UsageError extends Error {
   override readonly name = 'UsageError';
 }
 
-const USAGE = '用法:npx tsx scripts/degraded-report.ts [--in <dir>] [--out <path.md>] [-- <vitest 參數>](詳見檔頭)';
+const USAGE = '用法:npx tsx scripts/degraded-report.ts [--in <dir>] [--out <path.md>] [--intended <path.json>] [--full] [-- <vitest 參數>](詳見檔頭)';
 
 interface Args {
   inDir?: string;
   out?: string;
+  intended?: string;
+  /** --in 的資料是整套跑出來的:比基準、沒跑到的登記算過期。 */
+  full: boolean;
   vitestArgs: string[];
 }
 
 export function parseArgs(argv: string[]): Args {
-  const args: Args = { vitestArgs: [] };
+  const args: Args = { full: false, vitestArgs: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
-    if (a === '--in' || a === '--out') {
+    if (a === '--in' || a === '--out' || a === '--intended') {
       const value = argv[i + 1];
       if (value === undefined || value.startsWith('--')) throw new UsageError(`${a} 後面要接一個路徑,現在沒有。\n${USAGE}`);
       i++;
       if (a === '--in') args.inDir = value;
-      else args.out = value;
+      else if (a === '--out') args.out = value;
+      else args.intended = value;
+    } else if (a === '--full') {
+      args.full = true;
     } else if (a === '--') {
       args.vitestArgs = argv.slice(i + 1);
       break;
     } else throw new UsageError(`不認得的參數:${a}\n${USAGE}`);
   }
+  if (args.full && args.inDir === undefined) throw new UsageError(`--full 只跟 --in 一起用(自己跑 vitest 時沒帶參數就是整套)。\n${USAGE}`);
   return args;
 }
 
@@ -247,6 +272,161 @@ export function readRecords(dir: string): WitnessRecord[] {
   return out;
 }
 
+// ────────────────────────────────────────────────────────────── 「刻意」登記表
+export const DEFAULT_INTENDED_PATH = 'scripts/degraded-intended.json';
+
+export interface IntendedEntry {
+  /** 測試檔,repo 相對路徑(跟 JSONL 的 file 同一種寫法)。 */
+  file: string;
+  /** 完整測試名「describe > describe > it」,跟 vitest 報表與 JSONL 的 test 一樣。 */
+  test: string;
+  /** 它刻意要走的那條退化分支。 */
+  signal: DegradedSignal;
+  /** 為什麼這個測試存在的目的就是要走那條分支。必填(規則 2)。 */
+  reason: string;
+  /** 登記日期 YYYY-MM-DD。 */
+  since: string;
+}
+
+export interface IntendedRegistry {
+  /** 「未標記」的基準,只准降(規則 3)。 */
+  unmarkedBaseline: number;
+  entries: IntendedEntry[];
+}
+
+const SINCE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 一條登記哪裡不對。對了就 null。跟 describeRecordProblem 同一種寫法:不用 zod,
+ * 五個欄位手寫比多一個相依便宜,而且訊息可以直接講人話。
+ */
+export function describeEntryProblem(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '不是物件';
+  const e = value as Record<string, unknown>;
+  if (typeof e.file !== 'string' || e.file.trim() === '') return '缺 file,或 file 不是非空字串';
+  if (typeof e.test !== 'string' || e.test.trim() === '') return '缺 test,或 test 不是非空字串';
+  if (typeof e.signal !== 'string') return '缺 signal,或 signal 不是字串';
+  if (!isDegradedSignal(e.signal)) return `signal「${e.signal}」不在訊號目錄(packages/contracts/src/witness.ts)裡`;
+  if (typeof e.reason !== 'string') return '缺 reason(規則 2:reason 必填)';
+  if (e.reason.trim() === '') return 'reason 是空的(規則 2:空字串、只有空白都算沒填)';
+  if (typeof e.since !== 'string' || !SINCE_RE.test(e.since)) return 'since 要是 YYYY-MM-DD';
+  return null;
+}
+
+/** 整張表哪裡不對。對了就 null。 */
+export function describeRegistryProblem(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '最外層要是物件 { unmarkedBaseline, entries }';
+  const r = value as Record<string, unknown>;
+  if (typeof r.unmarkedBaseline !== 'number' || !Number.isInteger(r.unmarkedBaseline) || r.unmarkedBaseline < 0) return 'unmarkedBaseline 要是非負整數';
+  if (!Array.isArray(r.entries)) return 'entries 要是陣列';
+  const seen = new Set<string>();
+  for (let i = 0; i < r.entries.length; i++) {
+    const problem = describeEntryProblem(r.entries[i]);
+    if (problem !== null) return `entries[${i}] ${problem}`;
+    const e = r.entries[i] as IntendedEntry;
+    const key = `${e.file}::${e.test}::${e.signal}`;
+    if (seen.has(key)) return `entries[${i}] 重複了(同一個檔案、同一個測試、同一個訊號登記兩次)`;
+    seen.add(key);
+  }
+  return null;
+}
+
+/** 讀登記表。檔案不存在、不是 JSON、形狀不對都是 UsageError(一句人話 + 退出碼 1)。 */
+export function loadIntended(path: string): IntendedRegistry {
+  if (!existsSync(path)) throw new UsageError(`找不到登記表:${path}(預設是 ${DEFAULT_INTENDED_PATH};要指到別處用 --intended)`);
+  if (statSync(path).isDirectory()) throw new UsageError(`--intended 要指到一個 JSON 檔,這是一個目錄:${path}`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    throw new UsageError(`登記表 ${path} 不是合法的 JSON(${err instanceof Error ? err.message : String(err)})`);
+  }
+  const problem = describeRegistryProblem(parsed);
+  if (problem !== null) throw new UsageError(`登記表 ${path} 的${problem}`);
+  return parsed as IntendedRegistry;
+}
+
+/**
+ * 這次的紀錄涵蓋多少:`full` 是沒帶任何 vitest 參數跑的整套,登記的檔案沒出現就是過期;
+ * `partial` 是只跑一部分(`-- <vitest 參數>`)或 `--in` 既有目錄(不知道當初怎麼跑的),
+ * 沒出現但磁碟上還在的檔案標「這次沒跑到」,不判。
+ */
+export type RunScope = 'full' | 'partial';
+
+export type IntendedStatus =
+  | { kind: 'ok'; count: number }
+  | { kind: 'not-run' }
+  | { kind: 'file-missing' }
+  | { kind: 'test-missing' }
+  | { kind: 'signal-not-triggered'; triggered: DegradedSignal[] };
+
+export interface IntendedCheck {
+  entry: IntendedEntry;
+  status: IntendedStatus;
+}
+
+export function isStale(status: IntendedStatus): boolean {
+  return status.kind === 'file-missing' || status.kind === 'test-missing' || status.kind === 'signal-not-triggered';
+}
+
+/**
+ * 規則 1:登記表每一條對回實際的紀錄。`fileExists` 注入是為了測試不用真的擺檔案。
+ * `rows` 是 aggregate() 之後的(同一個測試的多筆已合併)。
+ */
+export function checkIntended(
+  entries: readonly IntendedEntry[],
+  rows: readonly TestRow[],
+  scope: RunScope,
+  fileExists: (rel: string) => boolean,
+): IntendedCheck[] {
+  const rowsByFile = new Map<string, TestRow[]>();
+  for (const r of rows) rowsByFile.set(r.file, [...(rowsByFile.get(r.file) ?? []), r]);
+  return entries.map((entry) => {
+    const inFile = rowsByFile.get(entry.file);
+    if (inFile === undefined) {
+      if (scope === 'partial' && fileExists(entry.file)) return { entry, status: { kind: 'not-run' } };
+      return { entry, status: { kind: fileExists(entry.file) ? 'test-missing' : 'file-missing' } };
+    }
+    const row = inFile.find((r) => r.test === entry.test);
+    if (row === undefined) return { entry, status: { kind: 'test-missing' } };
+    const count = row.signals.get(entry.signal);
+    if (count === undefined || count <= 0) return { entry, status: { kind: 'signal-not-triggered', triggered: [...row.signals.keys()] } };
+    return { entry, status: { kind: 'ok', count } };
+  });
+}
+
+/** 一句人話,給報告與終端機用。 */
+export function describeStatus(status: IntendedStatus): string {
+  switch (status.kind) {
+    case 'ok':
+      return `✓ 觸發 ${status.count} 次`;
+    case 'not-run':
+      return '– 這次沒跑到(檔案還在,不判)';
+    case 'file-missing':
+      return '✗ 登記過期:測試檔已不存在';
+    case 'test-missing':
+      return '✗ 登記過期:找不到這個測試(改名、刪掉或被 skip)';
+    case 'signal-not-triggered':
+      return `✗ 登記過期:測試還在,但不再走那條分支(這次觸發的:${status.triggered.length === 0 ? '無' : status.triggered.join(', ')})`;
+  }
+}
+
+/**
+ * 規則 3:「未標記」對基準。回傳 null 是沒事;字串是 FAIL 的理由。
+ * `hint` 是「可以降了」的提示,不是失敗。只在 full 才比:部分跑的數字沒意義。
+ */
+export function compareBaseline(unmarked: number, baseline: number, scope: RunScope): { fail: string | null; hint: string | null } {
+  if (scope !== 'full') return { fail: null, hint: null };
+  if (unmarked > baseline) {
+    return {
+      fail: `未標記 ${unmarked} 超過基準 ${baseline}(多 ${unmarked - baseline})。基準只准降:多出來的測試如果存在的目的就是走那條退化分支,登記進 ${DEFAULT_INTENDED_PATH} 並在 commit 說明交代;不是的話就是新的退化路徑被走到了,去看報告 §3。不要上調基準。`,
+      hint: null,
+    };
+  }
+  if (unmarked < baseline) return { fail: null, hint: `未標記 ${unmarked} 低於基準 ${baseline}:可以把 ${DEFAULT_INTENDED_PATH} 的 unmarkedBaseline 降到 ${unmarked}` };
+  return { fail: null, hint: null };
+}
+
 // ────────────────────────────────────────────────────────────── 彙總
 export interface TestRow {
   file: string;
@@ -260,12 +440,21 @@ export interface Summary {
   command: string;
   testFiles: number;
   tests: number;
-  /** 觸發任一訊號的測試數 = 「未標記且觸發」(opt-in 機制尚不存在,所以兩者相等) */
+  /** 觸發任一訊號的測試數(刻意 + 未標記) */
   testsTriggeringAny: number;
   testsTriggeringSwallow: number;
   testsTriggeringDefaultPath: number;
-  /** 目前恆為 0:沒有 opt-in 機制 */
-  testsOptedIn: number;
+  /** 第四桶:登記在 scripts/degraded-intended.json、而且登記還沒過期的測試數 */
+  testsIntended: number;
+  /** 觸發任一 − 刻意。這才是「只准降」比的數字 */
+  testsUnmarked: number;
+  /** 登記表裡的基準;比對只在 scope=full 時有意義 */
+  unmarkedBaseline: number;
+  /** 登記過期的條數(規則 1) */
+  intendedStale: number;
+  /** 這次沒跑到、不判的條數(只在 partial 會非 0) */
+  intendedNotRun: number;
+  scope: RunScope;
   crossOwnerTests: number;
   signalsInCatalog: number;
   signalsWithCallSites: number;
@@ -316,8 +505,11 @@ export function renderReport(opts: {
   outside: TestRow[];
   sites: Map<string, CallSite[]>;
   unknown: Array<CallSite & { signal: string }>;
+  intended: IntendedRegistry;
+  checks: IntendedCheck[];
+  scope: RunScope;
 }): { markdown: string; summary: Summary } {
-  const { root, sha, command, rows, outside, sites, unknown } = opts;
+  const { root, sha, command, rows, outside, sites, unknown, intended, checks, scope } = opts;
   const owners = loadOwners(root);
   const allSignals = Object.keys(DEGRADED_SIGNALS) as DegradedSignal[];
 
@@ -326,6 +518,10 @@ export function renderReport(opts: {
   for (const row of rows) for (const s of row.signals.keys()) testsBySignal.set(s, [...(testsBySignal.get(s) ?? []), row]);
 
   const triggering = rows.filter((r) => r.signals.size > 0);
+  // 刻意:登記還沒過期的那些(同一個測試登記兩個訊號也只算一個測試)
+  const intendedKeys = new Set(checks.filter((c) => c.status.kind === 'ok').map((c) => `${c.entry.file}::${c.entry.test}`));
+  const isIntended = (r: TestRow): boolean => intendedKeys.has(`${r.file}::${r.test}`);
+  const unmarked = triggering.filter((r) => !isIntended(r));
   const cross = triggering.flatMap((row) => {
     const testOwner = ownerOf(owners, row.file);
     const foreign = [...row.signals.keys()].filter((s) => DEGRADED_SIGNALS[s].owner !== testOwner);
@@ -342,7 +538,12 @@ export function renderReport(opts: {
     testsTriggeringAny: triggering.length,
     testsTriggeringSwallow: rows.filter((r) => hasKind(r, 'swallow')).length,
     testsTriggeringDefaultPath: rows.filter((r) => hasKind(r, 'default-path')).length,
-    testsOptedIn: 0,
+    testsIntended: intendedKeys.size,
+    testsUnmarked: unmarked.length,
+    unmarkedBaseline: intended.unmarkedBaseline,
+    intendedStale: checks.filter((c) => isStale(c.status)).length,
+    intendedNotRun: checks.filter((c) => c.status.kind === 'not-run').length,
+    scope,
     crossOwnerTests: cross.length,
     signalsInCatalog: allSignals.length,
     signalsWithCallSites: allSignals.filter((s) => (sites.get(s) ?? []).length > 0).length,
@@ -353,24 +554,26 @@ export function renderReport(opts: {
   const L: string[] = [];
   L.push(`# 退化路徑報告 · ${sha}`);
   L.push('');
-  L.push(`報告模式,不執法(ADR-044)。這份報告回答一個問題:**哪些測試在跑的時候走進了「失敗了卻回一個看起來正常的值」的分支?** 走進去不代表錯——很多測試就是在測那條分支——但沒有任何一個測試有明說它要走(opt-in 機制尚不存在),所以下面的數字全部是「未標記」。這是基準;之後的指標是**未標記數只准降**。`);
+  L.push(`報告模式(ADR-044)。這份報告回答一個問題:**哪些測試在跑的時候走進了「失敗了卻回一個看起來正常的值」的分支?** 走進去不代表錯——很多測試就是在測那條分支。存在的目的就是要走那條分支的測試登記在 \`${DEFAULT_INTENDED_PATH}\`(第四桶「刻意」,§3a),其餘的是「未標記」。指標是**未標記數只准降**(基準 ${intended.unmarkedBaseline});登記表**不准過期**(每一條都要對應一個仍在觸發那個訊號的測試)。`);
   L.push('');
   L.push('| 欄位 | 值 |');
   L.push('|---|---|');
   L.push(`| 量測的 commit | \`${sha}\` |`);
   L.push(`| 產生時間 | ${summary.generatedAt} |`);
   L.push(`| 指令 | \`${md(command)}\` |`);
+  L.push(`| 範圍 | ${scope === 'full' ? '全套(基準比對有效)' : '部分(只跑了一部分或 --in 既有目錄;不比基準,沒跑到的登記不判)'} |`);
   L.push(`| 測試檔 / 測試(只算實際執行的;skipped 沒有 afterEach,不進分母) | ${summary.testFiles} / ${summary.tests} |`);
   L.push(`| 訊號目錄 / 有呼叫點 / 被觸發 | ${summary.signalsInCatalog} / ${summary.signalsWithCallSites} / ${summary.signalsTriggered} |`);
   L.push('');
-  L.push('## 1. 基準數字');
+  L.push('## 1. 基準數字(四桶)');
   L.push('');
   L.push('| 指標 | 數字 | 說明 |');
   L.push('|---|---|---|');
-  L.push(`| **觸發了退化分支但沒有明示 opt-in 的測試數** | **${summary.testsTriggeringAny} / ${summary.tests}** | 這是基準。opt-in 機制尚不存在,所以 = 所有觸發的測試 |`);
+  L.push(`| 觸發了退化分支的測試數 | ${summary.testsTriggeringAny} / ${summary.tests} | = 刻意 + 未標記 |`);
   L.push(`| 其中觸發 \`swallow\`(失敗 → 正常值)的 | ${summary.testsTriggeringSwallow} | 「測試綠但走錯路」最典型的來源 |`);
   L.push(`| 其中觸發 \`default-path\`(沒給 → 自選一條路)的 | ${summary.testsTriggeringDefaultPath} | 不知情地測了 stub / 預設路徑 |`);
-  L.push(`| 有 opt-in 標記的測試數 | ${summary.testsOptedIn} | 機制尚不存在 |`);
+  L.push(`| **刻意**:登記為故意走退化分支的測試 | **${summary.testsIntended}** | 登記表 ${intended.entries.length} 條(過期 ${summary.intendedStale}${summary.intendedNotRun > 0 ? `,這次沒跑到 ${summary.intendedNotRun}` : ''}),§3a |`);
+  L.push(`| **未標記**:觸發了、但沒登記為刻意的 | **${summary.testsUnmarked}** | 基準 **${summary.unmarkedBaseline}**,只准降${scope === 'full' ? (summary.testsUnmarked > summary.unmarkedBaseline ? ' — **超過基準,FAIL**' : summary.testsUnmarked < summary.unmarkedBaseline ? ' — 低於基準,可以降' : ' — 等於基準') : '(部分跑,不比)'} |`);
   L.push(`| **跨擁有者觸發**(測試的資料夾 ≠ 訊號的資料夾) | **${summary.crossOwnerTests}** | 最值得看:測試自以為在測 A,卻走了 B 的退化分支(§4) |`);
   L.push(`| 測試之外觸發的紀錄(beforeAll / 檔案頂層 / afterAll) | ${summary.outsideRows} | 歸不到單一測試,列在 §6 |`);
   L.push('');
@@ -400,21 +603,37 @@ export function renderReport(opts: {
   // §3 測試 → 訊號
   L.push('## 3. 測試 → 它觸發的退化分支');
   L.push('');
-  L.push(`只列有觸發的測試(${triggering.length} 個);沒觸發的 ${rows.length - triggering.length} 個不列。依測試檔分組,括號是「觸發 / 該檔測試數」。`);
+  L.push(`只列有觸發的測試(${triggering.length} 個);沒觸發的 ${rows.length - triggering.length} 個不列。依測試檔分組,括號是「觸發 / 該檔測試數」。開頭標 **[刻意]** 的是登記表裡的(§3a),不算未標記。`);
   L.push('');
   const byFile = new Map<string, TestRow[]>();
   for (const r of rows) byFile.set(r.file, [...(byFile.get(r.file) ?? []), r]);
   for (const [file, fileRows] of [...byFile.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const hit = fileRows.filter((r) => r.signals.size > 0);
     if (hit.length === 0) continue;
-    L.push(`### \`${file}\` (${hit.length} / ${fileRows.length}) · 擁有者 ${ownerOf(owners, file)}`);
+    const intendedHere = hit.filter(isIntended).length;
+    L.push(`### \`${file}\` (${hit.length} / ${fileRows.length}${intendedHere > 0 ? `,其中刻意 ${intendedHere}` : ''}) · 擁有者 ${ownerOf(owners, file)}`);
     L.push('');
     for (const r of hit) {
       const sig = [...r.signals.entries()].map(([s, n]) => (n === 1 ? `\`${s}\`` : `\`${s}\` ×${n}`)).join(', ');
-      L.push(`- ${md(r.test)} → ${sig}`);
+      L.push(`- ${isIntended(r) ? '**[刻意]** ' : ''}${md(r.test)} → ${sig}`);
     }
     L.push('');
   }
+
+  // §3a 刻意登記表
+  L.push('## 3a. 刻意登記表');
+  L.push('');
+  L.push(`\`${DEFAULT_INTENDED_PATH}\`,${intended.entries.length} 條。每一條都要對應一個仍然存在、而且仍然觸發那個訊號的測試;✗ 的是**登記過期**,整支腳本會以退出碼 1 結束——修法是把測試改回去,或把那條登記拿掉(在 commit 說明講為什麼)。不是用來讓數字好看的:只有「這個測試存在的目的就是要走那條分支」才登記。`);
+  L.push('');
+  if (checks.length === 0) L.push('(沒有)');
+  else {
+    L.push('| 狀態 | 測試檔 | 測試 | 訊號 | 理由 | 登記日 |');
+    L.push('|---|---|---|---|---|---|');
+    for (const c of checks) {
+      L.push(`| ${md(describeStatus(c.status))} | \`${c.entry.file}\` | ${md(c.entry.test)} | \`${c.entry.signal}\` | ${md(c.entry.reason)} | ${c.entry.since} |`);
+    }
+  }
+  L.push('');
 
   // §4 跨擁有者
   L.push('## 4. 跨擁有者觸發');
@@ -481,9 +700,10 @@ export function renderReport(opts: {
   L.push('npx tsx scripts/degraded-report.ts                      # 全部測試');
   L.push('npx tsx scripts/degraded-report.ts -- <某個 .test.ts>     # 只跑一個檔(反向驗證用)');
   L.push('npx tsx scripts/degraded-report.ts --in <raw 目錄>       # 只彙總,不跑');
+  L.push('npx tsx scripts/degraded-report.ts --intended <path>     # 換一張登記表(測試用)');
   L.push('```');
   L.push('');
-  L.push('觀測點:`packages/contracts/src/witness.ts`(訊號目錄 + `witness()`)。hook:`scripts/degraded-witness.setup.ts`(只在設了 `DEGRADED_WITNESS_DIR` 時做事)。這份報告不改任何測試、不加任何標記;數字旁邊的 `.json` 是給下一次比「有沒有降」用的。');
+  L.push(`觀測點:\`packages/contracts/src/witness.ts\`(訊號目錄 + \`witness()\`)。hook:\`scripts/degraded-witness.setup.ts\`(只在設了 \`DEGRADED_WITNESS_DIR\` 時做事)。登記表:\`${DEFAULT_INTENDED_PATH}\`(§3a)。這份報告不改任何測試、不加任何標記;數字旁邊的 \`.json\` 是給下一次比「有沒有降」用的。`);
   L.push('');
 
   return { markdown: L.join('\n'), summary };
@@ -500,13 +720,23 @@ function timestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
+/** 登記過期或未標記超過基準:報告已經寫好了,只是要以退出碼 1 結束。訊息是給人看的。 */
+export class LockError extends Error {
+  override readonly name = 'LockError';
+}
+
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const root = REPO_ROOT;
   const sha = gitSha(root);
+  // 登記表先讀:壞了就不用花幾分鐘跑 vitest。
+  const intendedPath = args.intended ?? join(root, DEFAULT_INTENDED_PATH);
+  const intended = loadIntended(intendedPath);
 
   let inDir = args.inDir;
   let command: string;
+  // 沒帶 vitest 參數自己跑的是整套;--in 的資料不知道當初怎麼跑的,要 --full 才當整套。
+  const scope: RunScope = (inDir === undefined && args.vitestArgs.length === 0) || (inDir !== undefined && args.full) ? 'full' : 'partial';
   if (inDir === undefined) {
     inDir = join(root, 'reports/degraded/.raw', timestamp());
     mkdirSync(inDir, { recursive: true });
@@ -538,17 +768,31 @@ function main(): void {
 
   const { rows, outside } = aggregate(records);
   const { sites, unknown } = findCallSites(root);
-  const { markdown, summary } = renderReport({ root, sha, command, rows, outside, sites, unknown });
+  const checks = checkIntended(intended.entries, rows, scope, (rel) => existsSync(join(root, rel)));
+  const { markdown, summary } = renderReport({ root, sha, command, rows, outside, sites, unknown, intended, checks, scope });
 
   const out = args.out ?? join(root, 'reports/degraded', `${sha}.md`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, markdown, 'utf8');
   writeFileSync(out.replace(/\.md$/, '.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
 
-  console.log(`\n退化路徑報告:${relative(root, out)}`);
+  console.log(`\n退化路徑報告:${relative(root, out)}${scope === 'partial' ? '(部分跑:不比基準,沒跑到的登記不判)' : ''}`);
   console.log(`  測試 ${summary.tests}(${summary.testFiles} 檔)`);
-  console.log(`  觸發退化分支且未標記:${summary.testsTriggeringAny}(swallow ${summary.testsTriggeringSwallow},default-path ${summary.testsTriggeringDefaultPath})`);
+  console.log(`  觸發退化分支:${summary.testsTriggeringAny}(swallow ${summary.testsTriggeringSwallow},default-path ${summary.testsTriggeringDefaultPath})`);
+  console.log(`  刻意(登記表 ${intended.entries.length} 條):${summary.testsIntended};未標記:${summary.testsUnmarked};基準:${summary.unmarkedBaseline}`);
   console.log(`  跨擁有者:${summary.crossOwnerTests};訊號 目錄/呼叫點/觸發:${summary.signalsInCatalog}/${summary.signalsWithCallSites}/${summary.signalsTriggered}`);
+
+  // 規則 1:登記表不准腐爛。規則 3:未標記只准降。兩條都是報告寫完才判,報告要留著看。
+  const stale = checks.filter((c) => isStale(c.status));
+  const problems: string[] = [];
+  if (stale.length > 0) {
+    problems.push(`登記過期 ${stale.length} 條(${relative(root, intendedPath)}):`);
+    for (const c of stale) problems.push(`  - ${c.entry.file} :: ${c.entry.test} :: ${c.entry.signal}\n    ${describeStatus(c.status)}`);
+  }
+  const baseline = compareBaseline(summary.testsUnmarked, intended.unmarkedBaseline, scope);
+  if (baseline.fail !== null) problems.push(baseline.fail);
+  if (baseline.hint !== null) console.log(`  ℹ ${baseline.hint}`);
+  if (problems.length > 0) throw new LockError(problems.join('\n'));
 }
 
 const isEntry = process.argv[1] !== undefined && /degraded-report\.(ts|js)$/.test(process.argv[1]);
@@ -557,7 +801,7 @@ if (isEntry) {
     main();
   } catch (err) {
     // 預期中的失敗印一句人話就好;其他的(程式自己的 bug)照常往外丟,stack 是要看的。
-    if (!(err instanceof UsageError)) throw err;
+    if (!(err instanceof UsageError) && !(err instanceof LockError)) throw err;
     console.error(`✗ degraded-report:${err.message}`);
     process.exitCode = 1;
   }

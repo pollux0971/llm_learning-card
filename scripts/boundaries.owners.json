@@ -149,6 +149,14 @@
       "infra"
     ],
     [
+      "scripts/degraded-report.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/degraded-intended.json",
+      "infra"
+    ],
+    [
       "scripts/degraded-witness.setup.ts",
       "infra"
     ],
