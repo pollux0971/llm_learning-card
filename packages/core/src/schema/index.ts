@@ -9,6 +9,7 @@ export {
   validateApplyQuestion,
   validateQuestionFile,
   findCardsMissingQuestions,
+  listCardIds,
 } from './validate-question.js';
 export { validateReview, createInitialReview, nextCalendarDay } from './review.js';
 export { validateLogEvent, recordEvent, parseLogLines } from './log.js';
