@@ -175,10 +175,13 @@ describe('check-boundaries 掃得到檔案但一個都沒真的檢查', () => {
   it('--root 指到不存在的目錄:0 個檔案 → FAIL,不是當機也不是綠燈', () => {
     const { code, output } = runBoundaries(join(tmpdir(), 'lc-boundaries-absolutely-no-such-dir'));
 
-    // 模板 v1.2.0 起,那裡連 boundaries.owners.json 都讀不到,所以先撞上「找不到設定檔」
-    // 這道更早的紅。這條守的是「絕對不可以是綠燈」,不是某一句特定的字。
+    // 模板 v1.3.2 起,設定檔的搜尋順序是「腳本自己所在的目錄 → <ROOT>/scripts/」,所以
+    // --root 指到別處時仍然讀得到本 repo 的 boundaries.owners.json,不再撞「找不到設定檔」
+    // 那道紅,而是往下走到「掃描到 0 個檔案」那道。這條守的是「絕對不可以是綠燈」,
+    // 不是某一句特定的字——所以斷言的是退出碼、掃描器壞了的訊息,以及沒有綠燈。
     expect(code).toBe(1);
-    expect(output).toContain('boundaries.owners.json');
+    expect(output).toContain(SCANNER_BROKEN);
+    expect(output).toContain('gate=boundaries result=FAIL scanned=0');
     expect(output).not.toContain('✓ 無違規');
   }, SPAWN_TIMEOUT_MS);
 
@@ -188,8 +191,10 @@ describe('check-boundaries 掃得到檔案但一個都沒真的檢查', () => {
 
     const { code, output } = runBoundaries(root);
 
+    // 同上:v1.3.2 的搜尋順序讓它讀得到本 repo 的設定檔,於是紅在「掃描到 0 個檔案」。
     expect(code).toBe(1);
-    expect(output).toContain('boundaries.owners.json');
+    expect(output).toContain(SCANNER_BROKEN);
+    expect(output).toContain('gate=boundaries result=FAIL scanned=0');
     expect(output).not.toContain('✓ 無違規');
   }, SPAWN_TIMEOUT_MS);
 });

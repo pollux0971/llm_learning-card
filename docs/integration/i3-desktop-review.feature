@@ -61,8 +61,3 @@ Feature: Reviewing in a desktop window
   Scenario: The terminal review loop still works as in I2
     When the person runs the review command
     Then a full session can be completed as in I2
-
-  Scenario: Every standalone entry point still runs
-    When every non interactive command in the standalone manifest is executed
-    Then each exits with status 0
-    And each output contains the expected marker

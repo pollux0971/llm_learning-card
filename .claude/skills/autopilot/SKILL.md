@@ -40,11 +40,16 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
    npm run boundaries && npm run typecheck && npm run lint:docs && npm test && npm run accept:standalone && npm run standalone
    npm run accept:dry        # 必看「0 ambiguous」:步驟定義撞名不會讓任何測試變紅,只有這步抓得到
    npm run check:steps       # 每句 gherkin 恰好一個步驟定義
-   npm run check:gherkin-dup # 重複的 gherkin 場景(⚠️ 採用模板時就是紅的:3 組逐字重複,另開工單處理,不要放寬規則讓它變綠)
+   npm run check:gherkin-dup # 重複的 gherkin 場景;**必跑且必須 exit 0**,不准靠放寬規則變綠
    npm run accept:coverage   # 每個 phase-N.feature 用自己的 tag 至少比對到 1 個場景;tag 打錯字只有這步抓得到
-   # 守門漂移偵測:本地 scripts/ 的守門與模板版本或內容不一致就紅
+   # 守門漂移偵測:本地 scripts/ 的守門與同步當時的內容不一致就紅(v1.3.2 起是 sha256 自比對,
+   # 不需要模板路徑也能跑;sync 才需要 TEMPLATE_DIR)
    # TEMPLATE_DIR 指向模板 repo 的 template/(目前在 llm_learning-cards 的模板 worktree 底下)
-   # 目前同步到 v1.3.0;check-phase-coverage.ts 有本地 HOTFIX(見檔頭第 2 行),模板修好要回流
+   # 目前同步到 v1.3.2;check-phase-coverage.ts 的本地 HOTFIX 已隨 v1.3.2 的 strict-tsconfig 修正移除
+   # ⚠️ v1.3.2 的 --check 有一條已回報的迴歸:它列舉的是目標目錄的 `check-*.ts` glob,
+   #    會連專案自己的 `check-*.test.ts` 一起要求 SOURCE 標頭 → 對本 repo 必定紅(三支測試檔)。
+   #    v1.3.0 列舉的是模板側的檔案清單,所以不會誤判。模板修好前這支的紅要人工判讀:
+   #    只有那三行 `✗ check-*.test.ts 缺 SOURCE 標頭` 才可放行,其他任何一行紅都是真的漂移。
    "$TEMPLATE_DIR/scripts/sync-gates.sh" "$(git rev-parse --show-toplevel)" scripts --check
    ```
    全綠 → tag、清 worktree、通知技術顧問「驗推」;FAIL 的照 test→dev→review 循環派 debug session。

@@ -802,7 +802,10 @@ describe('輸出的完整格式(訊息本身就是這張工單的產出)', () =>
     });
 
     expect(code).toBe(0);
-    expect(output).toBe(`${SKIP_LINE}\ndoc-links: 掃描 2 個 markdown 檔,1 條相對連結\n✓ 無壞掉的連結`);
+    expect(output).toBe(
+      `${SKIP_LINE}\ndoc-links: 掃描 2 個 markdown 檔,1 條相對連結\n✓ 無壞掉的連結\n` +
+        'gate=doc-links result=PASS scanned=1',
+    );
   });
 
   it('有壞連結:排除清單、統計、空行、✗ 標題、每條一行、最後是怎麼修', () => {
@@ -817,6 +820,8 @@ describe('輸出的完整格式(訊息本身就是這張工單的產出)', () =>
       '  docs/a.md:1  →  ./missing.md',
       '',
       '改了檔名或搬了目錄就要一起改指過去的連結;真的要指到還沒有的檔案就先別寫成連結。',
+      // 模板 v1.3.2 起,每支守門最後多印一行機器可讀的 gate 標記(CHANGELOG 1.3.2 (C))。
+      'gate=doc-links result=FAIL scanned=1',
     ]);
   });
 
@@ -828,6 +833,7 @@ describe('輸出的完整格式(訊息本身就是這張工單的產出)', () =>
       SKIP_LINE,
       'doc-links: 掃描 1 個 markdown 檔,掃描到 0 條相對連結',
       `${SCANNER_BROKEN}。掃描範圍 SCAN_DIRS、副檔名、或 stripCode 挖太多時就長這樣。`,
+      'gate=doc-links result=FAIL scanned=0',
     ]);
   });
 });

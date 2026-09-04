@@ -77,8 +77,3 @@ Feature: The system survives offline use and stays healthy over time
   Scenario: The daily habit features still work as in I5
     When the machine is restarted and a session is completed from the tray
     Then everything behaves as in I5
-
-  Scenario: Every standalone entry point still runs
-    When every non interactive command in the standalone manifest is executed
-    Then each exits with status 0
-    And each output contains the expected marker
