@@ -15,9 +15,11 @@ import type { LogEvent } from '@contracts/index.js';
 import {
   CloudRequiredError,
   DailyBudgetExceededError,
+  GatewayCallError,
   GatewayModelRejectedError,
   LlmTimeoutError,
   MissingCredentialError,
+  NoModelError,
   OutputTruncatedError,
   UnknownTaskError,
   UnsupportedProviderError,
@@ -39,7 +41,7 @@ interface Harness {
   router: GatewayLlmRouter;
 }
 
-function makeHarness(opts: { cloudFails?: Error; spend?: DailySpend; online?: boolean } = {}): Harness {
+function makeHarness(opts: { cloudFails?: Error; spend?: DailySpend; online?: boolean; gatewayDown?: boolean } = {}): Harness {
   const h: Partial<Harness> & { cloudCalls: number; gatewayChats: number; logged: LogEvent[] } = {
     cloudCalls: 0,
     gatewayChats: 0,
@@ -56,6 +58,10 @@ function makeHarness(opts: { cloudFails?: Error; spend?: DailySpend; online?: bo
 
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    // 閘道整台不在(機器沒開 / 沒網路):連 /auth/token/exchange 都連不上。
+    // 照 features/steps/_fake-cloud.mjs 的模式,只換 fetch,GatewayClient 與
+    // router 全跑真的——所以這裡丟的就是真的 fetch 連不上時丟的那個 TypeError。
+    if (opts.gatewayDown) throw new TypeError('fetch failed: connect ECONNREFUSED');
     const json = (body: unknown, status = 200): Response =>
       new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -87,6 +93,43 @@ function makeHarness(opts: { cloudFails?: Error; spend?: DailySpend; online?: bo
 
   return h as Harness;
 }
+
+/**
+ * 「什麼都沒丟」也是一種結果,而且是最容易讓 `expect(...).not.toBe(X)` 假綠的
+ * 那一種——用一個哨兵值把它跟「丟了東西」分開,測試裡再明確排除掉。
+ */
+const NOTHING_THROWN = Symbol('沒有丟出任何錯誤');
+
+async function caught(fn: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await fn();
+    return NOTHING_THROWN;
+  } catch (err) {
+    return err;
+  }
+}
+
+/** 契約 §7 的錯誤都帶 `code`。不是 Error 或沒有 code 就回 undefined。 */
+function codeOf(err: unknown): unknown {
+  return err instanceof Error ? (err as { code?: unknown }).code : undefined;
+}
+
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+const ALL_TASKS: LlmTask[] = [
+  'ingest.cards',
+  'ingest.questions',
+  'ingest.deps',
+  'deepen',
+  'grade.apply',
+  'reteach.short',
+  'grade.fill.llm',
+];
+
+/** 契約 §7 路由表第三欄(離線+無本機)要求 NO_MODEL 的四個 task。 */
+const OFFLINE_NO_MODEL_TASKS: LlmTask[] = ['deepen', 'grade.apply', 'reteach.short', 'grade.fill.llm'];
 
 function fallbackEvent(logged: LogEvent[]): Record<string, unknown> | undefined {
   return (logged as unknown as Record<string, unknown>[]).find((e) => e.fallback === 'gateway');
@@ -308,5 +351,104 @@ describe('GatewayLlmRouter.call — 閘道 403 不觸發備援', () => {
     });
     await expect(rejecting.call('grade.fill.llm', '填空題')).rejects.toBeInstanceOf(GatewayModelRejectedError);
     expect(h.cloudCalls).toBe(0);
+  });
+});
+
+
+// ============================================================ 收尾輪:契約偏差
+//
+// 契約 §7 路由表第三欄「離線+無本機」對 deepen / grade.apply / reteach.short /
+// grade.fill.llm 的要求是 **`NO_MODEL`**。閘道就是 ADR-039 決策 1 定義的「本機」,
+// 所以「連閘道也連不上」**就是**「無本機」那一格,不是一種新的失敗種類。
+//
+// phase-4 的審核輪實測到這裡丟的是 `GATEWAY_FAILED`,而且**刻意沒有補測試**——
+// 補了就等於把偏差固化成規格。技術顧問裁決:**對齊契約,但保留資訊**。
+//
+//   - 丟出來的 `code` / 型別是 `NO_MODEL`
+//   - 閘道層的細節放進 `cause`:`new NoModelError('...', { cause: gatewayError })`
+//   - 訊息文字仍要說得清「本機閘道不可達」
+//   - `GATEWAY_FAILED` 只准出現在閘道 adapter 內部,不外洩
+//
+// 為什麼不能反過來把 `GATEWAY_FAILED` 寫成規格:§7 是**硬約定**,`NO_MODEL` 是
+// 消費者(05-grading/phase-3 的離線審核、11-review、之後的 06)分支的依據。
+// 實作發明第二個名字,等於讓**每一個**消費者都多一個 case 要處理。
+//
+// 這一輪只寫測試,實作留給下一輪——所以下面這些是預期的紅燈。
+describe('GatewayLlmRouter.call — 完全離線(雲端不通 + 閘道也不通)', () => {
+  it.each(OFFLINE_NO_MODEL_TASKS)('%s 丟契約 §7 的 NO_MODEL,不是閘道的錯誤碼', async (task) => {
+    const h = makeHarness({ online: false, gatewayDown: true });
+    const err = await caught(() => h.router.call(task, '同源政策'));
+    expect(err).toBeInstanceOf(NoModelError);
+    expect(codeOf(err)).toBe('NO_MODEL');
+  });
+
+  it.each(OFFLINE_NO_MODEL_TASKS)('%s 把閘道的原始錯誤留在 cause 裡,診斷資訊不丟掉', async (task) => {
+    const h = makeHarness({ online: false, gatewayDown: true });
+    const err = await caught(() => h.router.call(task, '同源政策'));
+    const cause = (err as { cause?: unknown }).cause;
+    expect(cause).toBeInstanceOf(GatewayCallError);
+    expect(codeOf(cause)).toBe('GATEWAY_FAILED');
+    // cause 要是**這一次**閘道真的丟出來的那個,不是隨手 new 一個空殼。
+    expect(messageOf(cause)).toContain('ECONNREFUSED');
+  });
+
+  it.each(OFFLINE_NO_MODEL_TASKS)('%s 的訊息說得清「本機閘道不可達」,不是只有一句沒有模型', async (task) => {
+    const h = makeHarness({ online: false, gatewayDown: true });
+    const err = await caught(() => h.router.call(task, '同源政策'));
+    expect(messageOf(err)).toMatch(/gateway/i);
+    // 還是要看得出來是哪個 task ——NoModelError 原本就帶 task,別在改訊息時弄丟。
+    expect(messageOf(err)).toContain(task);
+  });
+
+  it.each(['ingest.cards', 'ingest.questions', 'ingest.deps'] as LlmTask[])(
+    '%s 不變:離線一律 CLOUD_REQUIRED,而且閘道一次都沒被打',
+    async (task) => {
+      const h = makeHarness({ online: false, gatewayDown: true });
+      const err = await caught(() => h.router.call(task, '同源政策'));
+      expect(err).toBeInstanceOf(CloudRequiredError);
+      expect(codeOf(err)).toBe('CLOUD_REQUIRED');
+      expect(h.gatewayChats).toBe(0);
+    },
+  );
+
+  it('probeLocal() 在閘道整台不在時回不可用,不 throw(phase-2 的行為不變)', async () => {
+    const h = makeHarness({ online: false, gatewayDown: true });
+    await expect(h.router.probeLocal()).resolves.toEqual({ available: false, models: [] });
+  });
+});
+
+describe('GATEWAY_FAILED 不從 router 的公開介面外洩', () => {
+  // GatewayCallError / `GATEWAY_FAILED` 是**閘道 adapter 的內部詞彙**:它描述的是
+  // 「那台代理這次不行」,不是呼叫端能拿來分支的東西。router 對外只講契約 §7 的詞
+  // (NO_MODEL / CLOUD_REQUIRED),加上 ADR-039 明寫要往外丟的兩個設定錯誤
+  // (GATEWAY_MODEL_REJECTED、BUDGET_EXCEEDED)。
+
+  it.each(ALL_TASKS)('%s:完全離線時丟出來的不是 GATEWAY_FAILED', async (task) => {
+    const h = makeHarness({ online: false, gatewayDown: true });
+    const err = await caught(() => h.router.call(task, '同源政策'));
+    expect(err).not.toBe(NOTHING_THROWN);
+    expect(err).not.toBeInstanceOf(GatewayCallError);
+    expect(codeOf(err)).not.toBe('GATEWAY_FAILED');
+  });
+
+  it('grade.fill.llm:在線但閘道不通,一樣不外洩', async () => {
+    // 契約 §7 對 grade.fill.llm 的「在線」那一欄寫的就是 local,所以對它來說
+    // 「閘道不通」仍然是「無本機」;§7 給這個 task 定義的失敗只有 NO_MODEL 一種。
+    const h = makeHarness({ online: true, gatewayDown: true });
+    const err = await caught(() => h.router.call('grade.fill.llm', '填空題'));
+    expect(err).not.toBe(NOTHING_THROWN);
+    expect(err).not.toBeInstanceOf(GatewayCallError);
+    expect(codeOf(err)).not.toBe('GATEWAY_FAILED');
+  });
+
+  it('在線、雲端失敗、閘道也不通:備援兩邊都掛掉時仍不外洩', async () => {
+    // 這一格契約 §7 沒有(那張表假設「在線」就等於雲端可用)。所以這裡**只**鎖住
+    // 「不准把閘道的內部錯誤碼丟給呼叫端」這一條;該丟原本那個雲端錯誤、還是
+    // NO_MODEL,是實作的選擇,這個測試刻意不指定。
+    const h = makeHarness({ cloudFails: Object.assign(new Error('503'), { status: 503 }), gatewayDown: true });
+    const err = await caught(() => h.router.call('deepen', '同源政策'));
+    expect(err).not.toBe(NOTHING_THROWN);
+    expect(err).not.toBeInstanceOf(GatewayCallError);
+    expect(codeOf(err)).not.toBe('GATEWAY_FAILED');
   });
 });
