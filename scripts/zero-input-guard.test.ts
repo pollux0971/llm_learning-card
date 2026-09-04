@@ -350,6 +350,15 @@ const ONE_FOLDER_DRY_RUN = ['--only', '01-data-layer', '--run-phases', 'nope/pha
 
 const OWNERS_OK = JSON.stringify({ owners: [['scripts/', 'infra']], glue: ['infra'], aliases: [], scanDirs: ['scripts'], contractsOwner: 'contracts' });
 
+/** 一個 DEGRADED_WITNESS_DIR 的樣子(ADR-044):目錄裡一個 worker 的 .jsonl,每一行一筆 WitnessRecord。 */
+function witnessDir(scratch: string, jsonl: string): string {
+  const d = emptyDir(scratch, 'raw');
+  file(d, 'worker-1.jsonl', jsonl);
+  return d;
+}
+
+const WITNESS_OK = `${JSON.stringify({ file: 'packages/core/src/llm/router.test.ts', test: 'falls back to gateway', signals: { 'llm.fallback.cloud-failed': 1 } })}\n`;
+
 // ───────────────────────────────────────────────────────────────── 清單
 
 const SCHEMA_CLI = 'packages/core/src/schema/cli.ts';
@@ -358,6 +367,38 @@ const ROSTER: Record<string, Entry> = {
   // ── 共用模組,不是入口 ──
   'scripts/_env.ts': { kind: 'helper', reason: 'side-effect import(ADR-034 的 .env 載入),沒有 main、沒有參數' },
   'scripts/_root.ts': { kind: 'helper', reason: '守門腳本共用的 repo 根與設定檔解析(模板 v1.3.4),只 export 函式' },
+  'scripts/degraded-witness.setup.ts': {
+    kind: 'helper',
+    reason:
+      'vitest 的 setupFile(vitest.config.ts 掛的),不是可執行入口、沒有 CLI 介面。' +
+      '只在設了 DEGRADED_WITNESS_DIR 時註冊 hook,沒設就一個 hook 都不註冊(ADR-044)',
+  },
+
+  // ── ADR-044 退化路徑見證器的彙總 ──
+  'scripts/degraded-report.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'degraded-report',
+        // 每一次呼叫都帶 --in 與 --out:不帶 --in 是它的預設行為「先跑整套 vitest 再彙總」
+        // (幾分鐘,而且它印了 ▶ 那行說明自己要做什麼,不算洞,只是探不起);不帶 --out
+        // 會寫進 repo 的 reports/degraded/。探的是 --in 目錄與參數的處理。
+        baselines: { healthy: (s) => ({ args: ['--in', witnessDir(s, WITNESS_OK), '--out', join(s, 'r.md')] }) },
+        probes: [
+          { kind: 'empty', name: '--in 是空目錄', build: (s) => ({ args: ['--in', emptyDir(s, 'raw'), '--out', join(s, 'r.md')] }) },
+          { kind: 'empty', name: '--in 裡的 .jsonl 是空檔', build: (s) => ({ args: ['--in', witnessDir(s, ''), '--out', join(s, 'r.md')] }) },
+          { kind: 'missing', name: '--in 不存在', build: (s) => { const p = missingPath(s, 'raw'); return { args: ['--in', p, '--out', join(s, 'r.md')], mention: p }; } },
+          { kind: 'missing', name: '--in 沒給值', build: (s) => ({ args: ['--out', join(s, 'r.md'), '--in'] }) },
+          { kind: 'malformed', name: '.jsonl 有一行壞 JSON', build: (s) => ({ args: ['--in', witnessDir(s, '{ "file": \n'), '--out', join(s, 'r.md')] }) },
+          { kind: 'malformed', name: '--in 指到一個檔案', build: (s) => ({ args: ['--in', file(s, 'raw.jsonl', WITNESS_OK), '--out', join(s, 'r.md')] }) },
+          { kind: 'malformed', name: '不認得的參數', build: (s) => ({ args: ['--bogus', '--out', join(s, 'r.md')] }) },
+          { kind: 'wrong-type', name: '每一行都是數字', build: (s) => ({ args: ['--in', witnessDir(s, '5\n6\n'), '--out', join(s, 'r.md')] }) },
+          { kind: 'wrong-type', name: '整檔是一個 JSON 陣列', build: (s) => ({ args: ['--in', witnessDir(s, `[${WITNESS_OK.trim()}]\n`), '--out', join(s, 'r.md')] }) },
+          { kind: 'wrong-type', name: '紀錄缺 signals 欄位', build: (s) => ({ args: ['--in', witnessDir(s, `${JSON.stringify({ file: 'a.test.ts', test: 't' })}\n`), '--out', join(s, 'r.md')] }) },
+        ],
+      },
+    ],
+  },
 
   // ── 邏輯本體在 core、入口在 scripts ──
   'packages/core/src/prompt-quality/cli.ts': {
