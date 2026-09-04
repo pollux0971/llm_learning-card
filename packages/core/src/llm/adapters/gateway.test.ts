@@ -49,6 +49,12 @@ interface FakeOpts {
   /** /gateway/models 回應前先等這麼久(測 probe 的逾時) */
   modelsDelayMs?: number;
   /**
+   * `/auth/token/exchange` 回應前先等這麼久(**會**正常回,不像 `tokenHangs` 永遠掛著)。
+   * 用來分辨「一個計時器管兩段」與「兩段各開一個計時器」——後者每一段都在自己的
+   * 額度內就都不會逾時,前者看的是兩段加起來。
+   */
+  tokenDelayMs?: number;
+  /**
    * `/auth/token/exchange` 永不回應——只有 abort 能結束它。重現「閘道的 auth
    * 端點掛住」:封包被防火牆黑洞吃掉,連 ECONNREFUSED 都不會回來。
    */
@@ -121,6 +127,16 @@ function makeFetch(opts: FakeOpts = {}): FakeFetch {
         // 那正是「probe 的逾時管不到換 token」現在的樣子。
         await new Promise<never>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      }
+      if (opts.tokenDelayMs !== undefined) {
+        // 跟 modelsDelayMs 同一個形狀:時間到就正常回,但中途被 abort 就立刻 reject。
+        await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(resolve, opts.tokenDelayMs);
+          init?.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(new DOMException('aborted', 'AbortError'));
+          });
         });
       }
       if (opts.rawOn === 'token') {
@@ -816,5 +832,99 @@ describe('GatewayClient.probe — 逾時要涵蓋換 token 那一步', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ============================== 審核補洞:一個計時器管兩段 vs 兩段各開一個計時器
+//
+// 上面那三條**分辨不出來**實作是哪一種:
+//
+//   - `tokenHangs` 那條:換 token 永遠不回。兩段各開一個 5 秒計時器的話,換 token
+//     那一段自己的計時器一樣會在 5 秒 abort 它 → 一樣回不可用 → 一樣綠。
+//   - `hasSignal` 那條:兩種做法都會**帶** signal,只是帶的是不是同一個。
+//   - `getTimerCount` 那條:兩種做法最後都會清乾淨。
+//
+// 差別只在**額度是共用還是各算**。所以要一個「每一段都在額度內、但加起來超過」的
+// 情境才分得出來:換 token 花 4 秒、`/gateway/models` 再花 2 秒,總共 6 秒。
+//
+//   - 一個計時器管兩段(現在的實作):5 秒到的時候第二個請求還在飛 → abort → 不可用。
+//   - 兩段各開一個 5 秒的計時器:4 < 5、2 < 5,兩段都沒逾時 → 回**可用**。
+//
+// 這是「逾時涵蓋整個 probe 流程」這句話真正的意思。少了這條,把 `probe()` 改成
+// 各開一個 controller 仍然全綠,而閘道換成網域之後(auth 端點慢、models 端點也慢)
+// probe 就會拖到接近兩倍的時間才回答一個「可不可用」的問題。
+describe('GatewayClient.probe — 逾時是整段流程共用一份額度,不是每段各一份', () => {
+  it('換 token 4 秒 + models 2 秒(各自都沒超過 5 秒,加起來超過)→ 回不可用', async () => {
+    vi.useFakeTimers();
+    try {
+      const fake = makeFetch({ tokenDelayMs: 4_000, modelsDelayMs: 2_000 });
+      let settled: unknown;
+      void client(fake, { probeTimeoutMs: GATEWAY_PROBE_TIMEOUT_MS })
+        .probe()
+        .then(
+          (result) => {
+            settled = result;
+          },
+          (err: unknown) => {
+            settled = err;
+          },
+        );
+
+      await vi.advanceTimersByTimeAsync(GATEWAY_PROBE_TIMEOUT_MS * 10);
+
+      // 兩段各算一份額度的實作在這裡會拿到 { available: true, models: [...] }。
+      expect(settled).toEqual({ available: false, models: [] });
+      // 兩段都真的打出去過——不是在第一段就掛掉、根本沒走到第二段。
+      expect(fake.tokenCalls).toBe(1);
+      expect(fake.modelCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('對照組:同樣的 4 秒 + 2 秒,額度放寬到 10 秒就回可用', async () => {
+    // 沒有這一條的話,上面那條可能是被「假的延遲根本回不來」這種理由弄綠的,
+    // 而不是被逾時。兩條一起看才證明分辨的是**額度**,不是別的東西。
+    vi.useFakeTimers();
+    try {
+      const fake = makeFetch({ tokenDelayMs: 4_000, modelsDelayMs: 2_000 });
+      let settled: unknown;
+      void client(fake, { probeTimeoutMs: 10_000 })
+        .probe()
+        .then(
+          (result) => {
+            settled = result;
+          },
+          (err: unknown) => {
+            settled = err;
+          },
+        );
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(settled).toEqual({ available: true, models: Object.keys(MODELS) });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('probe 的兩個請求帶的是**同一個** AbortSignal(共用額度的機制前提)', async () => {
+    // 上面兩條測行為,這條測機制。兩個 fetch 各拿各的 controller 的話,
+    // 「共用一份額度」就只是巧合,下一個人重構時沒有東西擋著。
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const inner = makeFetch();
+    const spying = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(init?.signal);
+      return inner.fetchImpl(input, init);
+    }) as typeof fetch;
+
+    await new GatewayClient({
+      config: { baseUrl: BASE, apiKey: KEY, model: MODEL },
+      fetchImpl: spying,
+    }).probe();
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+    expect(seen[1]).toBe(seen[0]);
   });
 });
