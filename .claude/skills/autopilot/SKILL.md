@@ -25,7 +25,7 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 | 情況 | 誰決定 | 怎麼做 |
 |---|---|---|
 | 派工順序、合併順序、worktree、審核回合 | **協調者自己** | 直接做 |
-| 技術取捨:資料結構、介面形狀、規格措辭、gate 例外、要不要重跑、變異存活怎麼分類 | **技術顧問**(session `llm-learning-cards-57`) | SendMessage 問,附你的傾向;**30 分鐘沒回就照保守選項做**,記 ADR 標「待覆核」,下一輪再提 |
+| 技術取捨:資料結構、介面形狀、規格措辭、gate 例外、要不要重跑、變異存活怎麼分類 | **技術顧問**(session 名會變,見 `CLAUDE.md` 的「做決定時」;目前 `llm-learning-cards-61`,找不到就 `ListAgents` 找「llm-learning-cards-」開頭且不是自己的那個) | SendMessage 問,附你的傾向;**30 分鐘沒回就照保守選項做**,記 ADR 標「待覆核」,下一輪再提 |
 | 新功能、新需求、改「不在範圍」 | **使用者** | `/feature` 分流出提案,放進「等老闆」清單,**不擋其他工作** |
 | 改 `contracts/` 硬約定、改 `CLAUDE.md` | **使用者** | 同上,附 ADR 草稿 |
 | 花錢超過當日上限(`LLM_DAILY_CAP_USD`) | **使用者** | 不跑;@llm 場景延到明天或等他加碼 |
