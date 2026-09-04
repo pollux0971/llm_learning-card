@@ -106,6 +106,11 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 - `worker-start` 只用在一個 worktree 的**第一輪**。同一 worktree 的第二、三輪(debug / 再審):
   `terminal create` → `terminal send 'claude --dangerously-skip-permissions' --enter` → `terminal wait --for tui-idle` → `dispatch --inject`。
   少中間兩步會 `no recognized agent detected`;重用舊終端機常 `agent_unconfigured`。**永遠開新終端機**,交接靠 worktree 裡的 REVIEW.md(P-17)
+- **worker 用 `orchestration ask` 阻塞時,只能用 `orchestration reply --id <msg_id>` 解,`send` 不行**(P-45)。
+  `send` 送得到那個終端機,但**不會解除 `ask` 的阻塞** —— worker 等到逾時後自己走保守選項,
+  而協調者以為自己回了。**兩邊都以為溝通成功,而且沒有任何錯誤訊息。**
+  判斷:`check` 回來的 message `type` 是 `question` → 用 `reply`;其他才用 `send`。
+  **順序也重要:先 `reply` 再 `ack`** —— ack 之後 `check` 就抓不到那個 msg_id 了,只能退而用 `send`(就是踩坑的那次)。
 - `check --wait` 可能回**已處理過的舊訊息**(`"replayed": true`),要 `--ack <deliveryId>` 再等下一則,不然空轉
 - 開 worktree 明確指定起點(`--base-branch main` 或 `git worktree add -b <branch> <path> main`),開完驗 `git merge-base --is-ancestor main <branch>`(P-18)
 
