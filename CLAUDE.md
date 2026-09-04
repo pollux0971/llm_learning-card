@@ -71,4 +71,9 @@ phase 驗收的四項核心檢查、端到端場景。其餘可以先關掉,需�
 
 ## 做決定時
 
-任何「A 或 B」先查 `02-decision-map.md` 有沒有決定過。有,照做。沒有,問使用者,再 `/decide`。不要自己默默選一個。
+任何「A 或 B」先查 `02-decision-map.md` 有沒有決定過。有,照做。
+沒有:技術取捨(資料結構、介面、規格措辭、gate 例外、重跑與否)問技術顧問 session
+(`llm-learning-cards-57`),它決定後 `/decide` 記 ADR。只有三種情況問使用者:
+新功能或改「不在範圍」、改 `contracts/` 硬約定或本檔、當日 LLM 花費超過 `LLM_DAILY_CAP_USD`。
+問使用者時附選項與建議。人眼確認(`@manual`、`@e2e`)的觀感判定由技術顧問做,列清單即可,不擋其他工作。
+權責表與協調者的迴圈見 `.claude/skills/autopilot/SKILL.md`。
