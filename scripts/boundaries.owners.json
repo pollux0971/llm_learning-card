@@ -101,6 +101,10 @@
       "08-weekly-goal"
     ],
     [
+      "scripts/weekly.test.ts",
+      "08-weekly-goal"
+    ],
+    [
       "scripts/lint.ts",
       "09-lint"
     ],
