@@ -92,6 +92,7 @@ import type { LlmRouter } from '@core/llm/index.js';
 import { computeAndSaveCategoryOrder, detectCycle, type Graph } from '@core/schema/graph.js';
 import { atomicWriteJson, appendLogEvent } from './state.js';
 import { loadPromptTemplate } from './prompts.js';
+import { CORRUPT_HEAD_BYTES, GraphFileCorruptError } from './errors.js';
 
 // Stryker disable next-line all: 模組載入時執行一次的靜態初始化,coverageAnalysis: perTest 下不歸屬任何測試(coveredBy 恆為空),
 // 錯字會讓 readFileSync 在 import 當下就丟 ENOENT、整個測試檔案載入失敗,等同被所有測試殺死,只是 Stryker 的 per-test 模型算不出來。
@@ -212,9 +213,6 @@ export function computeDepsMaxTokens(cardCount: number): number {
  * 猜出來的內容蓋掉使用者的檔。這條要丟 `GraphFileCorruptError`(帶路徑與開頭
  * 200 位元組),**不覆寫、不刪那個檔**,留給人看;order 檔也一併不動。
  *
- * TODO(ADR-041):下面的 `JSON.parse` 還是裸的,壞檔會丟出裸的 `SyntaxError`。
- * 要包成 `GraphFileCorruptError`(見 ./errors.ts),對應的測試現在是紅的。
- *
  * 行為規格見同目錄 deps.test.ts 的 describe('removeCategoryGraph') 與
  * features/02-ingest-pipeline/phase-2.feature 的
  * 「Exhausting the drop limit removes the category's stale graph data」、
@@ -225,7 +223,20 @@ export function removeCategoryGraph(outDir: string, category: CategoryId): void 
   const depsPath = join(graphDir, 'deps.json');
 
   if (existsSync(depsPath)) {
-    const existing = JSON.parse(readFileSync(depsPath, 'utf8')) as Record<string, Graph>;
+    // 讀成 Buffer:錯誤要帶的是開頭 200 個**位元組**,不是 200 個字元。
+    const raw = readFileSync(depsPath);
+    let existing: Record<string, Graph>;
+    try {
+      existing = JSON.parse(raw.toString('utf8')) as Record<string, Graph>;
+    } catch (err) {
+      // ADR-041:在這裡就丟,所以下面的 order 檔也一併不動 —— 什麼都還沒判斷
+      // 出來就先刪東西是最糟的順序。壞掉的內容是現場,不覆寫、不刪,留給人看。
+      throw new GraphFileCorruptError(
+        depsPath,
+        raw.subarray(0, CORRUPT_HEAD_BYTES).toString('utf8'),
+        err as Error,
+      );
+    }
     // 沒有這個 key 就不重寫:讓「沒東西可刪」真的是一次 no-op。
     if (Object.hasOwn(existing, category)) {
       const { [category]: _removed, ...rest } = existing;
@@ -383,13 +394,24 @@ export async function analyzeDependencies(
       // 讓「沒有圖」是一個明確狀態。順序:先移除,再記 warning(warning 是這次
       // 事件的紀錄,清理是磁碟狀態的收斂,兩者都要發生)。
       //
-      // TODO(ADR-041):`removeCategoryGraph()` 丟 `GraphFileCorruptError` 時
-      // (deps.json 存在但不是合法 JSON)要另外處理:那代表**圖檔整個讀不出來**,
-      // 下面這筆「殘留環」的 warning 在語意上根本到不了(連上一次的圖長什麼樣都
-      // 不知道)。兩個失敗要各自有名字——改記一筆 reason: 'graph file corrupt'
-      // 的 warning(**恰好一筆**,殘留環那筆不記),然後把錯誤往外丟,讓 CLI 以
-      // 非 0 退出碼結束。檔案本身不覆寫、不刪,留給人看。
-      removeCategoryGraph(outDir, category);
+      // 例外(ADR-041):圖檔存在但讀不出來。那代表連上一次的圖長什麼樣都不知道,
+      // 下面那筆「殘留環」的 warning 在語意上根本到不了 —— 兩個失敗各自有名字,
+      // 改記一筆 reason: 'graph file corrupt' 的 warning(**恰好一筆**),再把錯誤
+      // 往外丟,讓 CLI 以非 0 退出碼結束。檔案本身不覆寫、不刪,留給人看。
+      try {
+        removeCategoryGraph(outDir, category);
+      } catch (err) {
+        if (err instanceof GraphFileCorruptError) {
+          appendLogEvent(logPath, {
+            ts: new Date().toISOString(),
+            type: 'warning',
+            file: 'graph/deps.json',
+            reason: 'graph file corrupt',
+            message: err.message,
+          });
+        }
+        throw err;
+      }
       appendLogEvent(logPath, {
         ts: new Date().toISOString(),
         type: 'warning',

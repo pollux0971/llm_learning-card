@@ -13,6 +13,7 @@ import { validateCard } from '@core/schema/validate-card.js';
 import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
 import { generateChildrenForCards } from './children.js';
 import { analyzeDependencies } from './deps.js';
+import { GraphFileCorruptError } from './errors.js';
 import type { LlmRouter as CoreLlmRouter } from '@core/llm/index.js';
 
 export interface RunIngestOptions {
@@ -328,10 +329,12 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     edgesRemoved = result.edgesRemoved;
     cycleUnresolved = result.cycleUnresolved;
   } catch (err) {
-    // TODO(ADR-041):`GraphFileCorruptError` 不可以走這條「已略過」的路。
-    // graph/deps.json 讀不出來是磁碟完整性問題,不是「這次圖沒算成功」——吞掉它
-    // 會讓 CLI 以 0 退出、而且多記一筆跟真正原因無關的 warning(違反「恰好一筆」)。
-    // 要 re-throw,讓 scripts/ingest.ts 的 main().catch 以非 0 退出碼結束。
+    // ADR-041:`GraphFileCorruptError` 不可以走這條「已略過」的路。graph/deps.json
+    // 讀不出來是**磁碟完整性問題**,不是「這次圖沒算成功」——吞掉它會讓 CLI 以 0
+    // 退出(操作者以為 ingest 成功了),而且會多記一筆跟真正原因無關的 warning,
+    // 違反「恰好一筆」。往外丟,讓 scripts/ingest.ts 的 main().catch 以非 0 結束。
+    // warning 已經由 analyzeDependencies() 記過了,這裡不再記第二筆。
+    if (err instanceof GraphFileCorruptError) throw err;
     appendLogEvent(logPath, {
       ts: new Date().toISOString(),
       type: 'warning',
