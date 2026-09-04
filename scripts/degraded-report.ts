@@ -326,7 +326,7 @@ export function renderReport(opts: {
   L.push(`| 量測的 commit | \`${sha}\` |`);
   L.push(`| 產生時間 | ${summary.generatedAt} |`);
   L.push(`| 指令 | \`${md(command)}\` |`);
-  L.push(`| 測試檔 / 測試 | ${summary.testFiles} / ${summary.tests} |`);
+  L.push(`| 測試檔 / 測試(只算實際執行的;skipped 沒有 afterEach,不進分母) | ${summary.testFiles} / ${summary.tests} |`);
   L.push(`| 訊號目錄 / 有呼叫點 / 被觸發 | ${summary.signalsInCatalog} / ${summary.signalsWithCallSites} / ${summary.signalsTriggered} |`);
   L.push('');
   L.push('## 1. 基準數字');
