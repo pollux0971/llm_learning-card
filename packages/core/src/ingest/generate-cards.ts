@@ -2,6 +2,7 @@
 import type { LlmRouter } from './types.js';
 import { countBodyWords, BODY_WORD_LIMIT } from './word-count-min.js';
 import { loadPromptTemplate } from './prompts.js';
+import { witness } from '@contracts/witness.js';
 
 const CARDS_TEMPLATE = loadPromptTemplate('cards');
 const REGENERATE_TEMPLATE = loadPromptTemplate('regenerate');
@@ -56,6 +57,7 @@ export async function generateCards(
     let attemptNum = 1;
     while (countBodyWords(current.body) > BODY_WORD_LIMIT && attemptNum < MAX_ATTEMPTS) {
       attemptNum += 1;
+      witness('ingest.cards.regenerate-retry');
       const [regenerated] = await callAndParse(router, buildRegeneratePrompt(opts, current));
       if (!regenerated) throw new Error('regenerate 回應沒有回傳卡片');
       current = { ...current, body: regenerated.body, examples: regenerated.examples ?? current.examples };

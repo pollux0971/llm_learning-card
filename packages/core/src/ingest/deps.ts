@@ -87,6 +87,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stringify as yamlStringify } from 'yaml';
+import { witness } from '@contracts/witness.js';
 import type { Card, CardId, CategoryId } from '@contracts/index.js';
 import type { LlmRouter } from '@core/llm/index.js';
 import { computeAndSaveCategoryOrder, detectCycle, type Graph } from '@core/schema/graph.js';
@@ -375,6 +376,7 @@ export async function analyzeDependencies(
 
   if (cycle.hasCycle) {
     // 模型呼叫就此打住,最多兩次——第二次之後不管有沒有循環都改用本地迴圈修。
+    witness('ingest.deps.cycle-llm-retry');
     const retryEdges = await fetchEdges(router, category, cards, maxTokens, cycle.path);
     edges = mergeEdges(retryEdges, parentEdges);
 
@@ -382,6 +384,7 @@ export async function analyzeDependencies(
     graph = repaired.graph;
     edgesRemoved = repaired.edgesRemoved;
     for (const edge of edgesRemoved) {
+      witness('ingest.deps.cycle-local-repair');
       appendLogEvent(logPath, { ts: new Date().toISOString(), type: 'cycle_removed', category, edge });
     }
 

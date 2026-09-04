@@ -65,6 +65,7 @@ import { z } from 'zod';
 import type { LogEvent } from '@contracts/index.js';
 import { recordEvent } from '@core/schema/log.js';
 import { countWords } from '@core/schema/word-count.js';
+import { witness } from '@contracts/witness.js';
 import type { LlmRouter } from './types.js';
 
 /** 契約 §3 ApplyQuestion 的可執行版本(05 自己的落點內複製,理由同 ./types.ts 開頭的說明)。 */
@@ -193,11 +194,13 @@ export async function gradeApply(
     verdict = parseApplyVerdict(llmResult.text, rubricCriteriaCount);
     if (verdict) break;
     if (attempt === 0) {
+      witness('grading.apply.invalid-response-retry');
       log({ ts: new Date().toISOString(), type: 'warning', task: 'grade.apply', reason: 'invalid_response_retry' });
     }
   }
 
   if (!verdict) {
+    witness('grading.apply.unparsable-skipped');
     return { pass: null, feedback: '模型回應無法解析,略過本次審核', grader: 'error' };
   }
 

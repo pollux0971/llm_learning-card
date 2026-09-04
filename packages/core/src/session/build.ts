@@ -10,6 +10,7 @@ import { buildDueList, selectSession, type SchedulableCard } from '@core/schedul
 import { FakeLlmRouter, loadFixturesFromDir, type LlmRouter } from '@core/grading/index.js';
 import { resolve } from 'node:path';
 import { loadReviews, loadSettings } from './io.js';
+import { witnessed } from '@contracts/witness.js';
 import type { Session } from './types.js';
 
 const LLM_FIXTURES_DIR = resolve(import.meta.dirname, '../../../../contracts/fixtures/llm');
@@ -83,7 +84,7 @@ export async function buildTodaySession(ctx: BuildSessionCtx): Promise<Session> 
 
   const result = selectSession(schedulable, { dailyCap: settings.daily_cap, reteach: reteachQueue });
 
-  const router = ctx.router ?? new FakeLlmRouter(loadFixturesFromDir(LLM_FIXTURES_DIR));
+  const router = ctx.router ?? witnessed('session.router-default-fake', new FakeLlmRouter(loadFixturesFromDir(LLM_FIXTURES_DIR)));
 
   return {
     learningDir: ctx.learningDir,

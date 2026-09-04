@@ -52,6 +52,7 @@
 import type { CloudAdapter, CloudProvider, LlmResult, LlmRouter, LlmTask } from './types.js';
 import { CloudLlmRouter, type CloudLlmRouterOptions, type CloudSettings } from './router.js';
 import { decideRoute, ROUTING_TABLE, type RouteGroup } from './routing.js';
+import { witness, witnessed } from '@contracts/witness.js';
 import type { LogAppender } from './router.js';
 
 export type LocalProber = () => Promise<{ available: boolean; models: string[] }>;
@@ -109,7 +110,8 @@ export class LlmRouterImpl implements LlmRouter {
     this.settings = opts.settings ?? {};
     this.now = opts.now ?? Date.now;
     this.onlineProbeTtlMs = opts.onlineProbeTtlMs ?? 60_000;
-    this.localProber = opts.localProber ?? alwaysUnavailable;
+    // Stryker disable next-line all: ADR-044 的觀測點,對測試不可觀測是設計,不是漏測。
+    this.localProber = opts.localProber ?? (() => witnessed('llm.router-impl.local-prober-default', alwaysUnavailable()));
     this.routingTable = opts.routingTable ?? ROUTING_TABLE;
     this.cloudRouter = opts.cloudRouter ?? new CloudLlmRouter(this.buildCloudRouterOptions(opts));
     this.onlineProber = opts.onlineProber ?? (() => this.cloudRouter.probeOnline());
@@ -156,6 +158,7 @@ export class LlmRouterImpl implements LlmRouter {
     try {
       return await this.localProber();
     } catch {
+      witness('llm.router-impl.probe-local-swallowed');
       return { available: false, models: [] };
     }
   }

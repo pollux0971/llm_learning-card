@@ -56,6 +56,7 @@ import type { LlmRouter } from '@core/llm/index.js';
 import { LlmTimeoutError, OutputTruncatedError, TASK_MAX_TOKENS } from '@core/llm/index.js';
 import { validateQuestionFile } from '@core/schema/validate-question.js';
 import { appendLogEvent } from './state.js';
+import { witness } from '@contracts/witness.js';
 import { loadPromptTemplate } from './prompts.js';
 
 // Stryker disable next-line all: 模組載入時執行一次的靜態初始化,coverageAnalysis: perTest 下不歸屬任何測試(coveredBy 恆為空),
@@ -133,6 +134,7 @@ async function callQuestionsOnceWithRetry(
   } catch (err) {
     const reason = retryReasonOf(err);
     if (!reason) throw err;
+    witness('ingest.questions.retry');
     onRetry?.(reason);
     // 截斷加倍預算;逾時與網路抖動原樣重打(預算不是問題,再打一次可能就過了)。
     const opts = reason === 'output_truncated' ? { maxTokens: RETRY_MAX_TOKENS } : undefined;
@@ -198,6 +200,7 @@ export async function generateQuestionsForCards(
       writeQuestionFile(outDir, file);
       written.push(card.frontmatter.id);
     } catch (err) {
+      witness('ingest.questions.card-failed-skipped');
       failures.push({ card: card.frontmatter.id, error: (err as Error).message });
     }
   }
