@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: regenerate-preflight",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"預檢請求\", \"body\": \"會改狀態或帶自訂標頭的跨來源請求,瀏覽器先問過伺服器才送出;結果可以快取。\", \"examples\": [], \"lines\": [26, 34]}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

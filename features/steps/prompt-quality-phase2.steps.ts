@@ -125,7 +125,7 @@ async function performLiveRun(): Promise<void> {
   p2.baseDir = newTmpDir();
   try {
     p2.golden = await runGolden({
-      task: 'grade.apply',
+      set: 'selftest',
       today: '2026-09-10',
       baseDir: p2.baseDir,
       mode: 'live',
@@ -139,16 +139,16 @@ async function performLiveRun(): Promise<void> {
 
 /** 在暫存目錄裡假造一次已經寫好的 run(不呼叫模型),給回歸流程的場景用。 */
 function makeRun(baseDir: string, date: string, outputs: Record<string, string>, opts: { commit?: string; scores?: string } = {}): string {
-  const dir = join(baseDir, 'grade.apply', date);
+  const dir = join(baseDir, 'selftest', date);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'meta.json'),
-    JSON.stringify({ task: 'grade.apply', date, model: MODEL, provider: 'anthropic', promptFileGitCommit: opts.commit ?? 'aaa1111', mode: 'live' }),
+    JSON.stringify({ set: 'selftest', task: 'grade.apply', date, model: MODEL, provider: 'anthropic', promptFileGitCommit: opts.commit ?? 'aaa1111', mode: 'live' }),
   );
   for (const [id, text] of Object.entries(outputs)) {
     writeFileSync(join(dir, `${id}.output.json`), JSON.stringify({ id, text, structural: { issues: [], note: '' } }));
   }
-  writeFileSync(join(dir, 'SCORES.md'), opts.scores ?? renderScoresSheet('grade.apply', date, Object.keys(outputs)));
+  writeFileSync(join(dir, 'SCORES.md'), opts.scores ?? renderScoresSheet('selftest', date, Object.keys(outputs)));
   return dir;
 }
 
@@ -209,7 +209,7 @@ Given('a level 1 card whose prereqs contain a level 0 card', function () {
 
 Given('no previous golden run exists for a task', function () {
   p2.baselineBase = newTmpDir();
-  assert.equal(findBaseline(p2.baselineBase, 'grade.apply'), undefined);
+  assert.equal(findBaseline(p2.baselineBase, 'selftest'), undefined);
 });
 
 Given('a prompt file has changed since the last golden run', function () {
@@ -258,7 +258,7 @@ When('a live golden run is performed and scored', async function () {
 
 When('the check command is run', function () {
   assert.ok(p2.baselineBase, 'Given 步驟要先立基準');
-  p2.drift = detectPromptDrift(p2.baselineBase, 'grade.apply', 'bbb2222');
+  p2.drift = detectPromptDrift(p2.baselineBase, 'selftest', 'bbb2222');
 });
 
 When('the comparison runs', function () {
@@ -399,7 +399,7 @@ Then('four graph shape problems are listed', function () {
 
 Then('the scoring sheet lists exactly two dimensions for the person', function () {
   assert.ok(p2.golden, String(p2.liveError));
-  const sheet = renderScoresSheet('grade.apply', '2026-09-10', ['demo-1']);
+  const sheet = renderScoresSheet('selftest', '2026-09-10', ['demo-1']);
   const header = sheet.split('\n').find((l) => l.startsWith('| id'));
   assert.equal(header, '| id | 正確嗎 | 是一個概念嗎 |');
 });
@@ -421,12 +421,12 @@ Then('that section is present even when both counts are zero', function () {
 
 Then('that run is marked as the baseline', function () {
   assert.ok(p2.baselineBase && p2.baselineDir);
-  assert.equal(findBaseline(p2.baselineBase, 'grade.apply')?.dir, p2.baselineDir);
+  assert.equal(findBaseline(p2.baselineBase, 'selftest')?.dir, p2.baselineDir);
 });
 
 Then('later runs are compared against it by default', function () {
   assert.ok(p2.baselineBase);
-  const baseline = findBaseline(p2.baselineBase, 'grade.apply');
+  const baseline = findBaseline(p2.baselineBase, 'selftest');
   assert.ok(baseline, '找不到基準');
   assert.ok(existsSync(baseline.dir), baseline.dir);
 });

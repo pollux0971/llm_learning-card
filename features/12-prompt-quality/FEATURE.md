@@ -37,9 +37,14 @@
 ## 單獨執行
 
 ```bash
-npx tsx scripts/prompt-check.ts --golden --task ingest.cards --fake
+npx tsx scripts/prompt-check.ts --list
+npx tsx scripts/prompt-check.ts --golden --set ingest.cards --fake
 npx tsx scripts/prompt-check.ts --diff prompts/golden/ingest.cards/2026-09-10 prompts/golden/ingest.cards/2026-10-01
 ```
+
+`--list` 印出登記了哪些 golden set,而且**沒被任何 golden set 引用的 prompt 檔會讓它退出碼 1**
+(掃到 0 個檔也是 1,P-28)。`--set` 收的是 golden set id,不是契約 §7 的 LlmTask;
+`--task` 是它的舊名字,行為一樣。
 
 `--fake` 用重播 fixture,所以單獨執行不花錢也不需要網路;它的輸出存到不進 git 的
 `golden-fake/`(要存到別處用 `--out <目錄>`)。
@@ -218,3 +223,56 @@ phase-2 自己的 `@manual @llm` 場景寫的是「a live golden run is performe
 那個 prompt。**「改了 prompt 沒人發現品質變差」正是這個資料夾存在的唯一理由。**
 
 不另立 phase 3——那等於把「沒做完」改名。補登記後才算 done。
+
+## phase 2 的補完:真的 golden set 登記了(2026-09-04)
+
+### 登記了什麼
+
+`packages/core/prompts/ingest/` 底下五個檔各一組 golden set,每組 3 個輸入:
+
+| golden set id | prompt 檔 | 送出去的 `LlmTask` |
+|---|---|---|
+| `ingest.cards` | `prompts/ingest/cards.md` | `ingest.cards` |
+| `ingest.children` | `prompts/ingest/children.md` | `ingest.cards` |
+| `ingest.regenerate` | `prompts/ingest/regenerate.md` | `ingest.cards` |
+| `ingest.questions` | `prompts/ingest/questions.md` | `ingest.questions` |
+| `ingest.deps` | `prompts/ingest/deps.md` | `ingest.deps` |
+| `selftest` | `golden-sets/grade.apply.selftest-prompt.md` | `grade.apply` |
+
+Wave 0 的 demo 改名為 `selftest`,從真實任務清單(`REAL_TASK_GOLDEN_SET_IDS`)排除。
+**05 尚未提供 prompt 檔,`grade.apply` 的真實登記待 05。**
+
+### 為什麼 key 不能是 `LlmTask`
+
+契約 §7 的權威清單只有七個任務,**沒有 `ingest.children`、也沒有 `regenerate`**。
+查證結果:`cards.md`(`generate-cards.ts:77`)、`children.md`(`children.ts:126`)、
+`regenerate.md`(`generate-cards.ts` 的 regenerate 路徑)**三個檔都用同一個 `'ingest.cards'`**
+呼叫 router。用任務名當登記表的 key,那三個檔只能登記一個,另外兩個會靜靜地沒有基準。
+
+所以登記表改用 `GoldenSetId` 當 key(`types.ts`),`GoldenSet.task` 仍然只放契約 §7 的值。
+**契約一個字都沒有改。** 連帶:golden run 的輸出目錄從 `<base>/<task>/<date>` 改成
+`<base>/<set>/<date>`,`GoldenRunMeta` 多一個 `set` 欄位,`compare` / `findBaseline` /
+`detectPromptDrift` 改用 set id,CLI 的旗標是 `--set`(`--task` 保留為舊名)。
+
+### 輸入怎麼切
+
+全部從 `contracts/fixtures/raw/security-basics.md` 讀出來(**不改那個檔**,唯讀),
+切成它自己的三個 `##` 小節:同源政策(3–12)、跨來源資源共享(14–24)、預檢請求(26–34)。
+選這三段是因為長度不同(CORS 最長、預檢最短)、結構不同(定義+列舉 / 機制+例外 / 流程+快取)。
+`raw-slices.ts` 是執行時讀、不是複製一份,`raw-slices.test.ts` 用行號、標題與字數把它釘住:
+那個 fixture 真的被動到時是**測試紅**,不是基準悄悄換掉。
+
+`ingest.deps` 吃的是卡片清單不是文章,所以它的三個輸入是三份清單(3 張、2 張、
+倒過來的 3 張),id 與 title 都取自那三個小節的標題。
+
+### prompt 檔真的被送出去了
+
+`composeGoldenPrompt()` 把 `promptFile` 的內容接在輸入前面。少了這一步,golden run 只是把
+prompt 檔快照下來卻從來沒送出去——改了 `cards.md` 再 `--diff` 只會拿到「沒有變化」。
+`golden-run.test.ts` 有一條專門的斷言:送進 router 的 prompt 一定包含快照的內容。
+
+### 守門
+
+`golden-sets/registry.test.ts` 斷言 `packages/core/prompts/**/*.md` 的每一個檔都被某個
+golden set 的 `promptFile` 引用,**掃到 0 個檔也紅**(P-28)。`--list` 是同一個判斷的 CLI 版本。
+反向驗證方式:真的放一個 `packages/core/prompts/ingest/_probe.md`,守門測試與 `--list` 都會紅。

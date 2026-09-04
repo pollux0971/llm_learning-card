@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: children-cors",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"為什麼需要跨來源\", \"body\": \"前端在一個網域、API 在另一個網域是很常見的架構,同源政策擋得徹底就得有解法。\", \"examples\": []}, {\"title\": \"請求成功不等於讀得到\", \"body\": \"標頭不符合時,即使請求成功,瀏覽器也不把內容交給網頁。\", \"examples\": []}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: cards-preflight",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"預檢請求是什麼\", \"body\": \"改變伺服器狀態的方法、或帶自訂標頭的請求,瀏覽器會先發一個詢問請求,問伺服器願不願意接受。\", \"examples\": [], \"lines\": [28, 29]}, {\"title\": \"預檢保護的是舊系統\", \"body\": \"舊系統沒有預期會收到跨來源的寫入請求,預檢先問過才送真正的請求。\", \"examples\": [], \"lines\": [31, 32]}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

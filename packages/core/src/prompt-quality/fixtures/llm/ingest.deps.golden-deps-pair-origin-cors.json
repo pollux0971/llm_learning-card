@@ -1,0 +1,12 @@
+{
+  "task": "ingest.deps",
+  "prompt_contains": "golden: deps-pair-origin-cors",
+  "attempt": 1,
+  "response": {
+    "text": "{\"edges\": [[\"sec-golden-same-origin\", \"sec-golden-cors\"]]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

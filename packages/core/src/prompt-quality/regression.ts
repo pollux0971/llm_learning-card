@@ -15,7 +15,7 @@ import type {
   BaselineInfo,
   CompareResult,
   GoldenRunMeta,
-  LlmTask,
+  GoldenSetId,
   PromptDrift,
   RegressionReview,
   ScoreDimension,
@@ -26,10 +26,10 @@ export const BASELINE_MARKER = 'BASELINE.json';
 
 export class BaselineAlreadyExistsError extends Error {
   constructor(
-    public readonly task: string,
+    public readonly set: string,
     public readonly existingDir: string,
   ) {
-    super(`task「${task}」已經有基準了:${existingDir}。基準只立一次,之後的 run 是拿來跟它比的。`);
+    super(`golden set「${set}」已經有基準了:${existingDir}。基準只立一次,之後的 run 是拿來跟它比的。`);
     this.name = 'BaselineAlreadyExistsError';
   }
 }
@@ -40,16 +40,16 @@ export class BaselineAlreadyExistsError extends Error {
  */
 export function markBaseline(baseDir: string, runDir: string): BaselineInfo {
   const meta = JSON.parse(readFileSync(join(runDir, 'meta.json'), 'utf8')) as GoldenRunMeta;
-  const existing = findBaseline(baseDir, meta.task);
+  const existing = findBaseline(baseDir, meta.set);
   // 先檢查再寫:拒絕的那一次不能在第二個 run 目錄留下標記檔。
-  if (existing) throw new BaselineAlreadyExistsError(meta.task, existing.dir);
+  if (existing) throw new BaselineAlreadyExistsError(meta.set, existing.dir);
   writeFileSync(join(runDir, BASELINE_MARKER), JSON.stringify(meta, null, 2));
-  return toBaselineInfo(meta.task, runDir, meta);
+  return toBaselineInfo(meta.set, runDir, meta);
 }
 
 /** 找出一個任務的基準 run;沒有就 undefined。 */
-export function findBaseline(baseDir: string, task: LlmTask): BaselineInfo | undefined {
-  const taskDir = join(baseDir, task);
+export function findBaseline(baseDir: string, set: GoldenSetId): BaselineInfo | undefined {
+  const taskDir = join(baseDir, set);
   if (!existsSync(taskDir)) return undefined;
   // 目錄名是日期,排序後由舊到新——真的有兩個標記檔時取最早的那個,
   // 「基準只立一次」的意思就是最早那次才算數。
@@ -58,13 +58,13 @@ export function findBaseline(baseDir: string, task: LlmTask): BaselineInfo | und
     const dir = join(taskDir, entry.name);
     const marker = join(dir, BASELINE_MARKER);
     if (!existsSync(marker)) continue;
-    return toBaselineInfo(task, dir, JSON.parse(readFileSync(marker, 'utf8')) as GoldenRunMeta);
+    return toBaselineInfo(set, dir, JSON.parse(readFileSync(marker, 'utf8')) as GoldenRunMeta);
   }
   return undefined;
 }
 
-function toBaselineInfo(task: LlmTask, dir: string, meta: GoldenRunMeta): BaselineInfo {
-  return { task, dir, date: meta.date, promptFileGitCommit: meta.promptFileGitCommit };
+function toBaselineInfo(set: GoldenSetId, dir: string, meta: GoldenRunMeta): BaselineInfo {
+  return { set, dir, date: meta.date, promptFileGitCommit: meta.promptFileGitCommit };
 }
 
 /**
@@ -75,17 +75,17 @@ function toBaselineInfo(task: LlmTask, dir: string, meta: GoldenRunMeta): Baseli
  * currentCommit 由呼叫端算好傳進來(CLI 用 golden-run 的 gitCommitOf),
  * 這樣這個函式不碰 git,測試才控制得住。
  */
-export function detectPromptDrift(baseDir: string, task: LlmTask, currentCommit: string): PromptDrift | undefined {
-  const baseline = findBaseline(baseDir, task);
+export function detectPromptDrift(baseDir: string, set: GoldenSetId, currentCommit: string): PromptDrift | undefined {
+  const baseline = findBaseline(baseDir, set);
   if (!baseline) return undefined;
   if (baseline.promptFileGitCommit === currentCommit) return undefined;
-  const set = getGoldenSet(task);
+  const goldenSet = getGoldenSet(set);
   // 有基準卻查不到 golden set,代表 registry 被改掉了。這時候回 undefined 等於謊報
   // 「沒有漂移」,所以寧可大聲壞掉。
-  if (!set) {
-    throw new Error(`task「${task}」有基準但沒有登記 golden set,說不出是哪個 prompt 檔漂移了;去 ${GOLDEN_SET_REGISTRY_FILE} 補上`);
+  if (!goldenSet) {
+    throw new Error(`golden set「${set}」有基準但沒有登記,說不出是哪個 prompt 檔漂移了;去 ${GOLDEN_SET_REGISTRY_FILE} 補上`);
   }
-  return { promptFile: set.promptFile, baselineCommit: baseline.promptFileGitCommit, currentCommit };
+  return { promptFile: goldenSet.promptFile, baselineCommit: baseline.promptFileGitCommit, currentCommit };
 }
 
 /**
@@ -114,5 +114,5 @@ export function reviewRegression(result: CompareResult): RegressionReview {
     if (item.scoresA) carriedForward[item.id] = item.scoresA;
   }
 
-  return { task: result.task, needsScoring, unchanged, carriedForward };
+  return { set: result.set, needsScoring, unchanged, carriedForward };
 }

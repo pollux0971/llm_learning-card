@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: cards-cors",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"跨來源的解法是伺服器表態\", \"body\": \"伺服器在回應裡加標頭,說明哪些來源可以讀這個回應;瀏覽器看到標頭符合才把結果交給網頁。\", \"examples\": [], \"lines\": [19, 20]}, {\"title\": \"決定權在伺服器\", \"body\": \"網頁不能自己宣稱有權限,能不能讀由伺服器決定。\", \"examples\": [], \"lines\": [22, 22]}, {\"title\": \"帶憑證時規則更嚴\", \"body\": \"請求要帶憑證時,伺服器必須明確指名允許的來源,不能用萬用字元。\", \"examples\": [], \"lines\": [24, 24]}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

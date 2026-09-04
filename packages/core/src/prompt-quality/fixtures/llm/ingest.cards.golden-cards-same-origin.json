@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: cards-same-origin",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"同源的三個組成\", \"body\": \"來源由協定、主機、埠號三部分組成,三者完全相同才算同源。\", \"examples\": [\"https://a.com 與 http://a.com 不同源,協定不一樣\"], \"lines\": [3, 6]}, {\"title\": \"同源政策為什麼存在\", \"body\": \"瀏覽器會自動帶上 cookie,沒有這條限制,任何網站都能在背景向你的銀行發請求並讀到回應。\", \"examples\": [], \"lines\": [8, 9]}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "task": "ingest.questions",
+  "prompt_contains": "golden: questions-cors",
+  "attempt": 1,
+  "response": {
+    "text": "{\"fill\": [{\"prompt\": \"跨來源能不能讀,決定權在 ___。\", \"answers\": [[\"伺服器\", \"server\"]]}, {\"prompt\": \"請求要帶憑證時,伺服器必須明確指名允許的來源,不能用 ___。\", \"answers\": [[\"萬用字元\", \"wildcard\", \"*\"]]}], \"apply\": [{\"prompt\": \"為什麼網頁不能自己宣稱有跨來源的權限?\", \"rubric\": [\"有指出表態的是伺服器\", \"有指出瀏覽器依標頭才交出內容\", \"沒有把請求成功跟讀得到混為一談\"]}]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

@@ -1,6 +1,6 @@
 /**
  * 比對兩次 golden run:逐項並排顯示,只讓差異被看見,不判斷好壞(FEATURE.md)。
- * 兩次 run 必須是同一個任務,否則拒絕比較。
+ * 兩次 run 必須是同一組 golden set,否則拒絕比較。
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,10 +9,10 @@ import type { CompareItem, CompareResult, GoldenRunMeta } from './types.js';
 
 export class NotComparableError extends Error {
   constructor(
-    public readonly taskA: string,
-    public readonly taskB: string,
+    public readonly setA: string,
+    public readonly setB: string,
   ) {
-    super(`兩次 run 的任務不一樣,不能比較:${taskA} vs ${taskB}`);
+    super(`兩次 run 的 golden set 不一樣,不能比較:${setA} vs ${setB}`);
     this.name = 'NotComparableError';
   }
 }
@@ -43,7 +43,7 @@ function readScores(dir: string): ParsedScores {
 export function compareRuns(dirA: string, dirB: string): CompareResult {
   const metaA = readMeta(dirA);
   const metaB = readMeta(dirB);
-  if (metaA.task !== metaB.task) throw new NotComparableError(metaA.task, metaB.task);
+  if (metaA.set !== metaB.set) throw new NotComparableError(metaA.set, metaB.set);
 
   const idsA = listOutputIds(dirA);
   const idsB = listOutputIds(dirB);
@@ -65,5 +65,5 @@ export function compareRuns(dirA: string, dirB: string): CompareResult {
     };
   });
 
-  return { task: metaA.task, dirA, dirB, items };
+  return { set: metaA.set, dirA, dirB, items };
 }
