@@ -799,3 +799,123 @@ describe('GatewayLlmRouter — probeLocal 的 catch 與檔案 log', () => {
     }
   });
 });
+
+/**
+ * ADR-044 的 `llm.gateway-router.spend-no-log-zero`:沒給 logPath 也沒注入 spendReader
+ * 時,今日花費**一律當 0**,預算分支永遠走不到。基準報告(959b039 / 45c83a7)裡這條
+ * 退化分支**沒有任何測試走過**——它壞了沒人會發現。這一組讓它真的被走到,而且斷言
+ * 它的行為:雲端已經花了遠超上限的錢,router 仍然當作一毛沒花。
+ *
+ * 對照組給真的 logPath(router 自己寫、自己讀那個檔),證明「差別只在有沒有 log」:
+ * 有 log 的第二次就被預算擋下,沒 log 的怎麼打都不會。
+ *
+ * 每次雲端呼叫回 tokens_in = 1,000,000,依 PRICES(2.5 美元 / 百萬)一次就是 2.5 美元,
+ * 遠超 CAP(1 美元)。
+ */
+describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero)', () => {
+  const TOKENS_IN_PER_CALL = 1_000_000; // 2.5 美元 / 次,CAP 是 1 美元
+
+  interface SpendHarness {
+    cloudCalls: number;
+    gatewayChats: number;
+    router: GatewayLlmRouter;
+  }
+
+  function spendHarness(opts: { logPath?: string } = {}): SpendHarness {
+    const h = { cloudCalls: 0, gatewayChats: 0 } as SpendHarness;
+
+    const cloudAdapter: CloudAdapter = {
+      async call({ prompt, model }) {
+        h.cloudCalls += 1;
+        return { text: `雲端回覆:${prompt}`, provider: 'openai', model, latency_ms: 5, tokens_in: TOKENS_IN_PER_CALL, tokens_out: 0 };
+      },
+    };
+
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const json = (body: unknown, status = 200): Response =>
+        new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+      if (url.includes('/auth/token/exchange')) return json({ access_token: 'jwt-1', expires_in: 3600 });
+      if (url.includes('/gateway/models')) return json({ auto_match: true, models: { [LOCAL_MODEL]: ['chat'] } });
+      if (url.includes('/gateway/chat')) {
+        h.gatewayChats += 1;
+        const body = JSON.parse(String(init?.body ?? '{}')) as { model?: string };
+        return json({ content: '閘道回覆。', provider: 'ollama', model: body.model ?? LOCAL_MODEL, tokens_used: { prompt: 3, completion: 4 } });
+      }
+      throw new Error(`沒有預期到的請求:${url}`);
+    }) as typeof fetch;
+
+    // 刻意**不給** spendReader;logPath 有沒有由 opts 決定。沒 logPath 時也不給
+    // logAppender——那正是「純單元測試沒接 log」的建構方式,退化分支就是為它而存在。
+    h.router = new GatewayLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'gpt-5.6-luna', OPENAI_API_KEY: 'k', LLM_LOCAL_MODEL: LOCAL_MODEL },
+      adapters: { openai: cloudAdapter },
+      onlineProber: async () => true,
+      gateway: new GatewayClient({ config: { baseUrl: BASE, apiKey: 'gk', model: LOCAL_MODEL }, fetchImpl }),
+      dailyCapUsd: CAP,
+      prices: PRICES,
+      ...(opts.logPath === undefined ? {} : { logPath: opts.logPath }),
+    });
+    return h;
+  }
+
+  function withTmpLog<T>(fn: (logPath: string) => Promise<T>): Promise<T> {
+    const dir = mkdtempSync(join(tmpdir(), 'router-gateway-spend-'));
+    return fn(join(dir, 'log.jsonl')).finally(() => rmSync(dir, { recursive: true, force: true }));
+  }
+
+  it('cloud-only 任務:沒 log 時打了三次、花了 7.5 美元,仍然一次也沒被 1 美元的預算擋下', async () => {
+    const h = spendHarness();
+    for (let i = 0; i < 3; i++) {
+      const result = await h.router.call('ingest.cards', `第 ${i + 1} 次`);
+      expect(result.provider).toBe('openai');
+      expect(result.provisional).toBe(false);
+    }
+    expect(h.cloudCalls).toBe(3);
+    expect(h.gatewayChats).toBe(0);
+  });
+
+  it('對照:同樣的三次呼叫,只要有 logPath,第二次就在花錢之前被 DailyBudgetExceededError 擋下', async () => {
+    await withTmpLog(async (logPath) => {
+      const h = spendHarness({ logPath });
+      await h.router.call('ingest.cards', '第 1 次');
+      const second = await caught(() => h.router.call('ingest.cards', '第 2 次'));
+      expect(second).not.toBe(NOTHING_THROWN);
+      expect(second).toBeInstanceOf(DailyBudgetExceededError);
+      expect(h.cloudCalls).toBe(1);
+    });
+  });
+
+  it('gateway-fallback 任務:沒 log 時三次都走雲端、都不是暫定,閘道一次都沒被打到', async () => {
+    const h = spendHarness();
+    const results = [];
+    for (let i = 0; i < 3; i++) results.push(await h.router.call('deepen', `同源政策 ${i + 1}`));
+    expect(results.map((r) => r.provider)).toEqual(['openai', 'openai', 'openai']);
+    expect(results.map((r) => r.provisional)).toEqual([false, false, false]);
+    expect(h.cloudCalls).toBe(3);
+    expect(h.gatewayChats).toBe(0);
+  });
+
+  it('對照:gateway-fallback 任務有 logPath 時,第二次改走閘道且回 provisional=true', async () => {
+    await withTmpLog(async (logPath) => {
+      const h = spendHarness({ logPath });
+      const first = await h.router.call('deepen', '同源政策 1');
+      const second = await h.router.call('deepen', '同源政策 2');
+      expect(first.provider).toBe('openai');
+      expect(second.provider).toBe('ollama');
+      expect(second.provisional).toBe(true);
+      expect(h.cloudCalls).toBe(1);
+      expect(h.gatewayChats).toBe(1);
+
+      const events = parseLogLines(readFileSync(logPath, 'utf8')) as unknown as Record<string, unknown>[];
+      const fallback = events.find((e) => e.fallback === 'gateway');
+      expect(fallback?.fallback_reason).toBe('budget_exhausted');
+    });
+  });
+
+  it('沒 log 時 spend 被當 0 是「每次呼叫都重新當 0」,不是只有第一次:第 10 次仍打雲端', async () => {
+    const h = spendHarness();
+    for (let i = 0; i < 10; i++) await h.router.call('ingest.questions', `第 ${i + 1} 次`);
+    expect(h.cloudCalls).toBe(10);
+  });
+});
