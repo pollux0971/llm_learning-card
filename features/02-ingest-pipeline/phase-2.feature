@@ -59,6 +59,16 @@ Feature: Questions, second level cards and the dependency graph
     Then the graph file and the order file are not written
     And a warning naming the remaining cycle is logged
 
+  Scenario: Exhausting the drop limit removes the category's stale graph data
+    Given an order file already exists for another category
+    And a previous successful run already wrote the graph and the order file for security
+    And the model returns edges containing a cycle on the first attempt
+    And the second attempt keeps forming a new cycle after each edge is dropped, up to the card count limit
+    When dependency analysis runs
+    Then the security entry and the security order file are gone
+    And the other category's entry and order file are untouched
+    And a warning naming the remaining cycle is logged
+
   Scenario: The order file is produced
     When dependency analysis runs
     Then an order file exists for the category

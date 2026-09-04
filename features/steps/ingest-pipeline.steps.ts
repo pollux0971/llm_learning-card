@@ -323,6 +323,21 @@ Given('an order file already exists for another category', function (this: Learn
   ctx(this).languageOrderBefore = readFileSync(orderPath, 'utf8');
 });
 
+/**
+ * deps-stale-graph-removal(ADR-038):模擬「上一次成功的 run 已經寫過 security 的
+ * 圖」。這個 Given 一定要跟前一個(another category)一起用,新場景才有「兩個分類
+ * 同時在 deps.json 裡」的形狀——粒度是分類、不是整個檔,靠的就是這個對照組。
+ */
+Given('a previous successful run already wrote the graph and the order file for security', function (this: LearningWorld) {
+  const c = ctx(this);
+  const depsPath = join(this.dir!, 'graph', 'deps.json');
+  const existing = existsSync(depsPath) ? (JSON.parse(readFileSync(depsPath, 'utf8')) as Record<string, Graph>) : {};
+  const ids = c.cards.map((card) => card.frontmatter.id);
+  const staleGraph: Graph = { nodes: ids, edges: ids.slice(0, -1).map((id, i) => [id, ids[i + 1]!]) };
+  writeFileSync(depsPath, JSON.stringify({ ...existing, [CATEGORY]: staleGraph }, null, 2));
+  writeFileSync(join(this.dir!, 'graph', `order-${CATEGORY}.json`), JSON.stringify(ids, null, 2) + '\n');
+});
+
 Given('question generation fails for the third card on both attempts', function (this: LearningWorld) {
   const c = ctx(this);
   c.questionsFailForCardId = c.cards[2]!.frontmatter.id;
@@ -577,6 +592,21 @@ Then('the order file exists and lists each card exactly once', function (this: L
 Then('the graph file and the order file are not written', function (this: LearningWorld) {
   assert.equal(existsSync(join(this.dir!, 'graph', 'deps.json')), false, 'deps.json 不該被寫出');
   assert.equal(existsSync(join(this.dir!, 'graph', `order-${CATEGORY}.json`)), false, 'order 檔不該被寫出');
+});
+
+Then('the security entry and the security order file are gone', function (this: LearningWorld) {
+  // 過期的圖不能靜默留在磁碟上:deps.json 裡這個分類的 key 要消失、order 檔要不見。
+  // 注意 deps.json 這個**檔案本身**還在(它裝著別的分類),所以不能拿存不存在檔案來驗。
+  const deps = JSON.parse(readFileSync(join(this.dir!, 'graph', 'deps.json'), 'utf8')) as Record<string, Graph>;
+  assert.equal(Object.hasOwn(deps, CATEGORY), false, `deps.json 還留著過期的 ${CATEGORY} entry`);
+  assert.equal(existsSync(join(this.dir!, 'graph', `order-${CATEGORY}.json`)), false, '過期的 order 檔還在');
+});
+
+Then("the other category's entry and order file are untouched", function (this: LearningWorld) {
+  const c = ctx(this);
+  const deps = JSON.parse(readFileSync(join(this.dir!, 'graph', 'deps.json'), 'utf8')) as Record<string, Graph>;
+  assert.deepEqual(deps.language, { nodes: ['lan-0001', 'lan-0002'], edges: [['lan-0001', 'lan-0002']] });
+  assert.equal(readFileSync(join(this.dir!, 'graph', 'order-language.json'), 'utf8'), c.languageOrderBefore);
 });
 
 Then('a warning naming the remaining cycle is logged', function (this: LearningWorld) {

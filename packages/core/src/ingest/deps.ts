@@ -30,7 +30,9 @@
  *
  * 達上限仍然有循環 → graph/deps.json 跟 order 檔都不寫(維持契約 §8「要嘛都寫、
  * 要嘛都不寫」的不變量),改記一筆 'warning'(格式比照 ingest.ts 既有的
- * warning log,message 要包含殘留的循環路徑)。見 removeCyclesLocally() 與
+ * warning log,message 要包含殘留的循環路徑),**並且移除該分類上一次留下的過期
+ * 圖資料**(removeCategoryGraph():deps.json 的該 key + order 檔,粒度是分類,
+ * 不是整個檔)——不然舊檔會靜默過期,見 ADR-038。見 removeCyclesLocally() 與
  * AnalyzeDependenciesResult 的說明。
  *
  * **每張 level 1 卡的 parent 一定是它的先備**(Scenario 5:「every level one
@@ -82,7 +84,7 @@
  *   逐一 log 成 'cycle_removed' 事件——這裡只算,不寫檔。
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stringify as yamlStringify } from 'yaml';
 import type { Card, CardId, CategoryId } from '@contracts/index.js';
@@ -176,6 +178,54 @@ export function removeCyclesLocally(graph: Graph, maxDrops: number): RemoveCycle
  */
 export function computeDepsMaxTokens(cardCount: number): number {
   return Math.min(16384, Math.max(2048, cardCount * 256));
+}
+
+/**
+ * 移除一個分類的**過期**圖資料。
+ *
+ * 為什麼需要這個:`analyzeDependencies()` 丟邊達上限仍有循環時會 early return、
+ * 兩個檔都不寫——但那只保證「**這一次**不寫」。上一次成功的 run 如果已經寫過
+ * `graph/deps.json` 與 `graph/order-<category>.json`,舊檔還留在磁碟上,讀的人
+ * 拿到的是**過期的圖卻看不出來**(09-lint 目前沒有「卡片不在 order 裡」這條
+ * 檢查,所以「留著+標記」等於沒人會發現)。圖是衍生資料、可以從卡片重生,所以
+ * 選擇直接移除,讓「沒有圖」變成一個看得見的明確狀態。見 ADR-038。
+ *
+ * 粒度是**分類**,不是整個檔(契約 §8:`deps.json` 的型別是
+ * `Record<CategoryId, Graph>`,一個檔裝所有分類):
+ *   1. 讀進整個 `deps.json`,只刪掉 `category` 這個 key,整檔**原子重寫**
+ *      (`atomicWriteJson`:寫 `.tmp` → fsync → rename,比照契約 §11b)。
+ *      其他分類的 entry 一個都不能動。
+ *   2. 刪掉 `graph/order-<category>.json`。
+ *   3. 刪到 `deps.json` 變成空物件 `{}` 時,**檔案留著**(`{}` 是
+ *      `Record<CategoryId, Graph>` 的合法值,而且「檔在、key 不在」跟「檔不在」
+ *      對消費者是同一個答案:這個分類沒有圖)。理由見 ADR-038。
+ *
+ * 全部邊界情況都不該丟錯,因為呼叫端已經在處理另一個錯誤(殘留循環),清理失敗
+ * 不該把那筆 warning 蓋掉:
+ *   - `deps.json` 不存在 → 什麼都不用做(也不要為此建出一個空檔)。
+ *   - `deps.json` 存在但沒有 `category` 這個 key → 完全不重寫,其他 key 連位元組
+ *     都不動(少一次寫入,也少一個「重寫途中斷電」的機會)。
+ *   - `graph/order-<category>.json` 不存在 → `rmSync` 的 force 選項直接吸收掉。
+ *
+ * 行為規格見同目錄 deps.test.ts 的 describe('removeCategoryGraph') 與
+ * features/02-ingest-pipeline/phase-2.feature 的
+ * 「Exhausting the drop limit removes the category's stale graph data」。
+ */
+export function removeCategoryGraph(outDir: string, category: CategoryId): void {
+  const graphDir = join(outDir, 'graph');
+  const depsPath = join(graphDir, 'deps.json');
+
+  if (existsSync(depsPath)) {
+    const existing = JSON.parse(readFileSync(depsPath, 'utf8')) as Record<string, Graph>;
+    // 沒有這個 key 就不重寫:讓「沒東西可刪」真的是一次 no-op。
+    if (Object.hasOwn(existing, category)) {
+      const { [category]: _removed, ...rest } = existing;
+      atomicWriteJson(depsPath, rest);
+    }
+  }
+
+  // force: true 讓「order 檔本來就不在」不丟 ENOENT——一類一檔,直接刪。
+  rmSync(join(graphDir, `order-${category}.json`), { force: true });
 }
 
 export function writeCategoryGraph(outDir: string, category: CategoryId, graph: Graph): void {
@@ -318,6 +368,12 @@ export async function analyzeDependencies(
     if (repaired.unresolved) {
       // 契約 §8 的語意上 deps.json 該是 DAG,order 檔又是 topologicalSort() 的產物:
       // 兩個都不寫,好過留下「有環的 deps.json + 沒有 order」的自相矛盾狀態。
+      //
+      // 「不寫」只保證這一次不寫;上一次成功的 run 留在磁碟上的舊 deps.json entry 與
+      // 舊 order 檔會變成**看不出來的過期資料**。ADR-038 決定直接移除該分類的圖,
+      // 讓「沒有圖」是一個明確狀態。順序:先移除,再記 warning(warning 是這次
+      // 事件的紀錄,清理是磁碟狀態的收斂,兩者都要發生)。
+      removeCategoryGraph(outDir, category);
       appendLogEvent(logPath, {
         ts: new Date().toISOString(),
         type: 'warning',
