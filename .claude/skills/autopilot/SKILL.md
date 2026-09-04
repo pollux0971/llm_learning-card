@@ -47,6 +47,12 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
    # 目前同步到 v1.3.0;check-phase-coverage.ts 有本地 HOTFIX(見檔頭第 2 行),模板修好要回流
    "$TEMPLATE_DIR/scripts/sync-gates.sh" "$(git rev-parse --show-toplevel)" scripts --check
    ```
+   **合併後跑的是 main 現在的完整檢查清單,不是分支開工時的那份。** 分支 base 比 main 舊的時候,
+   main 上可能已經多了新的守門 —— 那些**在分支上根本不存在**,所以「分支全綠」不等於「合併後全綠」,
+   而**新加的守門正好是最容易漏的那些**(它們是為了抓新問題才加的)。
+   實例:golden-set 那張的 base 早於守門合併,審核主動提醒「`check:steps` 與 `accept:coverage`
+   在這個 branch 上不存在,合併後要補跑」。
+
    全綠 → tag、清 worktree、通知技術顧問「驗推」;FAIL 的照 test→dev→review 循環派 debug session。
 2. **算 ready**:照 sprint-planning 的規則讀所有 NEXT.md。三種 gate 全滿足 → ready。
 3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。滿載時不派新工,回到 1 收割;收割不到東西就做維護清單(§3)等下一輪。**同時處於審核輪(跑變異測試)的 worktree ≤ 1**——變異測試是唯一吃重的工作,三個同時跑會互相 OOM(P-34);有 Stryker 檔案鎖之後這條才可放寬。每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
