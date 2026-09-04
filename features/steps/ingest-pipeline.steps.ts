@@ -63,6 +63,8 @@ interface IngestPipelineCtx {
   /** 「the run completes」跑完整 runIngestPipeline() 之後的結果。 */
   pipelineResult?: RunIngestPipelineResult;
   languageOrderBefore?: string;
+  /** 「the graph file on disk is not valid JSON」寫下去的位元組,Then 用來比對沒被動過。 */
+  corruptDepsBytes?: string;
 }
 
 const store = new WeakMap<LearningWorld, IngestPipelineCtx>();
@@ -338,6 +340,17 @@ Given('a previous successful run already wrote the graph and the order file for 
   writeFileSync(join(this.dir!, 'graph', `order-${CATEGORY}.json`), JSON.stringify(ids, null, 2) + '\n');
 });
 
+/**
+ * ADR-041:deps.json 存在但不是合法 JSON。跟 ADR-038 那三個邊界(檔不存在、沒有該
+ * 分類的 key、order 檔不存在)不同——那三個的磁碟狀態本來就是對的,這個是真的壞掉
+ * 的檔,要有自己的名字,而且不能被程式自作主張覆寫掉。
+ */
+Given('the graph file on disk is not valid JSON', function (this: LearningWorld) {
+  const bytes = '{"security":{"nodes":["sec-0001"],"edges":[["sec-0001"';
+  writeFileSync(join(this.dir!, 'graph', 'deps.json'), bytes, 'utf8');
+  ctx(this).corruptDepsBytes = bytes;
+});
+
 Given('question generation fails for the third card on both attempts', function (this: LearningWorld) {
   const c = ctx(this);
   c.questionsFailForCardId = c.cards[2]!.frontmatter.id;
@@ -403,6 +416,15 @@ When('child generation runs', async function (this: LearningWorld) {
 When('dependency analysis runs', async function (this: LearningWorld) {
   const c = ctx(this);
   c.depsResult = await analyzeDependencies(CATEGORY, c.cards, c.router!, this.dir!);
+});
+
+When('dependency analysis runs and fails', async function (this: LearningWorld) {
+  const c = ctx(this);
+  try {
+    c.depsResult = await analyzeDependencies(CATEGORY, c.cards, c.router!, this.dir!);
+  } catch (err) {
+    this.lastError = err as Error;
+  }
 });
 
 When('new cards are ingested for security', async function (this: LearningWorld) {
@@ -620,6 +642,33 @@ Then('a warning naming the remaining cycle is logged', function (this: LearningW
     events.some((e) => e.type === 'warning' && typeof e.message === 'string' && (e.message as string).includes(firstId)),
     JSON.stringify(events),
   );
+});
+
+Then('the failure names the corrupt graph file', function (this: LearningWorld) {
+  const err = this.lastError;
+  assert.ok(err, 'dependency analysis 沒有失敗');
+  // 「有自己的名字」就是這一句:呼叫端能靠型別分辨「圖檔壞了」與「模型回應壞了」。
+  assert.equal(err.name, 'GraphFileCorruptError', `丟出來的是 ${err.name}: ${err.message}`);
+  assert.ok(err.message.includes(join(this.dir!, 'graph', 'deps.json')), err.message);
+});
+
+Then('the corrupt graph file is left on disk byte for byte', function (this: LearningWorld) {
+  const c = ctx(this);
+  // 損壞的內容是現場,留給人看:程式沒有理由相信自己猜得出使用者本來有哪些分類。
+  assert.equal(readFileSync(join(this.dir!, 'graph', 'deps.json'), 'utf8'), c.corruptDepsBytes);
+});
+
+Then('exactly one warning is logged, naming the corrupt graph file as the reason', function (this: LearningWorld) {
+  const events = readFileSync(join(this.dir!, 'state/log.jsonl'), 'utf8')
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const warnings = events.filter((e) => e.type === 'warning');
+  // 恰好一筆:圖檔都讀不出來的時候,「殘留了哪一條循環」那筆在語意上到不了,
+  // 兩筆都記等於讓讀 log 的人自己猜哪一筆才是真正的原因。
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.equal(warnings[0]!.reason, 'graph file corrupt', JSON.stringify(warnings[0]));
+  assert.equal(warnings[0]!.file, 'graph/deps.json', JSON.stringify(warnings[0]));
 });
 
 Then('an order file exists for the category', function (this: LearningWorld) {

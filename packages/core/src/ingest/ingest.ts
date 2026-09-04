@@ -328,6 +328,10 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     edgesRemoved = result.edgesRemoved;
     cycleUnresolved = result.cycleUnresolved;
   } catch (err) {
+    // TODO(ADR-041):`GraphFileCorruptError` 不可以走這條「已略過」的路。
+    // graph/deps.json 讀不出來是磁碟完整性問題,不是「這次圖沒算成功」——吞掉它
+    // 會讓 CLI 以 0 退出、而且多記一筆跟真正原因無關的 warning(違反「恰好一筆」)。
+    // 要 re-throw,讓 scripts/ingest.ts 的 main().catch 以非 0 退出碼結束。
     appendLogEvent(logPath, {
       ts: new Date().toISOString(),
       type: 'warning',

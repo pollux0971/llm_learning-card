@@ -1,4 +1,5 @@
 export * from './types.js';
+export * from './errors.js';
 export * from './word-count-min.js';
 export * from './fake-llm.js';
 export * from './ids.js';

@@ -207,9 +207,18 @@ export function computeDepsMaxTokens(cardCount: number): number {
  *     都不動(少一次寫入,也少一個「重寫途中斷電」的機會)。
  *   - `graph/order-<category>.json` 不存在 → `rmSync` 的 force 選項直接吸收掉。
  *
+ * 例外只有一個(ADR-041):`deps.json` **存在但不是合法 JSON**。這時候
+ * 「移除該分類的 key」根本無從談起——連別的分類有哪些都不知道,重寫等於拿一個
+ * 猜出來的內容蓋掉使用者的檔。這條要丟 `GraphFileCorruptError`(帶路徑與開頭
+ * 200 位元組),**不覆寫、不刪那個檔**,留給人看;order 檔也一併不動。
+ *
+ * TODO(ADR-041):下面的 `JSON.parse` 還是裸的,壞檔會丟出裸的 `SyntaxError`。
+ * 要包成 `GraphFileCorruptError`(見 ./errors.ts),對應的測試現在是紅的。
+ *
  * 行為規格見同目錄 deps.test.ts 的 describe('removeCategoryGraph') 與
  * features/02-ingest-pipeline/phase-2.feature 的
- * 「Exhausting the drop limit removes the category's stale graph data」。
+ * 「Exhausting the drop limit removes the category's stale graph data」、
+ * 「A corrupt graph file is reported under its own name」。
  */
 export function removeCategoryGraph(outDir: string, category: CategoryId): void {
   const graphDir = join(outDir, 'graph');
@@ -373,6 +382,13 @@ export async function analyzeDependencies(
       // 舊 order 檔會變成**看不出來的過期資料**。ADR-038 決定直接移除該分類的圖,
       // 讓「沒有圖」是一個明確狀態。順序:先移除,再記 warning(warning 是這次
       // 事件的紀錄,清理是磁碟狀態的收斂,兩者都要發生)。
+      //
+      // TODO(ADR-041):`removeCategoryGraph()` 丟 `GraphFileCorruptError` 時
+      // (deps.json 存在但不是合法 JSON)要另外處理:那代表**圖檔整個讀不出來**,
+      // 下面這筆「殘留環」的 warning 在語意上根本到不了(連上一次的圖長什麼樣都
+      // 不知道)。兩個失敗要各自有名字——改記一筆 reason: 'graph file corrupt'
+      // 的 warning(**恰好一筆**,殘留環那筆不記),然後把錯誤往外丟,讓 CLI 以
+      // 非 0 退出碼結束。檔案本身不覆寫、不刪,留給人看。
       removeCategoryGraph(outDir, category);
       appendLogEvent(logPath, {
         ts: new Date().toISOString(),
