@@ -6,9 +6,9 @@
  * 用法:
  *   npx tsx scripts/lint.ts --dir <learning 目錄>
  *
- * 退出碼:0 沒有問題;1 有問題。
+ * 退出碼:0 沒有問題;1 有問題,或 --dir 指到的路徑不是一個既有的目錄;2 沒給 --dir。
  */
-import { mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { lint, formatReport, atomicWriteFileSync } from '../packages/core/src/lint/index.js';
 
@@ -24,6 +24,30 @@ if (!dirArg) {
 }
 
 const dir = resolve(dirArg);
+
+// 目錄不存在就在這裡收工,而且**不建目錄**。以前會一路走到 mkdirSync(<dir>/state)
+// 把報告寫進去,結果是:路徑打錯一個字 → 憑空生出一個空 vault → 回報
+// 「0 problems found.」。那比單純報錯糟得多,因為它把打錯的路徑變成一個看起來
+// 很健康的東西,而且硬碟上多了一棵假的 learning 目錄樹。
+//
+// 建目錄是 init 的事,lint 只看不動——這也是這個檔頭原本就寫的承諾。
+const INIT_HINT = '要建一個新的 learning 目錄請用:npx tsx packages/core/src/schema/cli.ts init <dir>';
+
+if (!existsSync(dir)) {
+  console.error(`✗ lint: --dir 指到的目錄不存在:${dir}`);
+  console.error('不會幫你建出來——建了就等於把打錯的路徑變成一個空 vault,然後回報「很乾淨」。');
+  console.error(INIT_HINT);
+  process.exit(1);
+}
+
+// 路徑存在但是一個檔案:同樣不是可以健檢的東西。分開一句話講,因為使用者要修的
+// 東西不一樣(前者是路徑打錯或還沒 init,後者是指到了別的檔)。
+if (!statSync(dir).isDirectory()) {
+  console.error(`✗ lint: --dir 指到的不是目錄,是一個檔案:${dir}`);
+  console.error(INIT_HINT);
+  process.exit(1);
+}
+
 const result = lint(dir);
 
 const now = new Date();
