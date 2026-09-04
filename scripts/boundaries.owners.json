@@ -145,6 +145,14 @@
       "infra"
     ],
     [
+      "scripts/degraded-report.ts",
+      "infra"
+    ],
+    [
+      "scripts/degraded-witness.setup.ts",
+      "infra"
+    ],
+    [
       "scripts/_env.ts",
       "infra"
     ],
