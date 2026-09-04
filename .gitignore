@@ -10,6 +10,10 @@ reports/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/schemas/
 tmp-learning/
+# 使用者的學習資料(卡片、考題、state 的複習歷史)。契約 §11b:learning/ 自己是一個 git repo,
+# 主 repo 不追蹤它。learning-*/ 擋掉之後多類別的測試輸出目錄。
+learning/
+learning-*/
 !.env.example
 
 # 12-prompt-quality:fake 模式的 golden run 只是重播 fixture,沒有品質資訊,不進 git(golden/ 的 live run 才進)
