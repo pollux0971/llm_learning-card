@@ -48,5 +48,10 @@
     "from": "03-llm-router",
     "to": "infra",
     "reason": "scripts/llm-spend.ts(ADR-039 的當日花費查詢 CLI)照 ADR-034 在 CLI 入口載入 .env,side-effect import scripts/_env.ts,跟 scripts/ingest.ts / scripts/review.ts 同一個模式"
+  },
+  {
+    "from": "12-prompt-quality",
+    "to": "03-llm-router",
+    "reason": "phase-2 的 --live 用 03 的 LlmRouterImpl 打真雲端(golden-run.ts 的 createDefaultLiveRouter,測試在 live-run.test.ts)。硬規則:LLM 呼叫一律經過 llm-router 的介面,不在別處 import provider SDK——這條例外正是為了遵守那條,而不是繞過它"
   }
 ]

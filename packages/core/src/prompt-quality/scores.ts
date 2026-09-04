@@ -2,7 +2,7 @@
  * 評分表(SCORES.md)的產生與解析。人工評分,工具不判斷品質(FEATURE.md)。
  * 兩個維度,各 1–5 分,先固定這兩個(見 FEATURE.md「開放問題」)。
  */
-import { SCORE_DIMENSIONS, type ScoreDimension } from './types.js';
+import { SCORE_DIMENSIONS, type BatchCheckResult, type ScoreDimension } from './types.js';
 
 export function renderScoresSheet(task: string, date: string, inputIds: string[]): string {
   const header = `| id | ${SCORE_DIMENSIONS.join(' | ')} |`;
@@ -52,4 +52,47 @@ export function parseScoresSheet(content: string): ParsedScores {
     if (any) out[id] = entry;
   }
   return out;
+}
+
+// ------------------------------------------------------- phase-2
+
+/**
+ * 批次檢查的結果附在 SCORES.md 下方,**跟人打分的表格分開**。
+ *
+ * 為什麼分開:人只打兩個維度(正確性、單一概念),ADR-032 的理由是多了就沒人打。
+ * 重複率與圖形狀是機器算的,放進同一張表會看起來像第三、第四個要人填的欄位。
+ * 所以格式是:上面一張人填的表,下面一段「機器檢查(不用填)」。
+ *
+ * 格式必須穩定——這份檔案之後要拿來 diff。規則:
+ *   - 固定標題 `## 機器檢查(不用填)`
+ *   - 重複率寫成 `重複對數 / 卡數 = N / M(rate)`,rate 三位小數
+ *   - 清單每列 `- a ↔ b(reason,similarity)`,依 (a, b) 字典序
+ *   - 圖形狀每列 `- card(L?) → prereq(L?)`,依 card 再 prereq 字典序
+ *   - 兩項都是 0 時仍然印出標題與 `0`,不要整段消失——消失的段落 diff 起來像檔案壞了
+ */
+export const BATCH_CHECK_HEADING = '## 機器檢查(不用填)';
+
+/** 固定三位小數。浮點數尾巴(0.6000000000000001)會讓 diff 一直吵。 */
+function fixed3(value: number): string {
+  return value.toFixed(3);
+}
+
+export function renderBatchCheckSection(batch: BatchCheckResult): string {
+  const { cardCount, pairs, rate } = batch.duplicates;
+  const lines: string[] = [
+    BATCH_CHECK_HEADING,
+    '',
+    `重複對數 / 卡數 = ${pairs.length} / ${cardCount}(${fixed3(rate)})`,
+    '',
+  ];
+  if (pairs.length > 0) {
+    for (const p of pairs) lines.push(`- ${p.a} ↔ ${p.b}(${p.reason},${fixed3(p.similarity)})`);
+    lines.push('');
+  }
+  lines.push(`圖形狀 = ${batch.prereqShape.length}`, '');
+  if (batch.prereqShape.length > 0) {
+    for (const v of batch.prereqShape) lines.push(`- ${v.card}(L${v.cardLevel}) → ${v.prereq}(L${v.prereqLevel})`);
+    lines.push('');
+  }
+  return lines.join('\n');
 }

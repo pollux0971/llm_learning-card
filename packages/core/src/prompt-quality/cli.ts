@@ -6,11 +6,12 @@
  *   prompt-check.ts --golden [--task <task>] [--fake] [--out <存放根目錄>]
  *   prompt-check.ts --diff <run 目錄 A> <run 目錄 B>
  *
- * Wave 0 phase-1 只支援 --fake(預設就是 fake,--fake 是明示寫法)。--live 是 phase-2。
+ * --fake(預設)重播 fixture,不花錢不碰網路;--live(phase-2)走 03-llm-router 的
+ * 真 router 打雲端,會花錢,而且離線時直接拒絕、不留下半個空目錄。
  * --out 不給時,fake run 存到 golden-fake/(不進 git),live run 存到 golden/(進 git);
  * 見 golden-run.ts 的 defaultGoldenBaseDir()。測試一律傳暫存目錄,不碰 repo 裡的檔案。
  */
-import { runGolden, MissingGoldenSetError } from './golden-run.js';
+import { runGolden, MissingGoldenSetError, LiveRunOfflineError } from './golden-run.js';
 import { compareRuns, NotComparableError } from './compare.js';
 import { listGoldenTasks } from './golden-sets/registry.js';
 import type { LlmTask } from './types.js';
@@ -31,11 +32,6 @@ export async function main(argv: string[]): Promise<CliResult> {
     lines.push(s);
   };
 
-  if (argv.includes('--live')) {
-    log('live 模式屬於 phase-2(需要 03-llm-router 與真的 prompt)。Wave 0 phase-1 只支援 --fake。');
-    return { code: 1, output: lines.join('\n') };
-  }
-
   if (argv.includes('--diff')) {
     return runDiff(argv, log, lines);
   }
@@ -44,7 +40,7 @@ export async function main(argv: string[]): Promise<CliResult> {
     return runGoldenCommand(argv, log, lines);
   }
 
-  log('用法:prompt-check.ts --golden [--task <task>] [--fake] [--out <存放根目錄>]  |  --diff <run 目錄 A> <run 目錄 B>');
+  log('用法:prompt-check.ts --golden [--task <task>] [--fake | --live] [--out <存放根目錄>]  |  --diff <run 目錄 A> <run 目錄 B>');
   return { code: 1, output: lines.join('\n') };
 }
 
@@ -55,6 +51,11 @@ async function runGoldenCommand(argv: string[], log: (s: string) => void, lines:
     log('--out 需要一個目錄:--out <存放根目錄>');
     return { code: 1, output: lines.join('\n') };
   }
+  if (argv.includes('--fake') && argv.includes('--live')) {
+    log('--fake 與 --live 只能擇一。');
+    return { code: 1, output: lines.join('\n') };
+  }
+  const mode = argv.includes('--live') ? ('live' as const) : ('fake' as const);
   const tasks = explicitTask ? [explicitTask] : listGoldenTasks();
   let totalInputs = 0;
   let anyIssues = 0;
@@ -62,9 +63,14 @@ async function runGoldenCommand(argv: string[], log: (s: string) => void, lines:
 
   for (const task of tasks) {
     try {
-      const result = await runGolden({ task, ...(outDir ? { baseDir: outDir } : {}) });
+      const result = await runGolden({ task, mode, ...(outDir ? { baseDir: outDir } : {}) });
       totalInputs += result.outputs.length;
       log(`✓ golden run ${task} → ${result.dir}(${result.outputs.length} 個輸入)`);
+      if (mode === 'live') {
+        const { tokens_in = 0, tokens_out = 0, estimated_cost_usd, model, provider } = result.meta;
+        const cost = estimated_cost_usd == null ? '(model 不在價目表上,不估)' : `約 US$${estimated_cost_usd.toFixed(4)}`;
+        log(`  模型 ${provider}/${model},token 進 ${tokens_in} 出 ${tokens_out},花費 ${cost}`);
+      }
       for (const o of result.outputs) {
         if (o.structural.issues.length) {
           anyIssues += o.structural.issues.length;
@@ -72,6 +78,10 @@ async function runGoldenCommand(argv: string[], log: (s: string) => void, lines:
         }
       }
     } catch (e) {
+      if (e instanceof LiveRunOfflineError) {
+        log(`✗ ${e.message}`);
+        return { code: 1, output: lines.join('\n') };
+      }
       if (e instanceof MissingGoldenSetError) {
         log(`✗ ${e.message}`);
         // 明確指定的 task 缺 golden set 才算失敗;預設跑全部時,尚未登記的任務略過即可。
