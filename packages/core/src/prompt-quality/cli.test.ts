@@ -14,6 +14,7 @@ function listWith(coverage: Partial<PromptCoverage>): { code: number; output: st
     scanned: [],
     unregistered: [],
     missing: [],
+    duplicated: [],
     scannerBroken: false,
     ...coverage,
   });
@@ -248,7 +249,7 @@ describe('cli main', () => {
     const lines = result.output.split('\n');
     expect(lines[7]).toBe('');
     expect(lines[8]).toBe(`${PROMPTS_DIR}/ 底下掃到 ${scanPromptFiles().length} 個 prompt 檔。`);
-    expect(lines[9]).toBe('✓ 每個 prompt 檔都有 golden set 登記。');
+    expect(lines[9]).toBe('✓ 每個 prompt 檔都恰好被一組 golden set 登記。');
     expect(lines.length).toBe(10);
   });
 
@@ -259,7 +260,7 @@ describe('cli main', () => {
     expect(lines[lines.length - 1]).toBe(
       '✗ 這個 prompt 檔沒有任何 golden set 登記,改了它不會有人發現:packages/core/prompts/ingest/_probe.md',
     );
-    expect(result.output).not.toContain('✓ 每個 prompt 檔都有 golden set 登記');
+    expect(result.output).not.toContain('✓ 每個 prompt 檔都恰好被一組 golden set 登記');
   });
 
   it('登記表指到不存在的 prompt 檔時退出碼 1', () => {
@@ -275,7 +276,7 @@ describe('cli main', () => {
     const lines = result.output.split('\n');
     expect(lines[lines.length - 2]).toBe(`${PROMPTS_DIR}/ 底下掃到 0 個 prompt 檔。`);
     expect(lines[lines.length - 1]).toBe(`✗ 一個 prompt 檔都沒掃到:${SCANNER_BROKEN}(${PROMPTS_DIR}/)`);
-    expect(result.output).not.toContain('✓ 每個 prompt 檔都有 golden set 登記');
+    expect(result.output).not.toContain('✓ 每個 prompt 檔都恰好被一組 golden set 登記');
   });
 
   it('掃描器壞掉時就停在那裡,不再逐條抱怨沒登記的檔', () => {
@@ -283,6 +284,63 @@ describe('cli main', () => {
     expect(result.code).toBe(1);
     expect(result.output).not.toContain('x.md');
     expect(result.output).not.toContain('y.md');
+  });
+
+  it('掃描器壞掉時也不抱怨重複引用——0 個檔的時候那件事沒有意義', () => {
+    const result = listWith({
+      scannerBroken: true,
+      duplicated: [{ promptFile: 'dup.md', sets: ['ingest.cards', 'selftest'] }],
+    });
+    expect(result.code).toBe(1);
+    expect(result.output).not.toContain('dup.md');
+  });
+
+  /**
+   * 反向驗證的第二個方向:引用數 2。
+   * `unregistered` / `missing` 都是空的(每個檔都還有人引用),只有這一項會紅。
+   */
+  it('一個 prompt 檔被兩組登記時退出碼 1,指名檔案與那兩組', () => {
+    const result = listWith({
+      scanned: [`${PROMPTS_DIR}/ingest/cards.md`],
+      duplicated: [{ promptFile: `${PROMPTS_DIR}/ingest/cards.md`, sets: ['ingest.cards', 'selftest'] }],
+    });
+    expect(result.code).toBe(1);
+    const lines = result.output.split('\n');
+    expect(lines[lines.length - 1]).toBe(
+      `✗ 這個 prompt 檔被 2 組 golden set 登記(要恰好一組),ingest.cards / selftest 都指到:${PROMPTS_DIR}/ingest/cards.md`,
+    );
+    expect(result.output).not.toContain('✓ 每個 prompt 檔都恰好被一組 golden set 登記');
+  });
+
+  it('多個檔各自被重複登記時逐條列出', () => {
+    const result = listWith({
+      scanned: ['a.md', 'b.md'],
+      duplicated: [
+        { promptFile: 'a.md', sets: ['ingest.cards', 'ingest.children'] },
+        { promptFile: 'b.md', sets: ['ingest.deps', 'ingest.questions', 'selftest'] },
+      ],
+    });
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('被 2 組 golden set 登記(要恰好一組),ingest.cards / ingest.children 都指到:a.md');
+    expect(result.output).toContain(
+      '被 3 組 golden set 登記(要恰好一組),ingest.deps / ingest.questions / selftest 都指到:b.md',
+    );
+  });
+
+  it('--diff 碰到舊版面的 run 目錄時退出碼 1,訊息說得出新目錄長什麼樣', async () => {
+    const base = tmpOutDir();
+    const dirA = join(base, 'grade.apply', '2026-09-02');
+    const dirB = join(base, 'grade.apply', '2026-09-03');
+    for (const d of [dirA, dirB]) {
+      mkdirSync(d, { recursive: true });
+      // 舊 meta:有 task、沒有 set
+      writeFileSync(join(d, 'meta.json'), JSON.stringify({ task: 'grade.apply', date: '2026-09-02', mode: 'fake' }));
+      writeFileSync(join(d, 'demo-1.output.json'), JSON.stringify({ id: 'demo-1', text: 'x' }));
+    }
+    const result = await main(['--diff', dirA, dirB]);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('<base>/<golden set id>/<date>');
+    expect(result.output).not.toContain('- demo-1');
   });
 
   it('--diff 少給目錄時報錯', async () => {

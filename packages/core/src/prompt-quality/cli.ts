@@ -16,7 +16,7 @@
  * 見 golden-run.ts 的 defaultGoldenBaseDir()。測試一律傳暫存目錄,不碰 repo 裡的檔案。
  */
 import { runGolden, MissingGoldenSetError, LiveRunOfflineError } from './golden-run.js';
-import { compareRuns, NotComparableError } from './compare.js';
+import { compareRuns, LegacyRunLayoutError, NotComparableError } from './compare.js';
 import {
   allGoldenSets,
   checkPromptCoverage,
@@ -66,11 +66,14 @@ export async function main(argv: string[]): Promise<CliResult> {
 }
 
 /**
- * 登記了哪些 golden set,以及**每個 prompt 檔是不是都被登記了**。
+ * 登記了哪些 golden set,以及**每個 prompt 檔是不是恰好被一組登記了**。
  *
  * 後者是守門(工單第 3 項):沒被任何 golden set 引用的 prompt 檔就退出碼 1。
  * 改了那個檔、跑 `--diff` 只會拿到「沒有變化」,因為根本沒在比那個 prompt——
  * 「框架有沒有接上真的東西」不能靠下一個人記得問。
+ *
+ * 被**兩組以上**指到也是 1:那一組的基準其實在評別人的 prompt,改了自己的 prompt 檔
+ * 一樣沒有人在看。守門要的是「恰好一組」,不是「至少一組」。
  *
  * 掃到 0 個 prompt 檔一樣是 1(P-28:空的掃描器跟全綠一樣)。
  */
@@ -97,7 +100,12 @@ export function runList(log: (s: string) => void, lines: string[], coverage: Pro
     log(`✗ 這個 prompt 檔沒有任何 golden set 登記,改了它不會有人發現:${f}`);
     failed = true;
   }
-  if (!failed) log('✓ 每個 prompt 檔都有 golden set 登記。');
+  // 引用數 2 跟引用數 0 一樣糟:其中一組的基準其實在評別人的 prompt。
+  for (const d of coverage.duplicated) {
+    log(`✗ 這個 prompt 檔被 ${d.sets.length} 組 golden set 登記(要恰好一組),${d.sets.join(' / ')} 都指到:${d.promptFile}`);
+    failed = true;
+  }
+  if (!failed) log('✓ 每個 prompt 檔都恰好被一組 golden set 登記。');
   return { code: failed ? 1 : 0, output: lines.join('\n') };
 }
 
@@ -174,7 +182,7 @@ function runDiff(argv: string[], log: (s: string) => void, lines: string[]): Cli
     }
     return { code: 0, output: lines.join('\n') };
   } catch (e) {
-    if (e instanceof NotComparableError) {
+    if (e instanceof NotComparableError || e instanceof LegacyRunLayoutError) {
       log(e.message);
       return { code: 1, output: lines.join('\n') };
     }

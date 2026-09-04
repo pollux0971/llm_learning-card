@@ -57,10 +57,15 @@ export function sliceRaw(slice: RawSlice, content = readRawFixture()): string {
   return content.split('\n').slice(from - 1, to).join('\n').replace(/\s+$/, '');
 }
 
-/** 切片的正文(去掉 `## 標題` 那一行),當作「一張卡的 body」用。 */
+/**
+ * 切片的正文(去掉 `## 標題` 那一行),當作「一張卡的 body」用。
+ *
+ * 只修開頭的空白:`sliceRaw` 已經把尾端修掉了,再修一次是死程式
+ * (審核:變異測試把 `\s+$` 那一半改掉沒有任何測試會紅,因為那條路走不到)。
+ */
 export function sliceBody(slice: RawSlice, content = readRawFixture()): string {
   const text = sliceRaw(slice, content);
   const lines = text.split('\n');
   const first = lines[0] ?? '';
-  return (first.startsWith('## ') ? lines.slice(1) : lines).join('\n').replace(/^\s+|\s+$/g, '');
+  return (first.startsWith('## ') ? lines.slice(1) : lines).join('\n').replace(/^\s+/, '');
 }

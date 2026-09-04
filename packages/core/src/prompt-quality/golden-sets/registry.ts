@@ -216,7 +216,7 @@ export function allGoldenSets(): GoldenSet[] {
   return listGoldenSets().map((id) => REGISTRY[id]!);
 }
 
-// ------------------------------------------------- 守門:每個 prompt 檔都要被登記
+// --------------------------------- 守門:每個 prompt 檔恰好被一組 golden set 引用
 
 /**
  * 掃 `packages/core/prompts/` 底下所有 `.md`,回傳 repo 相對路徑(以 `/` 分隔、已排序)。
@@ -225,7 +225,10 @@ export function allGoldenSets(): GoldenSet[] {
  * `checkPromptCoverage()` 與 `--list` 都會紅。
  */
 export function scanPromptFiles(promptsDir = PROMPTS_DIR): string[] {
-  const abs = join(ROOT, promptsDir);
+  // resolve 而不是 join:promptsDir 給絕對路徑時要當成絕對路徑,不是接在 ROOT 後面。
+  // 差別看得到——join 會把不存在的 ROOT/tmp/xxx 當成「掃到 0 個」,
+  // 於是「空目錄」的測試其實在測「目錄不存在」,兩件事被混成一件。
+  const abs = resolve(ROOT, promptsDir);
   const out: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -238,6 +241,13 @@ export function scanPromptFiles(promptsDir = PROMPTS_DIR): string[] {
   return out.sort();
 }
 
+/** 同一個 prompt 檔被兩組以上的 golden set 引用。 */
+export interface DuplicateReference {
+  promptFile: string;
+  /** 指到它的 golden set id,已排序 */
+  sets: GoldenSetId[];
+}
+
 export interface PromptCoverage {
   /** 掃到的 prompt 檔(repo 相對路徑,已排序) */
   scanned: string[];
@@ -245,6 +255,15 @@ export interface PromptCoverage {
   unregistered: string[];
   /** 有 golden set 指過去、但檔案不在掃描結果裡(路徑打錯或檔案被刪) */
   missing: string[];
+  /**
+   * 被兩組以上的 golden set 指到的 prompt 檔。
+   *
+   * 守門要的是「**恰好**一組」,不是「至少一組」:只查 unregistered 的話,
+   * 把 A 的 promptFile 複製貼到 B 身上、同時 A 換成別的檔,兩邊都還「有人引用」,
+   * 掃描器全綠——可是 B 的基準其實在評 A 的 prompt,改了 B 的 prompt 檔沒有人在看。
+   * 引用數 0 是沒守著,引用數 2 是守錯了東西,兩種都要紅。
+   */
+  duplicated: DuplicateReference[];
   /** 掃到 0 個檔——掃描器壞了,不是「很乾淨」 */
   scannerBroken: boolean;
 }
@@ -260,10 +279,22 @@ export function checkPromptCoverage(promptsDir = PROMPTS_DIR, sets = allGoldenSe
   const scanned = scanPromptFiles(promptsDir);
   const referenced = new Set(sets.map((s) => s.promptFile));
   const scannedSet = new Set(scanned);
+
+  // 一個 prompt 檔 → 指到它的所有 set。長度 > 1 就是「守錯了東西」。
+  // 先把檔名排好再組結果,不要用 comparator:Map 的 key 不會重複,
+  // 所以 `a < b` 跟 `a <= b` 在這裡永遠一樣——那種變異殺不掉,程式也不該長那樣。
+  const bySet = new Map<string, GoldenSetId[]>();
+  for (const s of sets) bySet.set(s.promptFile, [...(bySet.get(s.promptFile) ?? []), s.id]);
+  const duplicated: DuplicateReference[] = [...bySet.keys()]
+    .filter((f) => (bySet.get(f) ?? []).length > 1)
+    .sort()
+    .map((promptFile) => ({ promptFile, sets: [...bySet.get(promptFile)!].sort() }));
+
   return {
     scanned,
     unregistered: scanned.filter((f) => !referenced.has(f)),
     missing: [...referenced].filter((f) => f.startsWith(`${promptsDir}/`) && !scannedSet.has(f)).sort(),
+    duplicated,
     scannerBroken: scanned.length === 0,
   };
 }
