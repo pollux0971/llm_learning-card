@@ -89,6 +89,10 @@
       "04-scheduler"
     ],
     [
+      "scripts/due.test.ts",
+      "04-scheduler"
+    ],
+    [
       "scripts/grade.ts",
       "05-grading"
     ],
