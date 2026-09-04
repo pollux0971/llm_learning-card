@@ -94,26 +94,36 @@ export const NOT_INSTRUMENTED: readonly NotInstrumented[] = [
 ];
 
 // ────────────────────────────────────────────────────────────── 參數
+/**
+ * 預期中的失敗:參數、輸入目錄或 JSONL 的內容有問題。入口只印一句人話(`✗ degraded-report:…`)
+ * 加退出碼 1,不噴 stack——stack 是給程式自己的 bug 用的(零輸入守門,ADR-045 鎖 1)。
+ */
+export class UsageError extends Error {
+  override readonly name = 'UsageError';
+}
+
+const USAGE = '用法:npx tsx scripts/degraded-report.ts [--in <dir>] [--out <path.md>] [-- <vitest 參數>](詳見檔頭)';
+
 interface Args {
   inDir?: string;
   out?: string;
   vitestArgs: string[];
 }
 
-function parseArgs(argv: string[]): Args {
+export function parseArgs(argv: string[]): Args {
   const args: Args = { vitestArgs: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--in' || a === '--out') {
-      const value = argv[++i];
-      if (value === undefined) throw new Error(`${a} 後面要接一個路徑`);
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--')) throw new UsageError(`${a} 後面要接一個路徑,現在沒有。\n${USAGE}`);
+      i++;
       if (a === '--in') args.inDir = value;
       else args.out = value;
-    }
-    else if (a === '--') {
+    } else if (a === '--') {
       args.vitestArgs = argv.slice(i + 1);
       break;
-    } else throw new Error(`不認得的參數:${a}(見檔頭用法)`);
+    } else throw new UsageError(`不認得的參數:${a}\n${USAGE}`);
   }
   return args;
 }
@@ -201,14 +211,38 @@ function ownerOf(owners: Owners, rel: string): string {
 }
 
 // ────────────────────────────────────────────────────────────── 讀 JSONL
+/**
+ * 一行 JSONL 要長成 WitnessRecord 的樣子才收。回傳值是「哪裡不對」的一句話,對了就 null。
+ * 不用 zod:契約那邊的 witness.ts 沒有 schema,這裡的形狀只有三個欄位,手寫比多一個相依便宜。
+ */
+export function describeRecordProblem(value: unknown): string | null {
+  if (Array.isArray(value)) return '是陣列,不是物件(一行一筆 {file, test, signals},不是整檔一個陣列)';
+  if (typeof value !== 'object' || value === null) return `是 ${value === null ? 'null' : typeof value},不是物件`;
+  const r = value as Record<string, unknown>;
+  if (typeof r.file !== 'string') return '缺 file 欄位,或 file 不是字串';
+  if (typeof r.test !== 'string') return '缺 test 欄位,或 test 不是字串';
+  if (typeof r.signals !== 'object' || r.signals === null || Array.isArray(r.signals)) return '缺 signals 欄位,或 signals 不是物件';
+  return null;
+}
+
+/** 讀 `<dir>/*.jsonl`。壞的一行丟 UsageError,訊息帶「檔案:行」跟怎麼壞的;整個 dir 讀完才回。 */
 export function readRecords(dir: string): WitnessRecord[] {
   const out: WitnessRecord[] = [];
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.jsonl')) continue;
-    for (const line of readFileSync(join(dir, name), 'utf8').split('\n')) {
-      if (line.trim() === '') continue;
-      out.push(JSON.parse(line) as WitnessRecord);
-    }
+    const full = join(dir, name);
+    readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
+      if (line.trim() === '') return;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch (err) {
+        throw new UsageError(`${full}:${i + 1} 不是合法的 JSON(${err instanceof Error ? err.message : String(err)})。每一行要是一筆 {file, test, signals}`);
+      }
+      const problem = describeRecordProblem(parsed);
+      if (problem !== null) throw new UsageError(`${full}:${i + 1} 的紀錄${problem}`);
+      out.push(parsed as WitnessRecord);
+    });
   }
   return out;
 }
@@ -490,11 +524,15 @@ function main(): void {
     command = `(--in ${relative(root, inDir)})`;
   }
 
-  if (!existsSync(inDir)) throw new Error(`找不到輸入目錄:${inDir}`);
+  if (!existsSync(inDir)) throw new UsageError(`找不到輸入目錄:${inDir}`);
+  if (!statSync(inDir).isDirectory()) throw new UsageError(`--in 要指到一個目錄,這是一個檔案:${inDir}`);
   const records = readRecords(inDir);
   if (records.length === 0) {
-    throw new Error(
-      `這不是很乾淨,是掃描器壞了:${inDir} 裡沒有任何紀錄。vitest.config.ts 的 setupFiles 有掛 scripts/degraded-witness.setup.ts 嗎?`,
+    const jsonlFiles = readdirSync(inDir).filter((n) => n.endsWith('.jsonl')).length;
+    throw new UsageError(
+      args.inDir === undefined
+        ? `這不是很乾淨,是掃描器壞了:vitest 跑完了,${inDir} 裡卻沒有任何紀錄(.jsonl 檔 ${jsonlFiles} 個)。vitest.config.ts 的 setupFiles 有掛 scripts/degraded-witness.setup.ts 嗎?`
+        : `${inDir} 裡沒有任何紀錄(.jsonl 檔 ${jsonlFiles} 個,有效的行 0 行)。--in 要指到 DEGRADED_WITNESS_DIR 那個目錄,通常在 reports/degraded/.raw/<時戳>/`,
     );
   }
 
@@ -514,4 +552,13 @@ function main(): void {
 }
 
 const isEntry = process.argv[1] !== undefined && /degraded-report\.(ts|js)$/.test(process.argv[1]);
-if (isEntry) main();
+if (isEntry) {
+  try {
+    main();
+  } catch (err) {
+    // 預期中的失敗印一句人話就好;其他的(程式自己的 bug)照常往外丟,stack 是要看的。
+    if (!(err instanceof UsageError)) throw err;
+    console.error(`✗ degraded-report:${err.message}`);
+    process.exitCode = 1;
+  }
+}

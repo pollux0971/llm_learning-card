@@ -177,6 +177,10 @@
       "infra"
     ],
     [
+      "scripts/zero-input-guard.test.ts",
+      "infra"
+    ],
+    [
       "scripts/_root.js",
       "infra"
     ],
