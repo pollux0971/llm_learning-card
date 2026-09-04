@@ -15,7 +15,8 @@
 - 05-grading phase-2 done
 - 01-data-layer phase-2 done
 
-**phase-2** 需要:phase-1 done、I2 通過
+**phase-2** 需要:phase-1 done、I2 通過、01-data-layer phase-4 done(ADR-042 的
+`snapshotLearningDir()` 要先能用)
 
 ## Gate 未滿足時
 
@@ -30,6 +31,12 @@ Wave 0 期間唯一值得做的:**把 session 的行為想清楚並寫進 phase-
 3. 答案什麼時候落地?(定為每題立刻,不是 session 結束)
 
 想清楚了就寫進 gherkin,不用等程式。
+
+## phase-2 多了一件事(ADR-042)
+
+複習結束時要呼叫一次 snapshot,把當天的 `state/` 變更 commit 進 `learning/` 自己的 git repo。
+**這是 v1 唯一的「每天備份一次」機制**,沒有排程器。要寫成什麼場景、五條細節(dry-run 不
+呼叫、失敗不影響退出碼……)見 FEATURE.md 的「snapshot 的呼叫點(ADR-042)」。
 
 ## 完成後
 

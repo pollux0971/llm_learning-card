@@ -11,7 +11,7 @@
 - 字數計算函式(契約 §2 的權威實作)
 - 考題、reviews、weekly、log、categories、settings 的驗證
 - 依賴圖驗證、循環偵測、拓樸排序
-- `learning/` 目錄初始化
+- `learning/` 目錄初始化,含把它變成它自己的 git repo 與每日 snapshot(契約 §11b、ADR-042)
 - `contracts/fixtures/` 的建立(Wave 0 的附帶產出,其他功能靠它)
 
 ## 不在範圍
@@ -25,9 +25,11 @@
 ```bash
 npx tsx packages/core/src/schema/cli.ts validate contracts/fixtures/cards/valid-basic.md
 npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
+npx tsx scripts/snapshot.ts --dir ./tmp-learning
 ```
 
-預期輸出:第一個印出 `OK` 與字數;第二個建立目錄樹並列出建立的檔案。
+預期輸出:第一個印出 `OK` 與字數;第二個建立目錄樹並列出建立的檔案(phase-4 之後還會建立
+git repo 與第一個 `init` commit);第三個印出「沒有變更,不建立 snapshot。」並退出 0。
 
 ## 依賴
 
@@ -37,6 +39,7 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
 |---|---|---|
 | phase-2 | phase-1 | 共用 schema 基礎 |
 | phase-3 | phase-2 | 圖的驗證需要卡片驗證 |
+| phase-4 | phase-1 | 掛在 phase-1 的 `init` 後面,只需要目錄樹存在 |
 
 ## Wave 0 的重複
 
@@ -60,6 +63,7 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
 | 1 | schema、卡片驗證器、字數、init、fixtures | Wave 0 | done | 2026-09-02 |
 | 2 | 考題、狀態檔、log、設定檔 | I1 | done | 2026-09-03 |
 | 3 | 依賴圖、循環偵測、拓樸排序 | I1 | done | 2026-09-03 |
+| 4 | learning/ 自成 git repo、snapshot(ADR-042) | I3 | in-progress | |
 
 ## 驗收方式
 
@@ -71,6 +75,10 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
 它不在 `schema/**` 這個 glob 裡,所以審核輪要**手動指定**:
 `npx stryker run --mutate "packages/core/src/ingest/state.ts,!packages/core/src/ingest/state.test.ts"`。
 字數計算與 example 圍欄解析的邊界(剛好 100 / 101 字、0 個 / 多個圍欄)必須有測試。
+
+phase-4 的測試一律在 `mkdtemp` 出來的暫存目錄裡跑 `git init`,**絕對不在這個 repo 或任何
+worktree 裡面 init**。「沒有 git」這個路徑走兩條:單元測試把 `PATH` 清空(ENOENT),
+gherkin 在 `PATH` 前面插一個必定失敗的 `git` shim(非 0 退出碼)。兩條都要是 warning 不是失敗。
 
 ## 開放問題
 
@@ -137,3 +145,23 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
   跑出 174 個變異體、100% 擊殺。但因為 `mutate` 清單只有 `packages/core` 與 `packages/ui-shared`,
   平常 `npx stryker run` 不會掃到 contracts,這個分數不會自動守住。請協調者決定要不要把
   `packages/contracts/src/**/*.ts`(排除 `*.test.ts`)正式加進 `stryker.config.json`,納入變異門檻。
+
+### phase-4(ADR-042)
+
+- **`standalone.json`(共用檔,不自己改)建議在實作完成後加一條 snapshot 的入口**:
+  ```json
+  "01-data-layer-snapshot": {
+    "cmd": "npx tsx scripts/snapshot.ts --dir ./tmp-learning",
+    "interactive": false,
+    "expect": "snapshot"
+  }
+  ```
+  這一輪**沒有加**,因為 `npm run standalone` 會真的去跑那條指令,而 `snapshotLearningDir()`
+  現在是 `throw new Error('not implemented')`,加了就是把一個共用檢查弄紅。
+  `package.json` 的 `npm run snapshot` 本來就已經指向 `scripts/snapshot.ts`(先前指向一個
+  不存在的檔),這一輪把那個檔補上了。
+- **`features/01-data-layer/phase-4.feature` 的 `@i3` tag**:snapshot 的呼叫點在 11-review-cli
+  的 phase-2(I3),所以階段標 I3。但 phase-4 **本身不依賴 11**,gate 只要 phase-1,可以先做。
+- **11-review-cli 的呼叫點只寫在它的 FEATURE.md / NEXT.md,沒有寫進 `phase-2.feature`**。
+  理由見 ADR-042 Consequences 第 1 點(那份 feature 的步驟一個都還沒寫,加場景會讓
+  `accept:dry` 的 undefined 數字變多,或逼這一輪去佔用 phase-2 worker 要用的步驟名字)。

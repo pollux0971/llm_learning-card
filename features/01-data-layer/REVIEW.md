@@ -230,3 +230,224 @@ open 把第一次的覆寫掉了)。改成記 open/close **事件序列**再重�
 - `packages/core/src/ingest/state.test.ts` —— 補 fd 不外洩 ×2、`readLogEvents` ×2
 - `packages/core/src/ingest/state.ts` —— 只加一個 `Stryker disable next-line all` 註解,
   行為零改動
+
+---
+
+# B. phase-4 審核輪(ADR-042:learning/ 自成 git repo + snapshot)
+
+日期 2026-09-04 · worktree `learning-repo-snapshot` · 起點 HEAD `b815914`
+
+**結論:PASS。**
+
+## B.1 必辦事項 1 —— 修好那條寫錯的測試
+
+`git-repo.test.ts` 的 `'keeps the identity the user has configured for that repo'`
+原本任何實作都無法讓它變綠,而且**根本沒有測到實作**。
+
+**原因(已用臨時目錄實測確認)**:helper `git()` 每次都硬帶
+`-c user.name=… -c user.email=learning-cards@localhost`,而 git 的 `-c` 優先權高於
+repo local config。原流程用同一個 helper 做 commit(author 被 `-c` 蓋成
+`learning-cards@localhost`)→ `snapshotLearningDir()` 正確回 `no-changes`、不產生新 commit
+→ 斷言 `git log -1 --format=%ae`,拿到的還是步驟 2 那個 commit 的
+`learning-cards@localhost`,永遠不等於 `someone@example.com`。
+
+**修法採 (b)(不是 (a))**:在斷言前**製造變更**(寫 `state/reviews.json`),
+逼 `snapshotLearningDir()` **真的做出一個 commit**,讓 HEAD 是**我們的程式**做的那一個,
+再斷言它的身分。同時加上 `%an` 與「不等於 FALLBACK_IDENTITY.email」兩條。
+沒有採 (a)(把 setup commit 改成裸 git):那只會驗到測試自己做的 commit,
+綠了也沒有碰到 `identityArgs()`。
+
+**反向驗證(必做)**:把 `identityArgs()` 改成無條件回傳死身分
+(`return ['-c', 'user.name=…', '-c', 'user.email=…']`,拿掉 `user.email` 的判斷)後重跑:
+
+```
+× keeps the identity the user has configured for that repo
+AssertionError: expected 'learning-cards@localhost' to be 'someone@example.com'
+Tests  1 failed | 38 passed (39)
+```
+
+**只有這一條紅,而且紅在正確的地方**。修法確實測到了實作。實作已還原,`git diff` 為空。
+
+## B.2 必辦事項 2 —— 巢狀 repo 親自驗
+
+### 讀實作
+
+判斷「是不是 repo」的地方**全專案只有一處**:`isOwnGitRepo()`。
+`initGitRepo()` 與 `snapshotLearningDir()` 都呼叫它,沒有第二套判斷。
+`grep -rn "is-inside-work-tree"` 在**實作裡零命中**(只出現在說明為什麼不能用它的註解與 ADR)。
+
+`snapshotLearningDir()` 三道關卡的順序是
+`missing-dir` → `git-unavailable` → `not-a-repo` → **才** `add -A`。
+not-a-repo 確實擋在 `add -A` **之前**,不會把卡片 add 進上層 repo 的索引。
+
+### realpath 真的處理了 symlink 與 `..`(實測)
+
+```
+$ git -C outer/learning rev-parse --is-inside-work-tree     → true      ← 用這句就會出事
+$ git -C outer/learning rev-parse --show-toplevel           → …/nest/outer
+$ realpath outer/learning                                   → …/nest/outer/learning   ← 不相等 → false ✅
+$ git -C link-outer rev-parse --show-toplevel               → …/nest/outer   (git 自己解 symlink)
+$ realpath link-outer                                       → …/nest/outer   ← 相等 → true ✅
+$ git -C outer/learning/../ rev-parse --show-toplevel       → …/nest/outer   ← `..` 由 realpath 正規化 ✅
+```
+
+### 手動搭巢狀情境跑真的 snapshot
+
+```
+$ git init -q outer && git -C outer commit --allow-empty -m "outer base"
+$ mkdir -p outer/learning/{raw,cards,questions,assets,state,graph,config}
+$ echo '{}' > outer/learning/state/reviews.json
+$ npx tsx scripts/snapshot.ts --dir "$PWD/outer/learning"
+snapshot 失敗(not-a-repo):這個目錄不是它自己的 git repo,沒有東西可以 snapshot。
+請跑 npx tsx packages/core/src/schema/cli.ts init <dir> 建立版本控制。
+EXIT=1
+```
+
+外層 repo 前後對比:
+
+| | before | after |
+|---|---|---|
+| HEAD | `53960de…` | `53960de…` **不變** |
+| commit 數 | 1 | 1 |
+| `status --porcelain` | `?? learning/` | `?? learning/` **不變** |
+| `diff --cached --name-only` | (空) | (空) |
+
+### 反向驗證:換成 `--is-inside-work-tree`
+
+單元測試 3 條轉紅(正是該紅的那 3 條):
+
+```
+× is false for a directory that merely sits inside another repo
+× initialises a directory that sits inside another repo as its own repo
+× never commits into the parent repo when the learning dir is nested inside one
+Tests  3 failed | 36 passed (39)
+```
+
+更重要的是**同一個手動情境用被破壞的版本跑,災難真的會發生**:
+
+```
+BEFORE outer commits: 1
+snapshot 已建立:snapshot 2026-09-04
+EXIT=0
+AFTER outer commits: 2
+AFTER outer log:      snapshot 2026-09-04 / outer base
+AFTER outer tracked:  learning/state/reviews.json     ← 使用者的資料被 commit 進錯的 repo
+```
+
+出貨的實作拒絕,被破壞的版本會犯。這條防線是真的。實作已還原。
+
+## B.3 其他審查項目
+
+| 項目 | 判定 | 依據 |
+|---|---|---|
+| `initGitRepo` 冪等 | ✅ | 第二次回 `existing`、commit 數 1、HEAD 不變、`.gitignore` 不被覆寫(單元 + gherkin 各一) |
+| 沒有 git → warning 不失敗 | ✅ **真的測,不是 mock** | 單元測試把 `PATH` 換成空目錄(真 ENOENT);gherkin 在 `PATH` 前面插一個 `exit 127` 的 `git` shim。兩條都是真的跑 `spawnSync`,沒有任何 mock |
+| `/assets/` 開頭斜線 | ✅ **刻意,不是筆誤** | ADR-042 Decision (2) 明寫「只擋契約 §12 的那一個最上層 assets/,不擋 cards/<category>/assets/」。測試用**真的 `git check-ignore`** 驗(不是比字串),巢狀 `cards/security/assets/note.md` 確認**不被忽略** |
+| `*.tmp` 蓋到兩種暫存檔名 | ✅ | `atomic-write.ts` 用 `.<name>.<pid>.<ts>.tmp`、`ingest/state.ts` 用 `<name>.tmp`,兩種都用真 `git check-ignore` 驗過(dotfile 也有蓋到) |
+| snapshot 無變更 → 退出 0 不 commit | ✅ | `add -A` 之後才 `diff --cached --quiet`,抓得到新增與刪除;單元 + gherkin |
+| 有沒有碰到使用者真實資料 | ✅ **完全沒有** | `grep -rn "llm_learning-cards/learning\|/data/python"` 全專案零命中;所有測試都在 `mkdtemp` 裡跑。順帶查:`/data/python/llm_learning-cards/learning/` 目前**不是** git repo,所以就算有人在主 repo 跑 `npm run snapshot`,也是 `not-a-repo` 退出 1、一個字都不寫 |
+| 投機取巧 | ✅ 沒有 | gherkin 的 `isOwnRepo()` 用 `existsSync(<dir>/.git)`,是**獨立於實作**的第二種判準;`.gitignore` 的驗證問的是 git 本人不是字串;「沒有 git」走真的 PATH 操作 |
+
+## B.4 `standalone.json` —— 查證後**這一輪補上了**
+
+查證結果:ADR-042 Consequences 5 確實寫「**這一輪**不加」,但下一句是
+「**建議實作完成後**由協調者補一條」。測試與 `.feature` 場景確實**都沒有要求**這一條
+(dev agent 的判斷正確)。而**實作這一輪已經完成**,補的條件成立,所以補上:
+
+```json
+"01-data-layer-snapshot": {
+  "cmd": "npx tsx packages/core/src/schema/cli.ts init ./tmp-learning && printf '…' > ./tmp-learning/state/reviews.json && npx tsx scripts/snapshot.ts --dir ./tmp-learning",
+  "interactive": false,
+  "expect": "snapshot 已建立"
+}
+```
+
+刻意走**有變更 → 真的 commit** 那條路徑(不是 `no-changes`),這樣入口才驗得到東西。
+`check-standalone.ts` 是 `shell: true`,`&&` 可用;它會在跑之前先 `rmSync` 掉
+`tmp-learning/`,而 `tmp-learning/` 在主 repo 的 `.gitignore` 裡,不會污染版本控制。
+`npm run standalone` 實跑通過(1199 ms)。
+
+## B.5 Stryker —— 91.00% → **100.00%**,存活變異逐條處理
+
+第一次跑:**91.00%**(killed 91 / survived 8 / no-coverage 1),**未達嚴格 95%**。
+九條逐條分類處理:
+
+| # | 位置 | 變異 | 分類 | 處理 |
+|---|---|---|---|---|
+| 1 | `git-repo.ts:65` | `'warning: 找不到 git 命令…'` → `""` | **真漏測** | 補測試斷言訊息內容 |
+| 2 | `:66` | `'…§11b 的建議…再跑一次 init…'` → `""` | **真漏測** | 同上 |
+| 3 | `:70` | `MISSING_DIR_HINT` → `""` | **真漏測** | 同上 |
+| 4 | `:74` | `NOT_A_REPO_HINT` 前半 → `""` | **真漏測** | 同上 |
+| 5 | `:75` | `NOT_A_REPO_HINT` 後半 → `""` | **真漏測** | 同上 |
+| 6 | `:152` | `if (r.status !== 0) throw` → `if (false)` | **真漏測(最嚴重的一條)** | 補測試,見下 |
+| 7 | `:152` | 錯誤訊息樣板 → `` `` ``(NoCoverage) | **真漏測**,與 6 同根 | 同上 |
+| 8 | `:140` | `(r.stdout ?? '')` → `?? "Stryker was here!"` | **真等價** | `Stryker disable next-line all` + 精確理由 |
+| 9 | `:187` | `spawnSync(…, { encoding: 'utf8' })` → `{}` | **真等價** | 同上 |
+
+**1–5(真漏測)**:原本每條斷言都是 `expect(result.hint).toBe(NOT_A_REPO_HINT)`
+——拿常數比常數,常數被清空照樣綠。訊息內容本身就是功能的一部分(訊息沒說清楚
+要做什麼,使用者就卡住了),所以補一個 `describe('the hints and warnings')`,
+斷言 `toContain('找不到 git 命令')`、`toContain('§11b')`、`toContain('不存在')`、
+`toContain('--dir')`、`toContain('不是它自己的 git repo')`、`toContain('cli.ts init')`。
+
+**6–7(真漏測,最值得抓的一條)**:`if (false)` 存活代表**沒有任何測試讓
+`mustGit()` 真的失敗過**——而 `mustGit()` 存在的唯一理由就是「不要安靜吞掉失敗」,
+吞掉的話使用者會以為 snapshot 建好了,真正需要回溯那天才發現什麼都沒有。
+補測試的手法是寫一個 `.git/index.lock`(不依賴檔案權限,因此 root 底下也成立),
+`git add -A` 必定 `exit 128`,斷言
+`expect(() => snapshotLearningDir(dir, …)).toThrow(/git add 失敗/)`
+並確認 commit 數沒變。這一條同時殺掉 6 與 7。
+
+**8–9(真等價)**:
+`:140` 的 `?? ''` 只在 spawn 本身失敗(這台機器沒有 git)時會用到,而那種情況
+`status` 也是 `null`——`isOwnGitRepo` 只在 `status === 0` 時讀 `out`、`identityArgs`
+不讀、`mustGit` 讀的是自己丟出去的訊息,換掉 fallback 沒有任何呼叫端看得到的差異。
+`:187` 只讀 `.status`,`encoding` 只決定 `stdout` 是 string 還是 Buffer 而 `stdout`
+根本沒被讀。兩條都加 `// Stryker disable next-line all:` 並寫上精確理由,
+**實作行為零改動**。
+
+沒有「死程式」與「邊界」兩類的案例。
+
+第二次跑:**100.00%**(killed 90 / survived 0 / no-coverage 0)。
+
+## B.6 完整驗收結果
+
+| 檢查 | 結果 |
+|---|---|
+| `npm ci` | ✅ exit 0 |
+| `npm run boundaries` | ✅ 178 檔、9 條例外、無違規 |
+| `npm run typecheck` | ✅ |
+| `npx vitest run` | ✅ 67 檔 **1051 passed / 0 failed**(修好那條測試後 1047,再補 4 條變異測試 → 1051) |
+| `cucumber-js --tags "@data-layer and @phase-4"` | ✅ **13 scenarios / 13 passed**、56 steps 全過 |
+| `cucumber-js --tags "not @manual"` | ✅ **306 passed / 0 failed**(164 undefined 是未開工的 phase,與本輪前相同,無退化) |
+| `npm run accept:dry` | ✅ **0 ambiguous** |
+| `npm run standalone` | ✅ 全部通過(10 跑、3 interactive 跳過),含新增的 `01-data-layer-snapshot` |
+| Stryker `git-repo.ts` | ✅ **100.00%**(91.00% → 100.00%),嚴格 95% 達標 |
+
+## B.7 發現的問題與觀察
+
+1. **(已修)** `'keeps the identity…'` 測試寫錯,見 B.1。
+2. **(已修)** 五條訊息常數只被拿來跟自己比,內容被清空也不會紅,見 B.5 #1–5。
+3. **(已修)** `mustGit()` 的失敗路徑完全沒有測試覆蓋,見 B.5 #6–7。
+4. **(已補)** `standalone.json` 少一條 snapshot 入口,見 B.4。
+5. **(觀察,不擋)** `initGitRepo()` 在「目錄還不是 repo、但已經有一份 `.gitignore`」
+   時會直接覆寫它。ADR-042 的「不覆寫」要求是針對**重跑 init**(已經是 repo)那個情境,
+   該情境有測試且通過;這個邊角情境 ADR 沒有規定。發生機率低(learning 目錄是我們自己
+   建的),先記著,不擋驗收。
+6. **(觀察,不擋)** 契約 §11b 寫「暫存檔名固定是 `<name>.tmp`……不需要隨機後綴」,
+   但 `schema/atomic-write.ts` 實際用的是 `.<name>.<pid>.<ts>.tmp`。這是**既有**的
+   契約與實作措辭落差,不是本輪造成的,而且不影響本輪(`*.tmp` 兩種都蓋得到,已實測)。
+   要不要對齊留給協調者/技術顧問。
+7. **開發 agent 沒有標【驗】的設計判斷,逐一查證後全部成立**:
+   判斷 repo 只有 `isOwnGitRepo` 一處且只用 `--show-toplevel`(grep 佐證)、
+   not-a-repo 擋在 `add -A` 之前(讀碼 + 手動實跑佐證)、
+   realpath 處理 symlink 與 `..`(實測佐證)、
+   `standalone.json` 本輪不加符合 ADR 原文(已查證 ADR-042 Consequences 5 原文)。
+
+## B.8 本輪修改的檔案
+
+- `packages/core/src/schema/git-repo.test.ts` —— 修好 `'keeps the identity…'`(必辦事項 1)、
+  新增 `describe('the hints and warnings')` 3 條、新增 `mustGit` 失敗路徑 1 條
+- `packages/core/src/schema/git-repo.ts` —— **只加兩個 `Stryker disable next-line all` 註解,
+  行為零改動**
+- `standalone.json` —— 新增 `01-data-layer-snapshot` 入口(ADR-042 Consequences 5 的後半句)

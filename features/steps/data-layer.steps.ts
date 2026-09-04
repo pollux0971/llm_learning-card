@@ -5,6 +5,7 @@
 import { Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as yamlParse } from 'yaml';
@@ -890,4 +891,268 @@ Then('the language order file is unchanged', function (this: DataLayerWorld) {
   assert.ok(this.dir, '尚未建立 graph 檔案');
   const content = readFileSync(join(this.dir, 'graph/order-language.json'), 'utf8');
   assert.equal(content, this.languageOrderSnapshot);
+});
+
+// ================================================================ phase-4:learning/ 自成 git repo(ADR-042)
+//
+// 這一段的每個 git 操作都在 mkdtemp 出來的暫存目錄裡跑,**絕對不在這個 repo 或任何
+// worktree 裡面 git init**。`this.dir` 一律指到最外層的暫存目錄(After hook 會整個刪掉),
+// 真正被測的 learning 目錄放在 `this.learningPath`——巢狀那幾個場景兩者不一樣。
+
+/** phase-4 用到的額外暫存欄位 */
+interface GitWorld extends DataLayerWorld {
+  /** 被測的 learning 目錄。非巢狀時等於 this.dir */
+  learningPath?: string;
+  /** 巢狀場景裡外層那個 repo */
+  outerRepoPath?: string;
+  /** 「沒有 git」場景的 PATH 前綴目錄 */
+  gitShimPath?: string;
+  /** 比對用的快照 */
+  headBefore?: string;
+  commitCountBefore?: number;
+  gitignoreBefore?: string;
+}
+
+const SNAPSHOT_CLI = 'npx tsx scripts/snapshot.ts';
+
+/** 在暫存目錄裡跑 git,身分寫死,不依賴跑測試的人設過 user.email */
+function gitIn(dir: string, ...args: string[]): { status: number | null; out: string } {
+  const r = spawnSync(
+    'git',
+    ['-c', 'user.name=learning-cards', '-c', 'user.email=learning-cards@localhost', '-C', dir, ...args],
+    { encoding: 'utf8' },
+  );
+  return { status: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+}
+
+function gitCommitCount(dir: string): number {
+  const r = gitIn(dir, 'rev-list', '--count', 'HEAD');
+  return r.status === 0 ? Number(r.out.trim()) : 0;
+}
+
+function gitCommitMessages(dir: string): string[] {
+  const r = gitIn(dir, 'log', '--format=%s');
+  return r.status === 0 ? r.out.split('\n').filter((l) => l.length > 0) : [];
+}
+
+function gitTrackedFiles(dir: string): string[] {
+  const r = gitIn(dir, 'ls-tree', '-r', '--name-only', 'HEAD');
+  return r.status === 0 ? r.out.split('\n').filter((l) => l.length > 0).sort() : [];
+}
+
+/** dir 是不是「它自己」的 repo(不是被上層 repo 包住) */
+function isOwnRepo(dir: string): boolean {
+  return existsSync(join(dir, '.git'));
+}
+
+function learningOf(world: GitWorld): string {
+  assert.ok(world.learningPath, '尚未建立 learning 目錄');
+  return world.learningPath;
+}
+
+/** 跑 CLI,「沒有 git」場景會帶上把 git 換成必定失敗的 shim 的 PATH */
+function runWithEnv(world: GitWorld, cmd: string): void {
+  const env = world.gitShimPath ? { PATH: `${world.gitShimPath}:${process.env.PATH ?? ''}` } : undefined;
+  world.runCommand(cmd, env ? { env } : {});
+}
+
+// ---------------------------------------------------------------- phase-4:Given
+
+Given('an empty directory containing an image under assets', function (this: GitWorld) {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-git-'));
+  this.dir = dir;
+  this.learningPath = dir;
+  mkdirSync(join(dir, 'assets'), { recursive: true });
+  writeFileSync(join(dir, 'assets/diagram.png'), 'not really a png', 'utf8');
+});
+
+Given('an initialised learning repository', function (this: GitWorld) {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-git-'));
+  this.dir = dir;
+  this.learningPath = dir;
+  runWithEnv(this, `${CLI} init "${dir}"`);
+});
+
+Given('a file under cards security assets', function (this: GitWorld) {
+  const dir = learningOf(this);
+  mkdirSync(join(dir, 'cards/security/assets'), { recursive: true });
+  writeFileSync(join(dir, 'cards/security/assets/note.md'), 'nested, not the top level assets/\n', 'utf8');
+});
+
+Given('the person has edited the gitignore', function (this: GitWorld) {
+  const p = join(learningOf(this), '.gitignore');
+  // 前提是 init 已經寫過一份——「不覆寫」只有在本來就有東西的時候才有意義
+  assert.ok(existsSync(p), 'init 應該已經寫了一份 .gitignore');
+  this.gitignoreBefore = '/assets/\nmy-own-rule/\n';
+  writeFileSync(p, this.gitignoreBefore, 'utf8');
+});
+
+Given('an empty directory nested inside another git repository', function (this: GitWorld) {
+  const outer = mkdtempSync(join(tmpdir(), 'lc-outer-'));
+  this.dir = outer;
+  this.outerRepoPath = outer;
+  gitIn(outer, 'init', '-q');
+  const nested = join(outer, 'learning');
+  mkdirSync(nested);
+  this.learningPath = nested;
+});
+
+Given('a machine with no git available', function (this: GitWorld) {
+  // PATH 前面插一個必定失敗的 git,等同於「這台機器沒有可用的 git」:
+  // isGitAvailable() 跑 `git --version` 拿不到 0 就是 false。
+  // (單元測試 git-repo.test.ts 走的是另一條:PATH 整個清空,ENOENT。)
+  const shim = mkdtempSync(join(tmpdir(), 'lc-nogit-'));
+  writeFileSync(join(shim, 'git'), '#!/bin/sh\nexit 127\n', { encoding: 'utf8', mode: 0o755 });
+  this.gitShimPath = shim;
+});
+
+Given('a review was recorded today', function (this: GitWorld) {
+  const dir = learningOf(this);
+  writeFileSync(join(dir, 'state/reviews.json'), `${JSON.stringify({ 'sec-0001': { stage: 2 } }, null, 2)}\n`, 'utf8');
+});
+
+Given('a learning directory that was never put under version control', function (this: GitWorld) {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-git-'));
+  this.dir = dir;
+  this.learningPath = dir;
+  initLearningDir(dir);
+});
+
+Given('a learning directory nested inside another git repository and never initialised', function (this: GitWorld) {
+  const outer = mkdtempSync(join(tmpdir(), 'lc-outer-'));
+  this.dir = outer;
+  this.outerRepoPath = outer;
+  gitIn(outer, 'init', '-q');
+  const nested = join(outer, 'learning');
+  mkdirSync(nested);
+  initLearningDir(nested);
+  this.learningPath = nested;
+});
+
+Given('a directory path that does not exist', function (this: GitWorld) {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-git-'));
+  this.dir = dir;
+  this.learningPath = join(dir, 'nope');
+});
+
+// ---------------------------------------------------------------- phase-4:When
+
+When('the init command is run against an empty directory', function (this: GitWorld) {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-git-'));
+  this.dir = dir;
+  this.learningPath = dir;
+  runWithEnv(this, `${CLI} init "${dir}"`);
+});
+
+When('the init command is run against that directory', function (this: GitWorld) {
+  runWithEnv(this, `${CLI} init "${learningOf(this)}"`);
+});
+
+When('the init command is run again on it', function (this: GitWorld) {
+  const dir = learningOf(this);
+  this.headBefore = gitIn(dir, 'rev-parse', 'HEAD').out.trim();
+  runWithEnv(this, `${CLI} init "${dir}"`);
+});
+
+When('the snapshot command is run for that repository', function (this: GitWorld) {
+  const dir = learningOf(this);
+  this.commitCountBefore = gitCommitCount(dir);
+  runWithEnv(this, `${SNAPSHOT_CLI} --dir "${dir}"`);
+});
+
+When('the snapshot command is run for that repository again', function (this: GitWorld) {
+  runWithEnv(this, `${SNAPSHOT_CLI} --dir "${learningOf(this)}"`);
+});
+
+// ---------------------------------------------------------------- phase-4:Then
+
+Then('the learning directory is its own git repository', function (this: GitWorld) {
+  assert.ok(isOwnRepo(learningOf(this)), 'learning 目錄應該有自己的 .git');
+});
+
+Then('the learning directory is not a git repository', function (this: GitWorld) {
+  assert.ok(!isOwnRepo(learningOf(this)), 'learning 目錄不該有 .git');
+});
+
+Then('it has exactly one commit named init', function (this: GitWorld) {
+  assert.deepEqual(gitCommitMessages(learningOf(this)), ['init']);
+});
+
+Then('it still has exactly one commit named init', function (this: GitWorld) {
+  assert.deepEqual(gitCommitMessages(learningOf(this)), ['init']);
+});
+
+Then('a gitignore file is present', function (this: GitWorld) {
+  assert.ok(existsSync(join(learningOf(this), '.gitignore')), '.gitignore 應該存在');
+});
+
+Then(
+  'the first commit tracks reviews.json, weekly.json, deps.json and both config files',
+  function (this: GitWorld) {
+    assert.deepEqual(gitTrackedFiles(learningOf(this)), [
+      '.gitignore',
+      'config/categories.yaml',
+      'config/settings.yaml',
+      'graph/deps.json',
+      'state/reviews.json',
+      'state/weekly.json',
+    ]);
+  },
+);
+
+Then('the working tree is clean', function (this: GitWorld) {
+  assert.equal(gitIn(learningOf(this), 'status', '--porcelain').out.trim(), '');
+});
+
+Then('the image is not tracked', function (this: GitWorld) {
+  assert.ok(!gitTrackedFiles(learningOf(this)).includes('assets/diagram.png'), 'assets/ 的檔案不該進版控');
+});
+
+Then('that file is tracked', function (this: GitWorld) {
+  assert.ok(
+    gitTrackedFiles(learningOf(this)).includes('cards/security/assets/note.md'),
+    '只有最上層的 assets/ 該被忽略',
+  );
+});
+
+Then('the commit it pointed at has not changed', function (this: GitWorld) {
+  assert.ok(this.headBefore, '沒有記錄到之前的 HEAD');
+  assert.equal(gitIn(learningOf(this), 'rev-parse', 'HEAD').out.trim(), this.headBefore);
+});
+
+Then('the edited gitignore is left alone', function (this: GitWorld) {
+  assert.ok(this.gitignoreBefore, '沒有記錄到改過的 .gitignore');
+  assert.equal(readFileSync(join(learningOf(this), '.gitignore'), 'utf8'), this.gitignoreBefore);
+});
+
+Then('the surrounding repository has no commits', function (this: GitWorld) {
+  assert.ok(this.outerRepoPath, '這個場景沒有外層 repo');
+  assert.equal(gitCommitCount(this.outerRepoPath), 0);
+});
+
+Then('it warns that version control was skipped', function (this: GitWorld) {
+  assert.ok(this.lastRun, '還沒有跑過任何指令');
+  assert.match(this.lastRun.output, /warning/i);
+  assert.match(this.lastRun.output, /git/);
+});
+
+Then("a commit named snapshot with today's date is added", function (this: GitWorld) {
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  assert.deepEqual(gitCommitMessages(learningOf(this)), [`snapshot ${today}`, 'init']);
+});
+
+Then('the number of commits is unchanged since before the first snapshot', function (this: GitWorld) {
+  assert.equal(typeof this.commitCountBefore, 'number', '沒有記錄到之前的 commit 數');
+  assert.equal(gitCommitCount(learningOf(this)), this.commitCountBefore);
+});
+
+Then('it says the directory does not exist', function (this: GitWorld) {
+  assert.ok(this.lastRun, '還沒有跑過任何指令');
+  assert.match(this.lastRun.output, /不存在/);
+});
+
+Then('it points the person at the init command', function (this: GitWorld) {
+  assert.ok(this.lastRun, '還沒有跑過任何指令');
+  assert.match(this.lastRun.output, /init/);
 });

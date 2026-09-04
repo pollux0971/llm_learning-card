@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { parse as yamlParse } from 'yaml';
 import { validateCard } from './validate-card.js';
 import { initLearningDir } from './init.js';
+import { initGitRepo } from './git-repo.js';
 import { validateQuestionFile, findCardsMissingQuestions } from './validate-question.js';
 import { validateReview } from './review.js';
 import { validateLogEvent } from './log.js';
@@ -50,6 +51,12 @@ function runInit(dir: string | undefined): void {
   const result = initLearningDir(dir);
   for (const p of result.created) console.log(`created  ${p}`);
   for (const p of result.skipped) console.log(`skipped  ${p} (already exists)`);
+  // ADR-042:目錄樹建完之後把 learning/ 變成它自己的 git repo(契約 §11b)。
+  // 冪等,而且找不到 git 只印 warning——§11b 說的是「建議」,不能拿它擋掉整個產品。
+  const git = initGitRepo(dir);
+  if (git.warning) console.warn(git.warning);
+  else if (git.status === 'created') console.log('created  .gitignore\ncreated  git repo (commit: init)');
+  else console.log('skipped  git repo (already a repo)');
   process.exit(0);
 }
 
