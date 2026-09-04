@@ -241,8 +241,14 @@ Given('the fake router fixtures directory is renamed away', function (this: Lear
   // 頂替網路),從來沒有讀過 contracts/fixtures/llm,所以這裡不需要真的去搬動
   // 那個共用目錄(會影響同時在跑的其他測試檔案)。用一個明確的斷言記錄「此時
   // 用的 router 確實不是靠 fixture 重播」,取代真的搬檔案。
-  const router = ctx(this).router;
-  assert.ok(router, '尚未執行 Background 的 "a cloud LLM provider is configured and reachable"');
+  //
+  // I2 也用這句(i2-review-loop-headless.feature 的「Grading works without any
+  // fake in the loop」),但 I2 的 Background 只鋪 learning 目錄,不設 router。
+  // 這個步驟要斷言的是「用的不是 fixture 重播」,不是「某段 Background 跑過了」,
+  // 所以沒有 router 時就地建一個真的 CloudLlmRouter,語意完全相同。
+  const state = ctx(this);
+  state.router ??= buildReachableCloudRouter(this);
+  assert.ok(state.router, '無法建立 cloud router');
 });
 
 Given('the network is unavailable', function (this: LearningWorld) {
