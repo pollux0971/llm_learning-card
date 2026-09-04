@@ -48,6 +48,11 @@ interface FakeOpts {
   chatBody?: unknown;
   /** /gateway/models 回應前先等這麼久(測 probe 的逾時) */
   modelsDelayMs?: number;
+  /**
+   * `/auth/token/exchange` 永不回應——只有 abort 能結束它。重現「閘道的 auth
+   * 端點掛住」:封包被防火牆黑洞吃掉,連 ECONNREFUSED 都不會回來。
+   */
+  tokenHangs?: boolean;
   /** 回一段不是 JSON 的原始內容(例如反向代理的 502 HTML 錯誤頁) */
   rawOn?: 'token' | 'models' | 'chat';
   rawStatus?: number;
@@ -60,8 +65,8 @@ interface FakeFetch {
   chatCalls: number;
   chatBodies: { prompt?: string; model?: string; service?: string }[];
   authHeaders: string[];
-  /** 每一次請求的形狀:method / content-type / authorization / url */
-  requests: { url: string; method: string; contentType: string; authorization: string }[];
+  /** 每一次請求的形狀:method / content-type / authorization / url / 有沒有帶 signal */
+  requests: { url: string; method: string; contentType: string; authorization: string; hasSignal: boolean }[];
 }
 
 function json(body: unknown, status = 200): Response {
@@ -104,11 +109,20 @@ function makeFetch(opts: FakeOpts = {}): FakeFetch {
       method: init?.method ?? 'GET',
       contentType: headers.get('content-type') ?? '',
       authorization: headers.get('authorization') ?? '',
+      hasSignal: init?.signal != null,
     });
 
     if (opts.throwOn === 'all') throw new TypeError('fetch failed: connect ECONNREFUSED');
 
     if (url.includes('/auth/token/exchange')) {
+      if (opts.tokenHangs) {
+        state.tokenCalls += 1;
+        // 只有 abort 能讓這個 promise 結束。沒有 signal 的話它永遠掛著——
+        // 那正是「probe 的逾時管不到換 token」現在的樣子。
+        await new Promise<never>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      }
       if (opts.rawOn === 'token') {
         state.tokenCalls += 1;
         return html(opts.rawStatus ?? 200);
@@ -723,5 +737,84 @@ describe('createGatewayClient — 契約 §11 的環境變數', () => {
   it('沒有 LLM_LOCAL_MODEL 就用 .env.example 的預設 qwen2.5:32b', () => {
     const c = createGatewayClient({ GATEWAY_BASE_URL: BASE, GATEWAY_API_KEY: KEY });
     expect(c.config.model).toBe('qwen2.5:32b');
+  });
+});
+
+
+// ================================================ 收尾輪:probe 的逾時涵蓋範圍
+//
+// `probe()` 開的 AbortController 只傳給 `/gateway/models` 的 fetch;`token()` 打
+// `/auth/token/exchange` 的那個 fetch **沒有 signal**。也就是閘道的 auth 端點掛住
+// 時,`probe()` 會無限期卡住,`GATEWAY_PROBE_TIMEOUT_MS = 5000` 完全沒作用。
+//
+// 現在 `GATEWAY_BASE_URL` 是 `localhost:8787`,沒人聽就是立刻 ECONNREFUSED,所以
+// 看不出來。但 ADR-039 明說「啟用只需閘道可達,不用改程式」,而且 Consequences
+// 特別要求「probeLocal() 的逾時要短(當可用性檢查用)」——換成網域之後封包被防火牆
+// 黑洞吃掉,`token()` 會掛到 OS 預設的 TCP timeout(可能兩分鐘)。這是**啟用當天
+// 就會踩到**的東西,不是理論問題。
+//
+// 這一輪只寫測試,實作留給下一輪,所以下面是預期的紅燈。
+describe('GatewayClient.probe — 逾時要涵蓋換 token 那一步', () => {
+  it('換 token 永不回應時,probe 仍在逾時內回不可用,不會一直掛著', async () => {
+    // 用假計時器,不真的等 5 秒。
+    vi.useFakeTimers();
+    try {
+      const fake = makeFetch({ tokenHangs: true });
+      let settled: unknown;
+      void client(fake, { probeTimeoutMs: GATEWAY_PROBE_TIMEOUT_MS })
+        .probe()
+        .then(
+          (result) => {
+            settled = result;
+          },
+          // probe() 契約上不 throw;真的丟了要看得出來,不能讓它假裝成「還沒回來」。
+          (err: unknown) => {
+            settled = err;
+          },
+        );
+
+      // 推進到遠超過逾時。逾時真的管得到換 token 的話,這時候早就回來了。
+      await vi.advanceTimersByTimeAsync(GATEWAY_PROBE_TIMEOUT_MS * 10);
+
+      expect(settled).toEqual({ available: false, models: [] });
+      // 而且真的有打出去過——不是靠「根本沒發請求」蒙混過關。
+      expect(fake.tokenCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('probe 打的換 token 請求要帶 AbortSignal(逾時管得到它的前提)', async () => {
+    // 上一條測的是行為,這條測的是機制:少了 signal,逾時就只是一個沒人聽的計時器。
+    const fake = makeFetch();
+    await client(fake).probe();
+    const tokenRequest = fake.requests.find((r) => r.url.includes('/auth/token/exchange'));
+    expect(tokenRequest).toBeDefined();
+    expect(tokenRequest?.hasSignal).toBe(true);
+  });
+
+  it('換 token 掛住不會留下逾時計時器', async () => {
+    // finally 的 clearTimeout 在逾時路徑上也要有效,不然短命的 CLI 程序
+    // (scripts/llm.ts --probe)還是要多掛著。
+    vi.useFakeTimers();
+    try {
+      const fake = makeFetch({ tokenHangs: true });
+      let done = false;
+      void client(fake, { probeTimeoutMs: GATEWAY_PROBE_TIMEOUT_MS })
+        .probe()
+        .then(
+          () => {
+            done = true;
+          },
+          () => {
+            done = true;
+          },
+        );
+      await vi.advanceTimersByTimeAsync(GATEWAY_PROBE_TIMEOUT_MS * 10);
+      expect(done).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
