@@ -53,6 +53,10 @@ export function atomicWriteJson(path: string, data: unknown): void {
     // 從哪一步跳出去都會經過這裡。清理自己丟的錯全部吞掉 —— 呼叫端要看到的是
     // 「為什麼寫失敗」,不是「為什麼清不掉」,而 finally 裡丟錯會**取代**原本那顆。
     try {
+      // Stryker disable next-line all: 等價變異。`force: true` 的唯一作用是吸收「tmp 已經不在」
+      // 的 ENOENT(成功路徑上 tmp 早就被 rename 走了),但外面這個 catch 本來就會吞掉清理自己
+      // 丟的每一顆錯,所以 `{}` / `{ force: false }` 的可觀察行為與這裡完全相同。留著旗標是因為
+      // ADR-040 指名了「刪不掉就算了」的形式,而且它讓意圖不依賴外層 catch 才看得懂。
       rmSync(tmp, { force: true });
     } catch {
       /* 清理失敗不可以遮蔽原本那個錯誤(ADR-040) */

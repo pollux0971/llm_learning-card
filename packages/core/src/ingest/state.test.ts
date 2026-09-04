@@ -35,6 +35,12 @@ const h = vi.hoisted(() => ({
   calls: [] as string[],
   /** openSync 拿到的 fd → 當初開的路徑,用來判斷 fsync 的對象是檔案還是目錄 */
   fdPaths: new Map<number, string>(),
+  /**
+   * open / close 的事件序列,用來驗「開了就要關」。不能只記「關過哪些 fd」——作業系統
+   * 會**重用** fd 編號(關掉 22 之後下一個 open 又拿到 22),用集合比對會讓「開 22、關
+   * 22、再開 22 沒關」看起來是平的。照順序重放才算得準。
+   */
+  fdEvents: [] as ({ op: 'open'; fd: number; path: string } | { op: 'close'; fd: number })[],
   hooks: {} as {
     onRename?: (() => void) | undefined;
     onDirFsync?: (() => void) | undefined;
@@ -60,6 +66,7 @@ vi.mock('node:fs', async (importOriginal) => {
     openSync(path: Parameters<typeof real.openSync>[0], flags: Parameters<typeof real.openSync>[1], mode?: Parameters<typeof real.openSync>[2]) {
       const fd = real.openSync(path, flags, mode);
       h.fdPaths.set(fd, String(path));
+      h.fdEvents.push({ op: 'open', fd, path: String(path) });
       return fd;
     },
     fsyncSync(fd: number) {
@@ -73,6 +80,10 @@ vi.mock('node:fs', async (importOriginal) => {
       // hook 先跑:模擬「rename 這個 syscall 自己失敗」,目標檔不該被動到。
       h.hooks.onRename?.();
       return real.renameSync(from, to);
+    },
+    closeSync(fd: number) {
+      h.fdEvents.push({ op: 'close', fd });
+      return real.closeSync(fd);
     },
     unlinkSync(path: Parameters<typeof real.unlinkSync>[0]) {
       h.calls.push('unlink');
@@ -88,7 +99,7 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 
 // mock 之後才 import 受測模組,拿到的才是被攔截過的 fs。
-const { atomicWriteJson } = await import('./state.js');
+const { atomicWriteJson, readLogEvents } = await import('./state.js');
 
 /** 帶 errno code 的錯誤,跟 fs 真的丟出來的形狀一致。 */
 function errnoError(code: string, message: string): NodeJS.ErrnoException {
@@ -103,6 +114,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'lc-atomic-'));
   h.calls.length = 0;
   h.fdPaths.clear();
+  h.fdEvents.length = 0;
   h.hooks.onRename = undefined;
   h.hooks.onDirFsync = undefined;
   h.hooks.onUnlink = undefined;
@@ -265,6 +277,50 @@ describe('atomicWriteJson · 契約 §11b(ADR-040)', () => {
     expect(() => atomicWriteJson(path, { ok: 1 })).toThrow(dirFsyncFailure);
   });
 
+  // ------------------------------------------------------------ (d) fd 不外洩
+  //
+  // 四步裡開了兩個 fd(tmp 檔一個、目錄一個),兩個都要關。漏關在單次寫入上看不出
+  // 任何症狀,但 `atomicWriteJson()` 是 state/ 全部寫入的單一入口:桌面端常駐、每次
+  // 複習都寫,漏一個 fd 就是每次寫入漏一個,跑久了撞 EMFILE,而那時的錯誤會出現在
+  // 一個跟真正原因完全無關的地方。所以「開了就要關」要跟四步一起被鎖住。
+
+  /** 重放 open/close 序列,回傳結束時還開著的 fd(fd 編號會被重用,所以要照順序算)。 */
+  function stillOpenFds(): string[] {
+    const open = new Map<number, string>();
+    for (const e of h.fdEvents) {
+      if (e.op === 'open') open.set(e.fd, e.path);
+      else open.delete(e.fd);
+    }
+    return [...open].map(([fd, path]) => `${fd}=${path}`);
+  }
+
+  /** 這一輪一共開了幾次(不是幾個不同的 fd 編號)。 */
+  function openCount(): number {
+    return h.fdEvents.filter((e) => e.op === 'open').length;
+  }
+
+  it('成功路徑上每一個開起來的 fd 都被關掉(檔案的與目錄的都是)', () => {
+    const path = join(dir, 'state', 'reviews.json');
+
+    atomicWriteJson(path, { ok: 1 });
+
+    // 先確認這一輪真的開了兩次(tmp 檔一次、目錄一次),不然「全關掉」在零個 fd 上也成立。
+    expect(openCount(), JSON.stringify(h.fdEvents)).toBe(2);
+    expect(stillOpenFds(), `結束時還開著的 fd`).toEqual([]);
+  });
+
+  it('目錄 fsync 丟錯時,目錄的 fd 照樣被關掉(失敗路徑也不漏 fd)', () => {
+    const path = join(dir, 'state', 'weekly.json');
+    h.hooks.onDirFsync = () => {
+      throw errnoError('EIO', 'EIO: i/o error, fsync');
+    };
+
+    expect(() => atomicWriteJson(path, { ok: 1 })).toThrow();
+
+    expect(openCount(), JSON.stringify(h.fdEvents)).toBe(2);
+    expect(stillOpenFds(), `結束時還開著的 fd`).toEqual([]);
+  });
+
   // ------------------------------------------------------------ 既有行為的回歸
   //
   // 補保證不是改磁碟格式:落地的位元組、目錄自動建立、覆寫既有檔,全部照舊。
@@ -285,5 +341,25 @@ describe('atomicWriteJson · 契約 §11b(ADR-040)', () => {
     atomicWriteJson(path, { new: true });
 
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ new: true });
+  });
+});
+
+// ============================================================== readLogEvents
+//
+// log.jsonl 是 append-only 的(§11b 的例外),所以它會被中斷、被編輯器補尾巴,
+// 空白行是真的會出現的東西。過濾條件是 `l.trim().length > 0` 而不是 `l.length > 0`:
+// 只含空白的那一行 `JSON.parse` 會直接丟,整份 log 就讀不出來了。
+
+describe('readLogEvents', () => {
+  it('略過只含空白的行,不讓它把整份 log 弄到讀不出來', () => {
+    const logPath = join(dir, 'state', 'log.jsonl');
+    mkdirSync(join(dir, 'state'), { recursive: true });
+    writeFileSync(logPath, '{"type":"a"}\n   \n\t\n{"type":"b"}\n', 'utf8');
+
+    expect(readLogEvents(logPath)).toEqual([{ type: 'a' }, { type: 'b' }]);
+  });
+
+  it('檔案不存在時回空陣列', () => {
+    expect(readLogEvents(join(dir, 'state', 'nope.jsonl'))).toEqual([]);
   });
 });
