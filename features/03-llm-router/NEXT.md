@@ -5,8 +5,8 @@
 | 欄位 | 值 |
 |---|---|
 | 已完成 | phase-1(2026-09-02)、phase-2(2026-09-03) |
-| 進行中 | 無 |
-| 下一個 | phase-3、phase-4(皆卡在 ADR-037 本機模型決定) |
+| 進行中 | phase-4(閘道本機 adapter + 預算備援,2026-09-04 開工) |
+| 下一個 | phase-3(provisional 佇列)——gate 已由 ADR-039 解除,可以開工 |
 
 ## Gate
 
@@ -18,22 +18,33 @@
 - [x] 契約:**已解除**(ADR-037:本機模型延後,phase-2 只做路由表+線上偵測+`probeLocal` 固定回 unavailable,不需要真的本機模型)
 
 **phase-3** 需要:
-- [ ] 自身:phase-2 `done`
-- [ ] 契約:**使用者決定裝本機模型**(ADR-037,取代原本的「I5 通過」——provisional 佇列沒有本機模型可用就沒有意義)
+- [x] 自身:phase-2 `done`(2026-09-03)
+- [x] 契約:**已解除**(ADR-039:本機模型由另一台機器的 Ollama + JWT 閘道提供,
+      ADR-037 的「使用者決定裝本機模型」gate 不再成立。provisional 佇列現在有真的
+      本機結果可以排隊了)
 
 **phase-4** 需要:
-- [ ] 自身:phase-2 `done`
-- [ ] 契約:**使用者決定裝本機模型**(ADR-037,同 phase-3)
+- [x] 自身:phase-2 `done`(2026-09-03)
+- [x] 契約:**已解除**(ADR-039,同 phase-3)
 
 ## Gate 未滿足時
 
-**phase-2 已經 ready**,可以立刻開工,跟 01-data-layer/phase-3 平行做。
+**目前沒有未滿足的 gate。** phase-3 與 phase-4 的契約 gate 都已由 ADR-039 解除。
 
-**phase-3、phase-4 卡住**:等使用者決定要裝哪個本機模型、什麼時候裝(機器目前是 GTX 1650
-4GB VRAM,14B 塞不進去,7B 部分 offload 堪用但應用審核偏弱——ADR-037 有完整記錄)。
-提前做會做出一套沒人驗證過的東西,而且本機 adapter 沒有真的模型可以對,寫了也測不了真的。
+留下的不是 gate,是一個**已知的暫時狀態**:閘道機器還沒起來(`localhost:8787` 無回應、
+`GATEWAY_API_KEY` 還沒進 `.env`)。這不擋開工——phase-4 的自動場景全部用假的
+`globalThis.fetch` 模擬閘道(照 `features/steps/_fake-cloud.mjs` 的模式,router / client /
+SDK 全跑真的),真連線的場景標 `@manual`,等使用者把閘道起起來再跑一次:
+
+```bash
+npx tsx scripts/llm.ts --probe     # 應該印出閘道上的模型清單
+```
 
 ## 完成後
 
 phase-2 完成後 02 與 05 就能丟掉各自的 `FakeLlmRouter`。這是 I1 與 I2 的關鍵路徑,
 所以 phase-2 應該在 Wave 0 結束後**優先**做。
+
+phase-4 完成後,ADR-039 連帶解開的還有 `05-grading/phase-3`(離線審核)與 I6 涉及本機
+推論的那一半——那兩個原本也掛在 ADR-037 的同一個 gate 下。另外 `scripts/llm-spend.ts`
+的退出碼讓 autopilot 可以在開始花錢的工作之前先問一句「今天還有預算嗎」。
