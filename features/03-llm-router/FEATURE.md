@@ -8,10 +8,27 @@
 
 - 契約 §7 的 `LlmRouter` 實作
 - 雲端 adapter:Anthropic、OpenAI
-- 本機 adapter:Ollama HTTP API(**ADR-037 延後到 phase-4,gate 是使用者決定裝本機模型**)
+- 本機 adapter:**閘道**(ADR-039)。本機模型跑在另一台機器上的 Ollama,前面一個 JWT 閘道;
+  對這個專案來說它就是契約 §7 的「本機」——`LlmResult.provider` 回 `'ollama'`,**不改契約**。
+  ADR-037 的「使用者決定裝本機模型」gate 已解除
 - 網路可用性偵測(含 60 秒快取);本機可用性偵測的邏輯在 phase-2 寫,但固定回傳 unavailable(沒有本機模型可偵測)
 - 路由表(契約 §7 的權威表)——phase-2 用注入的 online/local 布林值測滿,不依賴真的本機模型
-- provisional 標記與複審佇列(phase-3,gate 同上延後)
+- provisional 標記與複審佇列(phase-3,ADR-039 解除 gate)
+- **備援規則(phase-4,ADR-039)**——契約 §7 的路由表**一格都不動**;這是在「在線」
+  之上多的一層,處理契約沒有的第四種情況:**在線,但雲端這一次不能用**
+  (5xx / 逾時 / 截斷重試後仍失敗,或當日預算用完):
+
+  | task | 在線且雲端正常 | 雲端失敗或預算用完 |
+  |---|---|---|
+  | `grade.fill.llm` | 閘道(契約本來就是 local),`provisional=false` | 同左 |
+  | `deepen` / `grade.apply` / `reteach.short` | OpenAI | **閘道,`provisional=true`**(進 I6 複審佇列) |
+  | `ingest.cards` / `ingest.questions` / `ingest.deps` | OpenAI | **沒有備援**:失敗 → `CLOUD_REQUIRED`;預算用完 → `BUDGET_EXCEEDED`(拒絕開始) |
+
+  `ingest.*` 沒有備援是使用者明確選的:卡片品質還沒用本機模型驗過,不讓它產卡。
+- **當日預算(phase-4,ADR-039)**:`LLM_DAILY_CAP_USD`(預設 1 美元)。花費從
+  `state/log.jsonl` 的 `llm_call` 事件算(只算 `provider === 'openai'` 且當日的,
+  `tokens_in`/`tokens_out` × `LLM_PRICE_IN_PER_M`/`LLM_PRICE_OUT_PER_M`)。
+  **`spent >= cap` 就算達到上限**(ADR-039 的邊界決定)。閘道免費,不計入。
 - 每次呼叫寫 log
 
 ## 不在範圍
@@ -26,9 +43,11 @@
 LLM_CLOUD_PROVIDER=openai OPENAI_API_KEY=... LLM_CLOUD_MODEL=gpt-5.6-luna \
   npx tsx scripts/llm.ts --task deepen --prompt "用 50 字解釋同源政策"
 npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模型
+npx tsx scripts/llm-spend.ts --today  # 今日 OpenAI 花費;退出碼 1 = 已達上限
 ```
 
-預期輸出:第一個印出 `LlmResult` 的 JSON;第二個印出 online / local 與可用模型清單。
+預期輸出:第一個印出 `LlmResult` 的 JSON;第二個印出 online / local 與可用模型清單;
+第三個印出今日金額與筆數(ADR-039,給 autopilot 在花錢之前先問一句用)。
 
 ## 依賴
 
@@ -37,8 +56,8 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 | 後續 phase | 需要 | 原因 |
 |---|---|---|
 | phase-2 | 自身 phase-1 | 路由建立在介面上 |
-| phase-3 | 自身 phase-2、**使用者決定裝本機模型**(ADR-037) | provisional 只在真的有本機模型可用時才有意義 |
-| phase-4 | 自身 phase-2、**使用者決定裝本機模型**(ADR-037) | 本機 adapter 沒有本機模型可以對,寫了也測不了真的 |
+| phase-3 | 自身 phase-2(契約 gate 已由 **ADR-039 解除**) | provisional 只在真的有本機模型可用時才有意義;閘道就是那個本機模型 |
+| phase-4 | 自身 phase-2(契約 gate 已由 **ADR-039 解除**) | 閘道提供了真的可以對的本機模型;閘道本身還沒起來,所以 `@llm` 場景先用 mock 閘道,真連線標 `@manual` |
 
 ## Wave 0 的重複
 
@@ -52,9 +71,9 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 |---|---|---|
 | 語言 | TypeScript | `packages/core/src/llm/` |
 | 雲端 | 官方 SDK | 只在 adapter 內 import |
-| 本機 | fetch → `http://localhost:11434/api/generate` | 不用第三方 client |
+| 本機 | fetch → 閘道 `{GATEWAY_BASE_URL}/gateway/chat`(ADR-039) | 不用第三方 client;token 從 `/auth/token/exchange` 換,快取到過期前 |
 | 設定 | 環境變數優先於 settings.yaml | |
-| 變異門檻 | **標準 80%**,但 `routing.ts` 為**嚴格 95%** | 路由表決定成本與離線行為,必須測滿 |
+| 變異門檻 | **標準 80%**,但 `routing.ts` 為**嚴格 95%** | 路由表決定成本與離線行為,必須測滿。phase-4 的備援規則(`fallback.ts`)與預算(`spend.ts`)**刻意不併進 `routing.ts`**,比照 `token-limits.ts` 的做法,避免動到既有的嚴格門檻 |
 
 ## Phase
 
@@ -62,13 +81,32 @@ npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模
 |---|---|---|---|---|
 | 1 | 介面、雲端 adapter、log、逾時 | Wave 0 | done | 2026-09-02 |
 | 2 | 離線偵測、路由表(本機永遠回 unavailable) | I1 | done | 2026-09-03 |
-| 3 | provisional 標記與複審佇列 | I6 | todo(gate 延後,見 NEXT.md) | |
-| 4 | 本機 adapter(真的呼叫本機模型) | gate:使用者決定 | todo | |
+| 3 | provisional 標記與複審佇列 | I6 | todo(gate 已由 ADR-039 解除) | |
+| 4 | 閘道本機 adapter + 預算備援 | I6 | in-progress | |
 
 ## 驗收方式
 
 路由決策全自動(mock 網路與 Ollama 狀態)。真呼叫只在 `@llm` 與 `@manual`。
 `routing.ts` 的變異門檻 95%——契約 §7 的表格每一格都要有測試。
+
+## phase-4 的落點(ADR-039)
+
+| 檔案 | 做什麼 | 為什麼在這裡 |
+|---|---|---|
+| `packages/core/src/llm/adapters/gateway.ts` | 閘道客戶端:換 token(含快取)、`/gateway/models` 探測、`/gateway/chat` 推論 | 跟雲端 adapter 平行,唯一碰網路的地方 |
+| `packages/core/src/llm/fallback.ts` | ADR-039 的備援規則(純函式 + 資料表) | **不放進 `routing.ts`**,避免動到它的嚴格 95% 門檻 |
+| `packages/core/src/llm/spend.ts` | 從 log 算當日花費、`isBudgetExhausted()` | 同上;而且是純函式,好測 |
+| `packages/core/src/llm/router-gateway.ts` | `GatewayLlmRouter`:把上面三個接到 I/O 上 | 組合 phase-2 的 `LlmRouterImpl`,**不改它一行**(跟 phase-2 包 phase-1 一樣) |
+| `scripts/llm-spend.ts` | `--today` 印今日金額與筆數,**退出碼 1 = 已達上限** | 給 autopilot 在花錢之前先問一句 |
+
+錯誤(`errors.ts`):`GatewayModelRejectedError`(403,設定錯誤,**不備援**)、
+`GatewayCallError`(5xx / 連線失敗)、`DailyBudgetExceededError`(訊息含「今日預算已用完」)。
+
+閘道還沒起來(8787 無回應、key 未進 `.env`),所以 `phase-4.feature` 的自動場景全部用
+**假的 `globalThis.fetch`**(照 `features/steps/_fake-cloud.mjs` 的模式,只換最外層的網路邊界,
+router / client / SDK 全跑真的),真連線的場景標 `@manual`。假 fetch 的裝卸掛在
+`Before/After({ tags: '@llm-router and @phase-4' })`——**`@phase-4` 這個 tag 06/07/10 也在用**,
+只寫 `@phase-4` 會換掉別人場景的 fetch。
 
 ## 已決定但要複核(ADR-034)
 

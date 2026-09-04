@@ -39,6 +39,7 @@ const OWNERS: [prefix: string, owner: string][] = [
   ['apps/desktop/', '10-desktop-shell'],
   ['scripts/ingest.ts', '02-ingest-pipeline'],
   ['scripts/llm.ts', '03-llm-router'],
+  ['scripts/llm-spend.ts', '03-llm-router'],
   ['scripts/due.ts', '04-scheduler'],
   ['scripts/grade.ts', '05-grading'],
   ['scripts/weekly.ts', '08-weekly-goal'],

@@ -43,5 +43,10 @@
     "from": "11-review-cli",
     "to": "infra",
     "reason": "scripts/review.ts 同上,補 ADR-034 的 .env 載入,side-effect import scripts/_env.ts"
+  },
+  {
+    "from": "03-llm-router",
+    "to": "infra",
+    "reason": "scripts/llm-spend.ts(ADR-039 的當日花費查詢 CLI)照 ADR-034 在 CLI 入口載入 .env,side-effect import scripts/_env.ts,跟 scripts/ingest.ts / scripts/review.ts 同一個模式"
   }
 ]

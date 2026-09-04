@@ -8,7 +8,7 @@
  */
 import { Given, When, Then, Before, After } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LearningWorld } from './_world.js';
@@ -462,4 +462,505 @@ Then('no other change was needed to make that happen', function () {
   // 也沒有改 routing.ts 的任何函式——這就是 ROUTING_TABLE 是資料而不是寫死
   // 在 decideRoute 裡的邏輯分支所要達到的效果。
   assert.ok(routeState.patchedTable, '應該已經準備好被改過的路由表');
+});
+
+// ============================================================== phase-4(ADR-039)
+//
+// 閘道本機 adapter + 預算備援。閘道跑在另一台機器上,這一輪它還沒起來,所以自動
+// 場景全部用**假的 globalThis.fetch**——照 features/steps/_fake-cloud.mjs 的模式:
+// 只換掉最外層的網路邊界,GatewayLlmRouter / LlmRouterImpl / CloudLlmRouter /
+// GatewayClient / OpenAI SDK 全都跑真的,整個測試不打真網路。
+//
+// _fake-cloud.mjs 是在**子程序**裡換 fetch(那個場景要真的跑一次 CLI);這裡是在
+// cucumber 自己的程序裡跑,所以覆寫必須有範圍——下面用 tagged Before/After
+// (@llm-router and @phase-4)裝上與還原,不會汙染其他場景——注意 @phase-4 這個 tag
+// 06/07/10 也在用,所以一定要連 @llm-router 一起限定,否則會換掉別人場景的 fetch。
+//
+// 真連線的場景標 @manual,等使用者把閘道起起來再跑。
+
+import {
+  DailyBudgetExceededError,
+  GatewayLlmRouter,
+  GatewayModelRejectedError,
+  computeDailySpend,
+  isBudgetExhausted,
+  type DailySpend,
+  type SpendPrices,
+} from '../../packages/core/src/llm/index.js';
+import type { LogEvent } from '../../packages/contracts/src/index.js';
+
+const GATEWAY_BASE_URL = 'http://gateway.test:8787';
+const GATEWAY_API_KEY = 'test-gateway-key';
+const GATEWAY_LOCAL_MODEL = 'qwen2.5:32b';
+const GATEWAY_MODELS = ['qwen2.5:32b', 'deepseek-r1:70b'];
+const CAP_USD = 1;
+const PRICES: SpendPrices = { inPerM: 2.5, outPerM: 10 };
+
+/** 假閘道的行為開關,每個 scenario 由 Given 步驟設定。 */
+interface GatewayStepState {
+  /** 401:key 錯 */
+  rejectKey: boolean;
+  /** 連線被拒(fetch 直接 throw) */
+  unreachable: boolean;
+  /** 403:model 不是本機模型名 */
+  rejectModel: boolean;
+  /** 第一次 /gateway/chat 回 401(token 過期),重換 token 後才成功 */
+  expireTokenOnce: boolean;
+  /** 雲端 /v1/chat/completions 回 503 */
+  cloudFails: boolean;
+  /** probeOnline() 回 false:雲端連不上(OpenAI 掛了或 DNS 不通),但閘道還在 */
+  offline: boolean;
+  /** 送給閘道的模型名(403 場景用來斷言錯誤訊息點名了誰) */
+  requestedModel: string;
+
+  /** 假 fetch 的計數器 */
+  tokenExchanges: number;
+  gatewayChats: number;
+  cloudCalls: number;
+  chatSeen401: boolean;
+
+  /** 種進 log.jsonl 的事件,決定「今天花了多少」 */
+  logEvents: LogEvent[];
+  logDir?: string;
+  logPath?: string;
+
+  /** 探測與呼叫的結果 */
+  probeResult?: { available: boolean; models: string[] } | undefined;
+  probeError?: Error | undefined;
+  callResult?: LlmResult | undefined;
+  callError?: Error | undefined;
+  spend?: DailySpend | undefined;
+  exhausted?: boolean | undefined;
+
+  realFetch?: typeof globalThis.fetch;
+}
+
+let gw: GatewayStepState;
+
+function isoOn(day: string, hour: number): string {
+  return `${day}T${String(hour).padStart(2, '0')}:30:00+08:00`;
+}
+
+/** 今天 / 昨天的本地日期字串,跟 spend.ts 的 dayOf() 用同一種切法。 */
+function localDay(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** 造一筆 llm_call 事件。tokens 由呼叫端算好,讓金額精確可控。 */
+function llmCallEvent(day: string, provider: string, tokensIn: number, tokensOut: number): LogEvent {
+  return {
+    ts: isoOn(day, 9),
+    type: 'llm_call',
+    task: 'deepen',
+    provider,
+    model: provider === 'openai' ? 'gpt-5.6-luna' : GATEWAY_LOCAL_MODEL,
+    latency_ms: 100,
+    tokens_in: tokensIn,
+    tokens_out: tokensOut,
+  } as unknown as LogEvent;
+}
+
+/**
+ * 花掉剛好 `usd` 美元的一筆事件。只用 output token 算,避免兩個價格相加的浮點誤差:
+ * usd = tokens_out / 1e6 * outPerM  →  tokens_out = usd * 1e6 / outPerM
+ */
+function eventCosting(day: string, usd: number): LogEvent {
+  return llmCallEvent(day, 'openai', 0, Math.round((usd * 1_000_000) / PRICES.outPerM));
+}
+
+function gatewayEnv(): NodeJS.ProcessEnv {
+  return {
+    LLM_CLOUD_PROVIDER: 'openai',
+    LLM_CLOUD_MODEL: 'gpt-5.6-luna',
+    OPENAI_API_KEY: 'test-openai-key',
+    GATEWAY_BASE_URL,
+    GATEWAY_API_KEY,
+    LLM_LOCAL_MODEL: GATEWAY_LOCAL_MODEL,
+    LLM_DAILY_CAP_USD: String(CAP_USD),
+    LLM_PRICE_IN_PER_M: String(PRICES.inPerM),
+    LLM_PRICE_OUT_PER_M: String(PRICES.outPerM),
+  };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+/**
+ * 假閘道 + 假雲端,裝在 globalThis.fetch 上。認得五個端點:
+ *   POST /auth/token/exchange   換 JWT
+ *   GET  /gateway/models        可用模型清單
+ *   POST /gateway/chat          本機模型推論
+ *   GET  /v1/models             CloudLlmRouter.probeOnline()
+ *   POST /v1/chat/completions   OpenAI SDK
+ */
+function installFakeFetch(): void {
+  gw.realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+
+    if (url.startsWith(GATEWAY_BASE_URL)) {
+      if (gw.unreachable) throw new TypeError(`fetch failed: connect ECONNREFUSED ${GATEWAY_BASE_URL}`);
+
+      if (url.includes('/auth/token/exchange')) {
+        gw.tokenExchanges += 1;
+        if (gw.rejectKey) return jsonResponse({ detail: 'invalid api key' }, 401);
+        return jsonResponse({ access_token: `jwt-${gw.tokenExchanges}`, expires_in: 3600 });
+      }
+
+      if (url.includes('/gateway/models')) {
+        return jsonResponse({
+          auto_match: true,
+          models: Object.fromEntries(GATEWAY_MODELS.map((m) => [m, ['chat']])),
+        });
+      }
+
+      if (url.includes('/gateway/chat')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { prompt?: string; model?: string };
+        gw.requestedModel = body.model ?? '';
+        if (gw.rejectModel) return jsonResponse({ detail: 'model not allowed' }, 403);
+        // token 過期:第一次回 401,GatewayClient 應該重換 token 再重試一次
+        if (gw.expireTokenOnce && !gw.chatSeen401) {
+          gw.chatSeen401 = true;
+          return jsonResponse({ detail: 'token expired' }, 401);
+        }
+        gw.gatewayChats += 1;
+        return jsonResponse({
+          content: '閘道上的本機模型回覆。',
+          provider: 'ollama',
+          model: body.model ?? GATEWAY_LOCAL_MODEL,
+          tokens_used: { prompt: 11, completion: 13 },
+        });
+      }
+    }
+
+    if (url.includes('/v1/models')) return jsonResponse({ data: [] });
+
+    if (url.includes('/v1/chat/completions')) {
+      gw.cloudCalls += 1;
+      if (gw.cloudFails) return jsonResponse({ error: { message: 'service unavailable' } }, 503);
+      return jsonResponse({
+        id: 'chatcmpl-fake',
+        model: 'gpt-5.6-luna',
+        choices: [{ index: 0, message: { role: 'assistant', content: '雲端回覆。' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 7, completion_tokens: 9 },
+      });
+    }
+
+    throw new Error(`phase-4 假 fetch 沒有預期到的請求:${url}`);
+  }) as typeof globalThis.fetch;
+}
+
+Before({ tags: '@llm-router and @phase-4' }, function () {
+  gw = {
+    rejectKey: false,
+    unreachable: false,
+    rejectModel: false,
+    expireTokenOnce: false,
+    cloudFails: false,
+    offline: false,
+    requestedModel: '',
+    tokenExchanges: 0,
+    gatewayChats: 0,
+    cloudCalls: 0,
+    chatSeen401: false,
+    logEvents: [],
+  };
+  installFakeFetch();
+});
+
+After({ tags: '@llm-router and @phase-4' }, function () {
+  if (gw?.realFetch) globalThis.fetch = gw.realFetch;
+  if (gw?.logDir) rmSync(gw.logDir, { recursive: true, force: true });
+});
+
+/** 把 logEvents 寫成一個真的 log.jsonl,回傳路徑。 */
+function materializeLog(): string {
+  if (!gw.logDir) gw.logDir = mkdtempSync(join(tmpdir(), 'llm-gateway-steps-'));
+  gw.logPath = join(gw.logDir, 'log.jsonl');
+  writeFileSync(gw.logPath, gw.logEvents.map((e) => JSON.stringify(e)).join('\n') + (gw.logEvents.length ? '\n' : ''));
+  return gw.logPath;
+}
+
+function buildGatewayRouter(): GatewayLlmRouter {
+  return new GatewayLlmRouter({
+    env: gatewayEnv(),
+    logPath: materializeLog(),
+    defaultTimeoutMs: 5_000,
+    onlineProber: async () => !gw.offline,
+    dailyCapUsd: CAP_USD,
+    prices: PRICES,
+  });
+}
+
+async function runRoutedCall(world: LearningWorld, task: LlmTask): Promise<void> {
+  const router = buildGatewayRouter();
+  gw.callResult = undefined;
+  gw.callError = undefined;
+  try {
+    gw.callResult = await router.call(task, '請用 50 字說明同源政策。');
+  } catch (err) {
+    gw.callError = err as Error;
+  }
+  world.lastResult = gw.callResult;
+  world.lastError = gw.callError;
+}
+
+/** 讀回剛才那個 log.jsonl 的最後一筆事件(備援場景要看 fallback 欄位)。 */
+function logEventsWritten(): Record<string, unknown>[] {
+  if (!gw.logPath) return [];
+  return readFileSync(gw.logPath, 'utf8')
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+}
+
+function assertFallbackLogged(reason: string): void {
+  const written = logEventsWritten();
+  const hit = written.find((e) => e.type === 'llm_call' && e.fallback === 'gateway');
+  assert.ok(hit, `log 裡沒有 fallback: "gateway" 的 llm_call 事件:${JSON.stringify(written)}`);
+  assert.equal(hit.fallback_reason, reason, `備援原因應該是 ${reason}:${JSON.stringify(hit)}`);
+}
+
+// ---------------------------------------------------------------- Given
+
+Given('the gateway is configured with a base url, a key and a local model name', function () {
+  // 設定值全部在 gatewayEnv() 裡(契約 §11 的三個環境變數),這一步只是把
+  // Background 講清楚:每個 phase-4 場景都在「閘道已設定好」的前提下跑。
+  assert.ok(GATEWAY_BASE_URL && GATEWAY_API_KEY && GATEWAY_LOCAL_MODEL);
+});
+
+Given('the gateway exchanges the key for a token and lists two models', function () {
+  gw.rejectKey = false;
+  gw.unreachable = false;
+});
+
+Given('the gateway rejects the key exchange with 401', function () {
+  gw.rejectKey = true;
+});
+
+Given('the gateway machine refuses the connection', function () {
+  gw.unreachable = true;
+});
+
+Given('the gateway is running', function () {
+  gw.rejectKey = false;
+  gw.unreachable = false;
+});
+
+Given('the cloud provider answers 503', function () {
+  gw.cloudFails = true;
+});
+
+/**
+ * probeOnline() 打的是 OpenAI 的 /v1/models。OpenAI 整個不通(5xx 或 DNS 不通)時
+ * 它回 false,底層 LlmRouterImpl 就把狀態當成「離線」——但閘道在區網/另一台機器上,
+ * 還活著。這一格契約 §7 沒有(它假設「離線」等於「什麼都連不到」),
+ * 是 ADR-039 之後才會發生的情況。
+ */
+Given('the cloud provider cannot be reached at all', function () {
+  gw.offline = true;
+});
+
+Given("today's log already spends the whole daily cap", function () {
+  gw.logEvents.push(eventCosting(localDay(), CAP_USD));
+});
+
+Given("today's log spends exactly the daily cap and not a cent more", function () {
+  gw.logEvents = [eventCosting(localDay(), CAP_USD)];
+});
+
+Given("yesterday's log spends twice the daily cap", function () {
+  gw.logEvents.push(eventCosting(localDay(-1), CAP_USD * 2));
+});
+
+Given("today's log spends nothing", function () {
+  // 不加任何今天的事件——斷言的重點是「昨天的不算進今天」
+});
+
+Given("today's log holds only gateway calls with large token counts", function () {
+  gw.logEvents = [llmCallEvent(localDay(), 'ollama', 5_000_000, 5_000_000)];
+});
+
+Given('the gateway answers 403 because the requested model is not a local one', function () {
+  gw.rejectModel = true;
+});
+
+Given('the cached token has expired', function () {
+  gw.expireTokenOnce = true;
+});
+
+// @manual
+Given('the real gateway is running and the key is in the env file', function () {
+  // @manual:真的用 .env 的 GATEWAY_BASE_URL / GATEWAY_API_KEY,不裝假 fetch。
+});
+
+// ---------------------------------------------------------------- When
+
+When('the gateway probe runs', async function () {
+  gw.probeResult = undefined;
+  gw.probeError = undefined;
+  try {
+    gw.probeResult = await buildGatewayRouter().probeLocal();
+  } catch (err) {
+    gw.probeError = err as Error;
+  }
+});
+
+When('a routed call is made for the fill grading task', async function (this: LearningWorld) {
+  await runRoutedCall(this, 'grade.fill.llm');
+});
+
+When('a routed call is made for the apply grading task', async function (this: LearningWorld) {
+  await runRoutedCall(this, 'grade.apply');
+});
+
+When('a routed call is made for the card generation task', async function (this: LearningWorld) {
+  await runRoutedCall(this, 'ingest.cards');
+});
+
+When('a routed call is made for the deepen task', async function (this: LearningWorld) {
+  await runRoutedCall(this, 'deepen');
+});
+
+When('the budget is checked', function () {
+  gw.spend = computeDailySpend(gw.logEvents, localDay(), PRICES);
+  gw.exhausted = isBudgetExhausted(gw.spend.usd, CAP_USD);
+});
+
+When('two gateway calls are made inside the token lifetime', async function (this: LearningWorld) {
+  const router = buildGatewayRouter();
+  gw.callError = undefined;
+  try {
+    await router.call('grade.fill.llm', '第一次');
+    gw.callResult = await router.call('grade.fill.llm', '第二次');
+  } catch (err) {
+    gw.callError = err as Error;
+  }
+  this.lastError = gw.callError;
+});
+
+// @manual
+When('the standalone probe command is run against the real gateway', function (this: LearningWorld) {
+  this.runCommand('npx tsx scripts/llm.ts --probe');
+});
+
+// ---------------------------------------------------------------- Then
+
+Then('the gateway reports itself as available', function () {
+  assert.equal(gw.probeError, undefined, `不該有錯誤:${gw.probeError?.message}`);
+  assert.equal(gw.probeResult?.available, true, `應該回報可用:${JSON.stringify(gw.probeResult)}`);
+});
+
+Then('the returned model list names both of them', function () {
+  assert.deepEqual([...(gw.probeResult?.models ?? [])].sort(), [...GATEWAY_MODELS].sort());
+});
+
+Then('the gateway reports itself as unavailable', function () {
+  assert.deepEqual(gw.probeResult, { available: false, models: [] }, `應該回報不可用:${JSON.stringify(gw.probeResult)}`);
+});
+
+Then('the probe raises no error', function () {
+  assert.equal(gw.probeError, undefined, `探測不該丟錯:${gw.probeError?.message}`);
+});
+
+Then('the result names the ollama provider', function () {
+  assert.equal(gw.callError, undefined, `不該有錯誤:${gw.callError?.message}`);
+  assert.equal(gw.callResult?.provider, 'ollama');
+});
+
+Then('the result names the configured local model', function () {
+  assert.equal(gw.callResult?.model, GATEWAY_LOCAL_MODEL);
+});
+
+Then('the result does not carry the provisional flag', function () {
+  assert.equal(gw.callResult?.provisional, false, `填空審核本來就走本機,不該標 provisional:${JSON.stringify(gw.callResult)}`);
+});
+
+Then('the result carries the provisional flag', function () {
+  assert.equal(gw.callResult?.provisional, true, `備援結果應該標 provisional:${JSON.stringify(gw.callResult)}`);
+});
+
+Then('the result comes from the gateway', function () {
+  assert.equal(gw.callError, undefined, `不該有錯誤:${gw.callError?.message}`);
+  assert.equal(gw.callResult?.provider, 'ollama', `應該由閘道回答:${JSON.stringify(gw.callResult)}`);
+  assert.ok(gw.gatewayChats >= 1, '閘道應該真的被呼叫過');
+});
+
+Then('the log records the gateway fallback and that the cloud call failed', function () {
+  assertFallbackLogged('cloud_failed');
+});
+
+Then('the log records the gateway fallback and that the budget was exhausted', function () {
+  assertFallbackLogged('budget_exhausted');
+});
+
+Then('the cloud required error is raised', function () {
+  assert.ok(gw.callError instanceof CloudRequiredError, `應該是 CloudRequiredError:${gw.callError?.message}`);
+});
+
+Then('the gateway is never called', function () {
+  assert.equal(gw.gatewayChats, 0, `不該呼叫閘道,實際呼叫了 ${gw.gatewayChats} 次`);
+});
+
+Then('no cloud call is made', function () {
+  assert.equal(gw.cloudCalls, 0, `不該呼叫雲端,實際呼叫了 ${gw.cloudCalls} 次`);
+});
+
+Then('it is refused with the daily budget message', function () {
+  assert.ok(gw.callError instanceof DailyBudgetExceededError, `應該是 DailyBudgetExceededError:${gw.callError?.message}`);
+  assert.match(gw.callError.message, /今日預算已用完/);
+});
+
+Then('the budget counts as exhausted', function () {
+  assert.equal(gw.exhausted, true, `spent=${gw.spend?.usd} cap=${CAP_USD} 應該算已達上限`);
+});
+
+Then('the budget does not count as exhausted', function () {
+  assert.equal(gw.exhausted, false, `spent=${gw.spend?.usd} cap=${CAP_USD} 不該算已達上限`);
+});
+
+Then('an error naming the rejected model is raised', function () {
+  assert.ok(gw.callError instanceof GatewayModelRejectedError, `應該是 GatewayModelRejectedError:${gw.callError?.message}`);
+  assert.ok(gw.callError.message.includes(gw.requestedModel), '錯誤訊息應該點名被拒絕的模型名');
+});
+
+Then('it does not fall back to the cloud', function () {
+  assert.equal(gw.cloudCalls, 0, '403 是設定錯誤,不該備援到雲端');
+});
+
+Then('the key is exchanged for a token only once', function () {
+  assert.equal(gw.callError, undefined, `不該有錯誤:${gw.callError?.message}`);
+  assert.equal(gw.tokenExchanges, 1, `token 應該只換一次(快取),實際換了 ${gw.tokenExchanges} 次`);
+});
+
+Then('the key is exchanged for a token twice', function () {
+  assert.equal(gw.tokenExchanges, 2, `過期後應該重換一次(共兩次),實際換了 ${gw.tokenExchanges} 次`);
+});
+
+Then('the call succeeds', function () {
+  assert.equal(gw.callError, undefined, `重試後應該成功:${gw.callError?.message}`);
+  assert.ok(gw.callResult?.text, '應該拿到回覆文字');
+});
+
+// @manual
+Then('it reports the local gateway as unavailable', function (this: LearningWorld) {
+  assert.ok(this.lastRun, '還沒有跑過 probe');
+  const printed = JSON.parse(this.lastRun.output) as { local?: { available?: boolean; models?: string[] } };
+  // 閘道沒起來(也可能連 GATEWAY_API_KEY 都沒設):probeLocal() 要接住錯誤回
+  // unavailable,不能讓 MissingCredentialError / ECONNREFUSED 冒出來。
+  assert.equal(printed.local?.available, false, `local 應該是 unavailable:${this.lastRun.output}`);
+  assert.deepEqual(printed.local?.models, []);
+});
+
+Then('it prints no stack trace', function (this: LearningWorld) {
+  assert.ok(this.lastRun, '還沒有跑過指令');
+  assert.doesNotMatch(this.lastRun.output, /\n\s+at\s+\S+/, `不該有 stack trace:${this.lastRun.output}`);
+});
+
+Then('it prints the list of models the gateway serves', function (this: LearningWorld) {
+  assert.ok(this.lastRun, '還沒有跑過 probe');
+  assert.match(this.lastRun.output, /models/);
 });
