@@ -66,7 +66,7 @@ npx tsx scripts/prompt-check.ts --diff prompts/golden/ingest.cards/2026-09-10 pr
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | golden 框架、結構性檢查、diff(FakeLlm) | Wave 0 | done | 2026-09-02 |
-| 2 | 真模型 golden run、評分表、回歸流程 | I2 | in-progress | |
+| 2 | 真模型 golden run、評分表、回歸流程 | I2 | done | 2026-09-04 |
 
 ## 什麼時候該跑
 

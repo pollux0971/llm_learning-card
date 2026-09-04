@@ -98,18 +98,32 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
   if (!set) throw new MissingGoldenSetError(opts.task);
 
   if ((opts.mode ?? 'fake') === 'live') return runGoldenLive(opts, set);
+  return runGoldenFake(opts, set);
+}
+
+/**
+ * fake 模式的 golden run:重播 fixture,不碰網路也不花錢。
+ *
+ * 審核記錄:第二個參數是後補的,理由跟 runGoldenLive 一樣——原本這段程式碼藏在
+ * runGolden 裡面,golden set 一律從 registry 拿,所以「prompt 檔不存在」那個分支
+ * 與「golden set 沒有輸入時 model 落在 unknown」那條路**沒有任何辦法從測試走到**
+ * (registry 裡登記的那一組永遠有檔案、永遠有 3 個輸入)。兩條路徑現在形狀一致。
+ */
+export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Promise<GoldenRunResult> {
+  const goldenSet = set ?? getGoldenSet(opts.task);
+  if (!goldenSet) throw new MissingGoldenSetError(opts.task);
 
   const mode: GoldenRunMeta['mode'] = 'fake';
   const date = opts.today ?? today();
   const baseDir = opts.baseDir ?? defaultGoldenBaseDir(mode);
-  const dir = join(baseDir, set.task, date);
+  const dir = join(baseDir, goldenSet.task, date);
   mkdirSync(dir, { recursive: true });
 
   const router = opts.router ?? new FakeLlmRouter([DEFAULT_FAKE_FIXTURE_DIR], opts.onCall);
 
-  const promptFileAbs = join(ROOT, set.promptFile);
+  const promptFileAbs = join(ROOT, goldenSet.promptFile);
   if (!existsSync(promptFileAbs)) {
-    throw new Error(`golden set「${set.task}」指向的 prompt 檔不存在:${set.promptFile}`);
+    throw new Error(`golden set「${goldenSet.task}」指向的 prompt 檔不存在:${goldenSet.promptFile}`);
   }
   const promptContent = readFileSync(promptFileAbs, 'utf8');
   writeFileSync(join(dir, 'prompt.snapshot.md'), promptContent);
@@ -117,8 +131,8 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
   const outputs: GoldenOutput[] = [];
   let model = 'unknown';
   let provider = 'unknown';
-  for (const input of set.inputs) {
-    const result = await router.call(set.task, input.prompt);
+  for (const input of goldenSet.inputs) {
+    const result = await router.call(goldenSet.task, input.prompt);
     model = result.model;
     provider = result.provider;
     const structural = runStructuralChecks(result.text);
@@ -128,20 +142,20 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
   }
 
   const meta: GoldenRunMeta = {
-    task: set.task,
+    task: goldenSet.task,
     date,
     model,
     provider,
-    promptFileGitCommit: gitCommitOf(set.promptFile),
+    promptFileGitCommit: gitCommitOf(goldenSet.promptFile),
     mode,
   };
   writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
   writeFileSync(
     join(dir, 'SCORES.md'),
     renderScoresSheet(
-      set.task,
+      goldenSet.task,
       date,
-      set.inputs.map((i) => i.id),
+      goldenSet.inputs.map((i) => i.id),
     ),
   );
 

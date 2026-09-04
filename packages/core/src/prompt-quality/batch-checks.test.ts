@@ -56,6 +56,16 @@ describe('normalizeTitle', () => {
   it('包含關係不算相同——「預檢請求」不等於「CORS 預檢請求」', () => {
     expect(normalizeTitle('預檢請求')).not.toBe(normalizeTitle('CORS 預檢請求'));
   });
+
+  /**
+   * 審核補測。上面每一個測試都是「normalize(x) === normalize(y)」的形狀,
+   * 那種斷言在 `toLowerCase()` 被換成 `toUpperCase()` 時兩邊一起變,還是相等——
+   * 47 個測試沒一個會紅。所以要有一個直接看**輸出長什麼樣**的測試。
+   */
+  it('輸出是小寫的(不是只要求兩邊一致)', () => {
+    expect(normalizeTitle('CORS Preflight')).toBe('corspreflight');
+    expect(normalizeTitle('「ＣＯＲＳ 預檢-請求」')).toBe('cors預檢請求');
+  });
 });
 
 describe('normalizeBody', () => {
@@ -72,6 +82,12 @@ describe('normalizeBody', () => {
   it('**保留**標點——標點在正文裡帶訊息,剝掉會灌水相似度', () => {
     expect(normalizeBody('協定、主機、埠號')).toContain('、');
   });
+
+  /** 審核補測,理由同 normalizeTitle 的「輸出是小寫的」。 */
+  it('輸出是小寫的、圍欄真的被拿掉、標點真的留著', () => {
+    expect(normalizeBody('CORS Is Fine')).toBe('corsisfine');
+    expect(normalizeBody('正文。\n\n```example\nFENCED\n```\n')).toBe('正文。');
+  });
 });
 
 describe('charNgrams / jaccard', () => {
@@ -84,6 +100,30 @@ describe('charNgrams / jaccard', () => {
     expect([...charNgrams('ab')]).toEqual(['ab']);
   });
 
+  /**
+   * 審核補測(反向驗證:把 `[...text]` 換成 `text.split('')` 原本 47 個測試沒一個紅)。
+   * BMP 之外的字(emoji、罕見漢字)在 UTF-16 是一對代理對。依 code unit 切會產生
+   * 「半個字」——那種 gram 跟任何真實文字都比不出東西,相似度會被無聲拉低。
+   */
+  it('依 code point 切,不依 UTF-16 code unit——代理對不會被切成半個字', () => {
+    expect([...charNgrams('\u{1F408}\u{1F409}\u{1F40A}\u{1F40B}')].sort()).toEqual(
+      ['\u{1F408}\u{1F409}\u{1F40A}', '\u{1F409}\u{1F40A}\u{1F40B}'],
+    );
+    // 每個 gram 都剛好是 3 個 code point(依 code unit 切的話會是 3 個 code unit)
+    for (const g of charNgrams('\u{1F408}\u{1F409}\u{1F40A}\u{1F40B}')) expect([...g]).toHaveLength(3);
+    // 罕見漢字(U+2A6xx)同理
+    expect([...charNgrams('\u{2A6B2}\u{2A6B3}\u{2A6B4}')]).toEqual(['\u{2A6B2}\u{2A6B3}\u{2A6B4}']);
+  });
+
+  /**
+   * 審核補測。空字串回**空集合**,不是 `{''}`。差別在 Jaccard:
+   * `{''}` 跟 `{''}` 的 Jaccard 是 1,兩張空白卡就會被報成一對重複。
+   */
+  it('空字串回空集合,不是 {\'\'}', () => {
+    expect(charNgrams('').size).toBe(0);
+    expect([...charNgrams('')]).toEqual([]);
+  });
+
   it('完全相同是 1,完全不同是 0', () => {
     expect(jaccard(charNgrams('abcdef'), charNgrams('abcdef'))).toBe(1);
     expect(jaccard(charNgrams('abcdef'), charNgrams('uvwxyz'))).toBe(0);
@@ -91,6 +131,17 @@ describe('charNgrams / jaccard', () => {
 
   it('兩邊都空定義為 0(沒有內容就沒有重複可言)', () => {
     expect(jaccard(new Set(), new Set())).toBe(0);
+  });
+
+  /**
+   * 審核補測:**任一邊**空就是 0,不是只有兩邊都空才是 0。
+   * (實作上這條由 `union === 0` 的退路一併保證,所以那個提前 return 是等價的——
+   * 見 structural-checks.ts 的 Stryker disable 註解。這裡釘的是**行為**,
+   * 不是那一行:換一種寫法也必須維持這個結果。)
+   */
+  it('任一邊空就是 0', () => {
+    expect(jaccard(new Set(), charNgrams('abcdef'))).toBe(0);
+    expect(jaccard(charNgrams('abcdef'), new Set())).toBe(0);
   });
 
   it('邊界字串的相似度剛好是 0.6', () => {
@@ -118,6 +169,22 @@ describe('checkDuplicates:閾值邊界', () => {
   it('閾值可以從外面調——調到 0.5 之後那一對就被抓到了', () => {
     const cards = [card('a-0001', '標題一', BOUNDARY_A), card('a-0002', '標題二', BOUNDARY_JUST_BELOW)];
     expect(checkDuplicates(cards, { threshold: 0.5 }).pairs).toHaveLength(1);
+  });
+
+  /**
+   * 審核補測:`ngramSize` 是宣告出來的第二個可調常數,但原本沒有任何測試傳它,
+   * 所以 `opts.ngramSize ?? DUPLICATE_NGRAM_SIZE` 這行怎麼改都沒人發現。
+   * 'abcdefghij' 與 'abcdefghwxy' 在 3-gram 是 6/11 = 0.545(門檻下),
+   * 換成 2-gram 之後共用的 bigram 變多,分數升到門檻上。
+   */
+  it('n-gram 大小可以從外面調,算出來的分數就跟著換', () => {
+    const cards = [card('a-0001', '標題一', BOUNDARY_A), card('a-0002', '標題二', BOUNDARY_JUST_BELOW)];
+    // 門檻放低只是為了讓這一對一定被列出來,重點在 similarity 的值
+    const three = checkDuplicates(cards, { threshold: 0.5 });
+    const two = checkDuplicates(cards, { threshold: 0.5, ngramSize: 2 });
+    expect(three.pairs[0]!.similarity).toBeCloseTo(6 / 11, 10); // 3-gram:交集 6、聯集 11
+    expect(two.pairs[0]!.similarity).toBeCloseTo(7 / 12, 10); // 2-gram:交集 7、聯集 12
+    expect(two.pairs[0]!.similarity).not.toBeCloseTo(three.pairs[0]!.similarity, 5);
   });
 });
 
@@ -152,6 +219,41 @@ describe('checkDuplicates:正面', () => {
   });
 });
 
+/**
+ * 審核補測:**排序**。原本每個測試餵進去的卡都已經照 id 排好,所以「有沒有排序」
+ * 看不出差別——`pairs.sort(...)` 整行拿掉、比較子的每一個分支換掉,
+ * 31 個變異沒有一個會被發現。清單順序不穩定就沒辦法 diff,而穩定順序正是
+ * 這份輸出要進 SCORES.md 的前提。
+ */
+describe('checkDuplicates:清單順序', () => {
+  /** 刻意把卡照 id 的**反序**餵進去,而且讓兩對共用同一個 a(逼出 b 的次序比較) */
+  const SHUFFLED = [
+    card('z-0009', '甲', BOUNDARY_A),
+    card('z-0005', '乙', BOUNDARY_A),
+    card('z-0001', '丙', BOUNDARY_A),
+  ];
+
+  it('無論輸入順序,清單都依 (a, b) 字典序', () => {
+    expect(checkDuplicates(SHUFFLED).pairs.map((p) => [p.a, p.b])).toEqual([
+      ['z-0001', 'z-0005'],
+      ['z-0001', 'z-0009'],
+      ['z-0005', 'z-0009'],
+    ]);
+  });
+
+  it('一對裡面 a 一定是字典序小的那個,不管誰先被讀到', () => {
+    const pairs = checkDuplicates([card('z-0009', '甲', BOUNDARY_A), card('z-0001', '乙', BOUNDARY_A)]).pairs;
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]!.a).toBe('z-0001');
+    expect(pairs[0]!.b).toBe('z-0009');
+  });
+
+  it('打亂輸入不改變輸出——同一批卡換順序餵進去,清單一模一樣', () => {
+    const forward = checkDuplicates([...SHUFFLED].reverse()).pairs;
+    expect(checkDuplicates(SHUFFLED).pairs).toEqual(forward);
+  });
+});
+
 describe('checkDuplicates:負面', () => {
   it('完全不重複的一批算出 0 對,rate 是 0', () => {
     const report = checkDuplicates(NO_DUPLICATES);
@@ -166,6 +268,32 @@ describe('checkDuplicates:負面', () => {
 
   it('只有一張卡沒有「兩兩比」可言', () => {
     expect(checkDuplicates([card('s-0001', '只有一張', '內容')]).pairs).toEqual([]);
+  });
+
+  /**
+   * 審核補測。兩張 body 空白的卡**不算**一對重複。
+   * 沒有 charNgrams 的空集合規則的話,兩邊都是 `{''}`,Jaccard 會是 1,
+   * 一批半成品卡會整批互相報成重複——這是最吵、也最容易被當成「檢查壞了」的假警報。
+   */
+  it('兩張 body 空白的卡不算重複(空對空的 Jaccard 不是 1)', () => {
+    const report = checkDuplicates([card('e-0001', '標題一', ''), card('e-0002', '標題二', '')]);
+    expect(report.pairs).toEqual([]);
+    expect(report.rate).toBe(0);
+  });
+
+  /**
+   * 審核補測。**兩張都沒有標題時不算撞名**——空字串撞空字串不是證據。
+   * 拿掉 `x.title.length > 0` 這個條件之後,一批還沒填標題的卡會兩兩全部互報。
+   */
+  it('兩張都沒有標題時不算撞名', () => {
+    const report = checkDuplicates([card('n-0001', '', '甲的正文完全不同'), card('n-0002', '', 'qrstuvwxyz 乙')]);
+    expect(report.pairs).toEqual([]);
+  });
+
+  it('但只要有標題,標題相同仍然算撞名', () => {
+    const report = checkDuplicates([card('n-0003', '同一個標題', '甲的正文'), card('n-0004', '同一個標題', 'qrstuvwxyz 乙')]);
+    expect(report.pairs).toHaveLength(1);
+    expect(report.pairs[0]!.reason).toBe('title');
   });
 });
 
@@ -265,6 +393,31 @@ describe('checkPrereqShape', () => {
   });
 });
 
+/**
+ * 審核補測:圖形狀清單的排序,理由同上(原本 15 個比較子變異全部存活)。
+ * 一張卡有兩筆違規,才逼得出「先比 card、再比 prereq」的第二層。
+ */
+describe('checkPrereqShape:清單順序', () => {
+  const SHUFFLED = [
+    card('h-0009', '主卡二', '正文', 0, ['h-0004', 'h-0002']),
+    card('h-0003', '主卡一', '正文', 0, ['h-0004']),
+    card('h-0004', '子卡甲', '正文', 1, []),
+    card('h-0002', '子卡乙', '正文', 1, []),
+  ];
+
+  it('依 card 再 prereq 字典序,與輸入順序無關', () => {
+    expect(checkPrereqShape(SHUFFLED)).toEqual([
+      { card: 'h-0003', cardLevel: 0, prereq: 'h-0004', prereqLevel: 1 },
+      { card: 'h-0009', cardLevel: 0, prereq: 'h-0002', prereqLevel: 1 },
+      { card: 'h-0009', cardLevel: 0, prereq: 'h-0004', prereqLevel: 1 },
+    ]);
+  });
+
+  it('打亂輸入不改變輸出', () => {
+    expect(checkPrereqShape(SHUFFLED)).toEqual(checkPrereqShape([...SHUFFLED].reverse()));
+  });
+});
+
 describe('runBatchChecks', () => {
   it('兩項的結果都進既有的 StructuralIssue 體系,note 仍然是那句提醒', () => {
     const cards = [
@@ -298,6 +451,29 @@ describe('runBatchChecks', () => {
     expect(result.duplicates.pairs).toEqual([]);
     expect(result.prereqShape).toHaveLength(4);
     expect(result.issues.map((i) => i.kind)).toEqual(Array(4).fill('prereq-shape'));
+  });
+
+  /**
+   * 審核補測:issue 的 `detail` 是給人看的那一行字,原本沒有任何測試看過它,
+   * 所以整串訊息被清空、相似度的三位小數被拿掉都不會被發現。
+   */
+  it('duplicate-pair 的 detail 說得出是哪兩張、依什麼、分數多少', () => {
+    const byTitle = runBatchChecks([card('t-0001', '一樣的標題', '甲'), card('t-0002', '一樣的標題', 'qrstuvwxyz')]);
+    expect(byTitle.issues).toEqual([
+      { kind: 'duplicate-pair', detail: 't-0001 與 t-0002 重複(依標題,0.000)' },
+    ]);
+
+    const byBody = runBatchChecks([card('t-0003', '甲', BOUNDARY_A), card('t-0004', '乙', BOUNDARY_EXACTLY_060)]);
+    expect(byBody.issues).toEqual([
+      { kind: 'duplicate-pair', detail: 't-0003 與 t-0004 重複(依body 相似度,0.600)' },
+    ]);
+  });
+
+  it('prereq-shape 的 detail 說得出是哪張卡、哪個 prereq、各自幾層', () => {
+    const result = runBatchChecks([card('t-0005', '主卡', '甲的正文', 0, ['t-0006']), card('t-0006', '子卡', 'qrstuvwxyz', 1, [])]);
+    expect(result.issues).toEqual([
+      { kind: 'prereq-shape', detail: 't-0005(L0)的 prereq 指向更深的 t-0006(L1)' },
+    ]);
   });
 
   it('乾淨的一批沒有任何 issue', () => {

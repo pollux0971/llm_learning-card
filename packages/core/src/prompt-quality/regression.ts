@@ -93,9 +93,13 @@ export function detectPromptDrift(baseDir: string, task: LlmTask, currentCommit:
  * 有差異的列進 needsScoring,等人看。兩個清單都依字典序,格式要穩定才能 diff。
  */
 export function reviewRegression(result: CompareResult): RegressionReview {
-  // compareRuns() 已經把 items 依 id 字典序排好,所以照著走就是字典序,
+  // compareRuns() 已經把 items 依 id 字典序排好,但這個函式的簽章吃的是任何一個
+  // CompareResult,沒有人保證呼叫端排過,所以這裡自己再排一次;
   // carriedForward 的 key 順序也跟著穩定(要 diff 就不能靠 Object 的插入順序碰運氣)。
-  const items = [...result.items].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // id 是唯一的(compareRuns 用 Set 併出來的),所以不需要第三個「相等」分支——
+  // 審核記錄:原本寫成 `a.id < b.id ? -1 : a.id > b.id ? 1 : 0`,那個 `: 0` 走不到,
+  // 變異測試只會看到一批殺不掉的存活變異,而不是一條被驗過的規則。
+  const items = [...result.items].sort((a, b) => (a.id < b.id ? -1 : 1));
   const needsScoring: string[] = [];
   const unchanged: string[] = [];
   const carriedForward: Record<string, Partial<Record<ScoreDimension, string>>> = {};

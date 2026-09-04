@@ -168,9 +168,16 @@ export function charNgrams(text: string, n: number = DUPLICATE_NGRAM_SIZE): Set<
   return grams;
 }
 
-/** Jaccard 相似度 |A∩B| / |A∪B|。兩邊都空時定義為 0(沒有內容就沒有重複可言)。 */
+/**
+ * Jaccard 相似度 |A∩B| / |A∪B|。**任一邊為空時是 0**(沒有內容就沒有重複可言)。
+ *
+ * 審核記錄:原本這裡有一行 `if (a.size === 0 || b.size === 0) return 0;`。那一行是
+ * 死程式——一邊空時交集必為 0、聯集等於另一邊的大小,算出來本來就是 0;兩邊都空時
+ * 由下面的 `union === 0` 接住。留著它會讓 `union === 0` 那個分支永遠走不到,
+ * 變異測試看到的是一個殺不掉的存活變異,而不是一條被驗過的規則。已刪。
+ * 行為本身由 batch-checks.test.ts 的「兩邊都空」與「任一邊空就是 0」釘住。
+ */
 export function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
   let intersection = 0;
   for (const gram of a) if (b.has(gram)) intersection += 1;
   const union = a.size + b.size - intersection;

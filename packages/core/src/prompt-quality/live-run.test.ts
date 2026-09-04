@@ -9,19 +9,33 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { LlmRouterImpl } from '@core/llm/index.js';
 import type { LogEvent } from '@contracts/index.js';
 import {
   DEFAULT_GOLDEN_BASE_DIR,
   DEFAULT_FAKE_GOLDEN_BASE_DIR,
+  ROOT,
   LiveRunOfflineError,
+  MissingGoldenSetError,
   defaultGoldenBaseDir,
   estimateCostUsd,
   runGolden,
+  runGoldenFake,
+  runGoldenLive,
   type ModelPriceTable,
 } from './golden-run.js';
-import type { GoldenRunMeta, LlmRouter } from './types.js';
+import type { GoldenRunMeta, GoldenSet, LlmRouter } from './types.js';
+
+/**
+ * ROOT 本身就是 git repo 的頂層嗎?
+ * 變異測試的沙箱是 repo 底下 `.stryker-tmp/sandboxNNN/` 的一份複本:它「在」工作區裡,
+ * 但裡面的檔案一個都沒被追蹤,`git log -- <path>` 什麼都回不出來。
+ * 所以要比的是 `--show-toplevel` 等不等於 ROOT,不是 `--is-inside-work-tree`。
+ */
+const IN_GIT_WORKTREE =
+  spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: ROOT, encoding: 'utf8' }).stdout?.trim() === ROOT;
 
 const MODEL = 'claude-sonnet-5';
 const PRICES: ModelPriceTable = { [MODEL]: { inPerMTok: 3, outPerMTok: 15 } };
@@ -143,6 +157,29 @@ describe('runGolden --live:線上', () => {
     expect(result.meta.estimated_cost_usd).toBeUndefined();
   });
 
+  /**
+   * 審核補測。上一個測試用 `toBeUndefined()`,那對「欄位不存在」與「欄位存在但值是
+   * undefined」是同一個結果——分不出來。tsconfig 開了 exactOptionalPropertyTypes,
+   * 意思就是**沒有價目時欄位整個不存在**;寫成 `estimated_cost_usd: undefined`
+   * 在型別上是另一回事,在 `'x' in meta` 與 Object.keys 上也是。
+   */
+  it('查不到價目時 estimated_cost_usd **欄位整個不存在**,不是一個 undefined 的值', async () => {
+    const result = await runGolden({
+      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
+      createRouter: () => makeRouter(), prices: {},
+    });
+    expect('estimated_cost_usd' in result.meta).toBe(false);
+    expect(Object.keys(result.meta)).not.toContain('estimated_cost_usd');
+  });
+
+  it('查得到價目時欄位才存在', async () => {
+    const result = await runGolden({
+      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
+      createRouter: () => makeRouter(), prices: PRICES,
+    });
+    expect('estimated_cost_usd' in result.meta).toBe(true);
+  });
+
   it('meta.json 落到磁碟上,內容跟回傳的一致', async () => {
     const result = await runGolden({
       task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
@@ -182,6 +219,128 @@ describe('runGolden --live:離線', () => {
     const out = tmpOutDir();
     await runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() }).catch(() => {});
     expect(requests.filter((u) => u.includes('/v1/messages'))).toEqual([]);
+  });
+});
+
+/**
+ * 審核補測:順序的第二段。probeOnline → **讀 prompt 檔** → mkdir。
+ * 上面的離線測試只釘住了「probeOnline 在 mkdir 之前」;把讀檔搬到 mkdir 之後,
+ * 原本的測試一個都不會紅。可是 prompt 檔不見(golden set 指錯路徑、prompt 被搬走)
+ * 是真的會發生的事,那時候一樣會留下一個空目錄,之後 diff 把它當成一次 run。
+ */
+/**
+ * 審核補測:兩個錯誤型別本身,以及 meta 裡兩個原本沒人看過的欄位。
+ * 錯誤訊息與 `this.name` 被清空時,原本的 `rejects.toThrow(LiveRunOfflineError)`
+ * 照樣通過——可是那句訊息是「為什麼跑不了、該怎麼辦」的唯一出口。
+ */
+describe('錯誤與 meta 的欄位(審核補測)', () => {
+  it('LiveRunOfflineError 帶得出 task,訊息說得出替代做法', async () => {
+    installFakeCloud(false);
+    let err: unknown;
+    try {
+      await runGolden({
+        task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LiveRunOfflineError);
+    const offline = err as LiveRunOfflineError;
+    expect(offline.name).toBe('LiveRunOfflineError');
+    expect(offline.task).toBe('grade.apply');
+    expect(offline.message).toContain('grade.apply');
+    expect(offline.message).toContain('--fake');
+  });
+
+  it('沒登記 golden set 的任務丟 MissingGoldenSetError,訊息指向 registry 檔', async () => {
+    installFakeCloud(true);
+    let err: unknown;
+    try {
+      await runGolden({
+        task: 'deepen', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(MissingGoldenSetError);
+    const missing = err as MissingGoldenSetError;
+    expect(missing.name).toBe('MissingGoldenSetError');
+    expect(missing.task).toBe('deepen');
+    expect(missing.message).toContain('registry');
+  });
+
+  /**
+   * promptFileGitCommit 原本沒有任何測試看過它的值,所以 `git log` 的參數
+   * 被改掉、`.trim()` 被拿掉都不會被發現——那個欄位正是 prompt 漂移偵測的依據
+   * (detectPromptDrift 拿它跟現在的 commit 比),值錯了整條回歸流程就是錯的。
+   */
+  /**
+   * 只在真的 git 工作區裡跑。變異測試的沙箱是 repo 的複本、**不是** git 工作區,
+   * 那裡 `git log` 什麼都回不出來,值本來就會是 'uncommitted'——
+   * 在那種環境下這條斷言驗的是環境不是程式,所以跳過。
+   */
+  it.skipIf(!IN_GIT_WORKTREE)('meta.promptFileGitCommit 是真的短 sha,不是 uncommitted、也沒有換行', async () => {
+    installFakeCloud(true);
+    const result = await runGolden({
+      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
+    });
+    expect(result.meta.promptFileGitCommit).toMatch(/^[0-9a-f]{7,12}$/);
+    expect(result.meta.promptFileGitCommit).not.toBe('uncommitted');
+  });
+
+  /**
+   * fake 路徑的兩條「原本走不到」的路(runGoldenFake 抽出來之後才測得到)。
+   * prompt 檔不存在時要丟錯而且訊息指得出是哪個 golden set、哪個檔。
+   */
+  it('fake 模式:prompt 檔不見時丟錯,訊息指得出 task 與檔名', async () => {
+    await expect(
+      runGoldenFake(
+        { task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'fake' },
+        { task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/不存在.md', inputs: [] },
+      ),
+    ).rejects.toThrow(/grade\.apply.*不存在\.md|不存在\.md/);
+  });
+
+  it('fake 模式:golden set 沒有輸入時 model 與 provider 是 unknown', async () => {
+    const result = await runGoldenFake(
+      { task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'fake' },
+      { task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/grade.apply.selftest-prompt.md', inputs: [] },
+    );
+    expect(result.meta.model).toBe('unknown');
+    expect(result.meta.provider).toBe('unknown');
+    expect(result.meta.mode).toBe('fake');
+    expect(result.outputs).toEqual([]);
+  });
+
+  /** 一個輸入都沒有的 golden set:model / provider 落在 'unknown',不是空字串。 */
+  it('golden set 沒有輸入時 model 與 provider 是 unknown', async () => {
+    installFakeCloud(true);
+    const result = await runGoldenLive(
+      { task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() },
+      { task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/grade.apply.selftest-prompt.md', inputs: [] },
+    );
+    expect(result.meta.model).toBe('unknown');
+    expect(result.meta.provider).toBe('unknown');
+    expect(result.outputs).toEqual([]);
+    expect(result.meta.tokens_in).toBe(0);
+  });
+});
+
+describe('runGolden --live:prompt 檔不見時也不留空目錄', () => {
+  beforeEach(() => installFakeCloud(true));
+
+  const MISSING_SET: GoldenSet = {
+    task: 'grade.apply',
+    promptFile: 'packages/core/src/prompt-quality/golden-sets/這個檔案不存在.md',
+    inputs: [{ id: 'demo-1', prompt: '任意輸入' }],
+  };
+
+  it('丟錯,而且 baseDir 底下什麼都沒建立', async () => {
+    const out = tmpOutDir();
+    await expect(
+      runGoldenLive({ task: 'grade.apply', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() }, MISSING_SET),
+    ).rejects.toThrow(/prompt 檔不存在/);
+    expect(readdirSync(out)).toEqual([]);
   });
 });
 
