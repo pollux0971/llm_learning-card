@@ -70,6 +70,29 @@ export function parseScoresSheet(content: string): ParsedScores {
  *   - 圖形狀每列 `- card(L?) → prereq(L?)`,依 card 再 prereq 字典序
  *   - 兩項都是 0 時仍然印出標題與 `0`,不要整段消失——消失的段落 diff 起來像檔案壞了
  */
+export const BATCH_CHECK_HEADING = '## 機器檢查(不用填)';
+
+/** 固定三位小數。浮點數尾巴(0.6000000000000001)會讓 diff 一直吵。 */
+function fixed3(value: number): string {
+  return value.toFixed(3);
+}
+
 export function renderBatchCheckSection(batch: BatchCheckResult): string {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  const { cardCount, pairs, rate } = batch.duplicates;
+  const lines: string[] = [
+    BATCH_CHECK_HEADING,
+    '',
+    `重複對數 / 卡數 = ${pairs.length} / ${cardCount}(${fixed3(rate)})`,
+    '',
+  ];
+  if (pairs.length > 0) {
+    for (const p of pairs) lines.push(`- ${p.a} ↔ ${p.b}(${p.reason},${fixed3(p.similarity)})`);
+    lines.push('');
+  }
+  lines.push(`圖形狀 = ${batch.prereqShape.length}`, '');
+  if (batch.prereqShape.length > 0) {
+    for (const v of batch.prereqShape) lines.push(`- ${v.card}(L${v.cardLevel}) → ${v.prereq}(L${v.prereqLevel})`);
+    lines.push('');
+  }
+  return lines.join('\n');
 }

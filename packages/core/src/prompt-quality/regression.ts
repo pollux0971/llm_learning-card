@@ -8,7 +8,18 @@
  * (內容是該 run 的 meta JSON)。不另外維護索引——目錄本身就是資料,
  * 手動搬動或刪除 run 目錄不會留下對不上的索引。
  */
-import type { BaselineInfo, CompareResult, LlmTask, PromptDrift, RegressionReview } from './types.js';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { getGoldenSet, GOLDEN_SET_REGISTRY_FILE } from './golden-sets/registry.js';
+import type {
+  BaselineInfo,
+  CompareResult,
+  GoldenRunMeta,
+  LlmTask,
+  PromptDrift,
+  RegressionReview,
+  ScoreDimension,
+} from './types.js';
 
 /** 基準標記檔的檔名。改這個等於改磁碟格式,不要隨手改。 */
 export const BASELINE_MARKER = 'BASELINE.json';
@@ -28,12 +39,32 @@ export class BaselineAlreadyExistsError extends Error {
  * 「基準只立一次並保留」是這條流程的重點,靜靜覆蓋掉舊基準就沒有基準可言了。
  */
 export function markBaseline(baseDir: string, runDir: string): BaselineInfo {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  const meta = JSON.parse(readFileSync(join(runDir, 'meta.json'), 'utf8')) as GoldenRunMeta;
+  const existing = findBaseline(baseDir, meta.task);
+  // 先檢查再寫:拒絕的那一次不能在第二個 run 目錄留下標記檔。
+  if (existing) throw new BaselineAlreadyExistsError(meta.task, existing.dir);
+  writeFileSync(join(runDir, BASELINE_MARKER), JSON.stringify(meta, null, 2));
+  return toBaselineInfo(meta.task, runDir, meta);
 }
 
 /** 找出一個任務的基準 run;沒有就 undefined。 */
 export function findBaseline(baseDir: string, task: LlmTask): BaselineInfo | undefined {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  const taskDir = join(baseDir, task);
+  if (!existsSync(taskDir)) return undefined;
+  // 目錄名是日期,排序後由舊到新——真的有兩個標記檔時取最早的那個,
+  // 「基準只立一次」的意思就是最早那次才算數。
+  for (const entry of readdirSync(taskDir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (!entry.isDirectory()) continue;
+    const dir = join(taskDir, entry.name);
+    const marker = join(dir, BASELINE_MARKER);
+    if (!existsSync(marker)) continue;
+    return toBaselineInfo(task, dir, JSON.parse(readFileSync(marker, 'utf8')) as GoldenRunMeta);
+  }
+  return undefined;
+}
+
+function toBaselineInfo(task: LlmTask, dir: string, meta: GoldenRunMeta): BaselineInfo {
+  return { task, dir, date: meta.date, promptFileGitCommit: meta.promptFileGitCommit };
 }
 
 /**
@@ -45,7 +76,16 @@ export function findBaseline(baseDir: string, task: LlmTask): BaselineInfo | und
  * 這樣這個函式不碰 git,測試才控制得住。
  */
 export function detectPromptDrift(baseDir: string, task: LlmTask, currentCommit: string): PromptDrift | undefined {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  const baseline = findBaseline(baseDir, task);
+  if (!baseline) return undefined;
+  if (baseline.promptFileGitCommit === currentCommit) return undefined;
+  const set = getGoldenSet(task);
+  // 有基準卻查不到 golden set,代表 registry 被改掉了。這時候回 undefined 等於謊報
+  // 「沒有漂移」,所以寧可大聲壞掉。
+  if (!set) {
+    throw new Error(`task「${task}」有基準但沒有登記 golden set,說不出是哪個 prompt 檔漂移了;去 ${GOLDEN_SET_REGISTRY_FILE} 補上`);
+  }
+  return { promptFile: set.promptFile, baselineCommit: baseline.promptFileGitCommit, currentCommit };
 }
 
 /**
@@ -53,5 +93,22 @@ export function detectPromptDrift(baseDir: string, task: LlmTask, currentCommit:
  * 有差異的列進 needsScoring,等人看。兩個清單都依字典序,格式要穩定才能 diff。
  */
 export function reviewRegression(result: CompareResult): RegressionReview {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  // compareRuns() 已經把 items 依 id 字典序排好,所以照著走就是字典序,
+  // carriedForward 的 key 順序也跟著穩定(要 diff 就不能靠 Object 的插入順序碰運氣)。
+  const items = [...result.items].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const needsScoring: string[] = [];
+  const unchanged: string[] = [];
+  const carriedForward: Record<string, Partial<Record<ScoreDimension, string>>> = {};
+
+  for (const item of items) {
+    if (!item.same) {
+      needsScoring.push(item.id);
+      continue;
+    }
+    unchanged.push(item.id);
+    // A 沒填分數就沒有東西可以沿用——不要憑空生一筆空的出來。
+    if (item.scoresA) carriedForward[item.id] = item.scoresA;
+  }
+
+  return { task: result.task, needsScoring, unchanged, carriedForward };
 }

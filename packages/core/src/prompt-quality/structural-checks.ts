@@ -122,6 +122,13 @@ export function runStructuralChecks(outputText: string): StructuralCheckResult {
 export const DUPLICATE_BODY_JACCARD_THRESHOLD = 0.6;
 export const DUPLICATE_NGRAM_SIZE = 3;
 
+/** 契約 §2 的 example 圍欄。跟 word-count.ts 同一條規則,兩邊都要移除。 */
+const EXAMPLE_FENCE = /```example[\s\S]*?```/g;
+/** `\s` 已含全形空白 U+3000(NFKC 也會把它折成半形空白,兩層都擋得住)。 */
+const WHITESPACE = /\s/gu;
+/** Unicode 標點(P*)與符號(S*)。只用在標題,body 保留標點。 */
+const PUNCTUATION_OR_SYMBOL = /[\p{P}\p{S}]/gu;
+
 /**
  * 標題正規化。規則(依序,全部都要):
  *   1. Unicode NFKC —— 全形英數與半形視為同一個字(`ＣＯＲＳ` === `CORS`)
@@ -134,7 +141,11 @@ export const DUPLICATE_NGRAM_SIZE = 3;
  * 剝掉會把不一樣的句子拉近、灌水相似度;標題短,剝掉才對得起「同一個標題」的直覺。
  */
 export function normalizeTitle(title: string): string {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  return title
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(WHITESPACE, '')
+    .replace(PUNCTUATION_OR_SYMBOL, '');
 }
 
 /**
@@ -143,17 +154,27 @@ export function normalizeTitle(title: string): string {
  * ——兩張卡引用同一段程式碼不代表它們在講同一件事。
  */
 export function normalizeBody(body: string): string {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  return body.replace(EXAMPLE_FENCE, '').normalize('NFKC').toLowerCase().replace(WHITESPACE, '');
 }
 
 /** 字元 n-gram 集合。字串短於 n 時回傳整個字串當唯一一個 gram,不回空集合。 */
 export function charNgrams(text: string, n: number = DUPLICATE_NGRAM_SIZE): Set<string> {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  // 依 code point 切,不依 UTF-16 code unit——切在代理對中間會產生比不出東西的半個字。
+  const chars = [...text];
+  if (chars.length === 0) return new Set();
+  if (chars.length < n) return new Set([chars.join('')]);
+  const grams = new Set<string>();
+  for (let i = 0; i + n <= chars.length; i += 1) grams.add(chars.slice(i, i + n).join(''));
+  return grams;
 }
 
 /** Jaccard 相似度 |A∩B| / |A∪B|。兩邊都空時定義為 0(沒有內容就沒有重複可言)。 */
 export function jaccard(a: Set<string>, b: Set<string>): number {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const gram of a) if (b.has(gram)) intersection += 1;
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
 }
 
 /**
@@ -176,7 +197,32 @@ export interface DuplicateOptions {
 }
 
 export function checkDuplicates(cards: BatchCard[], opts: DuplicateOptions = {}): DuplicateReport {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  const threshold = opts.threshold ?? DUPLICATE_BODY_JACCARD_THRESHOLD;
+  const ngramSize = opts.ngramSize ?? DUPLICATE_NGRAM_SIZE;
+
+  // 正規化只做一次:兩兩比是 O(n²) 次比較,但只有 n 次正規化。
+  const prepared = cards.map((c) => ({
+    id: c.id,
+    title: normalizeTitle(c.title),
+    grams: charNgrams(normalizeBody(c.body), ngramSize),
+  }));
+
+  const pairs: DuplicatePair[] = [];
+  for (let i = 0; i < prepared.length; i += 1) {
+    for (let j = i + 1; j < prepared.length; j += 1) {
+      const x = prepared[i]!;
+      const y = prepared[j]!;
+      const similarity = jaccard(x.grams, y.grams);
+      // 兩張都沒有標題時「正規化後相同」不成立——空字串撞空字串不是證據。
+      const sameTitle = x.title.length > 0 && x.title === y.title;
+      if (!sameTitle && similarity < threshold) continue;
+      const [a, b] = x.id < y.id ? [x.id, y.id] : [y.id, x.id];
+      pairs.push({ a, b, reason: sameTitle ? 'title' : 'body', similarity });
+    }
+  }
+
+  pairs.sort((p, q) => (p.a === q.a ? (p.b < q.b ? -1 : p.b > q.b ? 1 : 0) : p.a < q.a ? -1 : 1));
+  return { cardCount: cards.length, pairs, rate: cards.length === 0 ? 0 : pairs.length / cards.length };
 }
 
 /**
@@ -186,7 +232,21 @@ export function checkDuplicates(cards: BatchCard[], opts: DuplicateOptions = {})
  * 目標 0 筆。
  */
 export function checkPrereqShape(cards: BatchCard[]): PrereqShapeViolation[] {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  const levelById = new Map(cards.map((c) => [c.id, c.level]));
+  const violations: PrereqShapeViolation[] = [];
+  for (const card of cards) {
+    for (const prereq of card.prereqs ?? []) {
+      const prereqLevel = levelById.get(prereq);
+      if (prereqLevel === undefined) continue; // 斷鏈是 09-lint 的事,不是形狀問題
+      if (prereqLevel > card.level) {
+        violations.push({ card: card.id, cardLevel: card.level, prereq, prereqLevel });
+      }
+    }
+  }
+  violations.sort((p, q) =>
+    p.card === q.card ? (p.prereq < q.prereq ? -1 : p.prereq > q.prereq ? 1 : 0) : p.card < q.card ? -1 : 1,
+  );
+  return violations;
 }
 
 /**
@@ -195,5 +255,17 @@ export function checkPrereqShape(cards: BatchCard[]): PrereqShapeViolation[] {
  * note 仍然是 QUALITY_NOTE(這兩項也不判斷品質)。
  */
 export function runBatchChecks(cards: BatchCard[], opts: DuplicateOptions = {}): BatchCheckResult {
-  throw new Error('not implemented (12-prompt-quality/phase-2)');
+  const duplicates = checkDuplicates(cards, opts);
+  const prereqShape = checkPrereqShape(cards);
+  const issues: StructuralIssue[] = [
+    ...duplicates.pairs.map((p): StructuralIssue => ({
+      kind: 'duplicate-pair',
+      detail: `${p.a} 與 ${p.b} 重複(依${p.reason === 'title' ? '標題' : 'body 相似度'},${p.similarity.toFixed(3)})`,
+    })),
+    ...prereqShape.map((v): StructuralIssue => ({
+      kind: 'prereq-shape',
+      detail: `${v.card}(L${v.cardLevel})的 prereq 指向更深的 ${v.prereq}(L${v.prereqLevel})`,
+    })),
+  ];
+  return { issues, note: QUALITY_NOTE, duplicates, prereqShape };
 }
