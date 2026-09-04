@@ -184,3 +184,115 @@ commit 清單。）
   預錄回應,所以 `scripts/ingest.ts --fake` 路徑刻意只呼叫 `runIngest()`
   (level 0),沒接 `runIngestPipeline()`。要接上得先補這些 fixture。
 - `@llm` 標的 e2e 場景(真的打雲端 API)這次沒跑,需要有網路與憑證時另外驗證。
+
+---
+
+# I1 `@e2e @llm` 真呼叫驗收(第四次)
+
+日期:2026-09-04
+執行者:協調者 session。
+對象:main `4ba1663`(第四次真呼叫時的 HEAD)。
+指令:
+
+```bash
+LLM_CLOUD_PROVIDER=openai LLM_CLOUD_MODEL=gpt-5.6-luna \
+  npx tsx scripts/ingest.ts --file contracts/fixtures/raw/security-basics.md \
+  --out ./learning --category security
+```
+
+跑之前清掉 `learning/cards` `learning/questions` `learning/graph`、`state/ingested.json`
+重設為 `{}`、`state/log.jsonl` 另存;`raw/` 與 `config/` 未動。
+
+## 結論:**PASS**,`@e2e @llm` 綠燈(由技術顧問覆核確認)
+
+`@manual` 的「The cards read like one concept each」仍待使用者人工確認。
+
+## 1. 場景逐條對照
+
+`docs/integration/i1-content-pipeline.feature` 的 `@e2e @llm`
+「A person turns one article into a browsable card set」:
+
+| Then | 結果 |
+|---|---|
+| at least 3 cards exist under `cards/security/` | ✓ 25 張(`sec-0001`..`sec-0025`) |
+| every card passes the data-layer validator | ✓ **25/25 OK**(`schema/cli.ts validate` 逐張) |
+| every card has a question file with the same id | ✓ diff 空;考題另跑 `validate-question` **25/25 OK** |
+| `graph/order-security.json` lists every card exactly once | ✓ 25 筆,無重複、無遺漏、無幽靈項 |
+| the person can open any card in a markdown viewer and read it | 待人工(併入 `@manual` 一起問使用者) |
+
+## 2. 產出統計
+
+```
+卡片        25 張          考題        25 份
+deps.json   security: 25 nodes / 33 edges,DFS 驗過無環 (DAG)
+order 檔    25 筆
+llm_call    36 筆          tokens      38,287 (in+out)
+warning     0 筆
+事件分佈    { llm_call: 36, ingested: 1, cycle_removed: 3 }
+```
+
+CLI 印出單一卡片數(25),無失敗清單,退出碼 0。
+
+## 3. 證據:本輪修的三個 bug 都在真資料上被驗到
+
+前三次真呼叫連續發現三個 fake router 測不到的 bug。第四次的價值在於
+**其中最難的那個真的在這次觸發了**,不是靠 fixture 推論。
+
+### 3.1 依賴圖需要丟三條邊才無環(ADR-038 之前的邏輯會寫出矛盾狀態)
+
+`state/log.jsonl` 的三筆 `cycle_removed`:
+
+```
+丟邊 1  ["sec-0007","sec-0022"]   category: security
+丟邊 2  ["sec-0013","sec-0011"]   category: security
+丟邊 3  ["sec-0014","sec-0011"]   category: security
+```
+
+丟邊 2 與 3 都指向 `sec-0011`,丟邊 1 完全獨立——**模型這次回的圖含多個獨立環**。
+
+修復前的邏輯:第二次模型呼叫仍有環時只丟**一條**邊就寫 `graph/deps.json`,
+而 order 檔因 `topologicalSort` 失敗而不寫。也就是說若無本輪修復,這次跑完
+磁碟上會是「有環的 `deps.json` + 沒有 order 檔」的自相矛盾狀態,與第三次真呼叫
+完全相同的災情。本地丟邊迴圈(丟到無環或達 `cards.length` 上限)正確處理。
+
+### 3.2 考題失敗回報
+
+第三次真呼叫:29 張卡但 `sec-0022` 缺考題,`log.jsonl` 零記錄、CLI 零輸出,
+只能事後比對檔案數字才發現。本輪修復後失敗會逐筆寫 `warning`、CLI 印清單、
+退出碼非 0。這次 **warning 真的是 0 筆**——是「有事會記而沒事發生」,不是
+「根本沒在記」。
+
+### 3.3 動態 maxTokens
+
+`ingest.deps` 依卡片數算上限(前一輪合併)。25 張卡的依賴分析未再截斷。
+
+## 4. 與前幾次的差異說明
+
+卡片數 25 vs 前幾次 29/30 是模型輸出量的差異,**不是回歸**。`@e2e` 的判準是
+「≥3 張卡 + 每張卡都有同 id 的考題 + order 齊全 + 全數通過驗證器」,四條皆滿足。
+輸出量的穩定度由 `12-prompt-quality` 的 golden run 負責,不在 I1 判準內
+(技術顧問確認)。
+
+## 5. 本輪相關的 ADR 與 tag
+
+| 項目 | 內容 |
+|---|---|
+| `i1-deps-cycle-and-question-reporting` | 本地丟邊迴圈、考題失敗回報、非確定性錯誤重試一次 |
+| `ingest-cli-card-count` | CLI 不再連著印兩個矛盾的卡片數 |
+| ADR-038 / `ADR-038-stale-graph-removal` | 丟邊達上限時移除該分類的過期圖資料(粒度是分類) |
+
+`deps.ts` 與 `questions.ts` 兩個嚴格級模組的變異分數皆 **100.00%**。
+
+## 6. 待決事項(審核 agent 在 `features/02-ingest-pipeline/REVIEW.md` §8.4 提出)
+
+兩項 pre-existing、不在本輪範圍、實作檔未修改:
+
+1. `deps.json` 損壞時 `JSON.parse` 會丟錯,蓋掉原本要記的 warning。
+2. `atomicWriteJson()` 失敗時會留下 `.tmp` 殘檔,且不 fsync 目錄。
+
+## 7. 待使用者人工確認
+
+- `@manual`「The cards read like one concept each」:打開任三張卡,
+  每張只講一個概念,example 是具體案例而非重述 body。
+  建議樣本:`learning/cards/security/sec-0003.md`、`sec-0012.md`、`sec-0021.md`。
+- `@e2e` 最後一條:用 markdown 檢視器(例如 Obsidian)開 `learning/` 讀得順。
