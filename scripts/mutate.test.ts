@@ -896,7 +896,7 @@ describe('.gitignore', () => {
     expect(ignore.split('\n').map((l) => l.trim())).toContain('.stryker.lock');
   });
 
-  it('npm run mutate 走的是 scripts/mutate.ts,不是直接 stryker run', () => {
+  it('npm run mutate 走的是 scripts/mutate.ts,不是直接叫 Stryker CLI', () => {
     const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
       scripts: Record<string, string>;
     };
@@ -1260,6 +1260,11 @@ describe('SIGTERM 之後 Stryker 子行程不留', () => {
 // 這條比鎖本身還重要。鎖做得再好,只要工單模板 / skill / 審核紀錄還寫著
 // 「直接叫 Stryker CLI」,每一輪審核都會照抄那條指令、繞過鎖,整張工單白做。
 // 上一輪是靠人跑一次 grep 確認的;grep 不會自己再跑一次,所以釘成測試。
+//
+// 掃描範圍**不只文件**。2026-09-05 這條守門抓到兩份 REVIEW.md 裡過期的描述,
+// 卻漏掉 `vitest.mutate.config.ts` 檔頭註解裡一條**完整可照抄**的 Stryker CLI 指令 ——
+// 因為當時只掃 md / json / sh。真正危險的那一條躲在守門看不到的地方,是人手 grep 才發現的。
+// 所以現在**所有會被人照抄的文字檔都掃**:程式碼的註解跟文件一樣會被複製貼上。
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('文件裡不准出現繞過鎖的指令', () => {
@@ -1288,16 +1293,39 @@ describe('文件裡不准出現繞過鎖的指令', () => {
     'worktrees',
   ]);
 
-  /** 掃 repo 裡會被人照抄的文字檔(md / json / sh)。回相對路徑。 */
-  function docFiles(): string[] {
-    const root = realRepoRoot();
+  /**
+   * 會被人照抄的文字檔副檔名。文件、設定、腳本、**程式碼**(註解裡的指令一樣會被複製)。
+   * 名單是白名單不是黑名單:二進位檔(png / ico / icns)與 lock 檔不掃,
+   * 新的文字檔類型進 repo 時要來這裡加一行,不然又是一個守門看不到的角落。
+   */
+  const SCAN_EXTS = new Set([
+    // 文件
+    'md', 'txt', 'rst',
+    // 設定 / 資料
+    'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini', 'env', 'example', 'template',
+    // 腳本
+    'sh', 'bash', 'zsh', 'ps1', 'py',
+    // 程式碼(含 vitest / stryker 設定檔——它們是 .ts,檔頭註解就是文件)
+    'ts', 'mts', 'cts', 'tsx', 'js', 'mjs', 'cjs', 'jsx', 'svelte', 'rs', 'html', 'css',
+    // 驗收
+    'feature',
+  ]);
+
+  /** 檔名的副檔名(小寫,沒有點)。`.gitignore` 這種點開頭的檔名回 'gitignore'。 */
+  function extOf(name: string): string {
+    const i = name.lastIndexOf('.');
+    return i < 0 ? '' : name.slice(i + 1).toLowerCase();
+  }
+
+  /** 掃 `root` 底下會被人照抄的文字檔。回相對路徑(排序過)。 */
+  function scanFiles(root: string): string[] {
     const out: string[] = [];
     const walk = (rel: string) => {
       for (const e of readdirSync(join(root, rel) || root, { withFileTypes: true })) {
         if (e.isDirectory()) {
           if (SKIP_DIRS.has(e.name)) continue;
           walk(rel ? join(rel, e.name) : e.name);
-        } else if (/\.(md|json|sh)$/.test(e.name)) {
+        } else if (SCAN_EXTS.has(extOf(e.name))) {
           out.push(rel ? join(rel, e.name) : e.name);
         }
       }
@@ -1305,6 +1333,19 @@ describe('文件裡不准出現繞過鎖的指令', () => {
     walk('');
     return out.sort();
   }
+
+  /** 真正的 repo 裡會被人照抄的文字檔。 */
+  function docFiles(): string[] {
+    return scanFiles(realRepoRoot());
+  }
+
+  /**
+   * 這個檔案自己是規則的來源:下面的反向控制要拿違規字串餵正規表達式,
+   * 所以字串在原始碼裡**拼起來**,不寫成一整句。不是為了躲守門,是不開任何例外 ——
+   * 一開例外,例外那個檔案就變成下一個 `vitest.mutate.config.ts`。
+   */
+  const STRYKER_RUN = ['stryker', 'run'].join(' ');
+  const NPX_STRYKER_RUN = `npx ${STRYKER_RUN}`;
 
   it('沒有任何檔案教人用 npx / pnpm / yarn 直接叫 stryker', () => {
     // `npm run mutate` 之外的每一條路都繞過鎖 → 跟別的 worktree 互相 OOM。
@@ -1319,7 +1360,7 @@ describe('文件裡不准出現繞過鎖的指令', () => {
     expect(hits, `這些地方會讓下一輪審核繞過鎖:\n${hits.join('\n')}`).toEqual([]);
   });
 
-  it('沒有任何檔案寫著可以照抄的 `stryker run`', () => {
+  it('沒有任何檔案寫著可以照抄的 Stryker CLI 子指令', () => {
     // 連在說明文字裡都不要出現——下一輪的人 grep 到會以為還沒改完,
     // 或更糟:直接照抄。要提到那條路就寫「Stryker CLI」。
     const hits: string[] = [];
@@ -1329,7 +1370,7 @@ describe('文件裡不准出現繞過鎖的指令', () => {
         if (/\bstryker\s+run\b/.test(line)) hits.push(`${f}:${i + 1}: ${line.trim()}`);
       });
     }
-    expect(hits, `還有可以照抄的 stryker run:\n${hits.join('\n')}`).toEqual([]);
+    expect(hits, `還有可以照抄的 Stryker CLI 子指令:\n${hits.join('\n')}`).toEqual([]);
   });
 
   it('這個掃描器不是空掃(掃到 0 個檔案就該紅,不是看起來很乾淨)', () => {
@@ -1339,14 +1380,56 @@ describe('文件裡不准出現繞過鎖的指令', () => {
     expect(files).toContain('.claude/skills/mutation-testing/SKILL.md');
   });
 
+  it('掃描範圍蓋到程式碼:那個躲過守門的活例子現在在範圍內', () => {
+    // 2026-09-05 漏掉的就是這兩個 .ts。它們不在範圍裡,這條守門就只守了一半。
+    const files = docFiles();
+    expect(files).toContain('vitest.mutate.config.ts');
+    expect(files).toContain('scripts/mutate.ts');
+    expect(files).toContain('package.json');
+    // 掃描器自己也在範圍內——它沒有例外,所以上面兩條測試對它也成立。
+    expect(files).toContain('scripts/mutate.test.ts');
+  });
+
+  it('掃描範圍是白名單:文字檔全收,二進位與跳過目錄不收', () => {
+    // 在臨時目錄造一棵小樹,直接驗 scanFiles 的取捨,不靠真 repo 剛好長什麼樣。
+    const root = tmp('mutate-scan-exts');
+    const touch = (rel: string) => {
+      mkdirSync(join(root, rel, '..'), { recursive: true });
+      writeFileSync(join(root, rel), '', 'utf8');
+    };
+    const wanted = [
+      'README.md', 'notes.txt', 'config.json', 'data.jsonl', 'ci.yaml', 'ci.yml', 'Cargo.toml',
+      '.env.example', 'run.sh', 'tool.py', 'a.ts', 'b.mts', 'c.js', 'd.mjs', 'e.svelte', 'f.rs',
+      'index.html', 'style.css', 'phase-1.feature', 'deep/nested/dir/x.ts', 'Dockerfile.template',
+    ];
+    const unwanted = [
+      'icon.png', 'icon.ico', 'icon.icns', 'package-lock.lock', '.gitkeep', '.gitignore',
+      'node_modules/pkg/index.ts', '.git/HEAD.md', '.stryker-tmp/sandbox/a.ts', 'dist/out.js',
+      'target/debug/x.rs', 'reports/r.md', 'coverage/lcov.txt', 'worktrees/other/a.md',
+    ];
+    for (const f of [...wanted, ...unwanted]) touch(f);
+    const found = scanFiles(root);
+    for (const f of wanted) expect(found, `應該掃到 ${f}`).toContain(f);
+    for (const f of unwanted) expect(found, `不該掃到 ${f}`).not.toContain(f);
+    // 副檔名大小寫無關:Windows 來的檔案常常是 .MD / .JSON。
+    touch('SHOUT.MD');
+    expect(scanFiles(root)).toContain('SHOUT.MD');
+  });
+
   it('掃描器真的抓得到(拿一個假的違規行餵它)', () => {
-    // 反向控制:規則本身要能認得出違規,不然上面兩條永遠是綠的。
+    // 反向控制:規則本身要能認得出違規,不然上面幾條永遠是綠的。
     const bypass = /\b(?:npx|pnpm(?:\s+dlx)?|yarn|bunx)\s+(?:@stryker-mutator\/\S+|stryker)\b/;
-    expect(bypass.test('跑 `npx stryker run stryker.config.json`')).toBe(true);
-    expect(bypass.test('跑 `pnpm dlx stryker run`')).toBe(true);
+    expect(bypass.test(`跑 \`${NPX_STRYKER_RUN} stryker.config.json\``)).toBe(true);
+    expect(bypass.test(`跑 \`pnpm dlx ${STRYKER_RUN}\``)).toBe(true);
     expect(bypass.test('跑 `npm run mutate -- stryker.config.json`')).toBe(false);
-    expect(/\bstryker\s+run\b/.test('npx stryker run')).toBe(true);
+    expect(/\bstryker\s+run\b/.test(NPX_STRYKER_RUN)).toBe(true);
     expect(/\bstryker\s+run\b/.test('npm run mutate')).toBe(false);
+  });
+
+  it('反向控制用的違規字串跟寫死的一樣(拼接不是在改規則)', () => {
+    // 字串拼起來是為了讓這個檔案自己過得了掃描;拼錯了反向控制就測到別的東西。
+    expect(STRYKER_RUN).toBe('stryker' + ' ' + 'run');
+    expect(NPX_STRYKER_RUN).toBe('npx ' + STRYKER_RUN);
   });
 });
 

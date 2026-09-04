@@ -5,15 +5,17 @@
  * 那一輪三個審核跑了 84 / 45 / 40 分鐘,一大半燒在互相踩踏。更危險的是被 OOM
  * 殺掉的那一輪如果沒被診斷出來,殘缺的分數會被當成驗收結果回報——靜默的假驗收。
  *
- * 用法(package.json 的 `mutate` 指到這裡):
- *   npm run mutate                                   # = stryker run
+ * 用法(package.json 的 `mutate` 是 `tsx scripts/mutate.ts --`,指到這裡):
+ *   npm run mutate                                   # 拿鎖,再把 Stryker CLI 以預設設定跑起來
  *   npm run mutate -- --mutate "packages/core/src/x.ts"
  *   npm run mutate -- stryker.scanner-doclinks.json
  *
+ * 參數原樣透傳給 Stryker CLI,所以設定檔、--mutate 等旗標照樣生效。
  * 退出碼:Stryker 自己的退出碼;等鎖等超過上限則 1。
  *
- * ⚠️ 這支保護的是「經過 npm run mutate 的人」。直接 `npx stryker run` 繞過鎖,
- * repo 裡的文件與 skill 一律寫 `npm run mutate --`,否則鎖只擋得住一半的人。
+ * ⚠️ 這支保護的是「經過 npm run mutate 的人」。直接叫 Stryker CLI 繞過鎖,
+ * repo 裡的文件、skill 與程式碼註解一律寫 `npm run mutate --`,否則鎖只擋得住一半的人
+ * (`scripts/mutate.test.ts` §13 掃所有文字檔守著這條,含 .ts 的註解)。
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { closeSync, fsyncSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
