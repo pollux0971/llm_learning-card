@@ -48,6 +48,12 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 
 ## 3. 維護清單(沒事可做時,由上往下)
 
+**連續 3 輪沒被碰過的項目 → 升級成一張工單,不要再留在清單裡。**
+「有空再做」等於不會做,而**沒被碰過的東西本身就是最可能藏東西的地方**:
+`lint.ts` 的「空 vault 跟健康 vault 輸出一模一樣」就是這樣被發現的 ——
+它不是被守門抓到的,是協調者終於做了自己一直跳過的第 3 項才撞見的。
+
+
 1. `template/PITFALLS.md` 與 `docs/02-decision-map.md` 裡標「待覆核」「待辦」的項目(例如 `--deps-only` 入口)
 2. 標準級模組變異分數 < 80% 的檔案(`reports/mutation/` 最近一次),補測試
 3. `npm run lint:wiki` 對 `learning/` 的健檢結果,能自動修的修
@@ -64,6 +70,28 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 - 技術顧問 session 不在(`ListAgents` 找不到)→ 技術決策改成「保守選項 + ADR 待覆核」,不問使用者
 - 同時進行的 worktree 已達 3 → 不派新工,先收割
 - 已有一個審核輪在跑變異測試 → 其他審核輪先做不含變異的部分,或等待;agent 看到 stryker 退出碼 137 / 144 一律重跑,絕不把當次結果當分數(P-34)
+
+## 4a. 什麼**不是**停止條件(容易誤判成停止的狀況)
+
+煞車(§4)是「停下某一項」,下面這些**看起來像壞掉,但不是**:
+
+- **Orca runtime 掛掉 / `runtime_unavailable` / `runtime_timeout`**
+  → **不是**。worktree 與 commit 都在磁碟上,agent 程序也還活著(`pgrep -af claude` 看得到)。
+  掛的只是orchestration API。**先用 git 確認各 worktree 的 commit 與未提交變更沒事**,
+  然後做不需要 Orca 的事(文件、skill、自己跑檢查),等它回來。**不要重派工單** ——
+  重派會變成同一份工作跑兩份。
+- **worker 開 escalation / question**
+  → **不是**。那是流程在運作。worker 停下來問,比它猜一個答案往下做便宜得多。
+- **worker 說「我不照工單做」並附實測**
+  → **不是**,而且通常是那一輪最有價值的事。驗證它的實測,對了就改工單。
+- **工單被 superseded / 方向改了三次**
+  → **不是**。開新工單、舊的標 superseded 並寫下理由鏈就好。
+- **變異分數第一次量到很低(40–60%)**
+  → **不是**。那是「第一次真的量」,不是退步。照四分類處理。
+- **`accept:dry` 的 undefined 場景數很多**
+  → **不是**,那些是未來 phase 的既有狀態。**要看的是 `ambiguous` 是不是 0。**
+
+真正該停的只有 §4 那幾條。**把上面這些誤判成停止,比漏掉一個真煞車更常發生。**
 
 ## 4b. 平台操作備忘(Orca,實際踩過的)
 
