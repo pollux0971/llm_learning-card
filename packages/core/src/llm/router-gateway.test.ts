@@ -406,6 +406,29 @@ describe('GatewayLlmRouter.call — 完全離線(雲端不通 + 閘道也不通)
     expect(messageOf(err)).toContain(task);
   });
 
+  // 審核補洞:上面那條的 `/gateway/i` **鎖不住 router 自己加的那句話**。
+  // `cause` 的 `GatewayCallError` 訊息本來就以「gateway call failed: 」開頭,所以
+  // 把 detail 從 `local gateway unreachable: …` 改成 `unreachable: …`(整個「本機
+  // 閘道」的說法都不見了),`/gateway/i` 仍然被**內層**那句話餵飽 → 全綠。實測過。
+  //
+  // detail 是 router 這一層唯一貢獻的使用者可見文字,鎖它要鎖字面。
+  it.each(OFFLINE_NO_MODEL_TASKS)('%s 的 detail 字面就是「local gateway unreachable」', async (task) => {
+    const h = makeHarness({ online: false, gatewayDown: true });
+    const err = await caught(() => h.router.call(task, '同源政策'));
+    expect(messageOf(err)).toContain('(local gateway unreachable: ');
+  });
+
+  it('離線時的完整訊息一字不差(括號內外都是使用者看得到的東西)', async () => {
+    // 只挑 grade.fill.llm 一個 task 做全字串比對:它是**直接**走閘道那條路
+    // (不經過雲端失敗),所以內層訊息最短、最不會因為別處改動而假紅。
+    const h = makeHarness({ online: false, gatewayDown: true });
+    const err = await caught(() => h.router.call('grade.fill.llm', '填空題'));
+    expect(messageOf(err)).toBe(
+      'task "grade.fill.llm" has no model available: offline and no local model ' +
+        '(local gateway unreachable: gateway call failed: token exchange failed: fetch failed: connect ECONNREFUSED)',
+    );
+  });
+
   it.each(['ingest.cards', 'ingest.questions', 'ingest.deps'] as LlmTask[])(
     '%s 不變:離線一律 CLOUD_REQUIRED,而且閘道一次都沒被打',
     async (task) => {
