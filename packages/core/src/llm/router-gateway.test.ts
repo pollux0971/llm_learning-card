@@ -10,8 +10,12 @@
  * 決策本身在 fallback.test.ts / routing.test.ts / spend.test.ts,不在這裡重測。
  * 雲端 adapter 用注入的假的,閘道用注入的假 fetch,兩邊都不打真網路。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { LogEvent } from '@contracts/index.js';
+import { parseLogLines } from '@core/schema/log.js';
 import {
   CloudRequiredError,
   DailyBudgetExceededError,
@@ -545,5 +549,253 @@ describe('備援重試:cloud "failed" 永遠不會回到 cloud(router-gateway.ts
     // 上面的窮舉靠 GROUPS;這條擋的是「表裡塞了一個不在型別裡的字串」那種繞過。
     expect(Object.values(FALLBACK_TABLE).every((g) => GROUPS.includes(g))).toBe(true);
     expect(Object.keys(FALLBACK_TABLE).sort()).toEqual([...ALL_TASKS].sort());
+  });
+});
+
+
+// ============================================ 審核補洞:router-gateway.ts 的變異覆蓋
+//
+// 這一輪是 `router-gateway.ts` **第一次**被 Stryker 量到(上一輪的報告寫得很清楚:
+// 它不在當時要跑的三個檔案裡)。第一次量出來是 **46.15%**,遠低於標準 80% 門檻,
+// 23 個存活 + 5 個零覆蓋。缺口不是零散的,是三整塊從來沒有測試碰過的接線:
+//
+//   1. `callGateway()` 的**逾時接線**(第 229–254 行):`opts.timeoutMs ??
+//      defaultTimeoutMs` 的解析、要不要開計時器、signal 有沒有真的傳進
+//      `client.chat()`、`finally` 的 `clearTimeout`。既有測試一條都沒給過
+//      `timeoutMs`,所以整段是死的——`??` 被換成 `&&`、三元被換成 `true`/`false`、
+//      `clearTimeout` 被拿掉,全都沒人發現。
+//   2. **log 事件的組裝**(第 257–275 行):`type: 'llm_call'` 這個字串、
+//      `tokens_in` / `tokens_out` 的 `!= null` 判斷、`fallback_from` / `error`
+//      只在備援時才掛。既有測試只斷言 `fallback` 與 `fallback_reason` 兩個欄位。
+//   3. `probeLocal()` 的 **catch 分支**與 `createFileLogAppender()`。
+//
+// 逾時那一塊尤其值得補:`callGateway()` 是**唯一**會真的送出閘道請求的地方,
+// 而閘道在另一台機器上。「router 設的逾時有沒有真的接到閘道呼叫」跟 f7eef94 修的
+// probe 逾時是同一類問題,只是這一半從來沒被量過。
+
+describe('isCloudFailure — 5xx 的邊界(剛好 500)', () => {
+  it('剛好 500 算雲端失敗', () => {
+    // `status >= 500` 被換成 `> 500` 時,503 那條測試仍然綠——邊界只有這一個點。
+    expect(isCloudFailure(Object.assign(new Error('internal'), { status: 500 }))).toBe(true);
+  });
+
+  it('499 不算', () => {
+    expect(isCloudFailure(Object.assign(new Error('client closed'), { status: 499 }))).toBe(false);
+  });
+});
+
+/** 記下每一次閘道 chat 請求有沒有帶 signal,並可以讓它掛住(測逾時)。 */
+function timeoutHarness(opts: { chatHangs?: boolean; noTokens?: boolean } = {}) {
+  const chatSignals: (AbortSignal | null | undefined)[] = [];
+  const logged: LogEvent[] = [];
+
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const json = (body: unknown, status = 200): Response =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+    if (url.includes('/auth/token/exchange')) return json({ access_token: 'jwt-1', expires_in: 3600 });
+    if (url.includes('/gateway/chat')) {
+      chatSignals.push(init?.signal);
+      if (opts.chatHangs) {
+        // 只有 abort 能結束——沒接上 signal 的話會永遠掛著。
+        await new Promise<never>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      }
+      return json({
+        content: '閘道回覆。',
+        provider: 'ollama',
+        model: LOCAL_MODEL,
+        // 閘道不一定回 tokens_used(協定裡是 optional)。
+        ...(opts.noTokens ? {} : { tokens_used: { prompt: 3, completion: 4 } }),
+      });
+    }
+    throw new Error(`沒有預期到的請求:${url}`);
+  }) as typeof fetch;
+
+  const make = (extra: Record<string, unknown> = {}) =>
+    new GatewayLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'gpt-5.6-luna', OPENAI_API_KEY: 'k', LLM_LOCAL_MODEL: LOCAL_MODEL },
+      adapters: { openai: { async call() { throw new Error('這個測試不該打到雲端'); } } },
+      onlineProber: async () => true,
+      logAppender: (event) => logged.push(event),
+      gateway: new GatewayClient({ config: { baseUrl: BASE, apiKey: 'gk', model: LOCAL_MODEL }, fetchImpl }),
+      dailyCapUsd: CAP,
+      prices: PRICES,
+      spendReader: () => ({ usd: 0, calls: 0 }),
+      ...extra,
+    });
+
+  return { chatSignals, logged, make };
+}
+
+describe('GatewayLlmRouter.callGateway — 逾時接線', () => {
+  it('沒有任何逾時設定時,閘道請求不帶 signal(也不開計時器)', async () => {
+    const h = timeoutHarness();
+    await h.make().call('grade.fill.llm', '填空題');
+    expect(h.chatSignals).toHaveLength(1);
+    expect(h.chatSignals[0] == null).toBe(true);
+  });
+
+  it('opts.timeoutMs 會讓閘道請求帶上 signal', async () => {
+    const h = timeoutHarness();
+    await h.make().call('grade.fill.llm', '填空題', { timeoutMs: 30_000 });
+    expect(h.chatSignals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it('沒給 opts.timeoutMs 時吃 defaultTimeoutMs', async () => {
+    // `opts.timeoutMs ?? this.opts.defaultTimeoutMs` 被換成 `&&` 時,這條會紅:
+    // `undefined && 30000` 是 undefined,計時器就不會開。
+    const h = timeoutHarness();
+    await h.make({ defaultTimeoutMs: 30_000 }).call('grade.fill.llm', '填空題');
+    expect(h.chatSignals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it('opts.timeoutMs 蓋過 defaultTimeoutMs(用逾時長度分辨)', async () => {
+    // defaultTimeoutMs 很長、opts.timeoutMs 很短:短的那個生效才會逾時。
+    vi.useFakeTimers();
+    try {
+      const h = timeoutHarness({ chatHangs: true });
+      let settled: unknown;
+      void h
+        .make({ defaultTimeoutMs: 10 * 60_000 })
+        .call('grade.fill.llm', '填空題', { timeoutMs: 1_000 })
+        .then(
+          (r) => {
+            settled = r;
+          },
+          (e: unknown) => {
+            settled = e;
+          },
+        );
+      await vi.advanceTimersByTimeAsync(5_000);
+      // abort → fetch 丟 AbortError → GatewayCallError → 轉成契約 §7 的 NO_MODEL
+      expect(settled).toBeInstanceOf(NoModelError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('逾時真的會中斷掛住的閘道呼叫,並轉成 NO_MODEL', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = timeoutHarness({ chatHangs: true });
+      let settled: unknown;
+      void h
+        .make()
+        .call('grade.fill.llm', '填空題', { timeoutMs: 2_000 })
+        .then(
+          (r) => {
+            settled = r;
+          },
+          (e: unknown) => {
+            settled = e;
+          },
+        );
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(settled).toBeInstanceOf(NoModelError);
+      expect(codeOf(settled)).toBe('NO_MODEL');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('成功回來之後不留下計時器(finally 的 clearTimeout 有效)', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = timeoutHarness();
+      await h.make().call('grade.fill.llm', '填空題', { timeoutMs: 30_000 });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('GatewayLlmRouter.callGateway — log 事件的組裝', () => {
+  it('直接走閘道那一筆是 llm_call,帶 task / provider / model / latency_ms / token 數', async () => {
+    const h = timeoutHarness();
+    await h.make().call('grade.fill.llm', '填空題');
+    const event = h.logged[0] as unknown as Record<string, unknown>;
+    expect(event.type).toBe('llm_call');
+    expect(event.task).toBe('grade.fill.llm');
+    expect(event.provider).toBe('ollama');
+    expect(event.model).toBe(LOCAL_MODEL);
+    expect(typeof event.latency_ms).toBe('number');
+    expect(event.tokens_in).toBe(3);
+    expect(event.tokens_out).toBe(4);
+    expect(typeof event.ts).toBe('string');
+  });
+
+  it('閘道沒回 tokens_used 時,事件裡連 key 都不放(不是塞 undefined)', async () => {
+    // `result.tokens_in != null ? { tokens_in } : {}` 被換成永遠放的話,log 會多出
+    // 兩個值是 undefined 的欄位——JSON.stringify 會把它們吃掉,但事件物件本身變了,
+    // 而 spend.ts 是照這些欄位算錢的。
+    const h = timeoutHarness({ noTokens: true });
+    await h.make().call('grade.fill.llm', '填空題');
+    const event = h.logged[0] as unknown as Record<string, unknown>;
+    expect('tokens_in' in event).toBe(false);
+    expect('tokens_out' in event).toBe(false);
+  });
+
+  it('直接走閘道(不是備援)時不掛 fallback 那組欄位', async () => {
+    const h = timeoutHarness();
+    await h.make().call('grade.fill.llm', '填空題');
+    const event = h.logged[0] as unknown as Record<string, unknown>;
+    expect('fallback' in event).toBe(false);
+    expect('fallback_reason' in event).toBe(false);
+    expect('fallback_from' in event).toBe(false);
+    expect('error' in event).toBe(false);
+  });
+
+  it('備援那一筆記下 fallback_from 與原本的雲端錯誤訊息', async () => {
+    // `if (cause !== undefined)` 這個判斷之前沒有任何測試碰過(被換成 `if (true)`
+    // 也全綠)——上面那條管「沒有 cause 就不掛」,這條管「有 cause 就要掛」。
+    const h = makeHarness({ cloudFails: Object.assign(new Error('upstream 503 boom'), { status: 503 }) });
+    await h.router.call('grade.apply', '應用題');
+    const event = fallbackEvent(h.logged);
+    expect(event?.fallback_from).toBe('openai');
+    expect(event?.error).toBe('upstream 503 boom');
+  });
+
+  it('預算用完的備援也有 fallback,但沒有 fallback_from(那一格沒有雲端錯誤)', async () => {
+    const h = makeHarness({ spend: { usd: CAP, calls: 3 } });
+    await h.router.call('deepen', '同源政策');
+    const event = fallbackEvent(h.logged);
+    expect(event?.fallback_reason).toBe('budget_exhausted');
+    expect('fallback_from' in (event ?? {})).toBe(false);
+    expect('error' in (event ?? {})).toBe(false);
+  });
+});
+
+describe('GatewayLlmRouter — probeLocal 的 catch 與檔案 log', () => {
+  it('沒設 GATEWAY_API_KEY 時 probeLocal 回不可用,不 throw', async () => {
+    // createGatewayClient 會丟 MissingCredentialError;probeLocal 的 catch 要接住。
+    const router = new GatewayLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'gpt-5.6-luna', OPENAI_API_KEY: 'k' },
+      dailyCapUsd: CAP,
+      prices: PRICES,
+      spendReader: () => ({ usd: 0, calls: 0 }),
+    });
+    await expect(router.probeLocal()).resolves.toEqual({ available: false, models: [] });
+  });
+
+  it('給 logPath 而不給 logAppender 時,事件真的寫進檔案', async () => {
+    // createFileLogAppender 那條路之前零覆蓋(`return (event) => recordEvent(...)`
+    // 被換成 `() => undefined` 也全綠)。
+    const dir = mkdtempSync(join(tmpdir(), 'router-gateway-log-'));
+    try {
+      const logPath = join(dir, 'log.jsonl');
+      const h = timeoutHarness();
+      await h.make({ logAppender: undefined, logPath }).call('grade.fill.llm', '填空題');
+
+      const events = parseLogLines(readFileSync(logPath, 'utf8')) as unknown as Record<string, unknown>[];
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe('llm_call');
+      expect(events[0]?.task).toBe('grade.fill.llm');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
