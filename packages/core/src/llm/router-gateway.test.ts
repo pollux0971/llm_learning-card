@@ -39,7 +39,7 @@ interface Harness {
   router: GatewayLlmRouter;
 }
 
-function makeHarness(opts: { cloudFails?: Error; spend?: DailySpend } = {}): Harness {
+function makeHarness(opts: { cloudFails?: Error; spend?: DailySpend; online?: boolean } = {}): Harness {
   const h: Partial<Harness> & { cloudCalls: number; gatewayChats: number; logged: LogEvent[] } = {
     cloudCalls: 0,
     gatewayChats: 0,
@@ -77,7 +77,7 @@ function makeHarness(opts: { cloudFails?: Error; spend?: DailySpend } = {}): Har
   h.router = new GatewayLlmRouter({
     env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'gpt-5.6-luna', OPENAI_API_KEY: 'k', LLM_LOCAL_MODEL: LOCAL_MODEL },
     adapters: { openai: cloudAdapter },
-    onlineProber: async () => true,
+    onlineProber: async () => opts.online ?? true,
     logAppender: (event) => h.logged.push(event),
     gateway: new GatewayClient({ config: { baseUrl: BASE, apiKey: 'gk', model: LOCAL_MODEL }, fetchImpl }),
     dailyCapUsd: CAP,
@@ -195,6 +195,46 @@ describe('GatewayLlmRouter.call — 雲端失敗時的備援', () => {
   it('缺憑證這種設定錯誤不備援,原錯誤直接往外丟', async () => {
     const h = makeHarness({ cloudFails: new MissingCredentialError('OPENAI_API_KEY') });
     await expect(h.router.call('deepen', '深入')).rejects.toBeInstanceOf(MissingCredentialError);
+    expect(h.gatewayChats).toBe(0);
+  });
+});
+
+describe('GatewayLlmRouter.call — 雲端整個連不上(probeOnline 回 false)', () => {
+  // ADR-039 讓閘道成為契約 §7 的「本機」,但底層 LlmRouterImpl 的 localProber 是
+  // alwaysUnavailable,不知道閘道存在——OpenAI 整個不通時它判成「離線+無本機」
+  // 並丟 NoModelError。閘道在另一台機器上、還活著而且免費,這時候放棄是浪費,
+  // 所以 call() 把 NoModelError 也當成可備援的失敗。
+  //
+  // 這一格契約 §7 沒有:那張表假設「離線」等於「什麼都連不到」,而 OpenAI 掛掉
+  // 但區網閘道還在,是 ADR-039 之後才會發生的第四種情況。
+  it('deepen 在 NoModelError 之後改走閘道並標 provisional', async () => {
+    const h = makeHarness({ online: false });
+    const result = await h.router.call('deepen', '同源政策');
+    expect(result.provider).toBe('ollama');
+    expect(result.provisional).toBe(true);
+    expect(h.gatewayChats).toBe(1);
+    // 離線,雲端 adapter 一次都不該被打到
+    expect(h.cloudCalls).toBe(0);
+  });
+
+  it('grade.apply 與 reteach.short 也一樣', async () => {
+    for (const task of ['grade.apply', 'reteach.short'] as const) {
+      const h = makeHarness({ online: false });
+      const result = await h.router.call(task, '同源政策');
+      expect(result.provider).toBe('ollama');
+      expect(result.provisional).toBe(true);
+    }
+  });
+
+  it('備援那一筆 log 記下原因是 cloud_failed,而不是預算', async () => {
+    const h = makeHarness({ online: false });
+    await h.router.call('deepen', '同源政策');
+    expect(fallbackEvent(h.logged)?.fallback_reason).toBe('cloud_failed');
+  });
+
+  it('ingest.cards 不因為閘道活著就改走它——契約 §7 的 CLOUD_REQUIRED 不變', async () => {
+    const h = makeHarness({ online: false });
+    await expect(h.router.call('ingest.cards', '同源政策')).rejects.toBeInstanceOf(CloudRequiredError);
     expect(h.gatewayChats).toBe(0);
   });
 });

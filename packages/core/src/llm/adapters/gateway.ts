@@ -147,6 +147,10 @@ function describe(err: unknown): string {
 async function readJson<T>(response: Response): Promise<T | undefined> {
   try {
     return (await response.json()) as T;
+    // 下面的 catch 是等價變異:函式掉到結尾本來就回 undefined,所以
+    // `catch { return undefined }` 與 `catch {}` 對呼叫端完全一樣。明寫出來
+    // 是為了講清楚「parse 不動就當作沒有 body」是刻意的,不是漏寫。
+    // Stryker disable next-line all: 等價變異,理由見上。
   } catch {
     return undefined;
   }
@@ -218,12 +222,20 @@ export class GatewayClient {
 
       const body = await readJson<ModelsBody>(response);
       const models = body?.models;
+      // Stryker disable next-line all: `models === null` 這半邊是等價變異。
+      // typeof null 是 'object',少了它 null 會一路走到 Object.keys(null) 丟
+      // TypeError,而那個 TypeError 剛好被下面的 catch 接住、回同一個
+      // { available: false, models: [] }。留著是為了明講「null 不算一份清單」,
+      // 而不是靠一個例外繞出去。
       if (typeof models !== 'object' || models === null) return { available: false, models: [] };
       return { available: true, models: Object.keys(models as Record<string, unknown>) };
     } catch {
       // 401(key 錯)、連線被拒、逾時——本機模型不在不是錯誤(phase-2 的行為)。
       return { available: false, models: [] };
     } finally {
+      // Stryker disable next-line all: 等價變異。清掉逾時計時器只影響 Node 的
+      // event loop 要不要多醒著 5 秒,probe() 的回傳值一模一樣,沒有任何斷言
+      // 分辨得出來。留著是因為不清掉會讓短命的 CLI 程序多掛 5 秒才結束。
       clearTimeout(timer);
     }
   }

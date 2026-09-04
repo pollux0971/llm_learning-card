@@ -153,9 +153,17 @@ export function readDailySpend(logPath: string, day: string, prices: SpendPrices
   // 是「還可以繼續花」,錢的方向上不能這樣錯。
   const events: LogEvent[] = [];
   for (const line of content.split('\n')) {
+    // Stryker disable next-line all: 等價變異。這個 guard 只是省下「對空行呼叫
+    // JSON.parse 再接住例外」的繞路——拿掉它(或拿掉 .trim())之後,空行與只有
+    // 空白的行一樣會讓下面的 JSON.parse 丟錯、一樣被 catch 跳過,events 的內容
+    // 完全相同。沒有任何輸入能分辨這兩個版本。
     if (line.trim().length === 0) continue;
     try {
       events.push(JSON.parse(line) as LogEvent);
+      // 下面的 catch 是等價變異:裡面的 continue 是迴圈本體的最後一個述句,
+      // 拿掉整個 catch 本體跟留著它走的是同一條路。留著是為了讀的人一眼看出
+      // 「這一行放棄了,換下一行」,而不是「這裡什麼都不做」。
+      // Stryker disable next-line all: 等價變異,理由見上。
     } catch {
       continue;
     }

@@ -176,6 +176,27 @@ describe('readSpendPrices / readDailyCapUsd', () => {
   it('上限可以明確設成 0(表示不設限),不會被當成「沒設」', () => {
     expect(readDailyCapUsd({ LLM_DAILY_CAP_USD: '0' })).toBe(0);
   });
+
+  // 只有空白的值必須當成「沒設」。少了 .trim() 的話 Number('   ') 是 0,
+  // 而 0 的意思是「不設限」——一個手滑打成空白的環境變數會**靜默關掉預算上限**。
+  // 錢的方向上這是最糟的失敗,所以單獨鎖住。
+  it('ts 不是字串的事件不算——契約 §10 說 ts 是 ISO 8601 字串', () => {
+    // 少了 typeof 檢查的話,`ts` 是 epoch 毫秒(數字)的一行會被 new Date() 接受、
+    // 算出一個真的日期,於是一筆形狀壞掉的紀錄被當成今天的花費算進帳。
+    const day = '2026-09-04';
+    const numericTs = Date.parse('2026-09-04T10:00:00+08:00');
+    const events = [
+      { ts: numericTs, type: 'llm_call', provider: 'openai', tokens_out: 1_000_000 },
+      { type: 'llm_call', provider: 'openai', tokens_out: 1_000_000 },
+    ] as unknown as LogEvent[];
+    expect(computeDailySpend(events, day, { inPerM: 2.5, outPerM: 10 })).toEqual({ usd: 0, calls: 0 });
+  });
+
+  it('只有空白的環境變數當成沒設,不會變成「不設限」的 0', () => {
+    expect(readDailyCapUsd({ LLM_DAILY_CAP_USD: '   ' })).toBe(DEFAULT_DAILY_CAP_USD);
+    expect(readDailyCapUsd({ LLM_DAILY_CAP_USD: '\t\n' })).toBe(DEFAULT_DAILY_CAP_USD);
+    expect(readSpendPrices({ LLM_PRICE_IN_PER_M: '  ', LLM_PRICE_OUT_PER_M: ' ' })).toEqual(DEFAULT_SPEND_PRICES);
+  });
 });
 
 describe('readDailySpend', () => {
@@ -192,6 +213,31 @@ describe('readDailySpend', () => {
       const spend = readDailySpend(logPath, TODAY, PRICES);
       expect(spend.usd).toBeCloseTo(1, 10);
       expect(spend.calls).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('壞掉的一行只跳過那一行,其他行照算', () => {
+    // 整份放棄會把花費算成 0,而 0 的方向是「還可以繼續花」——錢的方向上不能這樣錯。
+    // 寫 log 中途被砍掉會留下半行,所以這不是假想的情況。
+    const dir = mkdtempSync(join(tmpdir(), 'spend-test-'));
+    try {
+      const logPath = join(dir, 'log.jsonl');
+      writeFileSync(
+        logPath,
+        [
+          JSON.stringify(event({ tokens_out: 500_000 })),
+          '{"ts":"2026-09-04T10:00:00+08:00","type":"llm_ca',  // 被砍斷的半行
+          'not json at all',
+          '',
+          '   ',
+          JSON.stringify(event({ tokens_out: 500_000 })),
+        ].join('\n') + '\n',
+      );
+      const spend = readDailySpend(logPath, TODAY, PRICES);
+      expect(spend.calls).toBe(2);
+      expect(spend.usd).toBeCloseTo(10, 10);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

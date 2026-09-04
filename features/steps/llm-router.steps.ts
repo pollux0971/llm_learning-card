@@ -508,6 +508,8 @@ interface GatewayStepState {
   expireTokenOnce: boolean;
   /** 雲端 /v1/chat/completions 回 503 */
   cloudFails: boolean;
+  /** probeOnline() 回 false:雲端連不上(OpenAI 掛了或 DNS 不通),但閘道還在 */
+  offline: boolean;
   /** 送給閘道的模型名(403 場景用來斷言錯誤訊息點名了誰) */
   requestedModel: string;
 
@@ -658,6 +660,7 @@ Before({ tags: '@llm-router and @phase-4' }, function () {
     rejectModel: false,
     expireTokenOnce: false,
     cloudFails: false,
+    offline: false,
     requestedModel: '',
     tokenExchanges: 0,
     gatewayChats: 0,
@@ -686,7 +689,7 @@ function buildGatewayRouter(): GatewayLlmRouter {
     env: gatewayEnv(),
     logPath: materializeLog(),
     defaultTimeoutMs: 5_000,
-    onlineProber: async () => true,
+    onlineProber: async () => !gw.offline,
     dailyCapUsd: CAP_USD,
     prices: PRICES,
   });
@@ -749,6 +752,16 @@ Given('the gateway is running', function () {
 
 Given('the cloud provider answers 503', function () {
   gw.cloudFails = true;
+});
+
+/**
+ * probeOnline() 打的是 OpenAI 的 /v1/models。OpenAI 整個不通(5xx 或 DNS 不通)時
+ * 它回 false,底層 LlmRouterImpl 就把狀態當成「離線」——但閘道在區網/另一台機器上,
+ * 還活著。這一格契約 §7 沒有(它假設「離線」等於「什麼都連不到」),
+ * 是 ADR-039 之後才會發生的情況。
+ */
+Given('the cloud provider cannot be reached at all', function () {
+  gw.offline = true;
 });
 
 Given("today's log already spends the whole daily cap", function () {
@@ -933,6 +946,20 @@ Then('the call succeeds', function () {
 });
 
 // @manual
+Then('it reports the local gateway as unavailable', function (this: LearningWorld) {
+  assert.ok(this.lastRun, '還沒有跑過 probe');
+  const printed = JSON.parse(this.lastRun.output) as { local?: { available?: boolean; models?: string[] } };
+  // 閘道沒起來(也可能連 GATEWAY_API_KEY 都沒設):probeLocal() 要接住錯誤回
+  // unavailable,不能讓 MissingCredentialError / ECONNREFUSED 冒出來。
+  assert.equal(printed.local?.available, false, `local 應該是 unavailable:${this.lastRun.output}`);
+  assert.deepEqual(printed.local?.models, []);
+});
+
+Then('it prints no stack trace', function (this: LearningWorld) {
+  assert.ok(this.lastRun, '還沒有跑過指令');
+  assert.doesNotMatch(this.lastRun.output, /\n\s+at\s+\S+/, `不該有 stack trace:${this.lastRun.output}`);
+});
+
 Then('it prints the list of models the gateway serves', function (this: LearningWorld) {
   assert.ok(this.lastRun, '還沒有跑過 probe');
   assert.match(this.lastRun.output, /models/);

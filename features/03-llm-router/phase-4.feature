@@ -57,6 +57,26 @@ Feature: The gateway local adapter and the daily budget fallback
     Then the cloud required error is raised
     And the gateway is never called
 
+  # ADR-039 讓閘道成為契約 §7 的「本機」,但底層路由的 localProber 不知道閘道存在,
+  # 所以 OpenAI 整個連不上時它會判成「離線+無本機」並丟 NO_MODEL。閘道在另一台機器上、
+  # 還活著而且免費,這時候放棄是浪費——router 接住那個錯誤改走閘道。
+  Scenario: Deepening still reaches the gateway when the cloud is unreachable
+    Given the gateway is running
+    And the cloud provider cannot be reached at all
+    When a routed call is made for the deepen task
+    Then the result comes from the gateway
+    And the result carries the provisional flag
+    And no cloud call is made
+
+  # 同一格但 ingest.* 不備援:契約 §7 的「離線」對 ingest 一律 CLOUD_REQUIRED,
+  # 閘道活著也不改變這件事(使用者明確選的:不讓本機模型產卡)。
+  Scenario: Card generation still refuses when the cloud is unreachable
+    Given the gateway is running
+    And the cloud provider cannot be reached at all
+    When a routed call is made for the card generation task
+    Then the cloud required error is raised
+    And the gateway is never called
+
   # ---------------------------------------------------------------- 4. budget
 
   Scenario: Deepening moves to the gateway once the day's budget is gone
@@ -115,6 +135,17 @@ Feature: The gateway local adapter and the daily budget fallback
     And the call succeeds
 
   # ---------------------------------------------------------------- 7. manual
+
+  # scripts/llm.ts 在 phase-4 換成了 GatewayLlmRouter,--probe 才會真的去問閘道。
+  # 這裡跑的是真的 CLI(subprocess),而且**沒有**起閘道:必須乾淨地印出
+  # local 不可用,不能吐 stack trace,退出碼也不能因此變成非 0
+  # (standalone.json 的 03-llm-router 就是這一行,marker 仍然是 "online")。
+  Scenario: The probe reports the gateway as unavailable instead of crashing
+    When the standalone probe command is run
+    Then it exits with status 0
+    And it prints whether the cloud is reachable
+    And it reports the local gateway as unavailable
+    And it prints no stack trace
 
   @manual
   Scenario: The real gateway answers the probe command
