@@ -316,7 +316,8 @@ exit=1
 
 ## 6. 完整驗收
 
-見 `features/11-review-cli/REVIEW.md` 的第 6 節(兩份共用一張表)。
+見 `features/11-review-cli/REVIEW.md`「**第三輪審核 — P-29**」那一段的第 6 節
+(兩份共用一張表)。那個檔案前半是 phase-1 的第一、二輪審核(2026-09-03),不要看錯段。
 
 ---
 
