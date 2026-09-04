@@ -323,3 +323,357 @@ if (retry.target !== 'gateway') throw err;   // ← 不可達
 3. **發現 7(probe 逾時管不到換 token)** — 換到網域之前修。
 
 phase-4 本身的 17 個場景、1136 個單元測試、三個檔案的變異分數都達標,可以標 done。
+
+
+---
+
+# 收尾輪的審核(第二次審核)· 2026-09-04
+
+審核 agent / worktree `phase-4-debug` / branch `pollux0971/phase-4-debug` / 起點 HEAD `f7eef94`。
+
+上一次審核留下三個「要協調者處理的」,開發 agent 用六個 commit 做完:
+
+| commit | 內容 |
+|---|---|
+| `e9ea5b6` | 測試先行:鎖住契約 §7 的離線錯誤碼 `NO_MODEL`(預期紅燈 18 條) |
+| `9e98257` | 實作:離線時丟 `NoModelError`,閘道細節降級成 `cause` |
+| `46724c9` | 測試先行:證明 `router-gateway.ts` 的備援重試分支到不了(29 條綠燈鎖前提) |
+| `e88e932` | 實作:刪掉那一行 + 修正講反的註解 |
+| `4ec2581` | 測試先行:鎖住 `probe()` 的逾時要涵蓋換 token(預期紅燈 3 條) |
+| `f7eef94` | 實作:`token(signal?)`,`probe()` 兩個 fetch 共用同一個 controller |
+
+**本輪結論:PASS。** 細節如下。
+
+## 0. 這一輪最重要的部分:開發 agent 主動點出的三個缺口
+
+開發 agent 照 P-29 自我檢查,誠實列出三個「答不出哪個測試會紅」的洞。**這是好事**——
+它沒有假裝測試已經夠了。前兩個我補上,第三個是範圍外,完整描述在 §1.3。
+
+### 1.1 洞 1:`NoModelError` 不給 detail 時的訊息文字沒有測試鎖 —— 已補
+
+`9e98257` 給建構子加了第二個 optional 參數之後:
+
+```ts
+`task "${task}" has no model available: offline and no local model` +
+  (options.detail === undefined ? '' : ` (${options.detail})`)
+```
+
+「沒給 detail 時訊息一字不變」沒有任何測試守著:
+
+- `routing.test.ts:52` 只有 `toThrow(/deepen/)` —— 整句話只要還帶得出 task 名字就綠。
+- `router-gateway.test.ts` 只測**有** detail 的那一半。
+
+**實測**:把三元條件寫反(沒給 detail 時接一句 ` (undefined)`),全套一條都不會紅。
+使用者會看到 `... offline and no local model (undefined)`,而 CI 全綠。訊息是使用者
+唯一看得到的東西。
+
+**補法**:新增 `packages/core/src/llm/errors.test.ts`(commit `e28523b`),鎖**完整字串**
+——子字串比對擋不住「多接了一段」。順帶鎖住 `cause` 的身分(`toBe` 同一個物件)、
+「沒給 cause 時連 own property 都不存在」、以及 `CloudRequiredError` 的訊息。
+
+### 1.2 洞 2:「一個計時器管兩段」對「各開一個」現有測試分辨不出來 —— 已補
+
+`f7eef94` 的核心修法就是讓逾時涵蓋換 token 那一步,但 `4ec2581` 的三條測試**分辨不出來**
+實作是哪一種:
+
+| 既有測試 | 為什麼分辨不出來 |
+|---|---|
+| 換 token 永不回應(`tokenHangs`)→ 回不可用 | 兩段各開一個 5 秒計時器的話,那一段自己的計時器一樣會 abort 它 → 一樣綠 |
+| 換 token 請求要帶 `AbortSignal` | 兩種做法都會**帶** signal,差別只在是不是同一個 |
+| 逾時路徑上不留計時器 | 兩種做法最後都清乾淨 |
+
+差別只在**額度是共用還是各算**,所以要一個「每段都在額度內、加起來超過」的情境。
+
+**補法**(commit `e28523b`,`adapters/gateway.test.ts` 新增一個 describe,假 fetch 多一個
+`tokenDelayMs`,照既有 `modelsDelayMs` 的形狀):
+
+1. **主測**:換 token 4 秒 + `/gateway/models` 2 秒,`probeTimeoutMs` 5 秒 → 回**不可用**。
+   共用一份額度 → 5 秒時第二個請求還在飛 → abort。各一份 5 秒 → 4<5、2<5 → 會回**可用**。
+   並斷言兩段都真的打出去過(`tokenCalls === 1 && modelCalls === 1`),不是在第一段就掛掉。
+2. **對照組**:同樣 4+2 秒,額度放寬到 10 秒 → 回**可用**。證明分辨的是額度,不是延遲本身。
+3. **機制**:probe 的兩個 fetch 拿到的是**同一個** `AbortSignal` 物件(`toBe`)。
+
+全部用假計時器,不真的等。
+
+**破壞驗證**:把 `probe()` 改成兩段各開一個 controller、各一份 `probeTimeoutMs`
+(忠實的「另一種實作」,不是只把 signal 拔掉)——
+
+- 新的三條:🔴 主測 + 機制兩條紅。
+- 舊的三條:🟢 **全綠**,一條都沒動。
+
+確認了缺口真的存在、也真的補起來了。
+
+### 1.3 洞 3(範圍外,已轉技術顧問):`chat()` 那條路的換 token 同樣沒有逾時涵蓋
+
+**哪個函式**:`packages/core/src/llm/adapters/gateway.ts` 的
+`GatewayClient.postChat()`(檔案第 297–314 行),它呼叫 `await this.token()` **不帶 signal**。
+
+**什麼情境會卡住**:
+
+1. `GatewayLlmRouter.callGateway()`(`router-gateway.ts:221`)開一個 `AbortController` 加
+   `setTimeout(timeoutMs)`,把 `controller.signal` 放進 `client.chat({ ..., signal })`。
+2. `chat()` → `postChat()` 只把 `args.signal` 傳給 `/gateway/chat` 那個 fetch
+   (`...(args.signal ? { signal: args.signal } : {})`),**沒有**傳給前面的 `await this.token()`。
+3. 所以 token 快取過期(或第一次呼叫)而閘道的 `/auth/token/exchange` 掛住時——封包被
+   防火牆黑洞吃掉,連 `ECONNREFUSED` 都不會回來——router 傳進來的 `timeoutMs`
+   **完全管不到那一步**,`call()` 會掛到 OS 預設的 TCP timeout(可能兩分鐘)。
+4. **更糟的一格是 401 重試路徑**:`chat()` 在 401 之後 `invalidateToken()` 再 `postChat()`
+   一次,所以第二次**一定**會打 `/auth/token/exchange`,同樣不帶 signal。也就是
+   「token 剛好過期」這個**最常見**的情境,正好落在沒有逾時保護的那條路上。
+5. 結果是同一個 `token()` 函式在兩個呼叫端的逾時保證**不一致**:`probe()` 帶 signal
+   (`f7eef94` 修好了),`postChat()` 不帶。
+
+**現況影響**:`GATEWAY_BASE_URL` 還是 `localhost:8787`,沒人聽就是立刻 `ECONNREFUSED`,
+所以看不出來。ADR-039 Consequences 寫的「之後換成網域」以後才會踩到——跟洞 2 是
+同一天會踩到的東西。
+
+**為什麼我沒有補測試**(刻意的):補了就要選一邊,而兩邊都不是我能決定的。
+
+- 鎖現況(chat 的 token 不帶 signal)= 把偏差固化成規格,正是上一輪對
+  `GATEWAY_FAILED` **正確避開**的錯誤。
+- 鎖修法(帶 signal)= 替技術顧問做了決定。而且這是個真的取捨:`probe()` 的逾時是
+  「可達性檢查」的 5 秒短逾時,`chat()` 的逾時是 router 傳進來的**模型呼叫**逾時
+  (`opts.timeoutMs ?? defaultTimeoutMs`,雲端那邊是 60 秒),涵蓋範圍該不該包含換
+  token 是要想過的。
+
+**實測留給後續的資訊**:把 `postChat()` 的 `this.token()` 改成 `this.token(args.signal)`,
+`npx vitest run packages/core/src/llm` **全綠 334 條**。**兩個方向都沒有測試守著**,
+所以決定權完整留給技術顧問,做哪一邊都不會被既有測試擋。
+
+## 2. 十個設計判斷的逐一破壞驗證(P-29 / P-28)
+
+我手上沒有開發 agent 那份【驗】/【推】的原始清單,所以從三個實作 commit 的 diff
+**自己重建**了十個設計判斷,逐一手動破壞、跑測試、還原(`git status` 每輪確認乾淨)。
+
+跑的指令一律是 **`npx vitest run packages/core/src/llm`**(基準 334 條綠)。
+下表的「紅在哪」全部來自 `git ls-files` 確認過的 committed 測試檔。
+
+| # | 設計判斷 | 破壞方式 | 結果 |
+|---|---|---|---|
+| J1 | 攔截點放在 `callGateway()` **一處**,結構性涵蓋三條進入閘道的路 | 加 `&& cause !== undefined`,只在備援路徑轉 | 🔴 **7 條** |
+| J2 | 403 的 `GatewayModelRejectedError` **不**轉成 `NoModelError` | `instanceof GatewayCallError` → `instanceof Error` | 🔴 **1 條** |
+| J3 | `cause` 掛的是**這一次**真的丟出來的那個物件 | 換成 `new GatewayCallError('replaced placeholder')` | 🔴 **4 條** |
+| J4 | `detail` 說得清「本機閘道不可達」 | 拿掉 `local gateway ` 五個字 | 🟢 **原本全綠 → 見 §3** |
+| J5 | 沒給 `detail` 時訊息一字不變 | 三元條件寫反,接一句 ` (undefined)` | 🔴 **2 條**(§1.1 補的) |
+| J6 | `GATEWAY_FAILED` 完全不外洩 router 公開介面 | 整段不轉,原樣 `throw err` | 🔴 **23 條** |
+| J7a | 刪掉的 `if (retry.target !== 'gateway') throw err;` 真的到不了 | 把那一行**加回來** | 🟢 **全綠 334 —— 預期綠,這就是「到不了」的證明** |
+| J7b | 備援重試用的是 `cloud: 'failed'`(J7a 的前提) | 改成 `cloud: 'ok'` | 🔴 **7 條** |
+| J8 | `ingest.*` 的 `CLOUD_REQUIRED` 來自 `decideFallback` **丟出來**的錯誤(修正後的註解) | `fallback.ts:116` 的 `throw new CloudRequiredError(task)` 改成 `return { target: 'cloud', ... }` | 🔴 **16 條** |
+| J9 | `probe()` 的逾時是**一份共用額度**,涵蓋換 token 那一段 | 兩段各開一個 controller、各一份 `probeTimeoutMs` | 🔴 **2 條**(§1.2 補的) |
+| J10 | `token(signal?)` 是 optional,`chat()` 那條路行為一字不變 | `postChat()` 改成 `this.token(args.signal)` | 🟢 **全綠 334 —— 這就是缺口 3(§1.3)** |
+
+### P-28:每一條紅來自哪個 committed 檔案的哪個測試
+
+指令全部是 `npx vitest run packages/core/src/llm`。
+
+**J1**(7 條,全在 `packages/core/src/llm/router-gateway.test.ts`)
+- `完全離線(雲端不通 + 閘道也不通) > grade.fill.llm 丟契約 §7 的 NO_MODEL,不是閘道的錯誤碼`
+- `… > grade.fill.llm 把閘道的原始錯誤留在 cause 裡,診斷資訊不丟掉`
+- `… > grade.fill.llm 的訊息說得清「本機閘道不可達」,不是只有一句沒有模型`
+- `… > grade.fill.llm 的 detail 字面就是「local gateway unreachable」`
+- `… > 離線時的完整訊息一字不差(括號內外都是使用者看得到的東西)`
+- `GATEWAY_FAILED 不從 router 的公開介面外洩 > grade.fill.llm:完全離線時丟出來的不是 GATEWAY_FAILED`
+- `… > grade.fill.llm:在線但閘道不通,一樣不外洩`
+
+只有 `grade.fill.llm` 紅,正好證明「直接走閘道」那條路是被**同一段程式**保護的:
+攔在 `call()` 的三條分支各一次的話,這一格就會漏。
+
+**J2**(1 條,`router-gateway.test.ts`)
+- `GatewayLlmRouter.call — 閘道 403 不觸發備援 > 填了雲端模型名時錯誤往外丟,不改走雲端`
+
+**J3**(4 條,`router-gateway.test.ts`)
+- `完全離線… > {deepen | grade.apply | reteach.short | grade.fill.llm} 把閘道的原始錯誤留在 cause 裡,診斷資訊不丟掉`
+
+回答「有測試斷言 `cause` 的身分嗎,還是只斷言有 cause?」——**有身分**:
+`toBeInstanceOf(GatewayCallError)` + `codeOf(cause) === 'GATEWAY_FAILED'` +
+`messageOf(cause)` 要含 `ECONNREFUSED`。換成隨手 new 一個空殼就紅(實測)。
+`errors.test.ts` 另外用 `toBe` 鎖了「掛的是同一個物件」。
+
+**J5**(2 條,`packages/core/src/llm/errors.test.ts`)
+- `NoModelError — 訊息文字 > 不給 detail 時訊息一字不多(不能接出 "(undefined)" 這種尾巴)`
+- `NoModelError — cause > detail 與 cause 可以只給其中一個`
+
+**J6**(23 條,`router-gateway.test.ts`;前 12 條)
+- `完全離線… > {4 個 task} 丟契約 §7 的 NO_MODEL,不是閘道的錯誤碼`
+- `完全離線… > {4 個 task} 把閘道的原始錯誤留在 cause 裡,診斷資訊不丟掉`
+- `完全離線… > {4 個 task} 的訊息說得清「本機閘道不可達」,不是只有一句沒有模型`
+- 其餘 11 條含 `GATEWAY_FAILED 不從 router 的公開介面外洩` 整個 describe
+
+回答「有沒有一個測試掃 router 公開介面丟出來的錯誤型別?」——**有,而且已經在
+committed 的測試裡**:`router-gateway.test.ts` 的
+`describe('GATEWAY_FAILED 不從 router 的公開介面外洩')`,7 個 task 全掃一遍
+(`it.each(ALL_TASKS)`),加上「在線但閘道不通」與「雲端失敗且閘道也不通」兩格。
+這一條契約層的保證不用補。
+
+**J7b**(7 條,`router-gateway.test.ts`)
+- `雲端失敗時的備援 > grade.apply 退到閘道並標 provisional`
+- `雲端失敗時的備援 > 備援那一筆 log 記下 fallback 與原因`
+- `雲端失敗時的備援 > 逾時也會備援`
+- `雲端失敗時的備援 > ingest.cards 不備援,丟 CLOUD_REQUIRED,而且閘道一次都沒被打`
+- `雲端整個連不上(probeOnline 回 false) > deepen 在 NoModelError 之後改走閘道並標 provisional`
+- `… > grade.apply 與 reteach.short 也一樣`
+- `… > 備援那一筆 log 記下原因是 cloud_failed,而不是預算`
+
+**J8**(16 條,`packages/core/src/llm/fallback.test.ts` 5 條 + `router-gateway.test.ts` 11 條)
+- `fallback.test.ts > decideFallback — cloud-only(ingest.*) > {ingest.cards | ingest.questions | ingest.deps}:雲端失敗就丟 CLOUD_REQUIRED,不備援`
+- `fallback.test.ts > … > CLOUD_REQUIRED 的錯誤點名是哪個 task`
+- `fallback.test.ts > decideFallback 是純函式 > 改備援表就改行為,不用改 decideFallback 本身`
+- `router-gateway.test.ts > 雲端失敗時的備援 > ingest.cards 不備援,丟 CLOUD_REQUIRED,而且閘道一次都沒被打`
+- `router-gateway.test.ts > 備援重試:cloud "failed" 永遠不會回到 cloud(…) > …` 共 10 條
+
+**J9**(2 條,`packages/core/src/llm/adapters/gateway.test.ts`)
+- `GatewayClient.probe — 逾時是整段流程共用一份額度,不是每段各一份 > 換 token 4 秒 + models 2 秒(各自都沒超過 5 秒,加起來超過)→ 回不可用`
+- `… > probe 的兩個請求帶的是**同一個** AbortSignal(共用額度的機制前提)`
+
+### J7 / 刪掉的死程式:確認刪對了行,而且註解真的正確
+
+**刪對了行**(`git show e88e932`):刪掉的就是
+`if (retry.target !== 'gateway') throw err;` 這一行加上它的 TODO 註解區塊,
+`decideFallback` 的呼叫與 `return this.callGateway(...)` 一行沒動。
+
+**J7a 的綠是預期的**:把那一行加回來,334 條全綠——沒有任何測試分辨得出它在不在,
+這正是「到不了」的定義。而 J7b(把 `cloud: 'failed'` 改成 `'ok'`)7 條紅,證明
+「到不了」的**前提**是被鎖住的:哪天有人讓 `decideFallback` 在 `'failed'` 時回 cloud,
+那些窮舉測試會先紅。
+
+**修正後的註解真的正確**:原註解說「再回 cloud 就代表沒有備援,把**原本的錯誤**
+往外丟(`ingest.*` 得到 `CloudRequiredError`)」——這句話錯兩次:(a) 靠的不是那個
+`if`,(b) 往外丟的**不是**原本那個雲端錯誤(那會是 503 之類),而是
+`decideFallback` **自己丟**的 `CloudRequiredError`(它蓋掉了原本的 `err`)。
+
+修正後的版本經查證屬實:`packages/core/src/llm/fallback.ts:116` 就是
+`if (cloud === 'failed') throw new CloudRequiredError(task);`。而且 J8 的破壞
+(把那個 throw 改成 return)讓 16 條紅,其中包含
+`router-gateway.test.ts > … > ingest.cards 不備援,丟 CLOUD_REQUIRED,而且閘道一次都沒被打`
+——**註解宣稱的機制,就是測試守著的機制**。註解正確。
+
+## 3. 破壞驗證抓到的新洞:`detail` 的字面沒鎖(已補)
+
+J4 是這一輪唯一一個「破壞了但沒有任何測試紅」的**真缺口**(J7a 的綠是預期的,
+J10 的綠是範圍外的缺口 3)。
+
+把 `callGateway()` 的 detail 從 `local gateway unreachable: ${err.message}` 改成
+`unreachable: ${err.message}`(整個「本機閘道」的說法都拿掉),334 條**全綠**。
+
+原因:守著這件事的是 `expect(messageOf(err)).toMatch(/gateway/i)`,而 `cause` 那個
+`GatewayCallError` 的訊息本來就以 `gateway call failed: ` 開頭——`/gateway/i` 被
+**內層**那句話餵飽了,router 這一層自己加的那句話等於沒鎖。跟洞 1 是同一類問題
+(使用者可見文字沒鎖字面),所以照同樣的方式補。
+
+**補法**(commit `8e11178`,`router-gateway.test.ts`):
+- 四個 task 各一條:訊息含字面 `(local gateway unreachable: `
+- `grade.fill.llm` 一條全字串比對(它直接走閘道、不經過雲端失敗,內層訊息最短,
+  最不會因為別處改動而假紅)
+
+**重跑同一個破壞:🔴 5 條紅**(四個 task 的 detail 字面 + 全字串那條)。
+
+## 4. 完整驗收
+
+| 檢查 | 結果 |
+|---|---|
+| `npm ci` | ✅ exit 0 |
+| `npm run boundaries` | ✅ exit 0 |
+| `npm run typecheck` | ✅ exit 0 |
+| `npx vitest run`(起點 `f7eef94`) | ✅ **71 檔 1266 條全綠**(與開發 agent 回報一致) |
+| `npx vitest run`(本輪補完) | ✅ **72 檔 1297 條全綠** |
+| `NODE_OPTIONS=--import=tsx npx cucumber-js --tags "not @manual"` | ✅ **484 場景 323 passed / 0 failed**(上一輪 469 場景 308 passed)→ **不退化** |
+| `npm run accept:dry` | ✅ exit 0,**0 ambiguous** |
+| `npm run standalone` | ✅ **全部通過**(7 個跑、3 個 interactive 跳過) |
+
+cucumber 的 161 個 `undefined` 場景是還沒開工的未來 phase/feature,不是本次造成的
+(上一輪是 164 個);場景總數從 469 漲到 484 是因為中間合併了
+`28adc83`(learning-repo-snapshot / ADR-042)。**failed 一直是 0。**
+
+## 5. Stryker 變異測試
+
+| 檔案 | 門檻 | 上一輪 | 本輪 | 判定 |
+|---|---|---|---|---|
+| `fallback.ts` | **嚴格 95%**(P-26) | 100.00% | **100.00%**(21 killed / 0 survived) | ✅ 無退步 |
+| `spend.ts` | **嚴格 95%**(P-26) | 98.41% | **98.41%**(62 killed / 1 survived) | ✅ 無退步 |
+| `adapters/gateway.ts` | 標準 80% | 98.88% | **98.89%**(89 killed / 1 survived) | ✅ 微升(本輪補的測試多殺一個) |
+| `router-gateway.ts` | 標準 80% | **從未量過** | **100.00%**(52 killed / 0 survived) | ✅ 見下 |
+
+**`router-gateway.ts` 是這一輪最大的發現。** 它這次是**第一次**被量到——上一輪的報告
+寫得很清楚:「`router-gateway.ts` 不在嚴格門檻名單也不在這次要跑的三個檔案裡,所以
+Stryker 沒有報它」。第一次量出來是 **46.15%**,遠低於標準 80%:104 個變異裡
+24 killed / **23 survived** / **5 no-coverage**。
+
+這不是退步(從來沒有基準),但是一個真的品質缺口,而且缺口不是零散的,是**三整塊
+從來沒有測試碰過的接線**:
+
+1. **`callGateway()` 的逾時接線**(第 229–254 行)。既有測試**一條都沒給過**
+   `timeoutMs`,所以整段是死的:`opts.timeoutMs ?? defaultTimeoutMs` 被換成 `&&`、
+   `timeoutMs === undefined ? …` 被換成 `true` / `false` / `!==`、signal 有沒有真的
+   傳進 `client.chat()`、`finally` 的 `clearTimeout` 被整個拿掉——全都沒人發現。
+   **這跟 `f7eef94` 修的 probe 逾時是同一類問題**(router 設的逾時有沒有真的接到閘道
+   呼叫),只是這一半從來沒被量過,而 `callGateway()` 是**唯一**會真的送出閘道請求
+   的地方,閘道又在另一台機器上。
+2. **log 事件的組裝**(第 257–275 行)。既有測試只斷言 `fallback` 與 `fallback_reason`
+   兩個欄位。`type: 'llm_call'` 這個字串、`tokens_in` / `tokens_out` 的 `!= null` 判斷
+   (**`spend.ts` 是照這兩個欄位算錢的**)、`if (cause !== undefined)` 被換成
+   `if (true)`,全都存活。
+3. **`probeLocal()` 的 catch 分支**與 **`createFileLogAppender()`**。零覆蓋。
+
+**補了 15 條**(commit `95ab592`),重跑 **46.15% → 100.00%**。
+
+### 存活變異逐條處理(四分類)
+
+跑完四個檔案共 **2 個**存活變異,兩個都是**真等價**,而且兩個都是上一輪就查證過、
+程式碼裡已經寫了理由的同一組。
+
+| 檔案:行 | 變異 | 分類 | 處理 |
+|---|---|---|---|
+| `spend.ts:167` | `} catch { continue; }` → `} catch {}` | **真等價** —— `continue` 是 `for` 迴圈本體的最後一句,拿掉之後控制流一模一樣 | 不補測試。程式碼已有 `// Stryker disable next-line all` 與理由 |
+| `adapters/gateway.ts:157` | `} catch { return undefined; }` → `} catch {}` | **真等價** —— 函式掉到結尾本來就回 `undefined`,對呼叫端完全一樣 | 不補測試。程式碼已有 `// Stryker disable next-line all` 與理由 |
+
+四分類的另外三類本輪**都是零**:
+
+- **真漏測**:0(`router-gateway.ts` 原本那 23 個 + 5 個零覆蓋全部補掉了,見上)
+- **邊界**:0(`isCloudFailure` 的 `>= 500` 邊界本輪補上,已殺)
+- **不值得測**:0
+
+補充(沿用上一輪的結論,本輪重新確認):這兩個 `catch` 區塊的 `// Stryker disable
+next-line all` 指令 Stryker **沒有吃**——它對 `} catch {` 這種 BlockStatement 變異的
+行號定位跟指令的 next-line 對不起來。這是工具的限制,不是品質缺口:兩個都確認過是
+真等價,理由寫在程式碼註解裡,而且 98.41% / 98.89% 都遠高於門檻。
+
+## 6. 結論:PASS
+
+**六個 commit 的三件實作都正確,而且測試真的守得住。**
+
+- 契約 §7 的 `NO_MODEL` 對齊做對了,而且 `GATEWAY_FAILED` 不外洩是**結構性**的
+  (攔在 `callGateway()` 唯一出口,不是三處各自記得),有 7 個 task 全掃的測試守著。
+- 403 不轉是對的(設定錯誤不是「沒有模型」),而且有測試鎖住(J2 破壞 → 紅)。
+- 刪掉的死程式刪對了行,前提被 29 條窮舉測試鎖住,修正後的註解**經查證屬實**
+  ——註解宣稱的機制就是 J8 破壞會弄紅的那個機制。
+- `probe()` 的逾時修法正確,而且現在有測試分辨得出「共用一份額度」與「各一份」。
+
+**但是有一個這一輪才第一次量到的品質缺口,已經補掉**:`router-gateway.ts` 從來沒被
+Stryker 量過,第一次量是 **46.15%**(23 存活 + 5 零覆蓋)。缺口集中在
+`callGateway()` 的**逾時接線**——既有測試一條都沒給過 `timeoutMs`,所以「router 設的
+逾時有沒有真的接到閘道呼叫」整段是死的。這跟開發 agent 這一輪修的 probe 逾時
+(`f7eef94`)是**同一類問題的另一半**,只是這一半沒人量過所以沒人發現。補 15 條後
+**100.00%**。
+
+這件事本身值得記一筆:**沒有被 Stryker 涵蓋的檔案,測試看起來再多也可能是空的**——
+`router-gateway.test.ts` 原本就有 30 幾條測試、全綠,但整個逾時接線沒有任何一條碰到。
+建議之後 `03-llm-router` 的 Stryker 標的清單把 `router-gateway.ts` 固定列進去。
+
+**本輪補的三處測試**(都已 commit,未 push):
+
+| commit | 檔案 | 補什麼 | 條數 |
+|---|---|---|---|
+| `e28523b` | `packages/core/src/llm/errors.test.ts`(新) | 洞 1:`NoModelError` / `CloudRequiredError` 的完整訊息字串、`cause` 身分 | 8 |
+| `e28523b` | `packages/core/src/llm/adapters/gateway.test.ts` | 洞 2:分辨「一份共用額度」與「各一份」+ 假 fetch 的 `tokenDelayMs` | 3 |
+| `8e11178` | `packages/core/src/llm/router-gateway.test.ts` | J4:`detail` 的字面 + 離線完整訊息 | 5 |
+| `95ab592` | `packages/core/src/llm/router-gateway.test.ts` | Stryker 46.15% → 100%:逾時接線、log 組裝、`probeLocal` catch、檔案 log | 15 |
+
+全套從 **1266 條**(起點 `f7eef94`)變成 **1297 條**,71 檔 → 72 檔。
+
+**留給後續的一件事**:缺口 3(`chat()` 那條路的換 token 沒有逾時涵蓋,§1.3)。
+已確認**兩個方向都沒有測試守著**,決定權完整留給技術顧問。要在
+`GATEWAY_BASE_URL` 換成網域之前處理——跟洞 2 是同一天會踩到的東西。
+
+**環境備註**:跑 Stryker 時另一個 worktree(`prompt-quality-phase-2`)也在跑 Stryker,
+機器 load average 一度到 26 / 8 核、可用記憶體歸零,我的 Stryker 被 OOM 殺掉兩次。
+最後改成等對方跑完再開始。不是程式問題,但同機器多個 worktree 同時跑變異測試會互相殺。
