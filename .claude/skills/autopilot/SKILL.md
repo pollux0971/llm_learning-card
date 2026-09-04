@@ -78,6 +78,12 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
    因為 **`git push` 推的是 HEAD 以下全部,不是「我剛 commit 的那一個」**。
    規則:**一輪只合一條就通知一次**,或合併後立刻通知。中間不要再往 main 疊東西。
 
+   **後半條(2026-09-05 補):送出「請驗推」之後,main 凍結,直到對方回「已推」或「退回」。**
+   凍結範圍是**整個 main,包含 `.claude/skills/` 這種看起來無害的檔案** —— 技術顧問是在
+   **隔離的 detach 簽出**上驗那個 commit,你在 main 上疊東西他不會看到,但**下次 `git log` 對不起來**,
+   而對不起來的第一反應是「他驗的東西被動過了」。實際代價:一次幻紅 + 20 分鐘。
+   凍結期間有事做:派工、開工單、回訊息、在 worktree 裡工作 —— 那些都不動 main。
+
    FAIL 的照 test→dev→review 循環派 debug session。
 2. **算 ready**:照 sprint-planning 的規則讀所有 NEXT.md。三種 gate 全滿足 → ready。
 3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。滿載時不派新工,回到 1 收割;收割不到東西就做維護清單(§3)等下一輪。~~同時處於審核輪的 worktree ≤ 1~~ **已放寬回 3**(2026-09-04):`scripts/mutate.ts` 的跨 worktree 檔案鎖合併後,變異測試會自己排隊,不再需要靠派工節流(P-34)。**`npm run mutate` 是唯一入口**,審核與開發都只准用它 —— 直接叫 Stryker CLI 會繞過鎖(`scripts/mutate.test.ts` §13 掃 repo 裡**所有文字檔**守著,程式碼註解也掃;2026-09-05 起,因為第一版只掃 md / json / sh 漏過 `vitest.mutate.config.ts` 裡一條可照抄的指令)。**分數要附完整指令**(設定檔、範圍、旗標),不附指令的分數不算數。每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
@@ -145,9 +151,25 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 1. **測試把「一定在 worktree 裡跑」內建成假設** → 到 main 就**永遠紅**。
    實例:`expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'))` —— 在 worktree 裡兩者不同所以綠,
    在主 repo 裡兩者本來就相同所以紅。**涉及路徑的斷言要在 worktree 與 main 兩種位置各跑一次。**
-2. **main 上有分支看不到的檔案被規則掃到** —— 別的 repo 的簽出(`.claude/worktrees/`)、
-   協調者自己寫的文件(它可能為了**描述**一個錯誤而引用那個錯誤的字串)。
-   **掃描類測試的 SKIP 清單要含 `.claude/worktrees`。**
+2. **main 上有分支看不到的檔案被規則掃到** —— 協調者自己寫的文件(它可能為了**描述**一個錯誤
+   而引用那個錯誤的字串)。掃描類測試要跳過**巢狀簽出**,而判斷方式是 **`existsSync(dir/.git)`**,
+   不是把某個目錄名字寫死。
+   ⚠️ 我當初寫死 `.claude/worktrees` 並說那是「別的 repo 的簽出」—— **那句是錯的**,
+   `git worktree list` 一查就知道那是**這個 repo 自己的 worktree**。理由講錯,規則就會抓錯範圍
+   (1051 檔 12 違規 → 改對後 616 檔 0 違規)。**寫 SKIP 理由前先跑一次 `git worktree list`。**
+
+3. **「守衛」本身是套套邏輯 —— 條件由被測的那個函式決定。**
+   我寫過這個:
+   ```ts
+   const inWorktree = strykerLockPath() !== join(REPO_ROOT, '.stryker.lock');
+   if (inWorktree) expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'));
+   ```
+   看起來是「只在 worktree 裡才斷言」,實際是:**把 `strykerLockPath()` 改壞 → `inWorktree` 變 false
+   → 斷言整個跳過 → 測試仍然綠。** 守衛把它要守的東西關掉了。
+   **判斷法:問「如果被測的東西壞掉,這個 if 會不會讓斷言不執行?」會 → 就是套套邏輯。**
+   正解是**自己蓋環境**(建臨時 git repo + worktree,子行程 `cwd` 指過去),
+   讓「在 worktree 裡」變成測試**製造**的事實,而不是**向被測程式詢問**的答案。
+   同族:`if (skip) return` 型的條件跳過、用被測函式算出期望值。
 
 **協調者為了修 main 紅燈而動測試檔**:可以先修(§4「先修 main」優先),但**同一輪必須開一張 review 工單事後覆核**,
 工單裡逐處列出「為什麼是測試錯不是實作錯」。覆核者判定任一處其實是**放寬** → **退回**。
@@ -165,6 +187,10 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
   **順序也重要:先 `reply` 再 `ack`** —— ack 之後 `check` 就抓不到那個 msg_id 了,只能退而用 `send`(就是踩坑的那次)。
 - `check --wait` 可能回**已處理過的舊訊息**(`"replayed": true`),要 `--ack <deliveryId>` 再等下一則,不然空轉
 - 開 worktree 明確指定起點(`--base-branch main` 或 `git worktree add -b <branch> <path> main`),開完驗 `git merge-base --is-ancestor main <branch>`(P-18)
+- **續用舊 worktree 之前先 `git merge main`(不 rebase)。** P-18 只管「開的時候」,但一個 worktree
+  活好幾輪之後,main 早就往前跑了 —— 實例:`a93e59b` 的 base 落後 origin/main 約 6 條。
+  那次無害(中間沒人動同一批檔),但**無害是運氣,不是設計**。先 merge 的好處是
+  **main 新加的守門會在分支上就撞到**,而不是合併後才撞(那正是 §4c 要防的)。
 
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
