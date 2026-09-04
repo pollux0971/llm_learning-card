@@ -2,12 +2,12 @@
  * CLI 入口:scripts/llm.ts。見 features/03-llm-router/FEATURE.md「單獨執行」。
  *
  *   npx tsx scripts/llm.ts --task deepen --prompt "..."   # 印出 LlmResult 的 JSON
- *   npx tsx scripts/llm.ts --probe                        # 印出線上與本機狀態,不呼叫模型
+ *   npx tsx scripts/llm.ts --probe                        # 印出線上與本機(閘道)狀態,不呼叫模型
  *
  * ADR-034:.env 只在 CLI 入口用 Node 內建的 process.loadEnvFile 載入,檔案不存在時吞掉錯誤;
  * library 程式碼(router.ts 等)只讀 process.env,不碰檔案。
  */
-import { CloudLlmRouter, isLlmTask, type LlmTask } from '../packages/core/src/llm/index.js';
+import { GatewayLlmRouter, isLlmTask, type LlmTask } from '../packages/core/src/llm/index.js';
 
 try {
   process.loadEnvFile(new URL('../.env', import.meta.url));
@@ -35,7 +35,9 @@ function parseArgs(argv: string[]): Record<string, string | boolean> {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const logPath = typeof args.log === 'string' ? args.log : 'learning/state/log.jsonl';
-  const router = new CloudLlmRouter({ logPath });
+  // phase-4(ADR-039):走 GatewayLlmRouter,--probe 才會真的去問閘道有哪些模型,
+  // call 才會有預算備援。閘道沒設定時 probeLocal() 一樣回 unavailable,不會爆炸。
+  const router = new GatewayLlmRouter({ logPath });
 
   if (args.probe) {
     const [online, local] = await Promise.all([router.probeOnline(), router.probeLocal()]);

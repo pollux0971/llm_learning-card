@@ -54,10 +54,22 @@
  */
 
 import type { LlmResult, LlmRouter, LlmTask } from './types.js';
+import type { LogEvent } from '@contracts/index.js';
+import { recordEvent } from '@core/schema/log.js';
 import { LlmRouterImpl, type LlmRouterImplOptions } from './router-impl.js';
-import { GatewayClient } from './adapters/gateway.js';
-import { FALLBACK_TABLE, type FallbackGroup } from './fallback.js';
-import { type DailySpend, type SpendPrices } from './spend.js';
+import { GatewayClient, createGatewayClient } from './adapters/gateway.js';
+import { NoModelError } from './errors.js';
+import { FALLBACK_TABLE, decideFallback, type CloudStatus, type FallbackDecision, type FallbackGroup } from './fallback.js';
+import {
+  dayOf,
+  isBudgetExhausted,
+  readDailyCapUsd,
+  readDailySpend,
+  readSpendPrices,
+  type DailySpend,
+  type SpendPrices,
+} from './spend.js';
+import type { LogAppender } from './router.js';
 
 /**
  * 「雲端這次不能用,可以備援」的錯誤類別名單。用 `name` 比對而不是 instanceof
@@ -70,8 +82,14 @@ export const CLOUD_FAILURE_ERRORS = ['LlmTimeoutError', 'OutputTruncatedError'] 
  * 哪些錯誤算「雲端這次不能用」。設定錯誤(缺憑證、provider 不支援、task 不在契約裡)
  * **不算**——備援只會讓錯誤設定一直藏著。
  */
-export function isCloudFailure(_err: unknown): boolean {
-  throw new Error('not implemented: isCloudFailure (03-llm-router/phase-4)');
+export function isCloudFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if ((CLOUD_FAILURE_ERRORS as readonly string[]).includes(err.name)) return true;
+
+  // OpenAI SDK 的 APIError 沒有專屬類別可以認,但帶著 status。5xx 是「服務端這次
+  // 不行」,4xx 是「請求本身有問題」——後者重試或換 provider 都沒有用。
+  const status = (err as { status?: unknown }).status;
+  return typeof status === 'number' && status >= 500;
 }
 
 export interface GatewayLlmRouterOptions extends LlmRouterImplOptions {
@@ -89,41 +107,150 @@ export interface GatewayLlmRouterOptions extends LlmRouterImplOptions {
   today?: () => string;
 }
 
+/** 沒給 path 就不寫(例如純單元測試);給了就用 01 的 recordEvent() 原子寫入。 */
+function createFileLogAppender(path: string | undefined): LogAppender {
+  if (!path) return () => {};
+  return (event) => recordEvent(path, event);
+}
+
 export class GatewayLlmRouter implements LlmRouter {
   private readonly opts: GatewayLlmRouterOptions;
   private readonly inner: LlmRouterImpl;
   private readonly fallbackTable: Readonly<Record<LlmTask, FallbackGroup>>;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly log: LogAppender;
+  private readonly capUsd: number;
+  private readonly prices: SpendPrices;
+  private readonly spendReader: (day: string) => DailySpend;
+  private readonly today: () => string;
+  /** 懶建立:沒設 GATEWAY_API_KEY 的人也要能只用雲端那半,不該在建構時就爆炸。 */
+  private gatewayClient: GatewayClient | undefined;
 
   constructor(opts: GatewayLlmRouterOptions = {}) {
     this.opts = opts;
-    this.inner = opts.cloudRouter ? new LlmRouterImpl(opts) : new LlmRouterImpl(opts);
+    this.inner = new LlmRouterImpl(opts);
     this.fallbackTable = opts.fallbackTable ?? FALLBACK_TABLE;
+    this.env = opts.env ?? process.env;
+    this.log = opts.logAppender ?? createFileLogAppender(opts.logPath);
+    this.capUsd = opts.dailyCapUsd ?? readDailyCapUsd(this.env);
+    this.prices = opts.prices ?? readSpendPrices(this.env);
+    this.today = opts.today ?? (() => dayOf(new Date().toISOString()));
+    this.spendReader =
+      opts.spendReader ??
+      ((day) => (opts.logPath ? readDailySpend(opts.logPath, day, this.prices) : { usd: 0, calls: 0 }));
+    this.gatewayClient = opts.gateway;
   }
 
-  async call(_task: LlmTask, _prompt: string, _opts: { timeoutMs?: number; maxTokens?: number } = {}): Promise<LlmResult> {
-    void this.inner;
-    void this.fallbackTable;
-    void this.opts;
-    throw new Error('not implemented: GatewayLlmRouter.call (03-llm-router/phase-4)');
+  async call(task: LlmTask, prompt: string, opts: { timeoutMs?: number; maxTokens?: number } = {}): Promise<LlmResult> {
+    // 花錢之前先看今天花了多少。ingest.* 在這一步就會被 decideFallback 擋下來
+    // (丟 DailyBudgetExceededError),雲端一次都不會被打到。
+    const spend = this.dailySpend();
+    const cloud: CloudStatus = isBudgetExhausted(spend.usd, this.capUsd) ? 'budget-exhausted' : 'ok';
+    const decision = decideFallback(
+      { task, cloud, spentUsd: spend.usd, capUsd: this.capUsd },
+      this.fallbackTable,
+    );
+
+    if (decision.target === 'gateway') {
+      return this.callGateway(task, prompt, decision, opts);
+    }
+
+    try {
+      return await this.inner.call(task, prompt, opts);
+    } catch (err) {
+      // NoModelError 也算:那是「離線,而底層的 localProber 不知道有閘道」。
+      // 閘道就是契約 §7 的 local,所以這裡接手,契約那張表的行為不變。
+      if (!isCloudFailure(err) && !(err instanceof NoModelError)) throw err;
+
+      const retry = decideFallback(
+        { task, cloud: 'failed', spentUsd: spend.usd, capUsd: this.capUsd },
+        this.fallbackTable,
+      );
+      // 還是回 cloud 就代表這個 task 根本沒有備援,把原本的錯誤往外丟。
+      if (retry.target !== 'gateway') throw err;
+      return this.callGateway(task, prompt, retry, opts, err);
+    }
   }
 
   /** 直接委派底層,快取行為不變。 */
   async probeOnline(): Promise<boolean> {
-    throw new Error('not implemented: GatewayLlmRouter.probeOnline (03-llm-router/phase-4)');
+    return this.inner.probeOnline();
   }
 
   /** 委派 GatewayClient.probe();任何錯誤接住回 unavailable,不 throw。 */
   async probeLocal(): Promise<{ available: boolean; models: string[] }> {
-    throw new Error('not implemented: GatewayLlmRouter.probeLocal (03-llm-router/phase-4)');
+    try {
+      return await this.gateway().probe();
+    } catch {
+      // 例如 GATEWAY_API_KEY 沒設(createGatewayClient 丟 MissingCredentialError)。
+      return { available: false, models: [] };
+    }
   }
 
   /** 今日花費(給 scripts/llm-spend.ts 與測試用)。 */
   dailySpend(): DailySpend {
-    throw new Error('not implemented: GatewayLlmRouter.dailySpend (03-llm-router/phase-4)');
+    return this.spendReader(this.today());
   }
 
   /** ADR-039:`spent >= cap` 就算達到。 */
   budgetExhausted(): boolean {
-    throw new Error('not implemented: GatewayLlmRouter.budgetExhausted (03-llm-router/phase-4)');
+    return isBudgetExhausted(this.dailySpend().usd, this.capUsd);
+  }
+
+  /** 懶建立的閘道 client。同一個 router 共用一個,token 快取才有意義。 */
+  private gateway(): GatewayClient {
+    this.gatewayClient ??= createGatewayClient(this.env);
+    return this.gatewayClient;
+  }
+
+  /**
+   * 打閘道並寫一筆 llm_call。備援時多帶 `fallback` / `fallback_reason`,
+   * 以及原本那個雲端錯誤(`fallback_from` / `error`)——不然事後看 log 只知道
+   * 「這一筆走了本機」,不知道為什麼。
+   */
+  private async callGateway(
+    task: LlmTask,
+    prompt: string,
+    decision: FallbackDecision,
+    opts: { timeoutMs?: number; maxTokens?: number },
+    cause?: unknown,
+  ): Promise<LlmResult> {
+    const client = this.gateway();
+    const timeoutMs = opts.timeoutMs ?? this.opts.defaultTimeoutMs;
+    const controller = new AbortController();
+    const timer = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(), timeoutMs);
+
+    let result;
+    try {
+      result = await client.chat({
+        prompt,
+        model: client.config.model,
+        ...(timer === undefined ? {} : { signal: controller.signal }),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const event: Record<string, unknown> = {
+      ts: new Date().toISOString(),
+      type: 'llm_call',
+      task,
+      provider: result.provider,
+      model: result.model,
+      latency_ms: result.latency_ms,
+      ...(result.tokens_in != null ? { tokens_in: result.tokens_in } : {}),
+      ...(result.tokens_out != null ? { tokens_out: result.tokens_out } : {}),
+    };
+    if (decision.reason !== undefined) {
+      event.fallback = 'gateway';
+      event.fallback_reason = decision.reason;
+      if (cause !== undefined) {
+        event.fallback_from = 'openai';
+        event.error = cause instanceof Error ? cause.message : String(cause);
+      }
+    }
+    this.log(event as unknown as LogEvent);
+
+    return { ...result, provisional: decision.provisional };
   }
 }

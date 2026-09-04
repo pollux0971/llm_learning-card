@@ -60,6 +60,7 @@
  */
 
 import type { LlmResult } from '../types.js';
+import { GatewayCallError, GatewayModelRejectedError, MissingCredentialError } from '../errors.js';
 
 /** 回應沒帶到期時間時的保守存活時間。 */
 export const GATEWAY_TOKEN_FALLBACK_TTL_MS = 50 * 60_000;
@@ -120,6 +121,37 @@ export interface CachedToken {
   expiresAt: number;
 }
 
+/** 閘道回應的形狀。欄位全是 optional——別人的服務,不能假設它一定照著回。 */
+interface TokenExchangeBody {
+  access_token?: unknown;
+  expires_in?: unknown;
+  expires_at?: unknown;
+}
+
+interface ModelsBody {
+  models?: unknown;
+}
+
+interface ChatBody {
+  content?: unknown;
+  model?: unknown;
+  tokens_used?: { prompt?: unknown; completion?: unknown } | undefined;
+}
+
+/** 只在錯誤訊息裡用,所以連 Error 都不是的東西也要能印出來。 */
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** 回應可能不是 JSON(例如 502 的 HTML 錯誤頁),parse 不動就回 undefined。 */
+async function readJson<T>(response: Response): Promise<T | undefined> {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 export class GatewayClient {
   readonly config: GatewayConfig;
   private readonly fetchImpl: typeof fetch;
@@ -138,27 +170,141 @@ export class GatewayClient {
 
   /** 快取到過期前重用;過期(或還沒換過)才打 `/auth/token/exchange`。 */
   async token(): Promise<string> {
-    void this.fetchImpl;
-    void this.now;
-    void this.cached;
-    throw new Error('not implemented: GatewayClient.token (03-llm-router/phase-4)');
+    const now = this.now();
+    if (this.cached && now < this.cached.expiresAt) return this.cached.accessToken;
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.config.baseUrl}/auth/token/exchange`, {
+        method: 'POST',
+        // 換 token 用的是**明文 key**,不是 JWT——這是唯一一個這樣的端點。
+        headers: { authorization: `Bearer ${this.config.apiKey}`, 'content-type': 'application/json' },
+      });
+    } catch (err) {
+      throw new GatewayCallError(`token exchange failed: ${describe(err)}`);
+    }
+
+    if (!response.ok) {
+      throw new GatewayCallError(`token exchange returned ${response.status}`, response.status);
+    }
+
+    const body = await readJson<TokenExchangeBody>(response);
+    const accessToken = body?.access_token;
+    if (typeof accessToken !== 'string' || accessToken.length === 0) {
+      throw new GatewayCallError('token exchange returned no access_token', response.status);
+    }
+
+    this.tokenExchanges += 1;
+    this.cached = { accessToken, expiresAt: now + resolveTtlMs(body, now) };
+    return accessToken;
   }
 
   /** 丟掉快取的 token,下一次 `token()` 會重換。401 重試路徑用。 */
   invalidateToken(): void {
-    throw new Error('not implemented: GatewayClient.invalidateToken (03-llm-router/phase-4)');
+    this.cached = undefined;
   }
 
   /** 換 token → `GET /gateway/models`。任何失敗都回 unavailable,不 throw。 */
   async probe(): Promise<GatewayProbeResult> {
-    void this.probeTimeoutMs;
-    throw new Error('not implemented: GatewayClient.probe (03-llm-router/phase-4)');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.probeTimeoutMs);
+    try {
+      const token = await this.token();
+      const response = await this.fetchImpl(`${this.config.baseUrl}/gateway/models`, {
+        headers: { authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      if (!response.ok) return { available: false, models: [] };
+
+      const body = await readJson<ModelsBody>(response);
+      const models = body?.models;
+      if (typeof models !== 'object' || models === null) return { available: false, models: [] };
+      return { available: true, models: Object.keys(models as Record<string, unknown>) };
+    } catch {
+      // 401(key 錯)、連線被拒、逾時——本機模型不在不是錯誤(phase-2 的行為)。
+      return { available: false, models: [] };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** `POST /gateway/chat`。403 → 設定錯誤;401 → 重換 token 重試一次。 */
-  async chat(_args: GatewayChatArgs): Promise<GatewayChatResult> {
-    throw new Error('not implemented: GatewayClient.chat (03-llm-router/phase-4)');
+  async chat(args: GatewayChatArgs): Promise<GatewayChatResult> {
+    const started = Date.now();
+
+    let response = await this.postChat(args);
+    if (response.status === 401) {
+      // token 過期。重換一次再重試一次——只有一次,key 真的錯掉時才不會無限迴圈。
+      this.invalidateToken();
+      response = await this.postChat(args);
+    }
+
+    if (response.status === 403) {
+      // 設定錯誤(填了雲端模型名或 "auto"),不是暫時性失敗:往外丟,不備援。
+      throw new GatewayModelRejectedError(args.model);
+    }
+    if (!response.ok) {
+      throw new GatewayCallError(`chat returned ${response.status}`, response.status);
+    }
+
+    const body = await readJson<ChatBody>(response);
+    if (body === undefined || typeof body.content !== 'string') {
+      throw new GatewayCallError('chat returned no content', response.status);
+    }
+
+    const result: GatewayChatResult = {
+      text: body.content,
+      provider: GATEWAY_PROVIDER,
+      model: typeof body.model === 'string' && body.model.length > 0 ? body.model : args.model,
+      latency_ms: Date.now() - started,
+    };
+    const tokensIn = body.tokens_used?.prompt;
+    const tokensOut = body.tokens_used?.completion;
+    if (typeof tokensIn === 'number') result.tokens_in = tokensIn;
+    if (typeof tokensOut === 'number') result.tokens_out = tokensOut;
+    return result;
   }
+
+  /** 一次 `POST /gateway/chat`(含取 token)。狀態碼的意義交給 chat() 判讀。 */
+  private async postChat(args: GatewayChatArgs): Promise<Response> {
+    const token = await this.token();
+    try {
+      return await this.fetchImpl(`${this.config.baseUrl}/gateway/chat`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          prompt: args.prompt,
+          model: args.model,
+          service: args.service ?? GATEWAY_DEFAULT_SERVICE,
+        }),
+        ...(args.signal ? { signal: args.signal } : {}),
+      });
+    } catch (err) {
+      throw new GatewayCallError(`chat failed: ${describe(err)}`);
+    }
+  }
+}
+
+/**
+ * token 還能活多久。`expires_in` 是秒數,`expires_at` 是絕對時間(epoch 秒 /
+ * 毫秒 / ISO 字串都接);兩個都沒有就用 50 分鐘的保守值。
+ */
+function resolveTtlMs(body: TokenExchangeBody | undefined, now: number): number {
+  const expiresIn = body?.expires_in;
+  if (typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0) {
+    return expiresIn * 1_000;
+  }
+
+  const expiresAt = body?.expires_at;
+  const absolute = typeof expiresAt === 'number' ? epochToMs(expiresAt) : typeof expiresAt === 'string' ? Date.parse(expiresAt) : NaN;
+  if (Number.isFinite(absolute) && absolute > now) return absolute - now;
+
+  return GATEWAY_TOKEN_FALLBACK_TTL_MS;
+}
+
+/** epoch 秒與毫秒長得很像。2001 年之後的毫秒時間戳都 > 1e12,用這個界線分。 */
+function epochToMs(value: number): number {
+  return value < 1e12 ? value * 1_000 : value;
 }
 
 /**
@@ -166,8 +312,18 @@ export class GatewayClient {
  * key 沒設就丟 `MissingCredentialError`(跟雲端那半同一個模式)。
  */
 export function createGatewayClient(
-  _env: NodeJS.ProcessEnv,
-  _opts: Omit<GatewayClientOptions, 'config'> = {},
+  env: NodeJS.ProcessEnv,
+  opts: Omit<GatewayClientOptions, 'config'> = {},
 ): GatewayClient {
-  throw new Error('not implemented: createGatewayClient (03-llm-router/phase-4)');
+  const apiKey = env.GATEWAY_API_KEY;
+  if (!apiKey) throw new MissingCredentialError('GATEWAY_API_KEY');
+
+  return new GatewayClient({
+    ...opts,
+    config: {
+      baseUrl: env.GATEWAY_BASE_URL ?? DEFAULT_GATEWAY_BASE_URL,
+      apiKey,
+      model: env.LLM_LOCAL_MODEL ?? DEFAULT_LOCAL_MODEL,
+    },
+  });
 }

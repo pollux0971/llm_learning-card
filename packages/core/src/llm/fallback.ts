@@ -48,6 +48,7 @@
  */
 
 import type { LlmTask } from './types.js';
+import { CloudRequiredError, DailyBudgetExceededError } from './errors.js';
 
 export type FallbackGroup = 'gateway-always' | 'gateway-fallback' | 'cloud-only';
 
@@ -88,8 +89,30 @@ export interface FallbackDecision {
  * 可以在不碰函式本體的情況下被驗證。
  */
 export function decideFallback(
-  _input: FallbackInput,
-  _table: Readonly<Record<LlmTask, FallbackGroup>> = FALLBACK_TABLE,
+  input: FallbackInput,
+  table: Readonly<Record<LlmTask, FallbackGroup>> = FALLBACK_TABLE,
 ): FallbackDecision {
-  throw new Error('not implemented: decideFallback (03-llm-router/phase-4)');
+  const { task, cloud } = input;
+  const group = table[task];
+
+  if (group === 'gateway-always') {
+    // 不看 cloud:填空審核本來就是契約 §7 指定給 local 的工作,不是雲端結果的
+    // 替代品,所以不標 provisional、也沒有備援原因可記。
+    return { target: 'gateway', provisional: false };
+  }
+
+  if (group === 'gateway-fallback') {
+    if (cloud === 'ok') return { target: 'cloud', provisional: false };
+    return {
+      target: 'gateway',
+      provisional: true,
+      reason: cloud === 'failed' ? 'cloud_failed' : 'budget_exhausted',
+    };
+  }
+
+  // cloud-only(ingest.*):沒有備援。卡片是幾個月要看的東西,本機模型產卡的品質
+  // 還沒有 golden run 驗過,寧可失敗也不要靜默降級。
+  if (cloud === 'ok') return { target: 'cloud', provisional: false };
+  if (cloud === 'failed') throw new CloudRequiredError(task);
+  throw new DailyBudgetExceededError(task, input.spentUsd ?? 0, input.capUsd ?? 0);
 }
