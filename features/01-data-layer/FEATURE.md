@@ -63,7 +63,7 @@ git repo 與第一個 `init` commit);第三個印出「沒有變更,不建立 sn
 | 1 | schema、卡片驗證器、字數、init、fixtures | Wave 0 | done | 2026-09-02 |
 | 2 | 考題、狀態檔、log、設定檔 | I1 | done | 2026-09-03 |
 | 3 | 依賴圖、循環偵測、拓樸排序 | I1 | done | 2026-09-03 |
-| 4 | learning/ 自成 git repo、snapshot(ADR-042) | I3 | in-progress | |
+| 4 | learning/ 自成 git repo、snapshot(ADR-042) | I3 | done | 2026-09-04 |
 
 ## 驗收方式
 

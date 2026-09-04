@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-1(2026-09-02)、phase-2(2026-09-03)、phase-3(2026-09-03) |
-| 進行中 | phase-4(ADR-042:learning/ 自成 git repo + snapshot) |
-| 下一個 | phase-4 的實作 |
+| 已完成 | phase-1(2026-09-02)、phase-2(2026-09-03)、phase-3(2026-09-03)、phase-4(2026-09-04) |
+| 進行中 | 無 |
+| 下一個 | 無。四個 phase 都 done |
 
 ## Gate
 
@@ -14,18 +14,17 @@
 
 ## phase-4 的現況
 
-測試輪已經做完:
+**已完成並合併**(`28adc83`,2026-09-04)。三輪都跑完:
 
-- `docs/02-decision-map.md` 的 **ADR-042**
-- `features/01-data-layer/phase-4.feature`(13 個場景,全紅)
-- `packages/core/src/schema/git-repo.test.ts`(28 個單元測試紅、11 個純函式的綠)
-- `packages/core/src/schema/git-repo.ts`:純函式與訊息常數是實的,四個碰 IO 的函式是
-  `throw new Error('not implemented')`
-- `scripts/snapshot.ts`:CLI 入口寫好了,邏輯本體在上面那四個函式裡
-- `packages/core/src/schema/cli.ts` 的 `runInit()`:只有 `TODO(ADR-042)` 註解,行為沒變
+- 測試輪 `44de114`:ADR-042、`phase-4.feature`(13 個場景)、`git-repo.test.ts`
+- 實作輪 `b815914`:`isGitAvailable` / `isOwnGitRepo` / `initGitRepo` / `snapshotLearningDir`
+  四個函式實作完成,`runInit()` 裡的那段打開了
+- 審核輪 `2b2d428`:修好一條假綠的測試,`git-repo.ts` 變異 91% → **100%**(門檻 95%)
 
-下一輪開發 agent 要做的:實作 `isGitAvailable` / `isOwnGitRepo` / `initGitRepo` /
-`snapshotLearningDir`,並把 `runInit()` 裡註解掉的那段打開。
+驗收重跑(2026-09-05,協調者):`npm run accept -- --tags "@data-layer and @phase-4"`
+→ **13 scenarios (13 passed) / 56 steps (56 passed)**,退出碼 0。
+
+`standalone.json` 的 snapshot 入口已補(`01-data-layer-snapshot`)。
 
 ## 完成後
 
