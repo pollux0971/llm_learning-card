@@ -1,10 +1,17 @@
+// SOURCE: template v1.3.0 (ee4f611) — 勿手改;升版用 sync-gates.sh
 /**
- * 單獨執行檢查(ADR-022)。跑 standalone.json 裡每個非互動指令,
- * 要求退出碼 0 且輸出含 expect 關鍵字。
+ * 單獨執行檢查(見 docs/02-decision-map.md ADR-005)。跑 standalone.json 裡每個非互動指令,
+ * 要求退出碼符合預期且輸出含 expect 關鍵字。
  *
- * 用法:
- *   npx tsx scripts/check-standalone.ts                 # 全部非互動
- *   npx tsx scripts/check-standalone.ts --only 04-scheduler
+ * 暫存目錄清理是**設定驅動**的:每個條目可以選填 `"cleanup": ["./tmp-learning", ...]`,
+ * 執行前後各清一次(rm -rf,不存在也不報錯)。程式本身不寫死任何目錄名——
+ * 舊版硬編一個 `tmp-learning` / `tmp-output`,換了專案的暫存目錄名字就失效,
+ * 而且會不小心清到剛好同名但無關的資料夾。
+ *
+ * 用法(repo 根從 `git rev-parse --show-toplevel` 解析,不在 git repo 裡則退回 cwd):
+ *   npx tsx scripts/check-standalone.ts                 # 複製進 repo 後執行,全部非互動
+ *   npx tsx <template>/scripts/check-standalone.ts      # 從模板路徑直接執行,cwd 需在目標 repo
+ *   npx tsx scripts/check-standalone.ts --only <key>
  *   npx tsx scripts/check-standalone.ts --list          # 只列出,不執行
  *   npx tsx scripts/check-standalone.ts --timeout 60000 # 每個指令的毫秒上限(預設 120000)
  *   npx tsx scripts/check-standalone.ts --manifest <path> # 改讀別的 manifest(測試用 fixture)
@@ -12,33 +19,38 @@
  * 退出碼:0 全部通過;1 任一失敗,或 manifest **一個條目都沒讀到**。
  * 互動式(dev server)一律跳過,由 /phase-done 人工確認。
  *
- * 最後那條是 P-28 加的:讀到 0 個條目時「全部通過」的 0 是騙人的——
- * 沒有東西通過,是根本沒讀到東西。0 個條目一律當 FAIL。
+ * 「讀到 0 個條目一律 FAIL」是刻意的:manifest 路徑打錯、檔案被清空、或格式改掉時,
+ * 「全部通過」的退出碼 0 是騙人的——沒有東西通過,是根本沒讀到東西。
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-
-const ROOT = resolve(import.meta.dirname, '..');
+import { ROOT as GIT_ROOT } from './_root.js';
 
 /** 三支掃描器共用的那句話。0 個東西的紅,方向永遠是「掃描器壞了」。 */
 const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
 
-type Manifest = Record<
-  string,
-  { cmd: string; interactive: boolean; expect?: string; expectExit?: number }
->;
+interface ManifestEntry {
+  cmd: string;
+  interactive: boolean;
+  expect?: string;
+  expectExit?: number;
+  /** 執行前後各清一次的相對路徑(相對 ROOT)。不填就不清理任何東西。 */
+  cleanup?: string[];
+}
+
+type Manifest = Record<string, ManifestEntry>;
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+const ROOT = resolve(arg('--root') ?? GIT_ROOT);
 const only = arg('--only');
 const timeout = Number(arg('--timeout') ?? 120_000);
 const listOnly = process.argv.includes('--list');
-
-const manifestPath = arg('--manifest') ?? join(ROOT, 'standalone.json');
+const manifestPath = resolve(ROOT, arg('--manifest') ?? join(ROOT, 'standalone.json'));
 
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest;
 const all = Object.entries(manifest);
@@ -59,6 +71,13 @@ if (!entries.length) {
   process.exit(1);
 }
 
+function cleanUp(entry: ManifestEntry): void {
+  for (const rel of entry.cleanup ?? []) {
+    const abs = join(ROOT, rel);
+    if (existsSync(abs)) rmSync(abs, { recursive: true, force: true });
+  }
+}
+
 let failed = 0;
 for (const [name, entry] of entries) {
   if (entry.interactive) {
@@ -66,12 +85,11 @@ for (const [name, entry] of entries) {
     continue;
   }
   if (listOnly) {
-    console.log(`•  ${name}  ${entry.cmd}  expect=${entry.expect ?? '(none)'}`);
+    console.log(`•  ${name}  ${entry.cmd}  expect=${entry.expect ?? '(none)'}${entry.cleanup ? `  cleanup=${entry.cleanup.join(',')}` : ''}`);
     continue;
   }
-  // 02 的指令會寫 ./tmp-learning;每次先清掉,確保是乾淨的一次執行
-  const tmp = join(ROOT, 'tmp-learning');
-  if (entry.cmd.includes('./tmp-learning') && existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
+
+  cleanUp(entry); // 執行前先清,確保是乾淨的一次執行
 
   const t0 = Date.now();
   const r = spawnSync(entry.cmd, { cwd: ROOT, shell: true, encoding: 'utf8', timeout, env: process.env });
@@ -81,6 +99,8 @@ for (const [name, entry] of entries) {
   const wantExit = entry.expectExit ?? 0;
   const exitOk = r.status === wantExit && !timedOut;
   const expectOk = !entry.expect || output.includes(entry.expect);
+
+  cleanUp(entry); // 執行後也清,不留下溢出到下一次執行、或下一個條目的髒狀態
 
   if (exitOk && expectOk) {
     console.log(`✓  ${name}  (${ms} ms)`);
