@@ -88,6 +88,7 @@ NEXT.md 的 gate 全部滿足 ──► 狀態 ready
 **選配(有幫助,但不擋)**
 
 - [ ] Wave 0:`npm run boundaries` 沒有跨資料夾 import
+- [ ] `npm run lint:docs` 沒有斷掉的相對連結(文件裡指到的檔案真的存在)
 - [ ] `FEATURE.md` 狀態與完成日已更新
 - [ ] `NEXT.md` 的「目前」與 gate 已更新
 - [ ] 過程中的取捨已 `/decide`

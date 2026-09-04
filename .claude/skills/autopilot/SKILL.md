@@ -36,7 +36,7 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 
 1. **收割**:哪些 worktree 的審核回來了 → PASS 的合併(一次一個,`git checkout main && git merge --no-ff <branch>`,**不 rebase**,每個 phase 三輪 commit 的軌跡是刻意留的),合併後跑完整檢查:
    ```bash
-   npm run boundaries && npm run typecheck && npm test && npm run accept:standalone && npm run standalone
+   npm run boundaries && npm run typecheck && npm run lint:docs && npm test && npm run accept:standalone && npm run standalone
    npm run accept:dry        # 必看「0 ambiguous」:步驟定義撞名不會讓任何測試變紅,只有這步抓得到
    ```
    全綠 → tag、清 worktree、通知技術顧問「驗推」;FAIL 的照 test→dev→review 循環派 debug session。

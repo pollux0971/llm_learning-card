@@ -15,6 +15,7 @@
     "accept:integration": "NODE_OPTIONS=--import=tsx cucumber-js docs/integration --tags 'not @manual'",
     "mutate": "stryker run",
     "lint:wiki": "tsx scripts/lint.ts",
+    "lint:docs": "tsx scripts/check-doc-links.ts",
     "standalone": "tsx scripts/check-standalone.ts",
     "boundaries": "tsx scripts/check-boundaries.ts",
     "snapshot": "tsx scripts/snapshot.ts",

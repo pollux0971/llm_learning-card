@@ -1,0 +1,10 @@
+{
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "reporters": ["clear-text", "progress-append-only"],
+  "coverageAnalysis": "off",
+  "vitest": { "configFile": "vitest.scanner-doclinks.config.ts", "related": false },
+  "mutate": ["scripts/check-doc-links.ts"],
+  "thresholds": { "high": 90, "low": 70, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "target", "apps/desktop/src-tauri"]
+}

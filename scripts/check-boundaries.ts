@@ -10,14 +10,28 @@
  * 用法:
  *   npx tsx scripts/check-boundaries.ts            # 檢查整個 repo
  *   npx tsx scripts/check-boundaries.ts --verbose  # 也印出每個檔案的歸屬
+ *   npx tsx scripts/check-boundaries.ts --root <dir>  # 改掃別的根目錄(測試用 fixture)
  *
- * 退出碼:0 無違規;1 有違規或有檔案不在任何落點內。
+ * 退出碼:0 無違規;1 有違規、有檔案不在任何落點內,或**一個檔案都沒掃到**。
+ *
+ * 最後那條是 P-28 加的:掃到 0 個檔案的退出碼本來跟「全部通過」一樣是 0,
+ * 落點表打錯字、SKIP_DIRS 多寫一個、EXTS 少一個副檔名,掃描器就會安靜地變瞎,
+ * 而下一個人看到綠燈以為 repo 很乾淨。0 個一律當 FAIL。
  */
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 
-const ROOT = resolve(import.meta.dirname, '..');
+function argValue(name: string): string | undefined {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+/** 預設掃這個 repo;`--root <dir>` 改掃別的根目錄(測試拿臨時目錄當 fixture 用)。 */
+const ROOT = resolve(argValue('--root') ?? resolve(import.meta.dirname, '..'));
 const VERBOSE = process.argv.includes('--verbose');
+
+/** 三支掃描器共用的那句話。看到它就知道方向是「掃描器壞了」,不是「程式碼很乾淨」。 */
+const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
 
 /** 落點 → 擁有的功能。順序有意義:先比對較長的前綴。 */
 const OWNERS: [prefix: string, owner: string][] = [
@@ -47,7 +61,11 @@ const OWNERS: [prefix: string, owner: string][] = [
   ['scripts/review.ts', '11-review-cli'],
   ['scripts/prompt-check.ts', '12-prompt-quality'],
   ['scripts/check-boundaries.ts', 'infra'],
+  ['scripts/check-boundaries.test.ts', 'infra'],
   ['scripts/check-standalone.ts', 'infra'],
+  ['scripts/check-standalone.test.ts', 'infra'],
+  ['scripts/check-doc-links.ts', 'infra'],
+  ['scripts/check-doc-links.test.ts', 'infra'],
   ['scripts/snapshot.ts', 'infra'],
   ['scripts/_env.ts', 'infra'],
   ['scripts/_env.js', 'infra'], // 同一個檔案,ESM 的 relative import 一律寫 .js 副檔名(NodeNext),來源是 .ts
@@ -164,8 +182,13 @@ function main(): void {
   const unmapped: string[] = [];
   let scanned = 0;
 
+  // found = walk() 真的在磁碟上找到的原始檔數;scanned = 有落點、非膠水、真的看了 import 的數量。
+  // 兩個都是 0 的時候掃描器是瞎的,不是 repo 很乾淨。
+  let found = 0;
+
   for (const dir of SCAN_DIRS) {
     for (const file of walk(join(ROOT, dir))) {
+      found++;
       const rel = toPosix(relative(ROOT, file));
       const from = ownerOf(rel);
       if (!from) { unmapped.push(rel); continue; }
@@ -201,6 +224,12 @@ function main(): void {
     }
     console.log('\nWave 0 只能 import contracts/ 與自己的目錄。整合後要跨功能,把邊加進 scripts/boundaries.allow.json 並附理由。');
   }
+  if (found === 0 || scanned === 0) {
+    console.log(`\n✗ boundaries: 掃描到 0 個檔案(walk 找到 ${found} 個原始檔,實際檢查 ${scanned} 個)`);
+    console.log(`${SCANNER_BROKEN}。落點表 OWNERS、walk() 的 SKIP_DIRS、或副檔名清單 EXTS 壞掉時就長這樣。`);
+    process.exit(1);
+  }
+
   if (!unmapped.length && !violations.length) console.log('✓ 無違規');
   process.exit(unmapped.length || violations.length ? 1 : 0);
 }
