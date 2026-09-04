@@ -73,7 +73,7 @@ git repo 與第一個 `init` commit);第三個印出「沒有變更,不建立 sn
 `atomicWriteJson()` 是 `state/` 全部寫入的單一入口,責任屬於 01(ADR-040 把這個歸屬留給
 協調者決定,2026-09-04 決定併入)。門檻跟著責任走,不跟著目錄走(P-26)。
 它不在 `schema/**` 這個 glob 裡,所以審核輪要**手動指定**:
-`npx stryker run --mutate "packages/core/src/ingest/state.ts,!packages/core/src/ingest/state.test.ts"`。
+`npm run mutate -- --mutate "packages/core/src/ingest/state.ts,!packages/core/src/ingest/state.test.ts"`。
 字數計算與 example 圍欄解析的邊界(剛好 100 / 101 字、0 個 / 多個圍欄)必須有測試。
 
 phase-4 的測試一律在 `mkdtemp` 出來的暫存目錄裡跑 `git init`,**絕對不在這個 repo 或任何
@@ -141,9 +141,9 @@ gherkin 在 `PATH` 前面插一個必定失敗的 `git` shim(非 0 退出碼)。
   獨立審核指出 `packages/contracts/src/index.ts` 的變異分數只有 85%(`AnswerGroupSchema` 的
   `some`→`every` 存活)。已在 `packages/contracts/src/index.test.ts` 補上混合空字串/全空的案例、
   regex 錨點(前後多字元)的案例、以及每條驗證錯誤訊息的斷言,手動指定
-  `npx stryker run --mutate "packages/contracts/src/index.ts,!packages/contracts/src/**/*.test.ts"`
+  `npm run mutate -- --mutate "packages/contracts/src/index.ts,!packages/contracts/src/**/*.test.ts"`
   跑出 174 個變異體、100% 擊殺。但因為 `mutate` 清單只有 `packages/core` 與 `packages/ui-shared`,
-  平常 `npx stryker run` 不會掃到 contracts,這個分數不會自動守住。請協調者決定要不要把
+  平常 `npm run mutate` 不會掃到 contracts,這個分數不會自動守住。請協調者決定要不要把
   `packages/contracts/src/**/*.ts`(排除 `*.test.ts`)正式加進 `stryker.config.json`,納入變異門檻。
 
 ### phase-4(ADR-042)

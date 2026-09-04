@@ -129,6 +129,14 @@
       "infra"
     ],
     [
+      "scripts/mutate.ts",
+      "infra"
+    ],
+    [
+      "scripts/mutate.test.ts",
+      "infra"
+    ],
+    [
       "scripts/_env.ts",
       "infra"
     ],

@@ -101,7 +101,7 @@ stage 1 答對進 stage 2、stage 3 答錯退 stage 1、reteach 提示不算進 
 ## 4. 變異測試(Stryker)
 
 範圍:`packages/core/src/session/**/*.ts`
-指令:`npx stryker run --mutate "packages/core/src/session/**/*.ts,!packages/core/src/session/**/*.test.ts"`
+指令:`npm run mutate -- --mutate "packages/core/src/session/**/*.ts,!packages/core/src/session/**/*.test.ts"`
 
 **分數 82.30%**(達 80% 門檻):189 個有效變異中 92 killed、1 timeout、17 survived、3 no coverage,
 另有 77 個被 TypeScript checker 判定型別不合法而自動排除(不算入分數,Stryker 正常行為)。
@@ -199,7 +199,7 @@ stage 1 答對進 stage 2、stage 3 答錯退 stage 1、reteach 提示不算進 
 **`packages/core/src/scheduler/transitions.ts`(嚴格 95%)**
 
 ```
-npx stryker run --mutate "packages/core/src/scheduler/transitions.ts,!packages/core/src/scheduler/transitions.test.ts"
+npm run mutate -- --mutate "packages/core/src/scheduler/transitions.ts,!packages/core/src/scheduler/transitions.test.ts"
 ```
 
 **分數 100.00%**(23 killed、0 timeout、**0 survived**、0 no coverage,另有 21 個被
@@ -209,7 +209,7 @@ TypeScript checker 判定型別不合法自動排除)。介面改動(`PassCtx.an
 **`packages/core/src/session/**`(標準 80%)**
 
 ```
-npx stryker run --mutate "packages/core/src/session/**/*.ts,!packages/core/src/session/**/*.test.ts"
+npm run mutate -- --mutate "packages/core/src/session/**/*.ts,!packages/core/src/session/**/*.test.ts"
 ```
 
 **分數 83.49%**(達 80% 門檻,較上一輪 82.30% 略升):90 killed、1 timeout、16 survived、

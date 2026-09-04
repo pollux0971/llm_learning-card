@@ -120,8 +120,12 @@ npm run accept:dry         # 必看「0 ambiguous」
 | 寬鬆 | 跳過 |
 
 ```
-npx stryker run --mutate "<該 phase 的原始碼路徑>"
+npm run mutate -- --mutate "<該 phase 的原始碼路徑>"
 ```
+
+**一定走 `npm run mutate`,不要用 `npx` 直接叫 `stryker`。** 那支會先拿跨 worktree 的鎖;繞過去的話
+幾個 worktree 的審核輪會同時跑 Stryker 互相 OOM(exit 144),而殘缺的分數會被當成驗收結果——
+靜默的假驗收。等鎖時它會印出是誰佔著,細節見 `mutation-testing` skill。
 
 用 `mutation-testing` skill 的準則判讀存活的變異。
 

@@ -11,7 +11,7 @@ phase-3 的嚴格級變異測試(`packages/core/src/schema/graph.ts`,契約 §8 
 ## 起手式
 
 ```
-npx stryker run --mutate "packages/core/src/schema/graph.ts,!packages/core/src/schema/graph.test.ts" --reporters json,clear-text
+npm run mutate -- --mutate "packages/core/src/schema/graph.ts,!packages/core/src/schema/graph.test.ts" --reporters json,clear-text
 ```
 
 初次結果:90.32%(138 killed / 11 survived / 2 timeout / 4 no-coverage,共 15 個要處理的存活變異)。
@@ -73,7 +73,7 @@ npx stryker run --mutate "packages/core/src/schema/graph.ts,!packages/core/src/s
 ## 最終結果
 
 ```
-npx stryker run --mutate "packages/core/src/schema/graph.ts,!packages/core/src/schema/graph.test.ts"
+npm run mutate -- --mutate "packages/core/src/schema/graph.ts,!packages/core/src/schema/graph.test.ts"
 ```
 
 - **變異分數:100.00%**(門檻 95%,級別:嚴格)

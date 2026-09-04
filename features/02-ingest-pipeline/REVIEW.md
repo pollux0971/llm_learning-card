@@ -72,7 +72,7 @@ NODE_OPTIONS=--import=tsx npx cucumber-js --tags "not @manual" --dry-run
 ## 4. Stryker 變異測試
 
 ```
-npx stryker run --mutate "packages/core/src/ingest/questions.ts,packages/core/src/ingest/children.ts,packages/core/src/ingest/deps.ts,!packages/core/src/ingest/**/*.test.ts"
+npm run mutate -- --mutate "packages/core/src/ingest/questions.ts,packages/core/src/ingest/children.ts,packages/core/src/ingest/deps.ts,!packages/core/src/ingest/**/*.test.ts"
 ```
 
 初次結果:**45.56%**(77 killed / 72 survived / 20 no-coverage,error 78 個是
@@ -180,7 +180,7 @@ null byte**在開發 agent 的原始 commit 就存在**(上一輪的骨架 commi
 ### 4.4 最終結果
 
 ```
-npx stryker run --mutate "packages/core/src/ingest/questions.ts,packages/core/src/ingest/children.ts,packages/core/src/ingest/deps.ts,!packages/core/src/ingest/**/*.test.ts"
+npm run mutate -- --mutate "packages/core/src/ingest/questions.ts,packages/core/src/ingest/children.ts,packages/core/src/ingest/deps.ts,!packages/core/src/ingest/**/*.test.ts"
 ```
 
 - **變異分數:100.00%**(門檻 80%,級別:標準)
@@ -263,7 +263,7 @@ npx vitest run     → 64 test files, 950 tests 全過
 ### 6.3 Stryker
 
 ```
-npx stryker run --mutate "packages/core/src/ingest/deps.ts,!packages/core/src/ingest/deps.test.ts"
+npm run mutate -- --mutate "packages/core/src/ingest/deps.ts,!packages/core/src/ingest/deps.test.ts"
 ```
 
 **變異分數:100.00%**(門檻 80%,級別:標準)。118 個變異點,85 killed +
@@ -624,7 +624,7 @@ typecheck 過,只拿掉行為)→ `pipeline.test.ts` 的
 
 ## 9.4 存活變異
 
-`npx stryker run --mutate "packages/core/src/ingest/deps.ts,!packages/core/src/ingest/deps.test.ts"`
+`npm run mutate -- --mutate "packages/core/src/ingest/deps.ts,!packages/core/src/ingest/deps.test.ts"`
 → **100.00%**,119 killed / 1 timeout / **0 survived** / 51 errors(TypeScript checker 擋掉,
 不計分)。**沒有存活變異要處理**,也沒有比上一輪退步。
 

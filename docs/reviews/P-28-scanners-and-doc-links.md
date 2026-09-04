@@ -253,9 +253,9 @@ walk 找得到檔案卻一個 import 都沒看過。開發輪的三條測試全�
 跑法:
 
 ```bash
-npx stryker run stryker.scanner-doclinks.json
-npx stryker run stryker.scanner-standalone.json
-npx stryker run stryker.scanner-boundaries-p28.json
+npm run mutate -- stryker.scanner-doclinks.json
+npm run mutate -- stryker.scanner-standalone.json
+npm run mutate -- stryker.scanner-boundaries-p28.json
 ```
 
 ### 8.2 分數(標準級門檻 80%)

@@ -31,12 +31,33 @@ description: 用 Stryker 做變異測試,驗證這個專案的測試是否真的
 
 ```bash
 npm run mutate                                          # 全部,慢
-npx stryker run --mutate "packages/core/src/scheduler/**/*.ts"   # 單一模組
-npx stryker run --mutate "packages/core/src/scheduler/interval.ts"  # 單一檔案
-npx stryker run --incremental                           # 只跑變動過的,日常用這個
+npm run mutate -- --mutate "packages/core/src/scheduler/**/*.ts"   # 單一模組
+npm run mutate -- --mutate "packages/core/src/scheduler/interval.ts"  # 單一檔案
+npm run mutate -- --incremental                           # 只跑變動過的,日常用這個
 ```
 
 報告在 `reports/mutation/index.html`。
+
+### ⚠️ 一律走 `npm run mutate`,不要用 `npx` 直接叫 `stryker`
+
+`npm run mutate` 是 `scripts/mutate.ts`,它在跑 Stryker 之前會先拿一把**跨 worktree 的檔案鎖**
+(鎖檔在主 repo 根的 `.stryker.lock`,所有 worktree 共用同一把)。直接叫 `stryker` CLI 會**繞過那把鎖**。
+
+繞過去會出什麼事:真的發生過。三個 worktree 的審核輪同時跑 Stryker,把彼此 **OOM 掉(exit 144)**,
+三個 agent 各自重試,那一輪跑了 84 / 45 / 40 分鐘,一大半燒在互相踩踏。**更危險的是**:被殺掉的
+那一輪如果沒被診斷出來,殘缺的分數會被當成驗收結果回報——**靜默的假驗收**。
+
+鎖的行為:
+
+- 別人在跑 → 每 15 秒重試一次,印出是哪個 worktree 的哪個 pid 佔著,最多等 90 分鐘,超過 `exit 1`。
+- 持鎖的程序死了(pid 不在)或鎖超過 2 小時 → 當殘鎖清掉,直接接手,不用等。
+- 自己被 Ctrl-C / SIGTERM 殺掉 → 鎖會被刪掉,不會留給下一個人白等。
+
+參數原樣透傳,`--` 後面照舊寫 Stryker 的參數(含帶引號逗號的 `--mutate`)、設定檔也可以:
+
+```bash
+npm run mutate -- stryker.scanner-doclinks.json
+```
 
 ## 分級門檻
 

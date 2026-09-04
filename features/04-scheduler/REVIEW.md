@@ -50,7 +50,7 @@ Stryker mutation score(`select.ts`,嚴格 95% 門檻):**100.00%**
 
 ## 3. Mutation testing:存活變異處理
 
-第一輪 `npx stryker run --mutate "packages/core/src/scheduler/select.ts,!...test.ts"`
+第一輪 `npm run mutate -- --mutate "packages/core/src/scheduler/select.ts,!...test.ts"`
 結果 80~88%(多次重跑分數在這區間浮動,因為部分 mutant 是耗時的迴圈變異,
 timeout/survived 的判定會因系統負載而不同,但下列 7 個真正的邏輯缺口每次都在
 存活名單裡,不受浮動影響)。逐一處理:
