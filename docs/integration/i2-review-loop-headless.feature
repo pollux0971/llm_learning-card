@@ -93,6 +93,22 @@ Feature: A working spaced repetition loop in the terminal
     When the person ingests a new raw file
     Then cards, questions and order are produced as in I1
 
+  @regression
+  Scenario: An empty or missing card directory is reported, not shown as nothing due
+    Given the vault has no cards at all
+    When the person asks what is due today
+    Then the command says the vault has no cards
+    And it does not say that nothing is due today
+    And it exits with a non zero status
+
+  @regression
+  Scenario: Having cards but none scheduled today is an ordinary quiet day
+    Given the vault has cards and none of them fall due today
+    When the person asks what is due today
+    Then the command reports how many cards it looked at
+    And it says nothing is due today
+    And it exits with status 0
+
   Scenario: Every standalone entry point still runs
     When every non interactive command in the standalone manifest is executed
     Then each exits with status 0
