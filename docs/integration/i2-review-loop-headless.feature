@@ -109,11 +109,6 @@ Feature: A working spaced repetition loop in the terminal
     And it says nothing is due today
     And it exits with status 0
 
-  Scenario: Every standalone entry point still runs
-    When every non interactive command in the standalone manifest is executed
-    Then each exits with status 0
-    And each output contains the expected marker
-
   @manual
   Scenario: A person actually uses it for a week
     When the person runs the review command daily for seven days

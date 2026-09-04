@@ -1,4 +1,4 @@
-// SOURCE: template v1.3.0 (ee4f611) — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.3.4 (eb04f73) sha256=9d09e58ac6bbe3bca866bbab7e8033065a8ef3d69861efd887b817419691c1fb — 勿手改;升版用 sync-gates.sh
 /**
  * 單獨執行檢查(見 docs/02-decision-map.md ADR-005)。跑 standalone.json 裡每個非互動指令,
  * 要求退出碼符合預期且輸出含 expect 關鍵字。
@@ -29,6 +29,9 @@ import { ROOT as GIT_ROOT } from './_root.js';
 
 /** 三支掃描器共用的那句話。0 個東西的紅,方向永遠是「掃描器壞了」。 */
 const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
+
+/** 這支腳本在 gate 機器可讀標記(見 CHANGELOG 1.3.2 (C))裡的名字。 */
+const GATE_NAME = 'standalone';
 
 interface ManifestEntry {
   cmd: string;
@@ -62,12 +65,14 @@ console.log(`standalone: 從 ${manifestPath} 讀到 ${all.length} 個條目`);
 if (all.length === 0) {
   console.error(`\n✗ 讀到 0 個條目`);
   console.error(`${SCANNER_BROKEN}。manifest 路徑指錯、檔案被清空、或格式改掉時就長這樣。`);
+  console.log(`gate=${GATE_NAME} result=FAIL scanned=0`);
   process.exit(1);
 }
 
 const entries = all.filter(([name]) => !only || name === only);
 if (!entries.length) {
   console.error(`${manifestPath} 裡沒有 ${only}`);
+  console.log(`gate=${GATE_NAME} result=FAIL scanned=0`);
   process.exit(1);
 }
 
@@ -118,4 +123,5 @@ for (const [name, entry] of entries) {
 }
 
 if (!listOnly) console.log(failed ? `\n${failed} 個失敗` : '\n全部通過');
+console.log(`gate=${GATE_NAME} result=${failed ? 'FAIL' : 'PASS'} scanned=${entries.length}`);
 process.exit(failed ? 1 : 0);

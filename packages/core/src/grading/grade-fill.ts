@@ -1,5 +1,6 @@
 import { normalize } from './normalize.js';
 import { matchFuzzy } from './fuzzy.js';
+import { witness } from '@contracts/witness.js';
 import type { FillQuestion, Grader, GradeResult, LlmRouter } from './types.js';
 
 function buildSynonymPrompt(accepted: string[], typed: string): string {
@@ -31,6 +32,7 @@ export async function gradeFillBlank(accepted: string[], rawInput: string, route
     const pass = result.text.trim().toLowerCase() === 'yes';
     return { pass, feedback: pass ? '模型判定語意相同' : '模型判定語意不同', grader: 'local-llm' };
   } catch {
+    witness('grading.fill.llm-failed-strict');
     return { pass: false, feedback: '沒有可用模型,無法判斷語意是否相同', grader: 'fallback-strict' };
   }
 }

@@ -1,0 +1,16 @@
+{
+  "sha": "d966420",
+  "generatedAt": "2026-09-04T22:25:27.738Z",
+  "command": "DEGRADED_WITNESS_DIR=reports/degraded/.raw/2026-09-04T22-20-20-767Z npx vitest run",
+  "testFiles": 90,
+  "tests": 2385,
+  "testsTriggeringAny": 161,
+  "testsTriggeringSwallow": 103,
+  "testsTriggeringDefaultPath": 83,
+  "testsOptedIn": 0,
+  "crossOwnerTests": 13,
+  "signalsInCatalog": 30,
+  "signalsWithCallSites": 30,
+  "signalsTriggered": 30,
+  "outsideRows": 0
+}

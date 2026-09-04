@@ -85,3 +85,69 @@ export function scanDir(root: string): ScannedDir {
 
   return { root, cards, questions, graphs, reviews };
 }
+
+/**
+ * 「掃了幾個東西」的清點。scanDir 回傳的是**內容**,這裡回傳的是**數量與結構
+ * 狀態**——兩者的差別就是「0 problems found.」跟「掃描 1 個類別、3 張卡」的差別。
+ *
+ * 為什麼要分開一個函式:scanDir 對「cards/ 不存在」與「cards/ 在但裡面是空的」
+ * 一視同仁,兩種都只是回傳 `cards: []`。使用者要修的東西完全不同(一個是路徑
+ * 打錯,一個是卡片檔案消失),所以診斷需要目錄層級的事實,不是只有筆數。
+ */
+export interface DirInventory {
+  /** --dir 指到的目錄本身在不在 */
+  rootExists: boolean;
+  /** `<root>/cards` 在不在 */
+  cardsDirExists: boolean;
+  /** `cards/` 底下的類別子目錄名,排序過 */
+  categories: string[];
+  /** 那些一個 `.md` 都沒有的類別目錄名,排序過 */
+  emptyCategories: string[];
+  /** 卡片數(不含 `.short.md`,跟 scanDir 同一條規則) */
+  cards: number;
+  /** `questions/*.yaml` 的份數 */
+  questions: number;
+  /** `graph/deps.json` 在不在 */
+  depsFile: boolean;
+  /** `graph/order-*.json` 的檔名,排序過 */
+  orderFiles: string[];
+}
+
+function subdirs(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => statSync(join(dir, name)).isDirectory())
+    .sort();
+}
+
+/** 只看數量與結構,不 parse 任何卡片內容——壞掉的卡片不該讓清點本身炸掉。 */
+export function inventory(root: string): DirInventory {
+  const cardsDir = join(root, 'cards');
+  const categories = subdirs(cardsDir);
+  const cardsPerCategory = new Map<string, number>();
+  for (const category of categories) {
+    const files = listFiles(join(cardsDir, category), '.md').filter((f) => !f.endsWith('.short.md'));
+    cardsPerCategory.set(category, files.length);
+  }
+
+  const qDir = join(root, 'questions');
+  const questions = existsSync(qDir) ? readdirSync(qDir).filter((n) => n.endsWith('.yaml')).length : 0;
+
+  const graphDir = join(root, 'graph');
+  const orderFiles = existsSync(graphDir)
+    ? readdirSync(graphDir)
+        .filter((n) => n.startsWith('order-') && n.endsWith('.json'))
+        .sort()
+    : [];
+
+  return {
+    rootExists: existsSync(root),
+    cardsDirExists: existsSync(cardsDir),
+    categories,
+    emptyCategories: categories.filter((c) => cardsPerCategory.get(c) === 0),
+    cards: [...cardsPerCategory.values()].reduce((a, b) => a + b, 0),
+    questions,
+    depsFile: existsSync(join(root, 'graph/deps.json')),
+    orderFiles,
+  };
+}

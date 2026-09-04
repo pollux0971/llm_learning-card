@@ -13,15 +13,21 @@
  */
 import './_env.js';
 import { createInterface } from 'node:readline/promises';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { FakeLlmRouter, loadFixturesFromDir } from '../packages/core/src/grading/index.js';
 import { buildDueList } from '../packages/core/src/scheduler/index.js';
 import { nextCalendarDay } from '../packages/core/src/schema/review.js';
 import { buildTodaySession } from '../packages/core/src/session/build.js';
 import { presentNextCard } from '../packages/core/src/session/present.js';
 import { joinApplyLines, submitAnswer } from '../packages/core/src/session/answer.js';
-import { loadReviews } from '../packages/core/src/session/io.js';
-import { estimateTomorrow, renderDryRun, renderSummary } from '../packages/core/src/session/summary.js';
+import { listCardIds, loadReviews } from '../packages/core/src/session/io.js';
+import {
+  estimateTomorrow,
+  renderDryRun,
+  renderDryRunHeader,
+  renderNoCards,
+  renderSummary,
+} from '../packages/core/src/session/summary.js';
 import type { Session } from '../packages/core/src/session/types.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -79,11 +85,26 @@ async function main(): Promise<void> {
     usageError('缺少 --dir 或 --today。');
   }
 
+  // 先數磁碟上有幾張卡,再建 session。0 張卡是異常狀態,不是空閒日——這個判斷
+  // 要在 buildTodaySession 之前,因為卡片不見時排程本身也已經沒有意義了。
+  const cardIds = listCardIds(dir);
+  if (cardIds.length === 0) {
+    console.error(renderNoCards(join(dir, 'cards')));
+    process.exit(1);
+  }
+
   const router = new FakeLlmRouter(loadFixturesFromDir(resolve(ROOT, 'contracts/fixtures/llm')));
   const session = await buildTodaySession({ learningDir: dir, today, router });
 
   if (dryRun) {
+    // 未排程 = 磁碟上有卡、reviews.json 沒有紀錄。檔案不存在與檔案是 `{}` 對
+    // 使用者是同一件事(都是「還沒開始複習」),loadReviews 已經把兩者都給成
+    // `{}`,所以這裡算出來的數字也一樣,兩種輸出逐字相同。
+    const reviews = loadReviews(dir);
+    const unscheduled = cardIds.filter((id) => !(id in reviews)).length;
     const due = session.queue.map((d) => ({ card: d.card, stage: d.stage, overdueDays: d.overdue_days }));
+
+    console.log(renderDryRunHeader({ cards: cardIds.length, due: due.length, unscheduled }));
     console.log(renderDryRun(due));
     return;
   }

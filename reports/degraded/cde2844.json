@@ -1,0 +1,21 @@
+{
+  "sha": "cde2844",
+  "generatedAt": "2026-09-04T23:02:52.487Z",
+  "command": "DEGRADED_WITNESS_DIR=reports/degraded/.raw/2026-09-04T22-59-50-053Z npx vitest run",
+  "testFiles": 91,
+  "tests": 2471,
+  "testsTriggeringAny": 160,
+  "testsTriggeringSwallow": 102,
+  "testsTriggeringDefaultPath": 81,
+  "testsIntended": 8,
+  "testsUnmarked": 152,
+  "unmarkedBaseline": 152,
+  "intendedStale": 0,
+  "intendedNotRun": 0,
+  "scope": "full",
+  "crossOwnerTests": 13,
+  "signalsInCatalog": 30,
+  "signalsWithCallSites": 30,
+  "signalsTriggered": 30,
+  "outsideRows": 0
+}

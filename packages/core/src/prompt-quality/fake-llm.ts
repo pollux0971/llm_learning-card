@@ -8,6 +8,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { witness } from '@contracts/witness.js';
 import type { LlmResult, LlmRouter, LlmTask } from './types.js';
 
 interface FixtureRecord {
@@ -61,6 +62,8 @@ export class FakeLlmRouter implements LlmRouter {
 
     const match = sameMarker.find((f) => f.attempt === count) ?? sameMarker.find((f) => f.attempt === 1);
     if (!match) throw new FixtureNotFoundError(task, prompt, count);
+    // Stryker disable next-line all: ADR-044 的觀測點,對測試不可觀測是設計,不是漏測。
+    if (match.attempt !== count) witness('prompt-quality.fake.attempt-fallback-first');
     return match.response;
   }
 

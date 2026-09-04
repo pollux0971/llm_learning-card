@@ -1,0 +1,16 @@
+{
+  "sha": "959b039-dirty",
+  "generatedAt": "2026-09-04T20:33:17.273Z",
+  "command": "(--in reports/degraded/.raw/2026-09-04T20-30-51-298Z)",
+  "testFiles": 89,
+  "tests": 1779,
+  "testsTriggeringAny": 152,
+  "testsTriggeringSwallow": 101,
+  "testsTriggeringDefaultPath": 74,
+  "testsOptedIn": 0,
+  "crossOwnerTests": 13,
+  "signalsInCatalog": 30,
+  "signalsWithCallSites": 30,
+  "signalsTriggered": 28,
+  "outsideRows": 0
+}

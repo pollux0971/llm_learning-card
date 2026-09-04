@@ -351,8 +351,3 @@ Then('it reports that the file has no usable content', function (this: LearningW
   const s = ctx(this);
   assert.match(s.lastResult?.message ?? '', /沒有可用內容|空白/);
 });
-
-Then('it exits with a non zero status', function (this: LearningWorld) {
-  const s = ctx(this);
-  assert.notEqual(s.lastResult?.exitCode, 0);
-});

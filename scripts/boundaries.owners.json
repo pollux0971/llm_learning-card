@@ -113,7 +113,15 @@
       "09-lint"
     ],
     [
+      "scripts/lint.test.ts",
+      "09-lint"
+    ],
+    [
       "scripts/review.ts",
+      "11-review-cli"
+    ],
+    [
+      "scripts/review.test.ts",
       "11-review-cli"
     ],
     [
@@ -157,6 +165,22 @@
       "infra"
     ],
     [
+      "scripts/degraded-report.ts",
+      "infra"
+    ],
+    [
+      "scripts/degraded-report.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/degraded-intended.json",
+      "infra"
+    ],
+    [
+      "scripts/degraded-witness.setup.ts",
+      "infra"
+    ],
+    [
       "scripts/_env.ts",
       "infra"
     ],
@@ -181,11 +205,19 @@
       "infra"
     ],
     [
+      "scripts/zero-input-guard.test.ts",
+      "infra"
+    ],
+    [
       "scripts/_root.js",
       "infra"
     ],
     [
       "features/steps/",
+      "steps"
+    ],
+    [
+      "features/support/",
       "steps"
     ]
   ],

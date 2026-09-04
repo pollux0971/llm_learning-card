@@ -37,6 +37,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { witness, witnessed } from '@contracts/witness.js';
 import type { LogEvent } from '@contracts/index.js';
 
 export interface SpendPrices {
@@ -72,7 +73,7 @@ function field(event: LogEvent, key: string): unknown {
 /** 只有數字才是數字:缺欄位(逾時、截斷的事件)當 0,不是 NaN。 */
 function numberField(event: LogEvent, key: string): number {
   const value = field(event, key);
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return typeof value === 'number' && Number.isFinite(value) ? value : witnessed('llm.spend.tokens-missing-zero', 0);
 }
 
 /** `type === 'llm_call'` 且 `provider === 'openai'`——只有雲端會花錢。 */
@@ -119,7 +120,7 @@ export function isBudgetExhausted(spentUsd: number, capUsd: number): boolean {
 function readNonNegativeNumber(raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw.trim() === '') return fallback;
   const value = Number(raw);
-  if (!Number.isFinite(value) || value < 0) return fallback;
+  if (!Number.isFinite(value) || value < 0) return witnessed('llm.spend.env-invalid-default', fallback);
   return value;
 }
 
@@ -146,6 +147,7 @@ export function readDailySpend(logPath: string, day: string, prices: SpendPrices
     content = readFileSync(logPath, 'utf8');
   } catch {
     // 還沒呼叫過就是沒花錢——檔案不存在不是錯誤。
+    witness('llm.spend.log-unreadable-zero');
     return { usd: 0, calls: 0 };
   }
 
@@ -165,6 +167,7 @@ export function readDailySpend(logPath: string, day: string, prices: SpendPrices
       // 「這一行放棄了,換下一行」,而不是「這裡什麼都不做」。
       // Stryker disable next-line all: 等價變異,理由見上。
     } catch {
+      witness('llm.spend.bad-line-skipped');
       continue;
     }
   }

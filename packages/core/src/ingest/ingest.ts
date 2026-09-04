@@ -14,6 +14,7 @@ import { generateQuestionsForCards, type GenerateQuestionsFailure } from './ques
 import { generateChildrenForCards } from './children.js';
 import { analyzeDependencies } from './deps.js';
 import { GraphFileCorruptError } from './errors.js';
+import { witness, witnessed } from '@contracts/witness.js';
 import type { LlmRouter as CoreLlmRouter } from '@core/llm/index.js';
 
 export interface RunIngestOptions {
@@ -43,7 +44,7 @@ interface IngestedState {
 
 export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult> {
   ensureInitialized(opts.outDir);
-  const category = opts.category ?? inferCategory(opts.rawRelPath) ?? 'security';
+  const category = opts.category ?? inferCategory(opts.rawRelPath) ?? witnessed('ingest.category-default-security', 'security');
   const today = opts.today ?? new Date().toISOString().slice(0, 10);
   const rawPath = join(opts.outDir, opts.rawRelPath);
 
@@ -278,7 +279,7 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     return emptyPipelineResult(level0);
   }
 
-  const category = opts.category ?? inferCategory(opts.rawRelPath) ?? 'security';
+  const category = opts.category ?? inferCategory(opts.rawRelPath) ?? witnessed('ingest.category-default-security', 'security');
   const today = opts.today ?? new Date().toISOString().slice(0, 10);
   const logPath = join(opts.outDir, 'state/log.jsonl');
 
@@ -300,6 +301,7 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     children = result.children;
     childQuestionFailures = result.questionFailures;
   } catch (err) {
+    witness('ingest.pipeline.children-failed-skipped');
     appendLogEvent(logPath, {
       ts: new Date().toISOString(),
       type: 'warning',
@@ -335,6 +337,7 @@ export async function runIngestPipeline(opts: RunIngestOptions): Promise<RunInge
     // 違反「恰好一筆」。往外丟,讓 scripts/ingest.ts 的 main().catch 以非 0 結束。
     // warning 已經由 analyzeDependencies() 記過了,這裡不再記第二筆。
     if (err instanceof GraphFileCorruptError) throw err;
+    witness('ingest.pipeline.deps-failed-skipped');
     appendLogEvent(logPath, {
       ts: new Date().toISOString(),
       type: 'warning',

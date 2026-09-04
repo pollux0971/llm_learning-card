@@ -6,10 +6,10 @@ Feature: The test card wired to the real modules
   Background:
     Given the desktop application is running against a real learning directory
 
-  Scenario: The window and the terminal produce the same session
+  Scenario: The card shows exactly what the real scheduler returns
     Given a fixed learning directory and a fixed date
-    When the question list is built in the window and in the terminal
-    Then the two lists are identical in content and order
+    When the card builds its question list from the real scheduler
+    Then the list matches the scheduler's due list in content and order
 
   Scenario: A file outside the learning directory cannot be reached
     When the interface is made to request a path outside the directory

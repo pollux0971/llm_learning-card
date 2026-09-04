@@ -1,4 +1,4 @@
-// SOURCE: template v1.3.0 (ee4f611) — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.3.4 (eb04f73) sha256=3b5cc5013b08c9f5021dc7cd95adad70edac408b82c7bd26ea0c341cdf3965be — 勿手改;升版用 sync-gates.sh
 /**
  * 文件連結檢查(見 docs/03-agile-workflow.md「文件漂移」維護項)。
  *
@@ -56,6 +56,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { ROOT as GIT_ROOT } from './_root.js';
 
+/** 這支腳本在 gate 機器可讀標記(見 CHANGELOG 1.3.2 (C))裡的名字。 */
+const GATE_NAME = 'doc-links';
+
 /** 遞迴掃描這些目錄底下的 *.md。根目錄的 *.md 另外處理(不遞迴)。 */
 export const SCAN_DIRS = ['docs', 'features', 'contracts', '.claude'];
 
@@ -77,14 +80,34 @@ interface GatesConfig {
   docLinks?: { skipSegments?: unknown; skipPrefixes?: unknown };
 }
 
+/**
+ * 找 `gates.config.json` 的順序(env 優先權見 CHANGELOG 1.3.4 (3)):
+ *   (0) 環境變數 `GATES_CONFIG_DIR`(若設且該目錄存在)——`verify-against.sh` 跑模板版
+ *       時會設這個,不然順位 (1) 在那個情境下是模板自己的 `scripts/`(裡面的
+ *       `gates.config.json` 是給新專案抄的範例),讀不到 consumer 真正填的
+ *       `docLinks.skipSegments` / `skipPrefixes`。
+ *   (1) 這支腳本自己所在的目錄(sync 後就是 consumer 的安裝目錄,例如 `features/scripts/`)
+ *   (2) `<root>/scripts/`——`root` 是呼叫端傳進來的那個(預設 `GIT_ROOT`,`--root` 覆蓋時是
+ *       覆蓋值),不是寫死的全域 ROOT,因為這支腳本支援對別的 repo 跑(`--root <dir>`,
+ *       verify-against.sh 用得到)。三處都沒有 → 用內建預設,這份檔本來就是選填設定,
+ *       不印任何訊息(見 CHANGELOG 1.3.2 (A))。
+ */
 function loadGatesConfig(root: string): GatesConfig {
-  const p = join(root, 'scripts', 'gates.config.json');
-  if (!existsSync(p)) return {};
-  try {
-    return JSON.parse(readFileSync(p, 'utf8')) as GatesConfig;
-  } catch {
-    return {};
+  const candidates: string[] = [];
+  const envDir = process.env.GATES_CONFIG_DIR;
+  if (envDir && existsSync(envDir)) {
+    candidates.push(join(envDir, 'gates.config.json'));
   }
+  candidates.push(join(import.meta.dirname, 'gates.config.json'), join(root, 'scripts', 'gates.config.json'));
+  for (const p of candidates) {
+    if (!existsSync(p)) continue;
+    try {
+      return JSON.parse(readFileSync(p, 'utf8')) as GatesConfig;
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 function stringArray(v: unknown): string[] {
@@ -352,6 +375,7 @@ export function main(argv: string[]): { code: number; output: string } {
   if (links === 0) {
     out.push(`doc-links: 掃描 ${files} 個 markdown 檔,掃描到 0 條相對連結`);
     out.push(`${SCANNER_BROKEN}。掃描範圍 SCAN_DIRS、副檔名、或 stripCode 挖太多時就長這樣。`);
+    out.push(`gate=${GATE_NAME} result=FAIL scanned=0`);
     return { code: 1, output: out.join('\n') };
   }
 
@@ -361,10 +385,12 @@ export function main(argv: string[]): { code: number; output: string } {
     out.push(`\n✗ ${broken.length} 條連結指到不存在的檔案:`);
     for (const b of broken) out.push(`  ${b.file}:${b.line}  →  ${b.target}`);
     out.push('\n改了檔名或搬了目錄就要一起改指過去的連結;真的要指到還沒有的檔案就先別寫成連結。');
+    out.push(`gate=${GATE_NAME} result=FAIL scanned=${links}`);
     return { code: 1, output: out.join('\n') };
   }
 
   out.push('✓ 無壞掉的連結');
+  out.push(`gate=${GATE_NAME} result=PASS scanned=${links}`);
   return { code: 0, output: out.join('\n') };
 }
 

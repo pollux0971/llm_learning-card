@@ -64,6 +64,7 @@
 
 import type { LlmResult } from '../types.js';
 import { GatewayCallError, GatewayModelRejectedError, MissingCredentialError } from '../errors.js';
+import { witness, witnessed } from '@contracts/witness.js';
 
 /** 回應沒帶到期時間時的保守存活時間。 */
 export const GATEWAY_TOKEN_FALLBACK_TTL_MS = 50 * 60_000;
@@ -235,7 +236,7 @@ export class GatewayClient {
         headers: { authorization: `Bearer ${token}` },
         signal: controller.signal,
       });
-      if (!response.ok) return { available: false, models: [] };
+      if (!response.ok) return witnessed('llm.gateway.probe.http-not-ok', { available: false, models: [] });
 
       const body = await readJson<ModelsBody>(response);
       const models = body?.models;
@@ -244,10 +245,11 @@ export class GatewayClient {
       // TypeError,而那個 TypeError 剛好被下面的 catch 接住、回同一個
       // { available: false, models: [] }。留著是為了明講「null 不算一份清單」,
       // 而不是靠一個例外繞出去。
-      if (typeof models !== 'object' || models === null) return { available: false, models: [] };
+      if (typeof models !== 'object' || models === null) return witnessed('llm.gateway.probe.bad-body', { available: false, models: [] });
       return { available: true, models: Object.keys(models as Record<string, unknown>) };
     } catch {
       // 401(key 錯)、連線被拒、逾時——本機模型不在不是錯誤(phase-2 的行為)。
+      witness('llm.gateway.probe.threw');
       return { available: false, models: [] };
     } finally {
       // Stryker disable next-line all: 等價變異。清掉逾時計時器只影響 Node 的
@@ -264,6 +266,7 @@ export class GatewayClient {
     let response = await this.postChat(args);
     if (response.status === 401) {
       // token 過期。重換一次再重試一次——只有一次,key 真的錯掉時才不會無限迴圈。
+      witness('llm.gateway.chat.401-retry');
       this.invalidateToken();
       response = await this.postChat(args);
     }

@@ -20,6 +20,7 @@ import { openaiAdapter } from './adapters/openai.js';
 import { TASK_MAX_TOKENS } from './token-limits.js';
 import type { LogEvent } from '@contracts/index.js';
 import { recordEvent } from '@core/schema/log.js';
+import { witness } from '@contracts/witness.js';
 
 /** 寫一筆 log 事件。契約 §10/§11b 的正式實作見 01-data-layer 的 recordEvent()。 */
 export type LogAppender = (event: LogEvent) => void;
@@ -184,6 +185,7 @@ export class CloudLlmRouter implements LlmRouter {
       const res = await fetch(PROBE_URL[providerName], { signal: controller.signal, headers });
       return res.status < 500;
     } catch {
+      witness('llm.cloud.probe-online-swallowed');
       return false;
     } finally {
       clearTimeout(timer);

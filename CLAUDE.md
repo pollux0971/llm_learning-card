@@ -52,7 +52,7 @@
 - 腳本:TypeScript,`tsx` 執行
 - Rust:只做視窗、系統列、fs、自啟
 - 驗收:`@cucumber/cucumber`;單元:`vitest`;變異:`@stryker-mutator/core`
-- 守門腳本採用模板 v1.3.0(`scripts/` 的 `_root.ts` 與 `check-*.ts`,檔頭有來源標頭,用 `sync-gates.sh` 升版,不手改;落點表與例外清單在 `scripts/boundaries.owners.json`、`boundaries.allow.json` 與 `gates.config.json`,那三個是我們自己的設定,模板不覆蓋)
+- 守門腳本採用模板 v1.3.4(`scripts/` 的 `_root.ts` 與 `check-*.ts`,檔頭有來源標頭,用 `sync-gates.sh` 升版,不手改;落點表與例外清單在 `scripts/boundaries.owners.json`、`boundaries.allow.json` 與 `gates.config.json`,那三個是我們自己的設定,模板不覆蓋)
 - schema:`zod`
 - 步驟定義先讀 `features/steps/_world.ts`,照那個結構寫,不要自己發明模式
 
@@ -74,7 +74,7 @@ phase 驗收的四項核心檢查、端到端場景。其餘可以先關掉,需�
 
 任何「A 或 B」先查 `02-decision-map.md` 有沒有決定過。有,照做。
 沒有:技術取捨(資料結構、介面、規格措辭、gate 例外、重跑與否)問技術顧問 session
-(`llm-learning-cards-57`),它決定後 `/decide` 記 ADR。只有三種情況問使用者:
+(目前 `llm-learning-cards-61`;名稱會變,找不到就用 `ListAgents` 找「llm-learning-cards-」開頭且不是協調者的那個),它決定後 `/decide` 記 ADR。只有三種情況問使用者:
 新功能或改「不在範圍」、改 `contracts/` 硬約定或本檔、當日 LLM 花費超過 `LLM_DAILY_CAP_USD`。
 問使用者時附選項與建議。人眼確認(`@manual`、`@e2e`)的觀感判定由技術顧問做,列清單即可,不擋其他工作。
 權責表與協調者的迴圈見 `.claude/skills/autopilot/SKILL.md`。

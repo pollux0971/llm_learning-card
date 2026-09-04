@@ -11,6 +11,7 @@ import { FakeLlmRouter } from './fake-llm.js';
 import { getGoldenSet, GOLDEN_SET_REGISTRY_FILE } from './golden-sets/registry.js';
 import { runStructuralChecks } from './structural-checks.js';
 import { renderScoresSheet } from './scores.js';
+import { witnessed } from '@contracts/witness.js';
 import type { GoldenOutput, GoldenRunMeta, GoldenRunResult, GoldenSet, GoldenSetId, LlmRouter } from './types.js';
 
 export const ROOT = resolve(import.meta.dirname, '../../../..');
@@ -98,7 +99,7 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
   const goldenSet = getGoldenSet(opts.set);
   if (!goldenSet) throw new MissingGoldenSetError(opts.set);
 
-  if ((opts.mode ?? 'fake') === 'live') return runGoldenLive(opts, goldenSet);
+  if ((opts.mode ?? witnessed('prompt-quality.mode-default-fake', 'fake')) === 'live') return runGoldenLive(opts, goldenSet);
   return runGoldenFake(opts, goldenSet);
 }
 
@@ -131,7 +132,7 @@ export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Pr
   const dir = join(baseDir, goldenSet.id, date);
   mkdirSync(dir, { recursive: true });
 
-  const router = opts.router ?? new FakeLlmRouter([DEFAULT_FAKE_FIXTURE_DIR], opts.onCall);
+  const router = opts.router ?? witnessed('prompt-quality.router-default-fake', new FakeLlmRouter([DEFAULT_FAKE_FIXTURE_DIR], opts.onCall));
 
   const promptFileAbs = join(ROOT, goldenSet.promptFile);
   if (!existsSync(promptFileAbs)) {

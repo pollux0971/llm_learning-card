@@ -64,7 +64,8 @@ import { recordEvent } from '@core/schema/log.js';
 import { LlmRouterImpl, type LlmRouterImplOptions } from './router-impl.js';
 import { GatewayClient, createGatewayClient } from './adapters/gateway.js';
 import { GatewayCallError, NoModelError } from './errors.js';
-import { FALLBACK_TABLE, decideFallback, type CloudStatus, type FallbackDecision, type FallbackGroup } from './fallback.js';
+import { FALLBACK_TABLE, decideFallback, type CloudStatus, type FallbackDecision, type FallbackGroup, type FallbackReason } from './fallback.js';
+import { witness, witnessed, type DegradedSignal } from '@contracts/witness.js';
 import {
   dayOf,
   isBudgetExhausted,
@@ -96,6 +97,12 @@ export function isCloudFailure(err: unknown): boolean {
   const status = (err as { status?: unknown }).status;
   return typeof status === 'number' && status >= 500;
 }
+
+/** ADR-044:備援真的發生時記一筆退化訊號(只觀測,不判斷)。 */
+const FALLBACK_SIGNAL: Readonly<Record<FallbackReason, DegradedSignal>> = {
+  cloud_failed: 'llm.fallback.cloud-failed',
+  budget_exhausted: 'llm.fallback.budget-exhausted',
+};
 
 export interface GatewayLlmRouterOptions extends LlmRouterImplOptions {
   /** 不給就用 createGatewayClient(env) */
@@ -142,7 +149,10 @@ export class GatewayLlmRouter implements LlmRouter {
     this.today = opts.today ?? (() => dayOf(new Date().toISOString()));
     this.spendReader =
       opts.spendReader ??
-      ((day) => (opts.logPath ? readDailySpend(opts.logPath, day, this.prices) : { usd: 0, calls: 0 }));
+      ((day) =>
+        opts.logPath
+          ? readDailySpend(opts.logPath, day, this.prices)
+          : witnessed('llm.gateway-router.spend-no-log-zero', { usd: 0, calls: 0 }));
     this.gatewayClient = opts.gateway;
   }
 
@@ -193,6 +203,7 @@ export class GatewayLlmRouter implements LlmRouter {
       return await this.gateway().probe();
     } catch {
       // 例如 GATEWAY_API_KEY 沒設(createGatewayClient 丟 MissingCredentialError)。
+      witness('llm.gateway-router.probe-local-swallowed');
       return { available: false, models: [] };
     }
   }
@@ -225,6 +236,9 @@ export class GatewayLlmRouter implements LlmRouter {
     opts: { timeoutMs?: number; maxTokens?: number },
     cause?: unknown,
   ): Promise<LlmResult> {
+    // 進到備援分支就記(不等閘道成功):報告要的是「這個測試走了哪條路」。
+    // Stryker disable next-line all: ADR-044 的觀測點,對測試不可觀測是設計,不是漏測。
+    if (decision.reason !== undefined) witness(FALLBACK_SIGNAL[decision.reason]);
     const client = this.gateway();
     const timeoutMs = opts.timeoutMs ?? this.opts.defaultTimeoutMs;
     const controller = new AbortController();

@@ -10,9 +10,9 @@
 | 欄位 | 值 |
 |---|---|
 | 目前階段 | **I1 · 內容管線 —— 通過**(2026-09-04,tag `I1`)。第四次真呼叫 `@e2e @llm` 全綠,兩條人工確認由技術顧問判定 PASS。下一步:12-prompt-quality/phase-2 的 gate 解除,之後 `/integrate I2` |
-| 目前 sprint | 2026-W36 — 04/phase-2+3、05/phase-2、11/phase-1 完成;I1 通過;03/phase-4(閘道本機 adapter,ADR-039)與寫入完整性(ADR-040/041)進行中 |
+| 目前 sprint | 2026-W36 — 04/phase-2+3、05/phase-2、11/phase-1、**01/phase-4**(ADR-042 learning repo + snapshot)完成;I1 通過;03/phase-4 的自動場景已合併,留一條 `@manual` 等閘道機器起來 |
 | 契約版本 | 1.1.0(凍結) |
-| 最後更新 | 2026-09-04 |
+| 最後更新 | 2026-09-05 |
 
 ## 全貌
 

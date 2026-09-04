@@ -59,3 +59,69 @@ describe('FakeLlmRouter', () => {
     expect(await router.probeLocal()).toEqual({ available: false, models: [] });
   });
 });
+
+/**
+ * ADR-044 的 `prompt-quality.fake.attempt-fallback-first`:同一個 task+marker 第 N 次
+ * 呼叫沒有 attempt=N 的 fixture 時,**重播 attempt=1 的那一份**,不丟錯。基準報告
+ * (959b039 / 45c83a7)裡這條退化分支沒有任何測試走過;這一組讓它被走到,而且斷言
+ * 「重播的是哪一份」——不是最後一份、不是隨便一份、也不是丟錯。
+ */
+describe('FakeLlmRouter — 第 N 次呼叫沒有 attempt=N 的 fixture 時重播 attempt=1(ADR-044 attempt-fallback-first)', () => {
+  const resp = (text: string) => ({ text, provider: 'fake', model: 'm', latency_ms: 0, provisional: false });
+
+  it('只錄了 attempt=1:第 2、3 次呼叫都重播 attempt=1,不丟 FixtureNotFoundError', async () => {
+    const dir = fixtureDir([{ task: 'ingest.cards', prompt_contains: 'ONLY_ONE', attempt: 1, response: resp('first') }]);
+    const router = new FakeLlmRouter([dir]);
+    expect((await router.call('ingest.cards', '[ONLY_ONE]')).text).toBe('first');
+    expect((await router.call('ingest.cards', '[ONLY_ONE]')).text).toBe('first');
+    expect((await router.call('ingest.cards', '[ONLY_ONE]')).text).toBe('first');
+    expect(router.calls).toHaveLength(3);
+  });
+
+  it('錄了 attempt=1、2:第 3 次重播的是 attempt=1,不是最後一份 attempt=2', async () => {
+    const dir = fixtureDir([
+      { task: 'ingest.cards', prompt_contains: 'TWO', attempt: 1, response: resp('first') },
+      { task: 'ingest.cards', prompt_contains: 'TWO', attempt: 2, response: resp('second') },
+    ]);
+    const router = new FakeLlmRouter([dir]);
+    await router.call('ingest.cards', '[TWO]');
+    await router.call('ingest.cards', '[TWO]');
+    expect((await router.call('ingest.cards', '[TWO]')).text).toBe('first');
+    expect((await router.call('ingest.cards', '[TWO]')).text).toBe('first');
+  });
+
+  it('重播的是 attempt=1 那一份,跟 fixture 檔案的排列順序無關(attempt=2 的檔排在前面也一樣)', async () => {
+    const dir = fixtureDir([
+      { task: 'grade.apply', prompt_contains: 'ORDER', attempt: 2, response: resp('second') },
+      { task: 'grade.apply', prompt_contains: 'ORDER', attempt: 1, response: resp('first') },
+    ]);
+    const router = new FakeLlmRouter([dir]);
+    expect((await router.call('grade.apply', '[ORDER]')).text).toBe('first');
+    expect((await router.call('grade.apply', '[ORDER]')).text).toBe('second');
+    expect((await router.call('grade.apply', '[ORDER]')).text).toBe('first');
+  });
+
+  it('只有 attempt=1 可以當替身:只錄了 attempt=2 時,第 1 次就丟 FixtureNotFoundError,不會拿 attempt=2 頂替', async () => {
+    const dir = fixtureDir([{ task: 'grade.apply', prompt_contains: 'NO_FIRST', attempt: 2, response: resp('second') }]);
+    const router = new FakeLlmRouter([dir]);
+    const err = await router.call('grade.apply', '[NO_FIRST]').then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(FixtureNotFoundError);
+    expect((err as Error).message).toMatch(/attempt=1/);
+  });
+
+  it('計數是 task+marker 各自算的:一個 marker 進入重播,不影響另一個 marker 的 attempt 序', async () => {
+    const dir = fixtureDir([
+      { task: 'ingest.cards', prompt_contains: 'A_MARK', attempt: 1, response: resp('a1') },
+      { task: 'ingest.cards', prompt_contains: 'B_MARK', attempt: 1, response: resp('b1') },
+      { task: 'ingest.cards', prompt_contains: 'B_MARK', attempt: 2, response: resp('b2') },
+    ]);
+    const router = new FakeLlmRouter([dir]);
+    await router.call('ingest.cards', '[A_MARK]');
+    expect((await router.call('ingest.cards', '[A_MARK]')).text).toBe('a1'); // A 第 2 次:重播
+    expect((await router.call('ingest.cards', '[B_MARK]')).text).toBe('b1'); // B 第 1 次:不受 A 影響
+    expect((await router.call('ingest.cards', '[B_MARK]')).text).toBe('b2'); // B 第 2 次:照序
+  });
+});
