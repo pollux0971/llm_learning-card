@@ -64,6 +64,12 @@ npx tsx packages/core/src/schema/cli.ts init ./tmp-learning
 ## 驗收方式
 
 全自動。變異測試範圍 `packages/core/src/schema/**`,門檻 95%。
+
+**外加 `packages/core/src/ingest/state.ts`(同樣 95%)。** 它住在 `ingest/` 底下但
+`atomicWriteJson()` 是 `state/` 全部寫入的單一入口,責任屬於 01(ADR-040 把這個歸屬留給
+協調者決定,2026-09-04 決定併入)。門檻跟著責任走,不跟著目錄走(P-26)。
+它不在 `schema/**` 這個 glob 裡,所以審核輪要**手動指定**:
+`npx stryker run --mutate "packages/core/src/ingest/state.ts,!packages/core/src/ingest/state.test.ts"`。
 字數計算與 example 圍欄解析的邊界(剛好 100 / 101 字、0 個 / 多個圍欄)必須有測試。
 
 ## 開放問題

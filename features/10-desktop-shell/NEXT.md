@@ -21,6 +21,11 @@
 **phase-4** 需要:phase-3 `done`、**I6 通過**、一台 macOS 實機
 **phase-5** 需要:phase-4 `done`、**I7 通過**、一台 Windows 實機
 
+  待辦(有實機時一起做):`atomicWriteJson()` 的目錄 `fsync` 在 Windows 會回 `EACCES`
+  (`FlushFileBuffers()` 要 `GENERIC_WRITE`;`openSync(dir)` 本身是成功的)。
+  候選解法是 win32 跳過目錄 fsync,**必須在真 Windows 上驗過再寫**。診斷與不採用的替代方案
+  見 **ADR-040** 的 Consequences 第 5 點。
+
 ## Gate 未滿足時
 
 **phase-2 沒有 gate,可以緊接著 phase-1 做。** 它提供 `LearningFs` 給 06 與 07,
