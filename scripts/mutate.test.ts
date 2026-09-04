@@ -60,6 +60,8 @@ import {
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 const MUTATE_MODULE = join(REPO_ROOT, 'scripts/mutate.ts');
+/** 這個 repo 的 tsx。給 cwd 不在 repo 裡的子行程用(bare `--import tsx` 會從 cwd 找 node_modules)。 */
+const TSX_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
 
 /** 開一個 tsx 子行程要一到三秒,機器忙的時候更久。跟其他掃描器測試同一個放寬。 */
 const SPAWN_TIMEOUT_MS = 60_000;
@@ -1047,7 +1049,7 @@ describe('acquireLock 的預設值(不注入 now / sleep / log 時)', () => {
 });
 
 describe('runMutate 的預設值與例外', () => {
-  it('不給 lockPath 時用 strykerLockPath()(主 repo 的根,不是這個 worktree)', async () => {
+  it('不給 lockPath 時用 strykerLockPath(),以現在的 cwd 算', async () => {
     let seen: string | undefined;
     const code = await runMutate({
       argv: ['node', 'mutate.ts'],
@@ -1061,11 +1063,14 @@ describe('runMutate 的預設值與例外', () => {
     });
     expect(code).toBe(0);
     expect(seen).toBe(strykerLockPath());
-    // 鎖必須在主 repo 那一份。在 worktree 裡跑時,那跟「這個 worktree 的根」不同;
-    // 在主 repo 裡跑時兩者本來就相同 —— 所以只在真的身處 worktree 時才斷言不相等,
-    // 否則這條會在 main 上永遠紅(它假設了「一定在 worktree 裡跑」)。
-    const inWorktree = strykerLockPath() !== join(REPO_ROOT, '.stryker.lock');
-    if (inWorktree) expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'));
+    expect(seen).toBe(strykerLockPath(process.cwd()));
+    // 「鎖在主 repo 的根,不是 worktree 自己的根」**不在這裡**用「套件現在跑在哪」推。
+    // 這裡曾寫成 `if (inWorktree) expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'))`,
+    // 而 inWorktree 是拿被測的 strykerLockPath() 自己算的:函式算錯成 worktree 本地時,
+    // inWorktree 恰好變 false、斷言被跳過 —— 綠的是它自己,不是實作
+    // (2026-09-05 審核輪實測:把 strykerLockPath 改成回 worktree 本地路徑,這條在 worktree 裡照樣綠)。
+    // 那個保證由 §1 的 describe('strykerLockPath') 在臨時 git repo 裡蓋 worktree 直接驗,
+    // 再由 §12 的「從 worktree 裡起跑」在行程層級驗一次;兩條都不管套件本身在哪裡跑。
   });
 
   it('不給 acquire 時走真的 acquireLock', async () => {
@@ -1254,6 +1259,42 @@ describe('SIGTERM 之後 Stryker 子行程不留', () => {
   );
 });
 
+describe('鎖的位置不看測試套件自己在哪裡跑', () => {
+  it(
+    '從 worktree 裡起跑、不給 lockPath:鎖落在主 repo 的根,不是那個 worktree 的根',
+    async () => {
+      // 不靠「套件現在是在 main 還是在某個 worktree 裡跑」:自己 git init 一個主 repo、掛一個 worktree,
+      // 子行程的 cwd 就是那個 worktree。原本這件事是靠「套件正好在 worktree 裡跑」才測得到,
+      // 套件在 main 上跑就變成永遠紅(或加了守衛之後永遠綠)。這裡兩種位置都測到同一件事。
+      const dir = tmp('mutate-lock-from-wt');
+      const { main, wtA } = gitRepoWithWorktrees();
+      const { runner, pidFile } = sandboxWithFakeStryker(dir);
+
+      // 不傳 lockPath → runMutate 走 strykerLockPath(),用子行程的 cwd(= 那個 worktree)算。
+      // 用絕對路徑叫 tsx:cwd 在 /tmp 底下,bare specifier 找不到 node_modules。
+      const child = spawn(TSX_BIN, [runner], { cwd: wtA });
+      let out = '';
+      child.stdout.on('data', (c) => (out += String(c)));
+      child.stderr.on('data', (c) => (out += String(c)));
+      const exited = new Promise<number | null>((res) => child.on('close', (code) => res(code)));
+      try {
+        const deadline = Date.now() + SPAWN_TIMEOUT_MS - 5_000;
+        while (!existsSync(pidFile) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        expect(existsSync(pidFile), `假 stryker 沒被叫起來:${out}`).toBe(true);
+        // 拿到鎖之後才會 spawn stryker,所以此刻鎖一定在。它必須在主 repo 的根,worktree 自己的根不能有。
+        expect(existsSync(join(main, '.stryker.lock')), `主 repo 的根沒有鎖:${out}`).toBe(true);
+        expect(existsSync(join(wtA, '.stryker.lock')), `鎖落在 worktree 自己的根:${out}`).toBe(false);
+      } finally {
+        child.kill('SIGTERM');
+        await exited;
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 13. 審核輪補的:不准有人在文件裡教別人繞過鎖
 //
@@ -1286,12 +1327,20 @@ describe('文件裡不准出現繞過鎖的指令', () => {
     }
   }
 
-  // `.claude/worktrees` 底下是**別的 repo 的簽出**(模板),不是我們的檔案 —— 跟 node_modules 同一類。
-  // 掃它會把模板自己的文件當成我們在教人繞過鎖,而我們也改不動它(它有版本標頭)。
-  const SKIP_DIRS = new Set([
-    'node_modules', '.git', '.stryker-tmp', 'dist', 'target', 'reports', 'coverage',
-    'worktrees',
-  ]);
+  const SKIP_DIRS = new Set(['node_modules', '.git', '.stryker-tmp', 'dist', 'target', 'reports', 'coverage']);
+
+  /**
+   * `dir` 自己是不是另一個 git 簽出(有 `.git`:一般 repo 是目錄,worktree 是檔案)。
+   *
+   * 主 repo 的 `.claude/worktrees/agent-*` 就是這種:**本 repo 別的分支**掛出來的 worktree
+   * (不是別的 repo——`git worktree list` 看得到它,`.git` 檔指回主 repo 的 `.git/worktrees/`)。
+   * 那是另一棵樹,不是我們現在這一份;它裡面的違規要等那個分支合併時由這條守門抓,
+   * 現在掃到只會把別的分支的舊檔算在自己頭上 —— 跟 node_modules 同一類。
+   * 用「有沒有 .git」認,不用目錄名字認:名字叫 worktrees 的普通目錄照掃,別的名字的巢狀簽出照跳。
+   */
+  function isNestedCheckout(dir: string): boolean {
+    return existsSync(join(dir, '.git'));
+  }
 
   /**
    * 會被人照抄的文字檔副檔名。文件、設定、腳本、**程式碼**(註解裡的指令一樣會被複製)。
@@ -1324,7 +1373,9 @@ describe('文件裡不准出現繞過鎖的指令', () => {
       for (const e of readdirSync(join(root, rel) || root, { withFileTypes: true })) {
         if (e.isDirectory()) {
           if (SKIP_DIRS.has(e.name)) continue;
-          walk(rel ? join(rel, e.name) : e.name);
+          const sub = rel ? join(rel, e.name) : e.name;
+          if (isNestedCheckout(join(root, sub))) continue;
+          walk(sub);
         } else if (SCAN_EXTS.has(extOf(e.name))) {
           out.push(rel ? join(rel, e.name) : e.name);
         }
@@ -1401,13 +1452,19 @@ describe('文件裡不准出現繞過鎖的指令', () => {
       'README.md', 'notes.txt', 'config.json', 'data.jsonl', 'ci.yaml', 'ci.yml', 'Cargo.toml',
       '.env.example', 'run.sh', 'tool.py', 'a.ts', 'b.mts', 'c.js', 'd.mjs', 'e.svelte', 'f.rs',
       'index.html', 'style.css', 'phase-1.feature', 'deep/nested/dir/x.ts', 'Dockerfile.template',
+      // 只是**名字**叫 worktrees 的普通目錄,不是簽出:照掃。
+      'worktrees/plain.md',
     ];
     const unwanted = [
       'icon.png', 'icon.ico', 'icon.icns', 'package-lock.lock', '.gitkeep', '.gitignore',
       'node_modules/pkg/index.ts', '.git/HEAD.md', '.stryker-tmp/sandbox/a.ts', 'dist/out.js',
-      'target/debug/x.rs', 'reports/r.md', 'coverage/lcov.txt', 'worktrees/other/a.md',
+      'target/debug/x.rs', 'reports/r.md', 'coverage/lcov.txt',
+      // 巢狀簽出:worktree(.git 是檔案)與一般 repo(.git 是目錄)都跳過,不看目錄叫什麼。
+      'worktrees/other/a.md', 'some-other-name/README.md',
     ];
     for (const f of [...wanted, ...unwanted]) touch(f);
+    touch('worktrees/other/.git');
+    touch('some-other-name/.git/HEAD');
     const found = scanFiles(root);
     for (const f of wanted) expect(found, `應該掃到 ${f}`).toContain(f);
     for (const f of unwanted) expect(found, `不該掃到 ${f}`).not.toContain(f);
