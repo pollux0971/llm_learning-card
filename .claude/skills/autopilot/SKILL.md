@@ -70,7 +70,15 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
    實例:golden-set 那張的 base 早於守門合併,審核主動提醒「`check:steps` 與 `accept:coverage`
    在這個 branch 上不存在,合併後要補跑」。
 
-   全綠 → tag、清 worktree、通知技術顧問「驗推」;FAIL 的照 test→dev→review 循環派 debug session。
+   全綠 → **tag 打在合併 commit 上**(不是之後的文件修正 —— tag 的意思是「**這個合併**通過」)
+   → 清 worktree → **立刻**通知技術顧問「驗推」。
+
+   ⚠️ **合併完就通知,不要累積**(P-56)。真的發生過:協調者 03:16 合併、又做了兩個 commit、
+   再合一條才通知;技術顧問 03:17 在上面 commit 然後 push —— **那個合併在他驗之前就被推上去了**,
+   因為 **`git push` 推的是 HEAD 以下全部,不是「我剛 commit 的那一個」**。
+   規則:**一輪只合一條就通知一次**,或合併後立刻通知。中間不要再往 main 疊東西。
+
+   FAIL 的照 test→dev→review 循環派 debug session。
 2. **算 ready**:照 sprint-planning 的規則讀所有 NEXT.md。三種 gate 全滿足 → ready。
 3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。滿載時不派新工,回到 1 收割;收割不到東西就做維護清單(§3)等下一輪。~~同時處於審核輪的 worktree ≤ 1~~ **已放寬回 3**(2026-09-04):`scripts/mutate.ts` 的跨 worktree 檔案鎖合併後,變異測試會自己排隊,不再需要靠派工節流(P-34)。**`npm run mutate` 是唯一入口**,審核與開發都只准用它 —— 直接叫 Stryker CLI 會繞過鎖(有四條測試守著)。**分數要附完整指令**(設定檔、範圍、旗標),不附指令的分數不算數。每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
 4. **整合點**:某個 IN 需要的 phase 全 done → **先開「整合工作」工單**(P-20:roadmap 該段的整合工作欄 + 各 FEATURE.md「Wave 0 的重複」表),合併後 `/integrate IN`;`@e2e @llm` 在預算內自動跑,結果貼進 `docs/integration/IN-REVIEW.md`;`@manual` 進「等老闆」清單。IN 的人工確認未完成前,gate 是「IN 通過」的 phase 維持 todo——這是刻意的,不要繞。
