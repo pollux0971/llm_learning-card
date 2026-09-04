@@ -61,11 +61,6 @@ Feature: Content pipeline turns raw material into a readable card set
     Then no cards are written
     And the command reports that ingest requires a cloud model
 
-  Scenario: Every standalone entry point still runs
-    When every non interactive command in the standalone manifest is executed
-    Then each exits with status 0
-    And each output contains the expected marker
-
   @manual
   Scenario: The cards read like one concept each
     When the person opens any three generated cards

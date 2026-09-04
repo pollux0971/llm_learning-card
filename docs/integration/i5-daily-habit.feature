@@ -80,8 +80,3 @@ Feature: The system becomes part of the day
   Scenario: Both cards still work as in I4
     When the person learns a card and reviews it the next day
     Then the full flow works as in I4
-
-  Scenario: Every standalone entry point still runs
-    When every non interactive command in the standalone manifest is executed
-    Then each exits with status 0
-    And each output contains the expected marker

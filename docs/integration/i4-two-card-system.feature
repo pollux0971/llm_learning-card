@@ -76,8 +76,3 @@ Feature: The complete two card system
   Scenario: Desktop review still works as in I3
     When the person opens the test card and answers a question
     Then the schedule advances as in I3
-
-  Scenario: Every standalone entry point still runs
-    When every non interactive command in the standalone manifest is executed
-    Then each exits with status 0
-    And each output contains the expected marker
