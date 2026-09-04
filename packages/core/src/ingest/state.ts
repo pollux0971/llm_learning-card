@@ -13,6 +13,7 @@ import {
   fsyncSync,
   closeSync,
   renameSync,
+  rmSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -30,21 +31,51 @@ import { dirname } from 'node:path';
  * 第 4 步唯一的例外是 **`EINVAL`**(tmpfs 與部分 CI 不支援對目錄 fsync)→ 當成功;
  * 其他錯誤碼一律往外丟。理由與取捨見 ADR-040。
  *
- * TODO(ADR-040):以下函式體還是舊的三步版本 —— 沒有失敗清理、沒有第 4 步。
- * 行為規格見同目錄 `state.test.ts` 的 describe('atomicWriteJson · 契約 §11b'),
- * 那一組現在是紅的,由下一輪開發 agent 補上。
+ * 行為規格見同目錄 `state.test.ts` 的 describe('atomicWriteJson · 契約 §11b')。
  */
 export function atomicWriteJson(path: string, data: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
   const tmp = `${path}.tmp`;
-  const fd = openSync(tmp, 'w');
   try {
-    writeSync(fd, JSON.stringify(data, null, 2) + '\n');
+    const fd = openSync(tmp, 'w');
+    try {
+      writeSync(fd, JSON.stringify(data, null, 2) + '\n');
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, path);
+    fsyncDir(dir);
+  } finally {
+    // 唯一的清理點。放在 finally 而不是每個步驟各包一次 catch:失敗清理與成功後
+    // 的「tmp 早就被 rename 走了」是同一件事(`force` 吸收掉 ENOENT),而且無論
+    // 從哪一步跳出去都會經過這裡。清理自己丟的錯全部吞掉 —— 呼叫端要看到的是
+    // 「為什麼寫失敗」,不是「為什麼清不掉」,而 finally 裡丟錯會**取代**原本那顆。
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      /* 清理失敗不可以遮蔽原本那個錯誤(ADR-040) */
+    }
+  }
+}
+
+/**
+ * §11b 第 4 步:fsync 目標檔所在的**目錄**,讓 rename 這個目錄項的變更也落地。
+ *
+ * `EINVAL` 是唯一吞掉的錯誤碼:tmpfs 與部分 CI 的檔案系統不支援對目錄 fsync,
+ * 那是「這個 fs 沒有這個概念」。其他錯誤碼(`EIO`、`ENOSPC`……)一律往外丟 ——
+ * 吞掉 `EIO` 等於把「磁碟壞了」變成靜默成功(ADR-040 (d) 已否決)。
+ */
+function fsyncDir(dir: string): void {
+  const fd = openSync(dir, 'r');
+  try {
     fsyncSync(fd);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EINVAL') throw err;
   } finally {
     closeSync(fd);
   }
-  renameSync(tmp, path);
 }
 
 export function readJsonOr<T>(path: string, fallback: T): T {
