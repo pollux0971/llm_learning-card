@@ -38,8 +38,9 @@
  *       3. `target === 'gateway'` → `callGateway()`;`target === 'cloud'` →
  *          底層 `LlmRouterImpl.call()`。
  *       4. 雲端丟出 `isCloudFailure()` 認得的錯 → 用 `cloud: 'failed'` 重跑一次
- *          `decideFallback`。再回 cloud 就代表沒有備援(`cloud-only`),把原本的
- *          錯誤往外丟(`ingest.*` 得到 `CloudRequiredError`)。
+ *          `decideFallback`。沒有備援的 `cloud-only`(`ingest.*`)在這一步就被
+ *          `decideFallback` **丟出** `CloudRequiredError`(蓋掉原本的雲端錯誤);
+ *          會回傳的兩組一律是 `target: 'gateway'`,所以之後直接走閘道。
  *       5. 備援成功時,除了底層已經寫的 `llm_call` 事件之外,再寫一筆帶
  *          `fallback: "gateway"` 與 `fallback_reason`(`cloud_failed` /
  *          `budget_exhausted`)的 `llm_call` 事件,並記下原本的錯誤訊息
@@ -166,18 +167,17 @@ export class GatewayLlmRouter implements LlmRouter {
       // 閘道就是契約 §7 的 local,所以這裡接手,契約那張表的行為不變。
       if (!isCloudFailure(err) && !(err instanceof NoModelError)) throw err;
 
+      // `cloud: 'failed'` 之下 decideFallback 只有兩種結局:gateway-always /
+      // gateway-fallback 回 `target: 'gateway'`,cloud-only **自己丟
+      // CloudRequiredError**。`ingest.*` 拿到 CLOUD_REQUIRED 就是靠這一行丟出來的
+      // 錯誤(它會蓋掉原本的 err),不是靠事後檢查 target。所以下面直接走閘道,
+      // 沒有「retry 又回到 cloud」這種情況要防。
+      // 前提由 router-gateway.test.ts 的「備援重試:cloud "failed" 永遠不會回到
+      // cloud」窮舉鎖住(7 個 task × 3 個分組 + 預設表 + 編譯期的分組窮舉)。
       const retry = decideFallback(
         { task, cloud: 'failed', spentUsd: spend.usd, capUsd: this.capUsd },
         this.fallbackTable,
       );
-      // TODO(收尾輪,下一輪刪):**這一行到不了**。`cloud` 在這裡是寫死的
-      // `'failed'`,而 decideFallback 在 'failed' 時 gateway-always / gateway-fallback
-      // 都回 gateway、cloud-only 直接丟 CloudRequiredError——沒有任何一條路會回
-      // `target: 'cloud'`。`ingest.*` 拿到 CLOUD_REQUIRED 靠的是上面那個
-      // decideFallback **丟出來**的錯誤(它會蓋掉 err),不是這個 if。
-      // 前提由 router-gateway.test.ts 的「備援重試:cloud "failed" 永遠不會回到
-      // cloud」窮舉鎖住;實際刪掉跑過全套,1209 個測試全綠。
-      if (retry.target !== 'gateway') throw err;
       return this.callGateway(task, prompt, retry, opts, err);
     }
   }
