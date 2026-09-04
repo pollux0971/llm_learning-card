@@ -16,9 +16,12 @@
  *      `--json` 也不吐 `usd` / `cap_usd`(下游拿到 `undefined` 而不是 0)。
  *
  * 觸發 2 的條件:log 檔不存在或不可讀、`LLM_DAILY_CAP_USD` 缺 / 空 / 非數字、
- * 價格變數缺、或 log 裡有任何一行 `JSON.parse` 失敗。
+ * 價格變數缺、log 裡有任何一行 `JSON.parse` 失敗、或有任何一行**解析得出來但不是
+ * 契約 §10 的事件**(不是物件,或 `ts` 在卻不是字串:例如整份檔是 `"hello"`、`42`、
+ * `[]`、`null`)。後者跟前者同一碼、同一個訊息形狀——`"hello"` 是合法 JSON,但「這份檔根本
+ * 不是花費紀錄」不可以被講成「花費是零」。**不知道不是零。**
  *
- * ⚠️ 最後一條是 **P-22 的反轉,不是回歸**。P-22 修的是「壞行要跳過」——那是在
+ * ⚠️ 最後兩條是 **P-22 的反轉,不是回歸**。P-22 修的是「壞行要跳過」——那是在
  * *讀事件* 的情境,跳過一行壞資料好過整份放棄。這裡是 *算錢*:跳過壞行等於**低估**
  * 花費,而低估花費的後果是超支使用者的錢。**有壞行 = 無法信任總數 = 算不出來。**
  * 不分哪一天:壞行讀不到 `ts`,沒有辦法證明它不是今天的,所以一律當成不可信。
@@ -165,12 +168,36 @@ const BAD_LINE_PREVIEW_CHARS = 80;
  * 壞行的原因。三樣缺一不可:**行號、該行前 80 字、一句怎麼修**。
  * 沒有這三樣的 fail-closed 會被下一個人想辦法繞過,那比 fail-open 更糟。
  */
-function badLineReason(logPath: string, lineNumber: number, line: string): string {
+function badLineReason(logPath: string, lineNumber: number, line: string, what: string): string {
   return (
-    `${logPath} 第 ${lineNumber} 行不是合法的 JSON,所以今天的花費算不出來:` +
+    `${logPath} 第 ${lineNumber} 行${what},所以今天的花費算不出來:` +
     `${line.slice(0, BAD_LINE_PREVIEW_CHARS)}` +
     `(修好或移除該行後重跑;這是花錢的煞車,不會自動跳過壞行)`
   );
+}
+
+/** JSON.parse 丟例外:那一行連 JSON 都不是(HTML、被截斷的行、亂碼)。 */
+const NOT_JSON = '不是合法的 JSON';
+/**
+ * JSON.parse 過了,但值不是契約 §10 的事件。`"hello"` / `42` / `[]` / `null` 每一個都
+ * 解析得出來,但沒有一個是「物件 + 字串 ts」;把它們當事件算會得到「今日條目 0 筆、
+ * $0.0000、exit 0」——那是把「這檔不是花費紀錄」講成「花費是零」。
+ */
+const NOT_EVENT = '是合法的 JSON,但不是 log 事件(契約 §10 的事件是一個物件,ts 是 ISO 字串)';
+
+/**
+ * 一行解析出來的值算不算契約 §10 的事件:**物件**(不是 null、不是陣列),而且 `ts`
+ * 如果有,必須是字串。
+ *
+ * 只擋「根本不是事件」。`ts` 缺掉的物件放行——它進不了今日條目也進不了花費
+ * (computeDailySpend 與今日 filter 都要字串 ts),既有測試也把它當「不算今天」而不是
+ * 壞行。但 `ts` 在卻不是字串(例如數字)是另一回事:那一行會被兩個 filter 靜靜略過,
+ * 方向是低估,所以跟 `null` 一樣當壞行。`type` 之類的欄位由 computeDailySpend 自己認。
+ */
+function isLogEvent(value: unknown): value is SpendEvents[number] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const ts = (value as { ts?: unknown }).ts;
+  return ts === undefined || typeof ts === 'string';
 }
 
 export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: string): SpendReport {
@@ -206,18 +233,28 @@ export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: s
   //
   // 而且**不分哪一天**:JSON.parse 失敗的行讀不到 ts,沒有辦法證明它不是今天寫的,
   // 所以一律當成不可信。不可以先用 ts 濾出今日再檢查壞行——那樣歷史壞行會被濾掉。
+  //
+  // 「解析得出來但不是事件」跟「解析不出來」走同一條路、同一個訊息形狀(行號 / 前 80
+  // 字 / 怎麼修)。以前 `"hello"` 這種行會被 push 進 events,然後被 computeDailySpend
+  // 與今日條目的 filter 靜靜略過,結果是 exit 0 加一句「有 log 但沒花」;`null` 則是
+  // 在 filter 裡讀 `.ts` 炸掉,exit 2 但訊息是一個 TypeError,沒有行號、沒有怎麼修。
   const events: SpendEvents = [];
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     // 空行與只有空白的行不是壞行:append-only 的檔案本來就會有行尾換行。
     if (line.trim().length === 0) continue;
+    let parsed: unknown;
     try {
-      events.push(JSON.parse(line) as SpendEvents[number]);
+      parsed = JSON.parse(line);
     } catch {
       // 行號用 1-based,跟編輯器一致。
-      return { kind: 'unknown', reason: badLineReason(logPath, i + 1, line) };
+      return { kind: 'unknown', reason: badLineReason(logPath, i + 1, line, NOT_JSON) };
     }
+    if (!isLogEvent(parsed)) {
+      return { kind: 'unknown', reason: badLineReason(logPath, i + 1, line, NOT_EVENT) };
+    }
+    events.push(parsed);
   }
 
   const prices: SpendPrices = { inPerM, outPerM };
