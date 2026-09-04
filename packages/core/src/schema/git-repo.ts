@@ -14,9 +14,13 @@
  * 兩個都必須是**冪等**的,而且**沒有 git 的環境照樣要能用**——§11b 說的是「建議」,
  * 不是硬約定,把 git 變成 init 的必要條件等於讓一個建議去擋掉整個產品。
  *
- * ⚠️ 本輪(測試輪)只定義介面與純函式,IO 的部分是 `throw new Error('not implemented')`,
- * 由下一輪開發 agent 補上。見 ADR-042 Consequences 第 5 點。
+ * ⚠️ 「dir 是不是一個 repo」一律用 `rev-parse --show-toplevel` 比對真實路徑,
+ * **不可以**用 `--is-inside-work-tree`——見 isOwnGitRepo() 的說明。
  */
+
+import { spawnSync } from 'node:child_process';
+import { existsSync, realpathSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * 寫進 `<learning>/.gitignore` 的內容(ADR-042)。
@@ -126,21 +130,61 @@ export function snapshotMessage(today: Date): string {
 }
 
 /**
+ * 跑一次 git,回傳退出碼與 stdout。**不丟錯**——「沒有 git」在這裡是一個要回報的
+ * 狀態,不是例外(§11b 說 git 是建議)。所以一律用 spawnSync 而不是 execFileSync。
+ *
+ * `leading` 放在 `-C` 前面,給 `-c user.email=…` 這種只對這一次呼叫生效的設定用。
+ */
+function runGit(dir: string, args: string[], leading: string[] = []): { status: number | null; out: string } {
+  const r = spawnSync('git', [...leading, '-C', dir, ...args], { encoding: 'utf8' });
+  return { status: r.status, out: (r.stdout ?? '').trim() };
+}
+
+/**
+ * 跑一次 git,失敗就丟錯。
+ *
+ * 只用在「已經確認 git 可用、目錄狀態也確認過」之後的那幾步(init / add / commit)。
+ * 那些步驟失敗代表磁碟或 git 本身出了問題,不是我們預期得到的狀態——安靜吞掉的話,
+ * 使用者會以為版本控制建好了,真正需要回溯的那天才發現什麼都沒有。
+ */
+function mustGit(dir: string, args: string[], leading: string[] = []): void {
+  const r = runGit(dir, args, leading);
+  if (r.status !== 0) throw new Error(`git ${args[0]} 失敗(exit ${r.status}):${r.out}`);
+}
+
+/**
+ * commit 時要不要帶一個退路身分進去。
+ *
+ * 這個 repo 讀得到 `user.email` 就回空陣列——**使用者自己設過的身分永遠優先**,
+ * 這是他的 repo,不是我們的。讀不到(全新的機器、CI 容器)才用 `-c` 帶
+ * FALLBACK_IDENTITY,否則 `git commit` 會直接失敗。
+ */
+function identityArgs(dir: string): string[] {
+  if (runGit(dir, ['config', 'user.email']).status === 0) return [];
+  return ['-c', `user.name=${FALLBACK_IDENTITY.name}`, '-c', `user.email=${FALLBACK_IDENTITY.email}`];
+}
+
+/**
  * `dir` 是不是**它自己**的 git repo。
  *
  * 不能只問 `git -C <dir> rev-parse --is-inside-work-tree`:`learning/` 常常就放在
  * 主 repo 底下,那句話會因為找到**上層**的 repo 而回 true。真正要問的是
  * 「這個目錄的 repo 根就是它自己嗎」——比對 `rev-parse --show-toplevel` 與 dir 的
  * 真實路徑。搞錯的後果是把使用者的卡片 commit 進錯的 repo。
+ *
+ * 兩邊都先過 `realpathSync` 再比:`/tmp` 在某些系統上是 symlink,git 回的是解開之後
+ * 的路徑,直接比字串會把「是自己的 repo」誤判成「不是」。
  */
 export function isOwnGitRepo(dir: string): boolean {
-  void dir;
-  throw new Error('not implemented');
+  const r = runGit(dir, ['rev-parse', '--show-toplevel']);
+  // 目錄不存在、不在任何 repo 裡、或這台機器沒有 git,都走這一條
+  if (r.status !== 0) return false;
+  return realpathSync(r.out) === realpathSync(dir);
 }
 
 /** 這台機器上有沒有可用的 git 命令。 */
 export function isGitAvailable(): boolean {
-  throw new Error('not implemented');
+  return spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
 }
 
 /**
@@ -152,8 +196,24 @@ export function isGitAvailable(): boolean {
  * 找不到 git 命令時回 `git-unavailable` 加一段 warning,**不丟錯**。
  */
 export function initGitRepo(dir: string): GitInitResult {
-  void dir;
-  throw new Error('not implemented');
+  if (!isGitAvailable()) {
+    return {
+      status: 'git-unavailable',
+      wroteGitignore: false,
+      committed: false,
+      warning: GIT_UNAVAILABLE_WARNING,
+    };
+  }
+  // 冪等的那一格。注意這裡問的是「是不是**它自己**的 repo」——如果 dir 只是躺在
+  // 上層 repo 底下,答案是 false,我們照樣要幫它 init 一個自己的。
+  if (isOwnGitRepo(dir)) {
+    return { status: 'existing', wroteGitignore: false, committed: false };
+  }
+  mustGit(dir, ['init', '-q']);
+  writeFileSync(join(dir, '.gitignore'), LEARNING_GITIGNORE, 'utf8');
+  mustGit(dir, ['add', '-A']);
+  mustGit(dir, ['commit', '-q', '-m', INIT_COMMIT_MESSAGE], identityArgs(dir));
+  return { status: 'created', wroteGitignore: true, committed: true };
 }
 
 /**
@@ -163,7 +223,19 @@ export function initGitRepo(dir: string): GitInitResult {
  * 真正有變化的那幾天找不到。
  */
 export function snapshotLearningDir(dir: string, opts: { today?: Date } = {}): SnapshotResult {
-  void dir;
-  void opts;
-  throw new Error('not implemented');
+  // 三道關卡的順序是有意義的:目錄不存在跟沒有 git 各自有自己的指引文字,
+  // 而「不是它自己的 repo」一定要在 add -A 之前擋掉——不然就是把使用者的卡片
+  // commit 進上層那個 repo。
+  if (!existsSync(dir)) return { status: 'missing-dir', hint: MISSING_DIR_HINT };
+  if (!isGitAvailable()) return { status: 'git-unavailable', hint: GIT_UNAVAILABLE_WARNING };
+  if (!isOwnGitRepo(dir)) return { status: 'not-a-repo', hint: NOT_A_REPO_HINT };
+
+  mustGit(dir, ['add', '-A']);
+  // 進了索引之後才問「跟 HEAD 有沒有差」。先 add 再比,才抓得到新增與刪除;
+  // 退出碼 0 表示沒有差異,那就什麼都不做。
+  if (runGit(dir, ['diff', '--cached', '--quiet']).status === 0) return { status: 'no-changes' };
+
+  const message = snapshotMessage(opts.today ?? new Date());
+  mustGit(dir, ['commit', '-q', '-m', message], identityArgs(dir));
+  return { status: 'committed', message };
 }
