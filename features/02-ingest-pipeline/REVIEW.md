@@ -431,3 +431,143 @@ DFS 最後走到的那條回邊),確定性才真的被鎖住。
   測(全部補測試)、1 個是真等價(加 disable 並寫明理由),沒有用「等價變異」
   一句話帶過。
 - 7.6 的兩點是體驗/取捨問題,不影響這一輪的驗收。
+
+---
+
+# 8. deps-stale-graph-removal(ADR-038)驗收
+
+**日期**:2026-09-04
+**branch**:`pollux0971/deps-stale-graph-removal`
+**被審的 commit**:`abf1d0c`(測試 + ADR,紅燈)、`bca7d68`(實作)
+**審核者**:審核 agent(有權限改測試檔)
+
+## 8.1 判定
+
+**PASS**。
+
+| 項目 | 實測 |
+|---|---|
+| `npm ci` | exit 0 |
+| `npm run boundaries` | ✓ 無違規(掃 174 檔,允許例外 9 條) |
+| `npm run typecheck` | exit 0 |
+| `npx vitest run` | **988 passed / 65 files**(原本 985,加上本次追加的 3 個) |
+| cucumber `not @manual` | **292 passed、0 failed**;164 undefined 全是尚未開工的 phase(基準線不變) |
+| cucumber phase-2 單跑 | **13 scenarios / 84 steps 全綠**(第 14 個是 `@manual`) |
+| cucumber `--dry-run` | exit 0、**0 ambiguous** |
+| Stryker `deps.ts` | **100.00%**(112 killed、1 timeout、**0 survived**、0 no-cov) |
+
+Stryker 表格裡的 `# errors = 45` 是 `stryker.config.json` 的 `checkers: ["typescript"]`
+在編譯階段就擋下、根本不成立的變異(172 instrumented → 158 tested → 112+1+45),
+不計入分數,也不是漏測。上一輪同模組是 100.00%,**沒有退步**。
+
+## 8.2 逐條審查結果
+
+### (1) 只動該分類 —— 通過,但原本的測試偏弱,已補強
+
+`removeCategoryGraph()` 用 rest destructuring 把 `category` 這個 key 拿掉、
+其餘原樣交給 `atomicWriteJson()`,**沒有**碰 `deps.json` 這個檔案本身,order 檔
+也只刪 `order-<category>.json` 一個。契約 §8 的「一個檔裝所有分類」有守住。
+
+原本的測試只有**兩個分類**,任何「保留剩下的」實作都會過。追加一個三分類測試
+(`removeCategoryGraph: 三個分類只動中間那個`),**移除夾在中間的那個**,斷言:
+
+- 另外兩個分類在 `deps.json` 裡的 **JSON 序列化字串**完全相同(不只 `toEqual`,
+  連鍵序、陣列順序都不能被重排)
+- `Object.keys(deps)` 恰好是 `['alpha', 'omega']`,順序也不變
+- 另外兩個分類的 `order-*.json` **位元組**不變
+
+**反向驗證**:把 `removeCategoryGraph()` 改成 `rmSync(depsPath, { force: true })`
+(砍整個檔),這個測試連同另外 7 個一起紅。確認它真的在測東西。
+
+### (2) 原子性 —— 通過,契約 §11b 滿足
+
+去讀了 `packages/core/src/ingest/state.ts:18` 的 `atomicWriteJson()`:
+
+```
+openSync(`${path}.tmp`, 'w') → writeSync → fsyncSync(fd) → closeSync → renameSync(tmp, path)
+```
+
+**確認有 `fsyncSync(fd)`**,而且在 `rename` 之前。契約 §11b 三步(寫 `.tmp`、
+`fsync`、`rename`)字面滿足。成功路徑不留 `.tmp`(rename 把它移走了),測試
+`rewrites deps.json atomically, leaving no .tmp file behind` 有鎖住。
+
+**觀察(非阻擋,pre-existing)**:`writeSync`/`fsyncSync` 若丟錯,`finally` 只
+`closeSync(fd)`、**不會 unlink `.tmp`**,所以失敗時磁碟上會留下一個殘檔。這不會
+毀資料——`rename` 沒發生,正本永遠是完整的舊版;而且下一次寫入用 `openSync(…, 'w')`
+會直接覆蓋掉那個殘檔。契約 §11b 也沒有要求清殘檔。同理 `atomicWriteJson()` 沒有
+fsync **目錄**,所以 rename 本身在斷電下不保證落盤——這同樣超出契約 §11b 的字面
+要求。兩點都是 `atomicWriteJson()` 既有行為(`ingest.ts` 也在用),不是這一輪引進的,
+列在這裡備查。
+
+### (3) 兩個設計判斷 —— 都合理,其中一個原本沒被鎖住
+
+**(a)「沒有該 key 就完全不重寫」**:合理。ADR-038 的理由(少一次寫入、少一個
+「重寫途中斷電」的機會)成立,而且對呼叫端沒有語意差別——`deps.json` 內容一樣。
+
+但原本的測試只斷言 `toEqual`,**等價內容的重寫也會過**。追加
+`leaves deps.json byte-identical when the category has no entry`:fixture 刻意寫成
+單行、無結尾換行的 JSON(不是 `atomicWriteJson` 的 2 空格縮排 + `\n` 格式),真的
+重寫過就會被正規化、位元組比對立刻抓到。
+
+**反向驗證**:拿掉 `if (Object.hasOwn(...))`、改成永遠重寫 → **只有這個新測試會紅**,
+其餘 46 個全過。也就是說「真 no-op」這條設計判斷在補測試之前是**沒有被鎖住的**。
+
+**(b) order 檔用 `rmSync(path, { force: true })`**:合理。`force: true` 吸收 ENOENT
+(包含 `graph/` 目錄本身不存在的情況),語意就是「確保它不在」,多一個 `existsSync`
+分支只是多一條路徑跟一個 TOCTOU 窗口。ADR-038 邊界 3 明文允許。
+
+### (4) 正常路徑不受影響 —— 通過,但「不該呼叫」本身無法用行為測試鎖住
+
+追加 `analyzeDependencies: 正常路徑不移除圖資料`:fixture 是「上一次成功的 run 已經
+寫過 security 圖 + 另一個分類的圖與 order 檔」,無環時斷言兩個檔照常一起寫、
+`deps.security` 換成這一次的圖、`order-security.json` 內容等於回傳的 `order`、
+另一分類的 entry 與 order 檔位元組不變、而且**不記 warning**。
+
+**誠實回報一個限制**:我試著反向驗證「正常路徑呼叫了 `removeCategoryGraph()` 會被抓到」
+—— 在 `writeCategoryGraph()` 之前插入一行 `removeCategoryGraph(outDir, category);`,
+**47 個測試全過**。原因是它在正常路徑上語意上就是 no-op:刪掉的 key 與 order 檔
+在下面兩行立刻被 `writeCategoryGraph()` 與 `computeAndSaveCategoryOrder()` 寫回去,
+磁碟終態完全一樣。所以「不該呼叫」這件事**在行為層面不可觀測**,不是測試放水。
+能鎖、也已經鎖住的是它的可觀測等價命題:正常路徑兩個檔照常寫、別的分類不動、不記 warning
+(新測試 + 既有的 Scenario 8 測試 `does not touch another category order file or its deps.json entry`)。
+
+### (5) 有沒有投機取巧 —— 沒有
+
+- **上限沒有寫死**:`removeCyclesLocally(graph, cards.length)`,`maxDrops` 是參數,
+  測試用 3 張卡只是讓 fixture 小,不是把上限改小。
+- **fixture 沒有硬寫死**:gherkin 的 step
+  `a previous successful run already wrote the graph and the order file for security`
+  是從 `c.cards` 的 id 真的組出一條鏈狀 stale graph,不是貼死字串;
+  `the security entry and the security order file are gone` 是**讀 `deps.json` 檢查
+  `Object.hasOwn`**,而不是拿「檔案存不存在」當斷言——那正好是這個 ADR 最容易做錯的地方,
+  步驟定義的註解也明講了。
+- 兩個新 step 都有真實斷言,沒有 `return 'pending'` 之類的空殼。
+
+## 8.3 存活變異處理
+
+**0 個存活、0 個未覆蓋**,所以四分類(真漏測 / 真等價 / 死程式 / 邊界)這一輪
+**沒有任何一條需要走**。`deps.ts` 裡既有的 4 個 `// Stryker disable next-line all`
+都是前幾輪就寫好、理由寫得很具體的(模組載入期的靜態初始化、`cyclePath.length > 0`
+的防呆、`prereqsByCardOf` 的 `includes` 防呆、`prereqs ?? []` 的型別保證),
+本輪沒有新增任何 disable。
+
+## 8.4 這一輪發現的問題(即使已修掉也記在這裡)
+
+1. **「真 no-op」設計判斷原本沒有測試鎖住**(見 8.2(3)(a))。開發 agent 的實作是對的,
+   但拿掉 `Object.hasOwn` 檢查不會有任何測試變紅。已補 byte-identical 測試,反向驗證過。
+2. **「只動該分類」原本只用兩個分類驗**(見 8.2(1))。兩個分類抓不到「順序被重排」
+   這類問題。已補三分類、移除中間那個的測試。
+3. **`removeCategoryGraph()` / `writeCategoryGraph()` 對損壞的 `deps.json` 會丟錯**
+   (`JSON.parse` 沒有包 try/catch)。ADR-038 列的三個邊界(檔不存在、沒有該 key、
+   order 檔不存在)都處理了,但「檔在、內容不是合法 JSON」會讓 `analyzeDependencies()`
+   在 unresolved 分支丟錯,把原本該記的那筆 warning 蓋掉——正是 ADR 想避免的形狀。
+   **不阻擋這一輪**:ADR 沒有列這個邊界,而且 `writeCategoryGraph()` 早就是同樣行為
+   (pre-existing,不是這輪引進的)。要不要補是個取捨,照 CLAUDE.md 的「做決定時」
+   規則不由我默默選,列在這裡等決定。
+4. `atomicWriteJson()` 失敗時留 `.tmp` 殘檔、且不 fsync 目錄(見 8.2(2))。
+   超出契約 §11b 字面要求,pre-existing,備查。
+
+## 8.5 本輪新增/修改的檔案
+
+- `packages/core/src/ingest/deps.test.ts` —— 追加 3 個測試(2 個 `removeCategoryGraph`、
+  1 個 `analyzeDependencies` 正常路徑),全部做過反向驗證。實作檔 `deps.ts` **未修改**。

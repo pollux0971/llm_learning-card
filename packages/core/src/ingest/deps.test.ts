@@ -942,3 +942,96 @@ describe('writeCategoryGraph', () => {
     expect(deps).toEqual({ language: languageGraph, security: securityGraph });
   });
 });
+
+// ====================================================== removeCategoryGraph(審核追加)
+//
+// 審核 agent 追加的兩組測試(ADR-038):
+//   1. 三個分類、移除中間那個 —— 上面的測試只有兩個分類,「只動該分類」在兩個分類的
+//      情形下比較弱(任何「保留剩下的」實作都會過);三個分類且移除中間那個,才能同時
+//      抓到「多刪一個」與「順序被重排」。斷言用**位元組**比對另外兩個分類的 order 檔,
+//      並比對 deps.json 裡它們的 JSON 序列化結果完全相同。
+//   2. 正常路徑(無環)不受影響 —— removeCategoryGraph() 只該在 unresolved 分支被叫到。
+
+describe('removeCategoryGraph: 三個分類只動中間那個', () => {
+  it('leaves both surviving categories serialized identically and their order files byte-identical', () => {
+    const outDir = makeOutDir();
+    const graphDir = join(outDir, 'graph');
+    const alpha: Graph = { nodes: ['sec-0001', 'sec-0002'], edges: [['sec-0001', 'sec-0002']] };
+    const security: Graph = { nodes: ['sec-0101', 'sec-0102'], edges: [['sec-0101', 'sec-0102']] };
+    const omega: Graph = { nodes: ['lan-0001', 'lan-0002', 'lan-0003'], edges: [['lan-0001', 'lan-0002'], ['lan-0002', 'lan-0003']] };
+
+    // security 刻意夾在中間,才驗得到「不是砍前面、也不是砍後面」。
+    writeFileSync(join(graphDir, 'deps.json'), JSON.stringify({ alpha, security, omega }, null, 2));
+    const alphaOrderBefore = JSON.stringify(['sec-0001', 'sec-0002'], null, 2) + '\n';
+    const omegaOrderBefore = JSON.stringify(['lan-0001', 'lan-0002', 'lan-0003'], null, 2) + '\n';
+    writeFileSync(join(graphDir, 'order-alpha.json'), alphaOrderBefore);
+    writeFileSync(join(graphDir, 'order-security.json'), JSON.stringify(['sec-0101', 'sec-0102'], null, 2) + '\n');
+    writeFileSync(join(graphDir, 'order-omega.json'), omegaOrderBefore);
+
+    removeCategoryGraph(outDir, 'security');
+
+    const deps = JSON.parse(readFileSync(join(graphDir, 'deps.json'), 'utf8')) as Record<string, Graph>;
+    // 剩下的兩個分類的 JSON 序列化結果要跟移除前完全相同(不只是 toEqual:連鍵的
+    // 順序、陣列的順序都不能被重排)。
+    expect(JSON.stringify(deps.alpha)).toBe(JSON.stringify(alpha));
+    expect(JSON.stringify(deps.omega)).toBe(JSON.stringify(omega));
+    expect(Object.keys(deps)).toEqual(['alpha', 'omega']);
+
+    expect(Object.hasOwn(deps, 'security')).toBe(false);
+    expect(existsSync(join(graphDir, 'order-security.json'))).toBe(false);
+
+    // 另外兩個分類的 order 檔:位元組不變(不是被重寫成等價內容)。
+    expect(readFileSync(join(graphDir, 'order-alpha.json'), 'utf8')).toBe(alphaOrderBefore);
+    expect(readFileSync(join(graphDir, 'order-omega.json'), 'utf8')).toBe(omegaOrderBefore);
+  });
+
+  it('leaves deps.json byte-identical when the category has no entry (true no-op, not a rewrite of equal content)', () => {
+    const outDir = makeOutDir();
+    const depsPath = join(outDir, 'graph', 'deps.json');
+    // 刻意用「非 atomicWriteJson 產出」的格式(單行、沒有結尾換行):真的重寫過的話
+    // 會被正規化成 2 空格縮排 + 結尾換行,位元組比對就會抓到。
+    const before = '{"language":{"nodes":["lan-0001"],"edges":[]}}';
+    writeFileSync(depsPath, before);
+
+    removeCategoryGraph(outDir, 'security');
+
+    expect(readFileSync(depsPath, 'utf8')).toBe(before);
+  });
+});
+
+describe('analyzeDependencies: 正常路徑不移除圖資料', () => {
+  it('keeps writing both files and never removes the category graph when there is no cycle', async () => {
+    const outDir = makeOutDir();
+    const graphDir = join(outDir, 'graph');
+    // 上一次成功的 run 留下的 security 圖 + 另一個分類的圖,兩個 order 檔都在。
+    const languageGraph: Graph = { nodes: ['lan-0001', 'lan-0002'], edges: [['lan-0001', 'lan-0002']] };
+    writeFileSync(
+      join(graphDir, 'deps.json'),
+      JSON.stringify({ security: { nodes: ['sec-9999'], edges: [] }, language: languageGraph }, null, 2),
+    );
+    const languageOrderBefore = JSON.stringify(['lan-0001', 'lan-0002'], null, 2) + '\n';
+    writeFileSync(join(graphDir, 'order-language.json'), languageOrderBefore);
+
+    const cards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
+    const { router } = makeDepsRouter([
+      [
+        ['sec-0001', 'sec-0002'],
+        ['sec-0002', 'sec-0003'],
+      ],
+    ]);
+
+    const result = await analyzeDependencies('security', cards, router, outDir);
+
+    expect(result.cycleUnresolved).toBeNull();
+    // 兩個檔案照常一起寫:deps.json 的 security key 換成這一次的圖,order 檔也在。
+    const deps = JSON.parse(readFileSync(join(graphDir, 'deps.json'), 'utf8')) as Record<string, Graph>;
+    expect(deps.security).toEqual(result.graph);
+    expect(existsSync(join(graphDir, 'order-security.json'))).toBe(true);
+    expect(JSON.parse(readFileSync(join(graphDir, 'order-security.json'), 'utf8'))).toEqual(result.order);
+    // 別的分類一個位元組都不能動。
+    expect(deps.language).toEqual(languageGraph);
+    expect(readFileSync(join(graphDir, 'order-language.json'), 'utf8')).toBe(languageOrderBefore);
+    // 正常路徑不該記 warning——warning 是 unresolved 分支才有的東西。
+    expect(logEventsOf(outDir).filter((e) => e.type === 'warning')).toEqual([]);
+  });
+});
