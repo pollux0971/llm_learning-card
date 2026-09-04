@@ -11,7 +11,7 @@ import { FakeLlmRouter } from './fake-llm.js';
 import { getGoldenSet, GOLDEN_SET_REGISTRY_FILE } from './golden-sets/registry.js';
 import { runStructuralChecks } from './structural-checks.js';
 import { renderScoresSheet } from './scores.js';
-import type { GoldenOutput, GoldenRunMeta, GoldenRunResult, GoldenSet, LlmRouter, LlmTask } from './types.js';
+import type { GoldenOutput, GoldenRunMeta, GoldenRunResult, GoldenSet, GoldenSetId, LlmRouter } from './types.js';
 
 export const ROOT = resolve(import.meta.dirname, '../../../..');
 /** live run(phase-2)的存放處:進 git,diff 看得到(FEATURE.md「golden 儲存」)。 */
@@ -29,15 +29,15 @@ export function defaultGoldenBaseDir(mode: GoldenRunMeta['mode']): string {
 }
 
 export class MissingGoldenSetError extends Error {
-  constructor(public readonly task: string) {
-    super(`task「${task}」沒有登記 golden set,去 ${GOLDEN_SET_REGISTRY_FILE} 定義它的固定輸入`);
+  constructor(public readonly set: string) {
+    super(`golden set「${set}」沒有登記,去 ${GOLDEN_SET_REGISTRY_FILE} 定義它的固定輸入`);
     this.name = 'MissingGoldenSetError';
   }
 }
 
 export class LiveRunOfflineError extends Error {
-  constructor(public readonly task: string) {
-    super(`live golden run 需要雲端,現在連不上(task=${task})。要離線跑就用 --fake,那是重播 fixture、沒有品質資訊。`);
+  constructor(public readonly set: string) {
+    super(`live golden run 需要雲端,現在連不上(set=${set})。要離線跑就用 --fake,那是重播 fixture、沒有品質資訊。`);
     this.name = 'LiveRunOfflineError';
   }
 }
@@ -52,7 +52,8 @@ export type ModelPriceTable = Record<string, { inPerMTok: number; outPerMTok: nu
 export const DEFAULT_MODEL_PRICES: ModelPriceTable = {};
 
 export interface RunGoldenOptions {
-  task: LlmTask;
+  /** 跑哪一組 golden set。**不是 LlmTask**——三個 ingest prompt 檔共用 'ingest.cards'。 */
+  set: GoldenSetId;
   /** 這次 run 的日期,預設今天(YYYY-MM-DD)。同一天重跑會覆蓋同一個目錄。 */
   today?: string;
   /** 預設是自備的 FakeLlmRouter,phase-1 只有這個模式 */
@@ -94,11 +95,22 @@ function today(): string {
 }
 
 export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult> {
-  const set = getGoldenSet(opts.task);
-  if (!set) throw new MissingGoldenSetError(opts.task);
+  const goldenSet = getGoldenSet(opts.set);
+  if (!goldenSet) throw new MissingGoldenSetError(opts.set);
 
-  if ((opts.mode ?? 'fake') === 'live') return runGoldenLive(opts, set);
-  return runGoldenFake(opts, set);
+  if ((opts.mode ?? 'fake') === 'live') return runGoldenLive(opts, goldenSet);
+  return runGoldenFake(opts, goldenSet);
+}
+
+/**
+ * 真正送進 router 的 prompt = prompt 檔的內容 + 這一則輸入會變動的那一半。
+ *
+ * 這一步是這整個資料夾的重點。少了它,golden run 只是把 prompt 檔快照下來、
+ * 卻從來沒有把它送出去:改了 `cards.md` 再 `--diff` 會拿到「沒有變化」,
+ * 因為被比的東西裡根本沒有那個 prompt。
+ */
+export function composeGoldenPrompt(promptFileContent: string, inputPrompt: string): string {
+  return `${promptFileContent}\n${inputPrompt}`;
 }
 
 /**
@@ -110,20 +122,20 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
  * (registry 裡登記的那一組永遠有檔案、永遠有 3 個輸入)。兩條路徑現在形狀一致。
  */
 export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Promise<GoldenRunResult> {
-  const goldenSet = set ?? getGoldenSet(opts.task);
-  if (!goldenSet) throw new MissingGoldenSetError(opts.task);
+  const goldenSet = set ?? getGoldenSet(opts.set);
+  if (!goldenSet) throw new MissingGoldenSetError(opts.set);
 
   const mode: GoldenRunMeta['mode'] = 'fake';
   const date = opts.today ?? today();
   const baseDir = opts.baseDir ?? defaultGoldenBaseDir(mode);
-  const dir = join(baseDir, goldenSet.task, date);
+  const dir = join(baseDir, goldenSet.id, date);
   mkdirSync(dir, { recursive: true });
 
   const router = opts.router ?? new FakeLlmRouter([DEFAULT_FAKE_FIXTURE_DIR], opts.onCall);
 
   const promptFileAbs = join(ROOT, goldenSet.promptFile);
   if (!existsSync(promptFileAbs)) {
-    throw new Error(`golden set「${goldenSet.task}」指向的 prompt 檔不存在:${goldenSet.promptFile}`);
+    throw new Error(`golden set「${goldenSet.id}」指向的 prompt 檔不存在:${goldenSet.promptFile}`);
   }
   const promptContent = readFileSync(promptFileAbs, 'utf8');
   writeFileSync(join(dir, 'prompt.snapshot.md'), promptContent);
@@ -132,7 +144,7 @@ export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Pr
   let model = 'unknown';
   let provider = 'unknown';
   for (const input of goldenSet.inputs) {
-    const result = await router.call(goldenSet.task, input.prompt);
+    const result = await router.call(goldenSet.task, composeGoldenPrompt(promptContent, input.prompt));
     model = result.model;
     provider = result.provider;
     const structural = runStructuralChecks(result.text);
@@ -142,6 +154,7 @@ export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Pr
   }
 
   const meta: GoldenRunMeta = {
+    set: goldenSet.id,
     task: goldenSet.task,
     date,
     model,
@@ -153,7 +166,7 @@ export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Pr
   writeFileSync(
     join(dir, 'SCORES.md'),
     renderScoresSheet(
-      goldenSet.task,
+      goldenSet.id,
       date,
       goldenSet.inputs.map((i) => i.id),
     ),
@@ -172,25 +185,25 @@ export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Pr
  * 其餘(prompt 快照、逐項 output、結構性檢查、SCORES.md)跟 fake 路徑一致。
  */
 export async function runGoldenLive(opts: RunGoldenOptions, set?: GoldenSet): Promise<GoldenRunResult> {
-  const goldenSet = set ?? getGoldenSet(opts.task);
-  if (!goldenSet) throw new MissingGoldenSetError(opts.task);
+  const goldenSet = set ?? getGoldenSet(opts.set);
+  if (!goldenSet) throw new MissingGoldenSetError(opts.set);
 
   const router = opts.router ?? (opts.createRouter ?? createDefaultLiveRouter)();
 
   // 順序有意義:先確認連得上、再讀 prompt 檔,兩件事都成功才建立目錄。
   // 反過來的話離線那次會留下一個空目錄,之後 diff 會把它當成一次 run。
-  if (!(await router.probeOnline())) throw new LiveRunOfflineError(goldenSet.task);
+  if (!(await router.probeOnline())) throw new LiveRunOfflineError(goldenSet.id);
 
   const promptFileAbs = join(ROOT, goldenSet.promptFile);
   if (!existsSync(promptFileAbs)) {
-    throw new Error(`golden set「${goldenSet.task}」指向的 prompt 檔不存在:${goldenSet.promptFile}`);
+    throw new Error(`golden set「${goldenSet.id}」指向的 prompt 檔不存在:${goldenSet.promptFile}`);
   }
   const promptContent = readFileSync(promptFileAbs, 'utf8');
 
   const mode: GoldenRunMeta['mode'] = 'live';
   const date = opts.today ?? today();
   const baseDir = opts.baseDir ?? defaultGoldenBaseDir(mode);
-  const dir = join(baseDir, goldenSet.task, date);
+  const dir = join(baseDir, goldenSet.id, date);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'prompt.snapshot.md'), promptContent);
 
@@ -200,9 +213,10 @@ export async function runGoldenLive(opts: RunGoldenOptions, set?: GoldenSet): Pr
   let tokensIn = 0;
   let tokensOut = 0;
   for (const input of goldenSet.inputs) {
-    opts.onCall?.(goldenSet.task, input.prompt);
+    const prompt = composeGoldenPrompt(promptContent, input.prompt);
+    opts.onCall?.(goldenSet.task, prompt);
     // 呼叫本身的 log(契約 §10 的 llm_call)由 router 自己寫,這裡不另外記一份。
-    const result = await router.call(goldenSet.task, input.prompt);
+    const result = await router.call(goldenSet.task, prompt);
     model = result.model;
     provider = result.provider;
     tokensIn += result.tokens_in ?? 0;
@@ -215,6 +229,7 @@ export async function runGoldenLive(opts: RunGoldenOptions, set?: GoldenSet): Pr
 
   const cost = estimateCostUsd(model, tokensIn, tokensOut, opts.prices ?? DEFAULT_MODEL_PRICES);
   const meta: GoldenRunMeta = {
+    set: goldenSet.id,
     task: goldenSet.task,
     date,
     model,
@@ -230,7 +245,7 @@ export async function runGoldenLive(opts: RunGoldenOptions, set?: GoldenSet): Pr
   writeFileSync(
     join(dir, 'SCORES.md'),
     renderScoresSheet(
-      goldenSet.task,
+      goldenSet.id,
       date,
       goldenSet.inputs.map((i) => i.id),
     ),

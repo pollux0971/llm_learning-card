@@ -1,0 +1,12 @@
+{
+  "task": "ingest.questions",
+  "prompt_contains": "golden: questions-preflight",
+  "attempt": 1,
+  "response": {
+    "text": "{\"fill\": [{\"prompt\": \"帶自訂標頭的跨來源請求,瀏覽器會先發一個 ___。\", \"answers\": [[\"預檢請求\", \"preflight\", \"詢問請求\"]]}, {\"prompt\": \"預檢的結果可以被 ___ 一段時間。\", \"answers\": [[\"快取\", \"cache\"]]}], \"apply\": [{\"prompt\": \"預檢機制保護的是哪一種系統?為什麼?\", \"rubric\": [\"有指出是同源政策之前就存在的舊系統\", \"有指出那些系統沒預期收到跨來源寫入\"]}]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

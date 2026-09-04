@@ -33,12 +33,43 @@ export interface LlmRouter {
 /** 一個 golden run 的固定輸入。id 是穩定的檔名主幹,不要用會變動的東西。 */
 export interface GoldenInput {
   id: string;
-  /** 送進 router 的完整 prompt。必須包含對應 fixture 的 prompt_contains 標記。 */
+  /**
+   * prompt 裡**會變動的那一半**:header 行加上內容,格式跟 02-ingest-pipeline 的
+   * `buildBatchPrompt` / `buildChildrenPrompt` / `buildQuestionsPrompt` / `buildDepsPrompt`
+   * 一致(`---` 分隔的 header 區塊,然後是內容)。
+   *
+   * **不含 prompt 檔本身**:golden run 會把 `promptFile` 的內容接在前面(見
+   * `composeGoldenPrompt()`)。這件事是這個資料夾存在的理由——prompt 檔沒有真的送出去的話,
+   * 改了 `cards.md` 再比對只會拿到「沒有變化」。
+   *
+   * 必須包含對應 fixture 的 `prompt_contains` 標記,`--fake` 才對得起來。
+   */
   prompt: string;
 }
 
-/** 一個 prompt 任務的 golden set:固定輸入 + 它評的是哪個 prompt 檔。 */
+/**
+ * golden set 的識別碼。**不是** `LlmTask`(契約 §7)。
+ *
+ * 為什麼要分開:契約 §7 的權威清單只有 7 個任務,而 `packages/core/prompts/ingest/`
+ * 底下的三個檔 `cards.md` / `children.md` / `regenerate.md` 都是用同一個任務
+ * `'ingest.cards'` 呼叫 router(generate-cards.ts、children.ts)。一個 prompt 檔一組
+ * golden set,所以「跑哪一組」必須有自己的 key;用任務名當 key 的話那三個檔最多只能
+ * 登記一個,另外兩個會靜靜地沒有基準——那正是這個資料夾要防的事。
+ *
+ * 契約 §7 的 LlmTask 一個字都沒有改;`GoldenSet.task` 仍然只放契約裡的值。
+ */
+export type GoldenSetId =
+  | 'ingest.cards'
+  | 'ingest.children'
+  | 'ingest.regenerate'
+  | 'ingest.questions'
+  | 'ingest.deps'
+  | 'selftest';
+
+/** 一個 prompt 檔的 golden set:固定輸入 + 它評的是哪個 prompt 檔 + 送去哪個契約任務。 */
 export interface GoldenSet {
+  id: GoldenSetId;
+  /** 送進 `router.call()` 的契約任務(§7 權威清單)。多組 golden set 可以共用同一個 task。 */
   task: LlmTask;
   /** 相對 repo 根目錄的路徑,golden run 會把這個檔案的內容存一份快照、並記錄它的 git commit。 */
   promptFile: string;
@@ -46,6 +77,9 @@ export interface GoldenSet {
 }
 
 export interface GoldenRunMeta {
+  /** 跑的是哪一組 golden set。**目錄名稱用這個**,不是 task——三個檔共用 'ingest.cards'。 */
+  set: GoldenSetId;
+  /** 這組送進 router 的契約任務(§7)。留著是因為「這次打的是哪個任務」是 run 的事實。 */
   task: LlmTask;
   /** 這次 run 的日期,同時是輸出目錄名稱(YYYY-MM-DD) */
   date: string;
@@ -112,7 +146,7 @@ export interface CompareItem {
 }
 
 export interface CompareResult {
-  task: LlmTask;
+  set: GoldenSetId;
   dirA: string;
   dirB: string;
   items: CompareItem[];
@@ -178,7 +212,7 @@ export interface BatchCheckResult extends StructuralCheckResult {
  * 不用另外維護索引——目錄本身就是資料。
  */
 export interface BaselineInfo {
-  task: LlmTask;
+  set: GoldenSetId;
   /** 基準 run 的目錄(絕對路徑) */
   dir: string;
   date: string;
@@ -201,7 +235,7 @@ export interface PromptDrift {
  * 「誰需要人看」是上面一層的判斷,混進 CompareItem 會讓比對開始下判斷。
  */
 export interface RegressionReview {
-  task: LlmTask;
+  set: GoldenSetId;
   /** 輸出有變、需要人重新打分的 id,依字典序 */
   needsScoring: string[];
   /** 輸出完全相同、不必重打分的 id,依字典序 */

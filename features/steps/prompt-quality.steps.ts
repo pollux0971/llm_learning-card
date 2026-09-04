@@ -19,11 +19,11 @@ import { compareRuns, NotComparableError } from '../../packages/core/src/prompt-
 import { runStructuralChecks } from '../../packages/core/src/prompt-quality/structural-checks.js';
 import { parseScoresSheet } from '../../packages/core/src/prompt-quality/scores.js';
 import { getGoldenSet } from '../../packages/core/src/prompt-quality/golden-sets/registry.js';
-import { SCORE_DIMENSIONS, type GoldenRunResult, type LlmTask, type StructuralCheckResult, type CompareResult } from '../../packages/core/src/prompt-quality/types.js';
+import { SCORE_DIMENSIONS, type GoldenRunResult, type GoldenSetId, type StructuralCheckResult, type CompareResult } from '../../packages/core/src/prompt-quality/types.js';
 
 interface PqState {
   tmpDirs: string[];
-  demoTask: LlmTask;
+  demoSet: GoldenSetId;
   goldenResult?: GoldenRunResult;
   runDirA?: string;
   runDirB?: string;
@@ -37,7 +37,7 @@ interface PqState {
 let pq: PqState;
 
 Before(function () {
-  pq = { tmpDirs: [], demoTask: 'grade.apply' };
+  pq = { tmpDirs: [], demoSet: 'selftest' };
 });
 
 After(function () {
@@ -54,7 +54,7 @@ function newTmpBaseDir(): string {
 
 async function performGoldenRun(world: LearningWorld, opts: Partial<RunGoldenOptions> = {}): Promise<GoldenRunResult> {
   return runGolden({
-    task: pq.demoTask,
+    set: pq.demoSet,
     today: opts.today ?? world.today,
     baseDir: opts.baseDir ?? newTmpBaseDir(),
   });
@@ -63,17 +63,17 @@ async function performGoldenRun(world: LearningWorld, opts: Partial<RunGoldenOpt
 // ---------------------------------------------------------------- Given
 
 Given('a task with three golden inputs', function () {
-  pq.demoTask = 'grade.apply'; // 內建 demo golden set,固定 3 個輸入
+  pq.demoSet = 'selftest'; // 內建 demo golden set,固定 3 個輸入
 });
 
 Given('a task with no golden inputs defined', function () {
-  pq.demoTask = 'deepen'; // registry.ts 沒有登記這個 task
+  pq.demoSet = 'not-registered' as GoldenSetId; // registry.ts 沒有登記這一組
 });
 
 Given('two golden runs exist for the same task', async function (this: LearningWorld) {
   const baseDir = newTmpBaseDir();
-  const runA = await runGolden({ task: pq.demoTask, today: '2026-09-10', baseDir });
-  const runB = await runGolden({ task: pq.demoTask, today: '2026-09-11', baseDir });
+  const runA = await runGolden({ set: pq.demoSet, today: '2026-09-10', baseDir });
+  const runB = await runGolden({ set: pq.demoSet, today: '2026-09-11', baseDir });
   pq.runDirA = runA.dir;
   pq.runDirB = runB.dir;
 });
@@ -125,13 +125,13 @@ When('they are compared', function () {
 
 When('a comparison is attempted across two different tasks', async function () {
   const baseDir = newTmpBaseDir();
-  const runA = await runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir });
+  const runA = await runGolden({ set: 'selftest', today: '2026-09-10', baseDir });
 
-  const dirB = join(baseDir, 'deepen', '2026-09-10');
+  const dirB = join(baseDir, 'ingest.cards', '2026-09-10');
   mkdirSync(dirB, { recursive: true });
   writeFileSync(
     join(dirB, 'meta.json'),
-    JSON.stringify({ task: 'deepen', date: '2026-09-10', model: 'm', provider: 'fake', promptFileGitCommit: 'x', mode: 'fake' }),
+    JSON.stringify({ set: 'ingest.cards', task: 'ingest.cards', date: '2026-09-10', model: 'm', provider: 'fake', promptFileGitCommit: 'x', mode: 'fake' }),
   );
 
   try {
@@ -143,7 +143,7 @@ When('a comparison is attempted across two different tasks', async function () {
 
 When('a golden run is attempted', async function () {
   try {
-    await runGolden({ task: pq.demoTask, baseDir: newTmpBaseDir() });
+    await runGolden({ set: pq.demoSet, baseDir: newTmpBaseDir() });
   } catch (e) {
     pq.missingSetError = e as Error;
   }
@@ -177,7 +177,7 @@ Then('it contains one output file per input', function () {
 
 Then('it contains the prompt file as it was at that moment', function () {
   assert.ok(pq.goldenResult);
-  const set = getGoldenSet(pq.demoTask);
+  const set = getGoldenSet(pq.demoSet);
   assert.ok(set);
   const original = readFileSync(join(ROOT, set.promptFile), 'utf8');
   const snapshot = readFileSync(join(pq.goldenResult.dir, 'prompt.snapshot.md'), 'utf8');

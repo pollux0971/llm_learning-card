@@ -26,7 +26,14 @@ import {
   runGoldenLive,
   type ModelPriceTable,
 } from './golden-run.js';
-import type { GoldenRunMeta, GoldenSet, LlmRouter } from './types.js';
+import type { GoldenRunMeta, GoldenSet, GoldenSetId, LlmRouter } from './types.js';
+
+/**
+ * 沒有登記的 golden set id。`GoldenSetId` 的六個值現在全部都有登記,
+ * 但 CLI 的 `--set` 收的是使用者打的字串,打錯字這條路是真的——
+ * 所以 MissingGoldenSetError 要驗,用一個永遠不會被登記的名字。
+ */
+const NOT_REGISTERED = 'not-registered' as GoldenSetId;
 
 /**
  * ROOT 本身就是 git repo 的頂層嗎?
@@ -113,7 +120,7 @@ describe('runGolden --live:線上', () => {
 
   it('用設定的雲端模型跑,每個輸入一個輸出檔,meta.mode 是 live', async () => {
     const out = tmpOutDir();
-    const result = await runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() });
+    const result = await runGolden({ set: 'selftest', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() });
 
     expect(result.meta.mode).toBe('live');
     expect(result.meta.provider).toBe('anthropic');
@@ -125,13 +132,13 @@ describe('runGolden --live:線上', () => {
   });
 
   it('真的走到網路邊界:三個輸入 → 三次 /v1/messages', async () => {
-    await runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() });
+    await runGolden({ set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() });
     expect(requests.filter((u) => u.includes('/v1/messages'))).toHaveLength(3);
   });
 
   it('每次呼叫都被 router 記進 log(契約 §10 的 llm_call 事件)', async () => {
     const log: LogEvent[] = [];
-    await runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(log) });
+    await runGolden({ set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(log) });
     const calls = log.filter((e) => e.type === 'llm_call');
     expect(calls).toHaveLength(3);
     expect(calls.every((e) => (e as { task?: string }).task === 'grade.apply')).toBe(true);
@@ -139,7 +146,7 @@ describe('runGolden --live:線上', () => {
 
   it('meta 記 token 合計,model 在價目表上時填美金粗估', async () => {
     const result = await runGolden({
-      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
+      set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
       createRouter: () => makeRouter(), prices: PRICES,
     });
     expect(result.meta.tokens_in).toBe(300); // 3 次 × 100
@@ -150,7 +157,7 @@ describe('runGolden --live:線上', () => {
 
   it('model 不在價目表上時只記 token,不瞎猜金額', async () => {
     const result = await runGolden({
-      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
+      set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
       createRouter: () => makeRouter(), prices: {},
     });
     expect(result.meta.tokens_in).toBe(300);
@@ -165,7 +172,7 @@ describe('runGolden --live:線上', () => {
    */
   it('查不到價目時 estimated_cost_usd **欄位整個不存在**,不是一個 undefined 的值', async () => {
     const result = await runGolden({
-      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
+      set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
       createRouter: () => makeRouter(), prices: {},
     });
     expect('estimated_cost_usd' in result.meta).toBe(false);
@@ -174,7 +181,7 @@ describe('runGolden --live:線上', () => {
 
   it('查得到價目時欄位才存在', async () => {
     const result = await runGolden({
-      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
+      set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
       createRouter: () => makeRouter(), prices: PRICES,
     });
     expect('estimated_cost_usd' in result.meta).toBe(true);
@@ -182,7 +189,7 @@ describe('runGolden --live:線上', () => {
 
   it('meta.json 落到磁碟上,內容跟回傳的一致', async () => {
     const result = await runGolden({
-      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
+      set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live',
       createRouter: () => makeRouter(), prices: PRICES,
     });
     const onDisk = JSON.parse(readFileSync(join(result.dir, 'meta.json'), 'utf8')) as GoldenRunMeta;
@@ -190,7 +197,7 @@ describe('runGolden --live:線上', () => {
   });
 
   it('輸出仍然跑結構性檢查(live 不是繞過檢查的後門)', async () => {
-    const result = await runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() });
+    const result = await runGolden({ set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() });
     for (const o of result.outputs) {
       expect(o.structural.note).toBeTruthy();
       expect(o.structural.issues).toEqual([]);
@@ -203,21 +210,21 @@ describe('runGolden --live:離線', () => {
 
   it('連不上就丟 LiveRunOfflineError', async () => {
     await expect(
-      runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() }),
+      runGolden({ set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() }),
     ).rejects.toThrow(LiveRunOfflineError);
   });
 
   it('**不建立任何目錄**——半個空目錄之後會被當成一次 run', async () => {
     const out = tmpOutDir();
     await expect(
-      runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() }),
+      runGolden({ set: 'selftest', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() }),
     ).rejects.toThrow(LiveRunOfflineError);
     expect(readdirSync(out)).toEqual([]);
   });
 
   it('離線時完全沒有送出 /v1/messages', async () => {
     const out = tmpOutDir();
-    await runGolden({ task: 'grade.apply', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() }).catch(() => {});
+    await runGolden({ set: 'selftest', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() }).catch(() => {});
     expect(requests.filter((u) => u.includes('/v1/messages'))).toEqual([]);
   });
 });
@@ -239,7 +246,7 @@ describe('錯誤與 meta 的欄位(審核補測)', () => {
     let err: unknown;
     try {
       await runGolden({
-        task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
+        set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
       });
     } catch (e) {
       err = e;
@@ -247,8 +254,8 @@ describe('錯誤與 meta 的欄位(審核補測)', () => {
     expect(err).toBeInstanceOf(LiveRunOfflineError);
     const offline = err as LiveRunOfflineError;
     expect(offline.name).toBe('LiveRunOfflineError');
-    expect(offline.task).toBe('grade.apply');
-    expect(offline.message).toContain('grade.apply');
+    expect(offline.set).toBe('selftest');
+    expect(offline.message).toContain('selftest');
     expect(offline.message).toContain('--fake');
   });
 
@@ -257,7 +264,7 @@ describe('錯誤與 meta 的欄位(審核補測)', () => {
     let err: unknown;
     try {
       await runGolden({
-        task: 'deepen', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
+        set: NOT_REGISTERED, today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
       });
     } catch (e) {
       err = e;
@@ -265,7 +272,7 @@ describe('錯誤與 meta 的欄位(審核補測)', () => {
     expect(err).toBeInstanceOf(MissingGoldenSetError);
     const missing = err as MissingGoldenSetError;
     expect(missing.name).toBe('MissingGoldenSetError');
-    expect(missing.task).toBe('deepen');
+    expect(missing.set).toBe(NOT_REGISTERED);
     expect(missing.message).toContain('registry');
   });
 
@@ -282,7 +289,7 @@ describe('錯誤與 meta 的欄位(審核補測)', () => {
   it.skipIf(!IN_GIT_WORKTREE)('meta.promptFileGitCommit 是真的短 sha,不是 uncommitted、也沒有換行', async () => {
     installFakeCloud(true);
     const result = await runGolden({
-      task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
+      set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter(),
     });
     expect(result.meta.promptFileGitCommit).toMatch(/^[0-9a-f]{7,12}$/);
     expect(result.meta.promptFileGitCommit).not.toBe('uncommitted');
@@ -295,16 +302,16 @@ describe('錯誤與 meta 的欄位(審核補測)', () => {
   it('fake 模式:prompt 檔不見時丟錯,訊息指得出 task 與檔名', async () => {
     await expect(
       runGoldenFake(
-        { task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'fake' },
-        { task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/不存在.md', inputs: [] },
+        { set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'fake' },
+        { id: 'selftest', task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/不存在.md', inputs: [] },
       ),
     ).rejects.toThrow(/grade\.apply.*不存在\.md|不存在\.md/);
   });
 
   it('fake 模式:golden set 沒有輸入時 model 與 provider 是 unknown', async () => {
     const result = await runGoldenFake(
-      { task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'fake' },
-      { task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/grade.apply.selftest-prompt.md', inputs: [] },
+      { set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'fake' },
+      { id: 'selftest', task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/grade.apply.selftest-prompt.md', inputs: [] },
     );
     expect(result.meta.model).toBe('unknown');
     expect(result.meta.provider).toBe('unknown');
@@ -316,8 +323,8 @@ describe('錯誤與 meta 的欄位(審核補測)', () => {
   it('golden set 沒有輸入時 model 與 provider 是 unknown', async () => {
     installFakeCloud(true);
     const result = await runGoldenLive(
-      { task: 'grade.apply', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() },
-      { task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/grade.apply.selftest-prompt.md', inputs: [] },
+      { set: 'selftest', today: '2026-09-10', baseDir: tmpOutDir(), mode: 'live', createRouter: () => makeRouter() },
+      { id: 'selftest', task: 'grade.apply', promptFile: 'packages/core/src/prompt-quality/golden-sets/grade.apply.selftest-prompt.md', inputs: [] },
     );
     expect(result.meta.model).toBe('unknown');
     expect(result.meta.provider).toBe('unknown');
@@ -330,6 +337,7 @@ describe('runGolden --live:prompt 檔不見時也不留空目錄', () => {
   beforeEach(() => installFakeCloud(true));
 
   const MISSING_SET: GoldenSet = {
+    id: 'selftest',
     task: 'grade.apply',
     promptFile: 'packages/core/src/prompt-quality/golden-sets/這個檔案不存在.md',
     inputs: [{ id: 'demo-1', prompt: '任意輸入' }],
@@ -338,7 +346,7 @@ describe('runGolden --live:prompt 檔不見時也不留空目錄', () => {
   it('丟錯,而且 baseDir 底下什麼都沒建立', async () => {
     const out = tmpOutDir();
     await expect(
-      runGoldenLive({ task: 'grade.apply', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() }, MISSING_SET),
+      runGoldenLive({ set: 'selftest', today: '2026-09-10', baseDir: out, mode: 'live', createRouter: () => makeRouter() }, MISSING_SET),
     ).rejects.toThrow(/prompt 檔不存在/);
     expect(readdirSync(out)).toEqual([]);
   });

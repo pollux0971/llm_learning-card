@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: regenerate-same-origin",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"同源政策\", \"body\": \"來源由協定、主機、埠號組成,三者相同才同源。這條限制存在是因為瀏覽器會自動帶 cookie。\", \"examples\": [], \"lines\": [3, 12]}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

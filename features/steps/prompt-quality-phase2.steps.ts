@@ -23,6 +23,13 @@ import {
 import { runBatchChecks } from '../../packages/core/src/prompt-quality/structural-checks.js';
 import { renderScoresSheet, renderBatchCheckSection } from '../../packages/core/src/prompt-quality/scores.js';
 import { compareRuns } from '../../packages/core/src/prompt-quality/compare.js';
+import { runList, SCANNER_BROKEN } from '../../packages/core/src/prompt-quality/cli.js';
+import {
+  allGoldenSets,
+  checkPromptCoverage,
+  PROMPTS_DIR,
+  type PromptCoverage,
+} from '../../packages/core/src/prompt-quality/golden-sets/registry.js';
 import { detectPromptDrift, findBaseline, markBaseline, reviewRegression } from '../../packages/core/src/prompt-quality/regression.js';
 import { I1_SECURITY_BATCH } from '../../packages/core/src/prompt-quality/fixtures/i1-security-batch.js';
 import {
@@ -40,6 +47,7 @@ import type {
   BatchCard,
   BatchCheckResult,
   GoldenRunResult,
+  GoldenSet,
   LlmRouter,
   PromptDrift,
   RegressionReview,
@@ -125,7 +133,7 @@ async function performLiveRun(): Promise<void> {
   p2.baseDir = newTmpDir();
   try {
     p2.golden = await runGolden({
-      task: 'grade.apply',
+      set: 'selftest',
       today: '2026-09-10',
       baseDir: p2.baseDir,
       mode: 'live',
@@ -139,16 +147,16 @@ async function performLiveRun(): Promise<void> {
 
 /** 在暫存目錄裡假造一次已經寫好的 run(不呼叫模型),給回歸流程的場景用。 */
 function makeRun(baseDir: string, date: string, outputs: Record<string, string>, opts: { commit?: string; scores?: string } = {}): string {
-  const dir = join(baseDir, 'grade.apply', date);
+  const dir = join(baseDir, 'selftest', date);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'meta.json'),
-    JSON.stringify({ task: 'grade.apply', date, model: MODEL, provider: 'anthropic', promptFileGitCommit: opts.commit ?? 'aaa1111', mode: 'live' }),
+    JSON.stringify({ set: 'selftest', task: 'grade.apply', date, model: MODEL, provider: 'anthropic', promptFileGitCommit: opts.commit ?? 'aaa1111', mode: 'live' }),
   );
   for (const [id, text] of Object.entries(outputs)) {
     writeFileSync(join(dir, `${id}.output.json`), JSON.stringify({ id, text, structural: { issues: [], note: '' } }));
   }
-  writeFileSync(join(dir, 'SCORES.md'), opts.scores ?? renderScoresSheet('grade.apply', date, Object.keys(outputs)));
+  writeFileSync(join(dir, 'SCORES.md'), opts.scores ?? renderScoresSheet('selftest', date, Object.keys(outputs)));
   return dir;
 }
 
@@ -209,7 +217,7 @@ Given('a level 1 card whose prereqs contain a level 0 card', function () {
 
 Given('no previous golden run exists for a task', function () {
   p2.baselineBase = newTmpDir();
-  assert.equal(findBaseline(p2.baselineBase, 'grade.apply'), undefined);
+  assert.equal(findBaseline(p2.baselineBase, 'selftest'), undefined);
 });
 
 Given('a prompt file has changed since the last golden run', function () {
@@ -258,7 +266,7 @@ When('a live golden run is performed and scored', async function () {
 
 When('the check command is run', function () {
   assert.ok(p2.baselineBase, 'Given 步驟要先立基準');
-  p2.drift = detectPromptDrift(p2.baselineBase, 'grade.apply', 'bbb2222');
+  p2.drift = detectPromptDrift(p2.baselineBase, 'selftest', 'bbb2222');
 });
 
 When('the comparison runs', function () {
@@ -399,7 +407,7 @@ Then('four graph shape problems are listed', function () {
 
 Then('the scoring sheet lists exactly two dimensions for the person', function () {
   assert.ok(p2.golden, String(p2.liveError));
-  const sheet = renderScoresSheet('grade.apply', '2026-09-10', ['demo-1']);
+  const sheet = renderScoresSheet('selftest', '2026-09-10', ['demo-1']);
   const header = sheet.split('\n').find((l) => l.startsWith('| id'));
   assert.equal(header, '| id | 正確嗎 | 是一個概念嗎 |');
 });
@@ -421,12 +429,12 @@ Then('that section is present even when both counts are zero', function () {
 
 Then('that run is marked as the baseline', function () {
   assert.ok(p2.baselineBase && p2.baselineDir);
-  assert.equal(findBaseline(p2.baselineBase, 'grade.apply')?.dir, p2.baselineDir);
+  assert.equal(findBaseline(p2.baselineBase, 'selftest')?.dir, p2.baselineDir);
 });
 
 Then('later runs are compared against it by default', function () {
   assert.ok(p2.baselineBase);
-  const baseline = findBaseline(p2.baselineBase, 'grade.apply');
+  const baseline = findBaseline(p2.baselineBase, 'selftest');
   assert.ok(baseline, '找不到基準');
   assert.ok(existsSync(baseline.dir), baseline.dir);
 });
@@ -461,4 +469,93 @@ Then('those two are listed as needing scoring', function () {
 Then('the unchanged one is listed separately', function () {
   assert.ok(p2.review);
   assert.deepEqual(p2.review.unchanged, ['demo-1']);
+});
+
+// ------------------------------------------------ 登記守門(每個 prompt 檔恰好一組)
+
+/**
+ * 這幾個步驟不碰 `packages/core/prompts/`(CLAUDE.md 硬規則 4:改了那裡就要跑 golden run)。
+ * 三種紅的情境靠 `checkPromptCoverage()` 的兩個參數餵進去:
+ * 假的掃描目錄(空的 / 多一個檔)與假的登記表。同一個判斷,不動真的資料夾。
+ */
+interface GateState {
+  promptsDir: string;
+  sets: GoldenSet[];
+  coverage?: PromptCoverage;
+  cli?: { code: number; output: string };
+  tmpDirs: string[];
+}
+const gate: GateState = { promptsDir: PROMPTS_DIR, sets: [], tmpDirs: [] };
+
+Before({ tags: '@prompt-quality' }, function () {
+  gate.promptsDir = PROMPTS_DIR;
+  gate.sets = allGoldenSets();
+  delete gate.coverage;
+  delete gate.cli;
+});
+
+After({ tags: '@prompt-quality' }, function () {
+  while (gate.tmpDirs.length) rmSync(gate.tmpDirs.pop()!, { recursive: true, force: true });
+});
+
+Given('a prompt file that no golden set names', function () {
+  // 真的多放一個檔會動到 prompts/,所以改成「登記表少一組」——掃描結果不變,
+  // 引用少一個,unregistered 就會列出那個沒人認領的檔。同一個判斷。
+  gate.sets = allGoldenSets().filter((s) => s.id !== 'ingest.deps');
+});
+
+Given('two golden sets that name the same prompt file', function () {
+  const shared = `${PROMPTS_DIR}/ingest/cards.md`;
+  gate.sets = allGoldenSets().map((s) => (s.id === 'selftest' ? { ...s, promptFile: shared } : s));
+});
+
+Given('the prompt directory holds no prompt files', function () {
+  const dir = mkdtempSync(join(tmpdir(), 'pq-gate-'));
+  gate.tmpDirs.push(dir);
+  // 真的存在、真的空的目錄:0 個檔的方向要紅,不是「很乾淨」(P-28)
+  gate.promptsDir = dir;
+});
+
+When('the registration gate runs', function () {
+  gate.coverage = checkPromptCoverage(gate.promptsDir, gate.sets);
+  const lines: string[] = [];
+  gate.cli = runList((s) => lines.push(s), lines, gate.coverage);
+});
+
+Then('the gate passes', function () {
+  assert.equal(gate.cli?.code, 0, gate.cli?.output);
+});
+
+Then('the gate fails', function () {
+  assert.equal(gate.cli?.code, 1, gate.cli?.output);
+});
+
+Then('each of the five ingest prompt files is named by exactly one golden set', function () {
+  assert.ok(gate.coverage);
+  assert.equal(gate.coverage.scanned.length, 5);
+  assert.deepEqual(gate.coverage.unregistered, []);
+  assert.deepEqual(gate.coverage.missing, []);
+  assert.deepEqual(gate.coverage.duplicated, []);
+});
+
+Then('it names that file as unregistered', function () {
+  assert.deepEqual(gate.coverage?.unregistered, [`${PROMPTS_DIR}/ingest/deps.md`]);
+  assert.ok(gate.cli?.output.includes(`${PROMPTS_DIR}/ingest/deps.md`), gate.cli?.output);
+  assert.ok(gate.cli?.output.includes('沒有任何 golden set 登記'), gate.cli?.output);
+});
+
+Then('it names that file and both sets', function () {
+  assert.deepEqual(gate.coverage?.duplicated, [
+    { promptFile: `${PROMPTS_DIR}/ingest/cards.md`, sets: ['ingest.cards', 'selftest'] },
+  ]);
+  // 這個情境下沒有任何檔變成沒人引用——舊的兩項檢查都是綠的,只有引用數這一項紅
+  assert.deepEqual(gate.coverage?.unregistered, []);
+  assert.ok(gate.cli?.output.includes('要恰好一組'), gate.cli?.output);
+  assert.ok(gate.cli?.output.includes('ingest.cards / selftest'), gate.cli?.output);
+});
+
+Then('it says the scanner is broken rather than reporting everything is fine', function () {
+  assert.equal(gate.coverage?.scannerBroken, true);
+  assert.ok(gate.cli?.output.includes(SCANNER_BROKEN), gate.cli?.output);
+  assert.ok(!gate.cli?.output.includes('✓'), gate.cli?.output);
 });

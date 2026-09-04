@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: children-same-origin",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"埠號不同就不同源\", \"body\": \"換一個埠號同樣不同源,即使主機一樣。\", \"examples\": [\"https://a.com:443 與 https://a.com:8443 不同源\"]}, {\"title\": \"路徑不影響同源\", \"body\": \"同一主機底下的不同路徑是同源的。\", \"examples\": []}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

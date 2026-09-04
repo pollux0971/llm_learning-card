@@ -1,0 +1,12 @@
+{
+  "task": "ingest.deps",
+  "prompt_contains": "golden: deps-reversed-order",
+  "attempt": 1,
+  "response": {
+    "text": "{\"edges\": [[\"sec-golden-same-origin\", \"sec-golden-cors\"], [\"sec-golden-cors\", \"sec-golden-preflight\"]]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

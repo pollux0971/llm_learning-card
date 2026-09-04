@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: children-preflight",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"預檢結果可以快取\", \"body\": \"預檢的結果可以被快取一段時間,避免每次都多一趟往返。\", \"examples\": []}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

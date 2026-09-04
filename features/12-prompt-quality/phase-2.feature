@@ -125,6 +125,37 @@ Feature: Golden runs against a real model
     Then those two are listed as needing scoring
     And the unchanged one is listed separately
 
+  # --------------------------------------------- the registration gate itself
+
+  # This gate is the reason phase 2 was sent back once: the framework shipped
+  # green while registering only the Wave 0 demo, so none of the real ingest
+  # prompts had a baseline. Zero references means nothing is guarded; two
+  # references means one of the sets is scoring somebody else's prompt. Both
+  # have to be red, and so does a scanner that finds nothing at all.
+
+  Scenario: Every real ingest prompt file has a golden set
+    When the registration gate runs
+    Then the gate passes
+    And each of the five ingest prompt files is named by exactly one golden set
+
+  Scenario: A prompt file nobody registered is reported
+    Given a prompt file that no golden set names
+    When the registration gate runs
+    Then the gate fails
+    And it names that file as unregistered
+
+  Scenario: A prompt file two golden sets both claim is reported
+    Given two golden sets that name the same prompt file
+    When the registration gate runs
+    Then the gate fails
+    And it names that file and both sets
+
+  Scenario: Finding no prompt files at all is a broken scanner, not a clean run
+    Given the prompt directory holds no prompt files
+    When the registration gate runs
+    Then the gate fails
+    And it says the scanner is broken rather than reporting everything is fine
+
   # ------------------------------------------------------------------- manual
 
   @manual @llm

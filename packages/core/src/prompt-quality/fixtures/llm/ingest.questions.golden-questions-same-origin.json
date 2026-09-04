@@ -1,0 +1,12 @@
+{
+  "task": "ingest.questions",
+  "prompt_contains": "golden: questions-same-origin",
+  "attempt": 1,
+  "response": {
+    "text": "{\"fill\": [{\"prompt\": \"來源由 ___、___ 與 ___ 三個部分組成。\", \"answers\": [[\"協定\", \"scheme\", \"protocol\"], [\"主機\", \"host\", \"網域\"], [\"埠號\", \"port\"]]}, {\"prompt\": \"同源政策存在是因為瀏覽器會自動帶上你的 ___。\", \"answers\": [[\"cookie\", \"餅乾\"]]}], \"apply\": [{\"prompt\": \"為什麼把 https 換成 http 之後就不同源?\", \"rubric\": [\"有指出協定是來源的一部分\", \"有指出三者要完全相同才算同源\"]}]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

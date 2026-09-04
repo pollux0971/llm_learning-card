@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: regenerate-cors",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"跨來源資源共享\", \"body\": \"伺服器用標頭說明哪些來源可以讀回應,決定權在伺服器;帶憑證時不能用萬用字元。\", \"examples\": [], \"lines\": [14, 24]}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}
