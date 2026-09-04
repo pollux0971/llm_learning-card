@@ -30,14 +30,23 @@
  *
  * ADR-034:.env 只在 CLI 入口載入(side-effect import scripts/_env.ts)。
  *
- * 三態的本體(`buildSpendReport` / `formatSpendReport` / `exitCodeFor`)先丟
- * not implemented,邏輯留給下一輪開發 agent;`main()` 也還沒接上它們,所以現在跑
- * 起來仍是舊的兩態行為——那正是 scripts/llm-spend.test.ts 現在該紅的原因。
+ * 三態的本體是 `buildSpendReport`(判)/ `formatSpendReport`(印)/ `exitCodeFor`
+ * (退出碼)三個純函式,`main()` 只負責把它們串起來——env 由參數傳進去,所以
+ * 「環境變數沒設」測得到,不必真的去動 `.env`。
  * 測試見 scripts/llm-spend.test.ts、packages/core/src/llm/spend.test.ts(純函式那半)
  * 與 features/03-llm-router/phase-4.feature 的 budget 場景。
  */
 import './_env.js';
-import { readDailyCapUsd, readDailySpend, readSpendPrices, dayOf, isBudgetExhausted } from '../packages/core/src/llm/index.js';
+import { readFileSync } from 'node:fs';
+import { computeDailySpend, dayOf, isBudgetExhausted } from '../packages/core/src/llm/index.js';
+import type { SpendPrices } from '../packages/core/src/llm/index.js';
+
+/**
+ * `computeDailySpend` 收的事件型別。直接寫 `LogEvent` 要從 @contracts import,
+ * 而 scripts/ 這一層只跟 packages/core 的公開介面打交道(CLAUDE.md 的跨資料夾規則),
+ * 所以從函式簽章倒推——型別跟著 core 走,core 改了這裡會編譯錯,不會默默漂掉。
+ */
+type SpendEvents = Parameters<typeof computeDailySpend>[0];
 
 /** 退出碼的意義,寫成常數免得看的人要猜。 */
 export const EXIT_UNDER_CAP = 0;
@@ -97,16 +106,6 @@ export function parseSpendArgs(argv: string[]): SpendCliArgs {
 }
 
 /**
- * 人看的一行:金額、筆數、上限,達上限時附上「今日預算已用完」。
- * 沒有 `--json` 時印這個。
- */
-export function formatSpendLine(spentUsd: number, calls: number, capUsd: number): string {
-  const cap = capUsd > 0 ? `$${capUsd.toFixed(2)}` : '無上限';
-  const line = `今日 OpenAI 花費 $${spentUsd.toFixed(4)}(${calls} 次呼叫),上限 ${cap}`;
-  return isBudgetExhausted(spentUsd, capUsd) ? `${line} — 今日預算已用完` : line;
-}
-
-/**
  * 算得出來的那兩態。`calls` 是今日 **OpenAI** 的 `llm_call` 次數,`entriesToday` 是
  * 今日 **所有** log 條目數(不分 type / provider)——兩個數字不一樣正是重點:
  * `calls = 0` 但 `entriesToday > 0` 的意思是「log 活著,只是今天沒打 OpenAI」。
@@ -140,37 +139,152 @@ export type SpendReport = ComputedSpend | UnknownSpend;
  * 能回答問題)。煞車不能那樣——退回預設值等於自己編一個上限出來,而編出來的上限
  * 跟使用者實際設定的可能差很多。所以這裡自己嚴格讀一次。
  */
-export function buildSpendReport(_env: NodeJS.ProcessEnv, _logPath: string, _day: string): SpendReport {
-  throw new Error('TODO: buildSpendReport 尚未實作(scripts/llm-spend.test.ts 定義了行為)');
+/**
+ * 環境變數讀成一個「一定要在、一定要是數字」的值。**不退回預設值。**
+ *
+ * `readDailyCapUsd()` / `readSpendPrices()`(packages/core)缺變數會退回預設值,
+ * 那是 router 的正確行為——少了上限也還是要能回答問題。煞車不能那樣:退回預設值
+ * 等於自己編一個上限出來,而編出來的上限跟使用者實際設定的可能差很多。
+ * 所以這裡自己嚴格讀一次,壞掉就是「算不出來」。
+ */
+function strictNumberEnv(env: NodeJS.ProcessEnv, name: string): number | { reason: string } {
+  const raw = env[name];
+  if (raw === undefined) return { reason: `環境變數 ${name} 沒有設定(在 .env 或 shell 裡設一個非負數字)` };
+  if (raw.trim() === '') return { reason: `環境變數 ${name} 是空的(在 .env 或 shell 裡設一個非負數字)` };
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    return { reason: `環境變數 ${name} 不是非負數字:"${raw}"` };
+  }
+  return value;
 }
 
-/** 三態各自的那一行。computed 帶 log 路徑與今日條目數;unknown 一律 `算不出來:<原因>`。 */
-export function formatSpendReport(_report: SpendReport): string {
-  throw new Error('TODO: formatSpendReport 尚未實作(scripts/llm-spend.test.ts 定義了行為)');
+/** exit 2 的訊息只印一行的前 80 個字元——log 一行可能好幾 KB,煞車的訊息要看得完。 */
+const BAD_LINE_PREVIEW_CHARS = 80;
+
+/**
+ * 壞行的原因。三樣缺一不可:**行號、該行前 80 字、一句怎麼修**。
+ * 沒有這三樣的 fail-closed 會被下一個人想辦法繞過,那比 fail-open 更糟。
+ */
+function badLineReason(logPath: string, lineNumber: number, line: string): string {
+  return (
+    `${logPath} 第 ${lineNumber} 行不是合法的 JSON,所以今天的花費算不出來:` +
+    `${line.slice(0, BAD_LINE_PREVIEW_CHARS)}` +
+    `(修好或移除該行後重跑;這是花錢的煞車,不會自動跳過壞行)`
+  );
 }
 
-/** `EXIT_UNDER_CAP` / `EXIT_AT_OR_OVER_CAP` / `EXIT_CANNOT_COMPUTE`。 */
-export function exitCodeFor(_report: SpendReport): number {
-  throw new Error('TODO: exitCodeFor 尚未實作(scripts/llm-spend.test.ts 定義了行為)');
+export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: string): SpendReport {
+  // 先讀環境變數:沒有上限與價格就算把 log 讀完也換算不出金額。
+  const capUsd = strictNumberEnv(env, 'LLM_DAILY_CAP_USD');
+  if (typeof capUsd !== 'number') return { kind: 'unknown', reason: capUsd.reason };
+  const inPerM = strictNumberEnv(env, 'LLM_PRICE_IN_PER_M');
+  if (typeof inPerM !== 'number') return { kind: 'unknown', reason: inPerM.reason };
+  const outPerM = strictNumberEnv(env, 'LLM_PRICE_OUT_PER_M');
+  if (typeof outPerM !== 'number') return { kind: 'unknown', reason: outPerM.reason };
+
+  let content: string;
+  try {
+    content = readFileSync(logPath, 'utf8');
+  } catch (err) {
+    // 這裡跟 packages/core 的 readDailySpend() 分道揚鑣:那支檔案不存在回
+    // `{ usd: 0, calls: 0 }`(對 router 是對的,還沒呼叫過就是沒花錢),煞車不行——
+    // 讀不到 log 不等於沒花錢,只等於「我不知道花了多少」。
+    return {
+      kind: 'unknown',
+      reason: `讀不到 log 檔 ${logPath}:${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // ⚠️ 這個迴圈是 **P-22 的反轉,不是回歸**。
+  //
+  // P-22 修的是 packages/core 的 readDailySpend():log 有一行壞掉時只跳過那一行,
+  // 不要整份放棄。那是在 *讀事件* 的情境——整份放棄會漏掉一堆好資料,而漏掉事件
+  // 的後果只是少看到一點歷史。
+  //
+  // 這裡是 *算錢*:**跳過壞行等於低估花費**,而低估花費的後果是超支使用者的錢。
+  // 所以在這支煞車裡,**有壞行 = 無法信任總數 = 算不出來(exit 2)**。
+  //
+  // 而且**不分哪一天**:JSON.parse 失敗的行讀不到 ts,沒有辦法證明它不是今天寫的,
+  // 所以一律當成不可信。不可以先用 ts 濾出今日再檢查壞行——那樣歷史壞行會被濾掉。
+  const events: SpendEvents = [];
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    // 空行與只有空白的行不是壞行:append-only 的檔案本來就會有行尾換行。
+    if (line.trim().length === 0) continue;
+    try {
+      events.push(JSON.parse(line) as SpendEvents[number]);
+    } catch {
+      // 行號用 1-based,跟編輯器一致。
+      return { kind: 'unknown', reason: badLineReason(logPath, i + 1, line) };
+    }
+  }
+
+  const prices: SpendPrices = { inPerM, outPerM };
+  const { usd, calls } = computeDailySpend(events, day, prices);
+
+  // 今日條目 = 今天**所有**的 log 行,不分 type / provider。跟 calls 是兩個數字,
+  // 而兩個數字不一樣正是重點:`calls = 0` 但 `entriesToday > 0` 的意思是
+  // 「log 活著,只是今天沒打 OpenAI」——那才是「$0.00」該有的證據。
+  const entriesToday = events.filter((e) => typeof e.ts === 'string' && dayOf(e.ts) === day).length;
+
+  return { kind: 'computed', usd, calls, entriesToday, capUsd, logPath };
+}
+
+export function formatSpendReport(report: SpendReport): string {
+  if (report.kind === 'unknown') return `算不出來:${report.reason}`;
+
+  // 上限跟花費用同樣的四位小數,兩個數字才直接比得起來。舊的兩位小數會把
+  // `cap = 0.0225` 印成 `$0.02`,於是「剛好用完」那一行看起來像「超支了一截」。
+  const cap = report.capUsd > 0 ? `$${report.capUsd.toFixed(4)}` : '無上限';
+  const line =
+    `今日 OpenAI 花費 $${report.usd.toFixed(4)}` +
+    `(${report.calls} 次呼叫,log: ${report.logPath},今日條目 ${report.entriesToday} 筆)` +
+    `,上限 ${cap}`;
+  return isBudgetExhausted(report.usd, report.capUsd) ? `${line} — 今日預算已用完` : line;
+}
+
+export function exitCodeFor(report: SpendReport): number {
+  if (report.kind === 'unknown') return EXIT_CANNOT_COMPUTE;
+  return isBudgetExhausted(report.usd, report.capUsd) ? EXIT_AT_OR_OVER_CAP : EXIT_UNDER_CAP;
 }
 
 async function main(): Promise<void> {
   const args = parseSpendArgs(process.argv.slice(2));
-  const prices = readSpendPrices(process.env);
-  const cap = readDailyCapUsd(process.env);
   const day = args.day ?? dayOf(new Date().toISOString());
-  const spend = readDailySpend(args.logPath, day, prices);
+  const report = buildSpendReport(process.env, args.logPath, day);
 
   if (args.json) {
-    console.log(JSON.stringify({ day, usd: spend.usd, calls: spend.calls, cap_usd: cap }, null, 2));
+    // 算不出來時**不吐 usd / cap_usd**:下游拿 `.usd` 要拿到 `undefined`,不是 0。
+    // 0 的方向是「還可以花」,而這裡的意思是「我不知道花了多少」。
+    console.log(
+      JSON.stringify(
+        report.kind === 'computed'
+          ? {
+              day,
+              usd: report.usd,
+              calls: report.calls,
+              entries_today: report.entriesToday,
+              log: report.logPath,
+              cap_usd: report.capUsd,
+            }
+          : { day, error: report.reason },
+        null,
+        2,
+      ),
+    );
+  } else if (report.kind === 'computed') {
+    console.log(formatSpendReport(report));
   } else {
-    console.log(formatSpendLine(spend.usd, spend.calls, cap));
+    console.error(formatSpendReport(report));
   }
 
-  process.exitCode = isBudgetExhausted(spend.usd, cap) ? EXIT_AT_OR_OVER_CAP : EXIT_UNDER_CAP;
+  process.exitCode = exitCodeFor(report);
 }
 
 main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exitCode = EXIT_USAGE_ERROR;
+  // 參數錯誤也是「算不出來」——對呼叫的人來說跟讀不到 log 是同一件事:
+  // 這次沒有得到一個可以拿來當花錢依據的數字。
+  console.error(`算不出來:${err instanceof Error ? err.message : String(err)}`);
+  process.exitCode = EXIT_CANNOT_COMPUTE;
 });
