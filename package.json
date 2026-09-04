@@ -13,7 +13,7 @@
     "accept": "NODE_OPTIONS=--import=tsx cucumber-js",
     "accept:standalone": "NODE_OPTIONS=--import=tsx cucumber-js --tags '@standalone and not @manual'",
     "accept:integration": "NODE_OPTIONS=--import=tsx cucumber-js docs/integration --tags 'not @manual'",
-    "mutate": "stryker run",
+    "mutate": "tsx scripts/mutate.ts --",
     "lint:wiki": "tsx scripts/lint.ts",
     "lint:docs": "tsx scripts/check-doc-links.ts",
     "standalone": "tsx scripts/check-standalone.ts",

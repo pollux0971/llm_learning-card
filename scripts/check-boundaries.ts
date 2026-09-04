@@ -67,6 +67,8 @@ const OWNERS: [prefix: string, owner: string][] = [
   ['scripts/check-doc-links.ts', 'infra'],
   ['scripts/check-doc-links.test.ts', 'infra'],
   ['scripts/snapshot.ts', 'infra'],
+  ['scripts/mutate.ts', 'infra'],
+  ['scripts/mutate.test.ts', 'infra'],
   ['scripts/_env.ts', 'infra'],
   ['scripts/_env.js', 'infra'], // 同一個檔案,ESM 的 relative import 一律寫 .js 副檔名(NodeNext),來源是 .ts
   ['features/steps/', 'steps'],

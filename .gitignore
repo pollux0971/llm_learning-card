@@ -3,6 +3,8 @@ dist/
 target/
 reports/
 .stryker-tmp/
+# 跨 worktree 的 Stryker 鎖(P-29)。放在主 repo 的根,不然各 worktree 看不到彼此。
+.stryker.lock
 .env
 .env.*
 *.log
