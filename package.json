@@ -19,7 +19,8 @@
     "boundaries": "tsx scripts/check-boundaries.ts",
     "snapshot": "tsx scripts/snapshot.ts",
     "prompt:golden": "tsx scripts/prompt-check.ts --golden",
-    "tauri": "npm run tauri -w apps/desktop --"
+    "tauri": "npm run tauri -w apps/desktop --",
+    "accept:dry": "NODE_OPTIONS=--import=tsx cucumber-js --tags 'not @manual' --dry-run"
   },
   "devDependencies": {
     "@cucumber/cucumber": "^11.3.0",

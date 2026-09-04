@@ -13,7 +13,9 @@ description: 讓協調者不停推進專案,把使用者當成只要成果的老
 ```bash
 cd <repo 根目錄> && pwd && git branch --show-current   # P-19:確認在根、在 main
 git status --short | head                              # 根目錄不該有未 commit 的東西
-npx tsx scripts/llm-spend.ts --today                   # 今日 OpenAI 花費;退出碼 1 = 已達上限
+npx tsx scripts/llm-spend.ts --today                   # 今日 OpenAI 花費;退出碼 1 = 已達上限(花費 ≥ 上限就算達到)
+                                                       # 檔案還不存在(03/phase-4 未合併)→ 跳過這步,不當煞車
+grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最大 ADR 號;派工說明裡寫「ADR-下一號 = 這個+1」,worker 不自己猜
 ```
 讀 `docs/01-roadmap.md` 現況表、所有 `features/*/NEXT.md`、`docs/sprints/<本週>.md`。
 
@@ -32,9 +34,14 @@ npx tsx scripts/llm-spend.ts --today                   # 今日 OpenAI 花費;�
 
 ## 2. 每輪流程
 
-1. **收割**:哪些 worktree 的審核回來了 → PASS 的合併(一次一個,rebase 到 main,跑完整檢查 `boundaries && typecheck && test && accept:standalone && standalone`),tag,清 worktree,通知技術顧問「驗推」;FAIL 的照 test→dev→review 循環派 debug session。
+1. **收割**:哪些 worktree 的審核回來了 → PASS 的合併(一次一個,`git checkout main && git merge --no-ff <branch>`,**不 rebase**,每個 phase 三輪 commit 的軌跡是刻意留的),合併後跑完整檢查:
+   ```bash
+   npm run boundaries && npm run typecheck && npm test && npm run accept:standalone && npm run standalone
+   npm run accept:dry        # 必看「0 ambiguous」:步驟定義撞名不會讓任何測試變紅,只有這步抓得到
+   ```
+   全綠 → tag、清 worktree、通知技術顧問「驗推」;FAIL 的照 test→dev→review 循環派 debug session。
 2. **算 ready**:照 sprint-planning 的規則讀所有 NEXT.md。三種 gate 全滿足 → ready。
-3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
+3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。滿載時不派新工,回到 1 收割;收割不到東西就做維護清單(§3)等下一輪。每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
 4. **整合點**:某個 IN 需要的 phase 全 done → **先開「整合工作」工單**(P-20:roadmap 該段的整合工作欄 + 各 FEATURE.md「Wave 0 的重複」表),合併後 `/integrate IN`;`@e2e @llm` 在預算內自動跑,結果貼進 `docs/integration/IN-REVIEW.md`;`@manual` 進「等老闆」清單。IN 的人工確認未完成前,gate 是「IN 通過」的 phase 維持 todo——這是刻意的,不要繞。
 5. **沒有 ready 的 phase** → 做維護清單(§3),做完一項就回到 2。
 6. **回報**(§5 格式),睡。
@@ -55,6 +62,16 @@ npx tsx scripts/llm-spend.ts --today                   # 今日 OpenAI 花費;�
 - 完整檢查在 main 上紅 → **先修 main**,不派新工
 - 根目錄有未 commit 變更或不在 main → 停,查是誰(P-12 / P-19)
 - 技術顧問 session 不在(`ListAgents` 找不到)→ 技術決策改成「保守選項 + ADR 待覆核」,不問使用者
+- 同時進行的 worktree 已達 3 → 不派新工,先收割
+
+## 4b. 平台操作備忘(Orca,實際踩過的)
+
+- `worker-start --worktree new-top-level` **一定要帶 `--name`**,不帶會 `invalid_argument`
+- `worker-start` 只用在一個 worktree 的**第一輪**。同一 worktree 的第二、三輪(debug / 再審):
+  `terminal create` → `terminal send 'claude --dangerously-skip-permissions' --enter` → `terminal wait --for tui-idle` → `dispatch --inject`。
+  少中間兩步會 `no recognized agent detected`;重用舊終端機常 `agent_unconfigured`。**永遠開新終端機**,交接靠 worktree 裡的 REVIEW.md(P-17)
+- `check --wait` 可能回**已處理過的舊訊息**(`"replayed": true`),要 `--ack <deliveryId>` 再等下一則,不然空轉
+- 開 worktree 明確指定起點(`--base-branch main` 或 `git worktree add -b <branch> <path> main`),開完驗 `git merge-base --is-ancestor main <branch>`(P-18)
 
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
