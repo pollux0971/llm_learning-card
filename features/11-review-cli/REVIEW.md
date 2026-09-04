@@ -326,8 +326,9 @@ npm run mutate -- --mutate "packages/core/src/session/**/*.ts,!packages/core/src
 npm run mutate -- stryker.user-facing-review.json
 ```
 
-`package.json` 的 `mutate` = `stryker run`,所以實際執行的是
-`stryker run stryker.user-facing-review.json`。
+`package.json` 的 `mutate` 是 `tsx scripts/mutate.ts --`(**不是**直接叫 Stryker CLI):
+它先拿跨 worktree 的檔案鎖,再把參數原樣透傳給 Stryker,所以那個設定檔照樣生效。
+繞過 `npm run mutate` 就等於繞過鎖,會跟別的 worktree 互相 OOM(P-34)。
 
 另一半(對照用,完整指令一樣寫在這裡):
 

@@ -151,8 +151,9 @@ NODE_OPTIONS=--import=tsx npx cucumber-js --tags '@i1 and not @manual' \
 npm run mutate -- stryker.user-facing-lint.json
 ```
 
-`package.json` 的 `mutate` = `stryker run`,所以實際執行的是
-`stryker run stryker.user-facing-lint.json`。設定檔全文(本輪未修改):
+`package.json` 的 `mutate` 是 `tsx scripts/mutate.ts --`(**不是**直接叫 Stryker CLI):
+它先拿跨 worktree 的檔案鎖,再把參數原樣透傳,所以那個設定檔照樣生效。
+繞過 `npm run mutate` 就等於繞過鎖(P-34)。設定檔全文(本輪未修改):
 
 ```json
 {

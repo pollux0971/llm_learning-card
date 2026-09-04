@@ -10,7 +10,7 @@
  *
  * ```bash
  * MUTATE_TEST_GLOB='packages/core/src/prompt-quality/**\/*.test.ts' \
- *   npx stryker run --mutate packages/core/src/prompt-quality/cli.ts
+ *   npm run mutate -- --mutate packages/core/src/prompt-quality/cli.ts
  * ```
  *
  * 縮小範圍是**加速**,不是放寬標準:縮掉的測試本來就殺不掉那些 mutant。
