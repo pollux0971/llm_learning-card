@@ -7,14 +7,22 @@
  *   npx tsx scripts/check-standalone.ts --only 04-scheduler
  *   npx tsx scripts/check-standalone.ts --list          # 只列出,不執行
  *   npx tsx scripts/check-standalone.ts --timeout 60000 # 每個指令的毫秒上限(預設 120000)
+ *   npx tsx scripts/check-standalone.ts --manifest <path> # 改讀別的 manifest(測試用 fixture)
  *
- * 退出碼:0 全部通過;1 任一失敗。互動式(dev server)一律跳過,由 /phase-done 人工確認。
+ * 退出碼:0 全部通過;1 任一失敗,或 manifest **一個條目都沒讀到**。
+ * 互動式(dev server)一律跳過,由 /phase-done 人工確認。
+ *
+ * 最後那條是 P-28 加的:讀到 0 個條目時「全部通過」的 0 是騙人的——
+ * 沒有東西通過,是根本沒讀到東西。0 個條目一律當 FAIL。
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
+
+/** 三支掃描器共用的那句話。0 個東西的紅,方向永遠是「掃描器壞了」。 */
+const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
 
 type Manifest = Record<
   string,
@@ -30,10 +38,24 @@ const only = arg('--only');
 const timeout = Number(arg('--timeout') ?? 120_000);
 const listOnly = process.argv.includes('--list');
 
-const manifest = JSON.parse(readFileSync(join(ROOT, 'standalone.json'), 'utf8')) as Manifest;
-const entries = Object.entries(manifest).filter(([name]) => !only || name === only);
+const manifestPath = arg('--manifest') ?? join(ROOT, 'standalone.json');
+
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest;
+const all = Object.entries(manifest);
+
+console.log(`standalone: 從 ${manifestPath} 讀到 ${all.length} 個條目`);
+
+// 0 個條目跟「全部通過」的退出碼一樣是 0,所以先擋在這裡。這條要在 --only 的過濾之前,
+// 「manifest 是空的」跟「--only 指到不存在的名字」是兩種完全不同的紅。
+if (all.length === 0) {
+  console.error(`\n✗ 讀到 0 個條目`);
+  console.error(`${SCANNER_BROKEN}。manifest 路徑指錯、檔案被清空、或格式改掉時就長這樣。`);
+  process.exit(1);
+}
+
+const entries = all.filter(([name]) => !only || name === only);
 if (!entries.length) {
-  console.error(`standalone.json 裡沒有 ${only}`);
+  console.error(`${manifestPath} 裡沒有 ${only}`);
   process.exit(1);
 }
 
