@@ -20,6 +20,7 @@
     "check:steps": "tsx scripts/check-step-dup.ts",
     "check:gherkin-dup": "tsx scripts/check-gherkin-dup.ts",
     "accept:coverage": "tsx scripts/check-phase-coverage.ts",
+    "check:gates": "\"${TEMPLATE_DIR:-.claude/worktrees/agent-a551c3d51889a2793/template}/scripts/sync-gates.sh\" \"$(git rev-parse --show-toplevel)\" scripts --check",
     "boundaries": "tsx scripts/check-boundaries.ts",
     "snapshot": "tsx scripts/snapshot.ts",
     "prompt:golden": "tsx scripts/prompt-check.ts --golden",

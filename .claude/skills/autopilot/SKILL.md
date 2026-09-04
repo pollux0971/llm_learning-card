@@ -42,16 +42,28 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
    npm run check:steps       # 每句 gherkin 恰好一個步驟定義
    npm run check:gherkin-dup # 重複的 gherkin 場景;**必跑且必須 exit 0**,不准靠放寬規則變綠
    npm run accept:coverage   # 每個 phase-N.feature 用自己的 tag 至少比對到 1 個場景;tag 打錯字只有這步抓得到
-   # 守門漂移偵測:本地 scripts/ 的守門與同步當時的內容不一致就紅(v1.3.2 起是 sha256 自比對,
-   # 不需要模板路徑也能跑;sync 才需要 TEMPLATE_DIR)
-   # TEMPLATE_DIR 指向模板 repo 的 template/(目前在 llm_learning-cards 的模板 worktree 底下)
-   # 目前同步到 v1.3.2;check-phase-coverage.ts 的本地 HOTFIX 已隨 v1.3.2 的 strict-tsconfig 修正移除
-   # ⚠️ v1.3.2 的 --check 有一條已回報的迴歸:它列舉的是目標目錄的 `check-*.ts` glob,
-   #    會連專案自己的 `check-*.test.ts` 一起要求 SOURCE 標頭 → 對本 repo 必定紅(三支測試檔)。
-   #    v1.3.0 列舉的是模板側的檔案清單,所以不會誤判。模板修好前這支的紅要人工判讀:
-   #    只有那三行 `✗ check-*.test.ts 缺 SOURCE 標頭` 才可放行,其他任何一行紅都是真的漂移。
-   "$TEMPLATE_DIR/scripts/sync-gates.sh" "$(git rev-parse --show-toplevel)" scripts --check
+   npm run check:gates       # 守門漂移偵測:scripts/ 的守門與同步當時的 sha256 不符就紅。
+                             # 目前同步到 **v1.3.4**,沒有任何已知例外——**任何一行紅都是真的漂移**。
+                             # 設定檔(boundaries.owners.json / boundaries.allow.json / gates.config.json)
+                             # 印「○ 你的設定檔,不比對」,那是對的。
+                             # 模板路徑吃 $TEMPLATE_DIR,沒設就用預設的模板 worktree。
    ```
+
+   ⚠️ **這條在 2026-09-05 之前只是 SKILL.md 裡一行手打指令,沒有進 `package.json`** ——
+   也就是「清單上寫著、實際沒人跑」。技術顧問抓到後才補成 `npm run check:gates`。
+   **清單裡的每一條都要是 npm script**,否則它就只是一句話。
+   **合併後留一份 junit,下次比「名稱集合」不比「總數」**:
+   ```bash
+   npx vitest run --reporter=junit --outputFile="reports/junit/$(git rev-parse --short HEAD).xml"
+   ```
+   下次合併時對 testcase 的**名稱**做 diff,**不要看數字** ——
+   別的專案抓到過「總數相等但組成不同」(branch 8044 = 8036+4+4、main 8044 = 8036+8):
+   **數字對得上,內容少了四條。**
+
+   ⚠️ **比的時候要用 multiset 或完整限定名(檔案 + suite + name),不要用 `set(names)`** ——
+   本 repo 實測 1691 個 testcase 只有 **1683 個不重複名稱**(8 個同名),
+   用集合比會**憑空少掉 8 筆**,那本身就是一個「看起來乾淨」的假象。
+
    **合併後跑的是 main 現在的完整檢查清單,不是分支開工時的那份。** 分支 base 比 main 舊的時候,
    main 上可能已經多了新的守門 —— 那些**在分支上根本不存在**,所以「分支全綠」不等於「合併後全綠」,
    而**新加的守門正好是最容易漏的那些**(它們是為了抓新問題才加的)。
