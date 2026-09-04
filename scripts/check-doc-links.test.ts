@@ -9,10 +9,16 @@
  * 直接呼叫 main(argv) 而不是開子行程:它已經回傳 { code, output },
  * 跟 packages/core/src/prompt-quality/cli.test.ts 同一個做法,快很多。
  */
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { main, SCANNER_BROKEN } from './check-doc-links.js';
+import { dirname, join, resolve } from 'node:path';
+import { findRelativeLinks, main, SCANNER_BROKEN, stripCode } from './check-doc-links.js';
+
+const REPO_ROOT = resolve(import.meta.dirname, '..');
+
+/** CLI 進入點那兩個測試會開 `npx tsx` 子行程,機器忙的時候超過 vitest 預設的 5 秒。 */
+const SPAWN_TIMEOUT_MS = 60_000;
 
 const tmpDirs: string[] = [];
 
@@ -33,7 +39,7 @@ function run(files: Record<string, string>): { code: number; output: string } {
 
 /** 從 `doc-links: 掃描 N 個 markdown 檔,M 條相對連結` 取出 M。 */
 function linkCount(output: string): number {
-  const m = /(\d+) 條相對連結/.exec(output);
+  const m = /(-?\d+) 條相對連結/.exec(output);
   expect(m, `輸出裡沒有「M 條相對連結」:\n${output}`).not.toBeNull();
   return Number(m![1]);
 }
@@ -301,5 +307,514 @@ describe('掃描範圍', () => {
     });
 
     expect(code).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 以下是審核輪(P-29)補的。上一輪 stryker 跑出來 63.13%,存活的變異指出
+// commit message 講了但沒有任何測試釘住的行為:行號保留、inline code 的精確
+// 長度配對、角括號 / protocol-relative / mailto: 的略過、README* 的命名、
+// 百分號還原、不帶 --root 的既有行為、以及 CLI 進入點本身。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('stripCode 挖掉 code 之後,行號與欄位不能跑掉', () => {
+  it('挖掉的東西換成等長空白:行數與每一行的長度都不變', () => {
+    const src = [
+      '# 標題',
+      '```markdown',
+      '[示範](./nope.md)',
+      '```',
+      '一段 `inline code` 的文字',
+      '',
+    ].join('\n');
+
+    const out = stripCode(src);
+
+    expect(out.split('\n')).toHaveLength(src.split('\n').length);
+    for (const [i, line] of out.split('\n').entries()) {
+      expect(line.length, `第 ${i + 1} 行長度變了`).toBe(src.split('\n')[i]!.length);
+    }
+  });
+
+  it('圍欄整段變空白,圍欄外的字原樣留著', () => {
+    const lines = ['前面', '```', '[示範](./nope.md)', '```', '後面 [b](./b.md)'];
+    const blank = (s: string) => ' '.repeat(s.length);
+
+    expect(stripCode(lines.join('\n'))).toBe(
+      [lines[0]!, blank(lines[1]!), blank(lines[2]!), blank(lines[3]!), lines[4]!].join('\n'),
+    );
+  });
+
+  it('inline code 換成等長空白,同一行後面的真連結位置不變', () => {
+    expect(stripCode('說 `[x](./a.md)` 再說 [b](./b.md)')).toBe(
+      '說               再說 [b](./b.md)',
+    );
+  });
+
+  it('報出來的行號是原檔的行號,不是挖掉之後的', () => {
+    const { code, output } = run({
+      'docs/a.md': [
+        '# 標題', // 1
+        '', // 2
+        '```markdown', // 3
+        '[示範](./ignored.md)', // 4
+        '```', // 5
+        '', // 6
+        '[壞的](./missing.md)', // 7
+        '',
+      ].join('\n'),
+    });
+
+    expect(code).toBe(1);
+    expect(output).toContain('docs/a.md:7');
+  });
+});
+
+describe('inline code 的收尾必須是剛好一樣長的反引號串', () => {
+  it('單反引號包住 ``` 時,不可以把中間那串當收尾(00-design.md:126 的形狀)', () => {
+    const { code, output } = run({
+      'docs/a.md': '- **範例放在 ` ```example ` 圍欄內**,見 [設計](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('沒有配對收尾的反引號不吃掉後面的連結', () => {
+    const { code, output } = run({
+      'docs/a.md': '一個孤兒反引號 ` 然後 [b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('雙反引號要用雙反引號收,中間的單反引號不算', () => {
+    expect(stripCode('``a ` b`` 之後 [c](./c.md)')).toBe(`${' '.repeat(9)} 之後 [c](./c.md)`);
+  });
+});
+
+describe('圍欄的其餘四條規則', () => {
+  it('規則 5:比外層短的圍欄收不了尾(```` 外層,裡面的 ``` 只是內文)', () => {
+    const { code, output } = run({
+      'docs/a.md': [
+        '````',
+        '```',
+        '[示範](./nope.md)',
+        '```',
+        '````',
+        '',
+        '[b](./b.md)',
+        '',
+      ].join('\n'),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('規則 2:``` 圍欄裡的 ~~~ 是內文,收不了尾', () => {
+    const { code, output } = run({
+      'docs/a.md': ['```', '~~~', '[示範](./nope.md)', '~~~', '```', '', '[b](./b.md)', ''].join(
+        '\n',
+      ),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('規則 3:比外層長的純圍欄可以收尾', () => {
+    const { code, output } = run({
+      'docs/a.md': ['```', '[示範](./nope.md)', '````', '[b](./b.md)', ''].join('\n'),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('``` 的 info string 裡有反引號 → 那一行不是圍欄(CommonMark)', () => {
+    // ```a`b 不是合法的圍欄開頭,所以下一行的連結是真的內文,不能被挖掉。
+    const { code, output } = run({
+      'docs/a.md': ['```a`b', '[b](./b.md)', ''].join('\n'),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('縮排 3 格以內的圍欄算圍欄', () => {
+    const { code, output } = run({
+      'docs/a.md': ['   ```', '   [示範](./nope.md)', '   ```', '[b](./b.md)', ''].join('\n'),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+});
+
+describe('連結的各種寫法', () => {
+  it("單引號 title 形式 [文字](路徑 '說明') 也認得", () => {
+    const { code, output } = run({
+      'docs/a.md': "[b](./b.md '說明')\n",
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('括號 title 形式 [文字](路徑 (說明)) 也認得', () => {
+    const { code, output } = run({
+      'docs/a.md': '[b](./b.md (說明))\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('路徑前後有空白也認得', () => {
+    const { code, output } = run({
+      'docs/a.md': '[b](  ./b.md  )\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('角括號形式 [文字](<路徑>) 要脫掉角括號再驗', () => {
+    const good = run({
+      'docs/a.md': '[b](<./b.md>)\n',
+      'docs/b.md': '# b\n',
+    });
+    expect(good.code).toBe(0);
+    expect(linkCount(good.output)).toBe(1);
+
+    const bad = run({ 'docs/a.md': '[沒有](<./missing.md>)\n' });
+    expect(bad.code).toBe(1);
+    // 報出來的是脫掉角括號之後的路徑,不是原文帶角括號的樣子
+    expect(bad.output).toContain('./missing.md');
+    expect(bad.output).not.toContain('<./missing.md>');
+  });
+
+  it('空的角括號 [x](<>) 沒有目標,不算一條連結', () => {
+    const { code, output } = run({
+      'docs/a.md': '[空的](<>)\n[b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('壞掉的百分號編碼不丟例外,原樣拿去找檔案', () => {
+    // decodeURIComponent('./a%ZZ.md') 會丟 URIError,catch 之後要退回原字串。
+    const { code, output } = run({
+      'docs/a.md': '[怪的](./a%ZZ.md)\n',
+      'docs/a%ZZ.md': '# 怪的\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('百分號編碼要還原:./a%20b.md 對到檔名有空白的 a b.md', () => {
+    const { code, output } = run({
+      'docs/a.md': '[有空白的檔名](./a%20b.md)\n',
+      'docs/a b.md': '# a b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+});
+
+describe('哪些目標不算相對連結', () => {
+  it('mailto: 與 file: 一樣是外部,略過', () => {
+    const { code, output } = run({
+      'docs/a.md': ['[寄信](mailto:a@b.c)', '[本機檔](file:///tmp/x.md)', '[b](./b.md)', ''].join(
+        '\n',
+      ),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('protocol-relative //host/x.md 是外部,略過', () => {
+    const { code, output } = run({
+      'docs/a.md': '[外部](//example.com/nope.md)\n[b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+    expect(output).not.toContain('example.com');
+  });
+
+  it('scheme 要從頭比對:路徑中間有冒號的相對連結還是相對連結', () => {
+    const { code, output } = run({
+      'docs/a.md': '[怪檔名](./a:b.md)\n',
+      'docs/a:b.md': '# a:b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+});
+
+describe('掃描範圍的邊界', () => {
+  it('根目錄的 README-zh.md 也掃,但 NOTES.md 不掃', () => {
+    const { code, output } = run({
+      'README-zh.md': '[x](./nope-readme-zh.md)\n',
+      'NOTES.md': '[x](./nope-notes.md)\n',
+    });
+
+    expect(code).toBe(1);
+    expect(output).toContain('./nope-readme-zh.md');
+    expect(output).not.toContain('./nope-notes.md');
+  });
+
+  it('根目錄的 readme 目錄(不是檔案)不算', () => {
+    const { code, output } = run({
+      'readme.md/inside.txt': 'x\n',
+      'docs/a.md': '[b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    // docs/a.md 與 docs/b.md 兩個;根目錄那個 readme.md 是目錄,不算檔案
+    expect(output).toMatch(/掃描 2 個 markdown 檔/);
+  });
+
+  it('掃描目錄底下的非 .md 檔不看', () => {
+    const { code, output } = run({
+      'docs/notes.txt': '[x](./nope-txt.md)\n',
+      'docs/a.md': '[b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(output).not.toContain('./nope-txt.md');
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('dist/ 與 .git/ 底下的 markdown 不掃', () => {
+    const { code, output } = run({
+      'docs/dist/x.md': '[x](./nope-dist.md)\n',
+      'docs/.git/y.md': '[x](./nope-git.md)\n',
+      'docs/target/z.md': '[x](./nope-target.md)\n',
+      'docs/.svelte-kit/w.md': '[x](./nope-svelte.md)\n',
+      'docs/a.md': '[b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+    for (const t of ['nope-dist', 'nope-git', 'nope-target', 'nope-svelte']) {
+      expect(output, `不該掃到 ${t}`).not.toContain(t);
+    }
+  });
+});
+
+describe('連結數要真的是數出來的', () => {
+  it('三條好連結就要印 3,不是別的數字', () => {
+    const { code, output } = run({
+      'docs/a.md': '[b](./b.md) [c](./c.md)\n[d](./d.md)\n',
+      'docs/b.md': '# b\n',
+      'docs/c.md': '# c\n',
+      'docs/d.md': '# d\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(3);
+  });
+
+  it('findRelativeLinks 回報的行號跟原文對得上', () => {
+    const links = findRelativeLinks(['第一行', '[b](./b.md)', '', '[c](./c.md)'].join('\n'));
+
+    expect(links).toEqual([
+      { target: './b.md', line: 2 },
+      { target: './c.md', line: 4 },
+    ]);
+  });
+});
+
+describe('不帶 --root 時的既有行為', () => {
+  it('沒有 --root 就掃這個 repo:連結數 > 0、退出碼 0', () => {
+    const { code, output } = main([]);
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBeGreaterThan(0);
+    expect(output).toContain('✓ 連結全部都在');
+  });
+
+  it('--verbose 之類不認得的參數不會被當成 root', () => {
+    const { code, output } = main(['--verbose']);
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBeGreaterThan(0);
+  });
+});
+
+describe('CLI 進入點', () => {
+  it('直接跑 scripts/check-doc-links.ts 會印出結果並回傳退出碼', () => {
+    const root = fixtureRoot({ 'docs/a.md': '[沒有](./missing.md)\n' });
+
+    const r = spawnSync('npx', ['tsx', 'scripts/check-doc-links.ts', '--root', root], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+
+    expect(r.status).toBe(1);
+    expect(`${r.stdout}${r.stderr}`).toContain('./missing.md');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('直接跑、掃到 0 條連結時退出碼 1 並說掃描器壞了', () => {
+    const root = fixtureRoot({ 'docs/a.md': '# 沒有連結\n' });
+
+    const r = spawnSync('npx', ['tsx', 'scripts/check-doc-links.ts', '--root', root], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+
+    expect(r.status).toBe(1);
+    expect(`${r.stdout}${r.stderr}`).toContain(SCANNER_BROKEN);
+  }, SPAWN_TIMEOUT_MS);
+});
+
+// ── 第二批(P-29):上一批之後還存活的變異裡,屬於「commit message 講了但沒釘住」的部分 ──
+
+describe('圍欄的判定只看行首', () => {
+  it('行中間出現的 ``` 不是圍欄,同一行的連結照樣算', () => {
+    // /^ {0,3}(`{3,}|~{3,})/ 的 ^ 若拿掉,這一行會被當成圍欄開頭,
+    // 之後整份文件都被當成 code,連結全部消失。
+    const { code, output } = run({
+      'docs/a.md': '參數寫成 ``` 三個反引號 ```,見 [b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('行中間的 ``` 後面沒有別的反引號時,也不算圍欄', () => {
+    // 上一條那個例子有第二串反引號,會被「``` 的 info string 不能有反引號」擋掉,
+    // 所以另外釘一條:純粹靠行首的 ^ 才擋得住的形狀。
+    const { code, output } = run({
+      'docs/a.md': '見 ``` 之後 [b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('收尾圍欄後面有空白仍然是收尾(info string 要 trim)', () => {
+    const { code, output } = run({
+      'docs/a.md': ['```', '[示範](./nope.md)', '```   ', '', '[b](./b.md)', ''].join('\n'),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('~~~ 的 info string 可以有反引號(只有 ``` 不行)', () => {
+    const { code, output } = run({
+      'docs/a.md': ['~~~a`b', '[示範](./nope.md)', '~~~', '', '[b](./b.md)', ''].join('\n'),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('規則 5 的短圍欄是內文,不是新的一層(不然外層會收不掉)', () => {
+    // ```` 外層,裡面一行 ``` 沒有收尾,再一行 ```` 收外層。
+    // 如果那行 ``` 被當成 push,外層的 ```` 只會收掉它,stack 沒清空,
+    // 後面真的連結就被整段吃掉。
+    const { code, output } = run({
+      'docs/a.md': ['````', '```', '[示範](./nope.md)', '````', '', '[b](./b.md)', ''].join('\n'),
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('沒有配對收尾的反引號原樣留著,不會把後面變成 NaN', () => {
+    expect(stripCode('孤兒 ` 反引號')).toBe('孤兒 ` 反引號');
+  });
+});
+
+describe('--root 指到不存在的目錄', () => {
+  it('不丟例外,而是 0 條連結 → FAIL', () => {
+    const { code, output } = main(['--root', join(tmpdir(), 'lc-doclinks-absolutely-no-such-dir')]);
+
+    expect(code).toBe(1);
+    expect(output).toContain(SCANNER_BROKEN);
+  });
+});
+
+describe('根目錄只撿 readme*.md', () => {
+  it('readme.txt 不是 markdown,不掃', () => {
+    const { code, output } = run({
+      'readme.txt': '[x](./nope-readme-txt.md)\n',
+      'README.md': '[b](./b.md)\n',
+      'b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(output).not.toContain('nope-readme-txt');
+    expect(linkCount(output)).toBe(1);
+  });
+});
+
+describe('輸出的完整格式(訊息本身就是這張工單的產出)', () => {
+  it('全綠:第一行是統計,第二行是 ✓,沒有多餘的東西', () => {
+    const { code, output } = run({
+      'docs/a.md': '[b](./b.md)\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(output).toBe('doc-links: 掃描 2 個 markdown 檔,1 條相對連結\n✓ 連結全部都在');
+  });
+
+  it('有壞連結:統計、空行、✗ 標題、每條一行、最後是怎麼修', () => {
+    const { code, output } = run({ 'docs/a.md': '[沒有](./missing.md)\n' });
+
+    expect(code).toBe(1);
+    expect(output.split('\n')).toEqual([
+      'doc-links: 掃描 1 個 markdown 檔,1 條相對連結',
+      '',
+      '✗ 1 條連結指到不存在的檔案:',
+      '  docs/a.md:1  →  ./missing.md',
+      '',
+      '改了檔名或搬了目錄就要一起改指過去的連結;真的要指到還沒有的檔案就先別寫成連結。',
+    ]);
+  });
+
+  it('0 條連結:統計一行、掃描器壞了一行,就這兩行', () => {
+    const { code, output } = run({ 'docs/a.md': '# 沒有連結\n' });
+
+    expect(code).toBe(1);
+    expect(output.split('\n')).toEqual([
+      'doc-links: 掃描 1 個 markdown 檔,掃描到 0 條相對連結',
+      `${SCANNER_BROKEN}。掃描範圍 SCAN_DIRS、副檔名、或 stripCode 挖太多時就長這樣。`,
+    ]);
   });
 });

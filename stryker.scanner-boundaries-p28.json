@@ -1,0 +1,16 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": { "command": "npx vitest run --bail=1 --config vitest.scanner-boundaries.config.ts" },
+  "reporters": ["clear-text", "progress-append-only"],
+  "coverageAnalysis": "off",
+  "concurrency": 4,
+  "timeoutMS": 60000,
+  "mutate": [
+    "scripts/check-boundaries.ts:24-34",
+    "scripts/check-boundaries.ts:186-192",
+    "scripts/check-boundaries.ts:226-232"
+  ],
+  "thresholds": { "high": 90, "low": 70, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "target", "apps/desktop/src-tauri"]
+}
