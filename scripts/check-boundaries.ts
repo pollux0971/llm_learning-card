@@ -1,4 +1,4 @@
-// SOURCE: template v1.3.2 (7eecc51) sha256=674235e98561d3bb6f3f75f5767570124b39092fe57e54032179b8af9f4a7ba0 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.3.4 (eb04f73) sha256=e883fc23acd99947eae48a23dbb83f63838e4e2f58f7eee3768880a7b1022209 — 勿手改;升版用 sync-gates.sh
 /**
  * 邊界檢查(見 docs/02-decision-map.md ADR-004 / ADR-014)。
  *
@@ -54,22 +54,37 @@ const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
 const GATE_NAME = 'boundaries';
 
 /**
- * 找一份設定檔(`boundaries.owners.json` / `boundaries.allow.json`)的順序:
+ * 找一份設定檔(`boundaries.owners.json` / `boundaries.allow.json`)的順序(env 優先權
+ * 見 CHANGELOG 1.3.4 (3)):
+ *   0. 環境變數 `GATES_CONFIG_DIR`(若設且該目錄存在)——`verify-against.sh` 跑模板版
+ *      `check-boundaries.ts` 時會設這個,不然「這支腳本自己所在的目錄」(順位 1)在那個
+ *      情境下是模板自己的 `scripts/`(佔位 owners.json),永遠比不出跟 consumer 一致。
  *   1. 這支腳本自己所在的目錄(sync 後就是 consumer 的安裝目錄,例如 `features/scripts/`)
  *   2. `<ROOT>/scripts/`(ROOT 是上面算出來的那個,`--root` 覆蓋時用覆蓋值,不是全域 git root——
- *      這支腳本本來就支援對別的 repo 跑,設定檔搜尋要跟著同一個 ROOT 走)
- * 兩處都沒有 → 回傳 undefined,呼叫端決定必要設定要不要印「設定檔未找到於 <兩個路徑>」並 exit 1。
+ *      這支腳本本來就支援對別的 repo 跑,設定檔搜尋要跟著同一個 ROOT 走;這也是這支腳本沒有
+ *      直接用 `_root.ts` 的 `resolveConfig` 的原因——那支用的是模組層級固定的 git ROOT,
+ *      不會跟著 `--root` 走)
+ * 三處都沒有 → 回傳 undefined,呼叫端決定必要設定要不要印「設定檔未找到於 <搜尋過的路徑>」並 exit 1。
  */
+function configSearchPathsList(name: string): string[] {
+  const paths: string[] = [];
+  const envDir = process.env.GATES_CONFIG_DIR;
+  if (envDir && existsSync(envDir)) {
+    paths.push(join(envDir, name));
+  }
+  paths.push(join(import.meta.dirname, name), join(ROOT, 'scripts', name));
+  return paths;
+}
+
 function findConfigFile(name: string): string | undefined {
-  const candidates = [join(import.meta.dirname, name), join(ROOT, 'scripts', name)];
-  for (const c of candidates) {
+  for (const c of configSearchPathsList(name)) {
     if (existsSync(c)) return c;
   }
   return undefined;
 }
 
 function configSearchPathsDisplay(name: string): string {
-  return [join(import.meta.dirname, name), join(ROOT, 'scripts', name)].join('、');
+  return configSearchPathsList(name).join('、');
 }
 
 interface OwnersConfig {

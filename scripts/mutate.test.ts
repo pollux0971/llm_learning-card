@@ -955,7 +955,11 @@ describe('acquireLock 的預設值(不注入 now / sleep / log 時)', () => {
     const dir = tmp('mutate-lock-realclock');
     const lockPath = join(dir, '.stryker.lock');
     // 持鎖的是「這個程序」——pid 一定活著,所以一定會走到等待那條路。
-    expect(tryAcquire(lockPath, info({ pid: process.pid, cwd: '/holder' }))).toBe(true);
+    // startedAt 必須是「現在」:這條走**真的時鐘**,而 info() 預設的 T0 是寫死的日期,
+    // 過了兩小時的殘鎖門檻就會被判定成殘鎖、直接搶到鎖,測試就再也等不到逾時了。
+    expect(
+      tryAcquire(lockPath, info({ pid: process.pid, cwd: '/holder', startedAt: new Date().toISOString() })),
+    ).toBe(true);
 
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')));
@@ -1462,7 +1466,8 @@ describe('acquireLock 預設的 sleep 是真的在睡', () => {
     // 預設 sleep 被換成 no-op 的話,這個迴圈會空轉幾千圈、印幾千行。
     const dir = tmp('mutate-lock-realsleep');
     const lockPath = join(dir, '.stryker.lock');
-    tryAcquire(lockPath, info({ pid: process.pid, cwd: '/holder' }));
+    // startedAt 同上:真時鐘 + 寫死的 T0 = 過了兩小時就變殘鎖,等不到逾時。
+    tryAcquire(lockPath, info({ pid: process.pid, cwd: '/holder', startedAt: new Date().toISOString() }));
 
     const lines: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')));

@@ -1,4 +1,4 @@
-// SOURCE: template v1.3.2 (7eecc51) sha256=a530cc724f807154577176aa59ed936f4e3613dd3c0faf9157113c534af27cab — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.3.4 (eb04f73) sha256=32f40d50b5ac69215bb5650f4f533d6be728916506d86ff23c874e5ebcdeb91e — 勿手改;升版用 sync-gates.sh
 /**
  * 六支守門腳本共用的 repo 根解析。
  *
@@ -31,7 +31,7 @@ export function resolveRoot(): string {
 export const ROOT: string = resolveRoot();
 
 /**
- * 設定檔位置解析(CHANGELOG 1.3.2 (A))。
+ * 設定檔位置解析(CHANGELOG 1.3.2 (A);env 優先權見 CHANGELOG 1.3.4 (3))。
  *
  * `sync-gates.sh` 把守門腳本複製進 consumer 的**安裝目錄**——預設是 `scripts/`,
  * 但 cucumber 設定不在根目錄的專案常把它裝在別處(例如 `features/scripts/`),設定檔
@@ -40,10 +40,18 @@ export const ROOT: string = resolveRoot();
  * 或觸發自動偵測,像是設定死掉了一樣(專案 B 實測的迴歸)。
  *
  * 找設定檔的順序:
+ *   0. 環境變數 `GATES_CONFIG_DIR`(若設且該目錄存在)
  *   1. 呼叫端腳本自己所在的目錄(`import.meta.dirname`,sync 後就是 consumer 的安裝目錄)
  *   2. `ROOT/scripts/`
- * 兩處都沒有 → 回傳 `undefined`,呼叫端印「設定檔未找到於 <兩個路徑>」(必要設定)
+ * 三處都沒有 → 回傳 `undefined`,呼叫端印「設定檔未找到於 <搜尋過的路徑>」(必要設定)
  * 或靜默套用內建預設(選填設定,行為不變)。
+ *
+ * 為什麼要有第 0 順位:`verify-against.sh` 直接對模板路徑下的 `.ts` 執行(不經
+ * `sync-gates.sh` 複製),此時「呼叫端腳本自己所在的目錄」(順位 1)是**模板自己的
+ * `scripts/` 目錄**,裡面放的是給新專案抄的佔位設定——對 boundaries 這種硬性設定,
+ * 永遠讀到模板的佔位 owners.json,對 consumer 的真實落點表永遠比出「差異」
+ * (CHANGELOG 1.3.4 (3))。`GATES_CONFIG_DIR` 讓 `verify-against.sh` 明講「這次跑
+ * 模板版時,設定要去哪裡找」,不受「腳本實際放在哪個目錄」影響。
  */
 export function resolveConfig(scriptDir: string, name: string): string | undefined {
   for (const candidate of configSearchPaths(scriptDir, name)) {
@@ -52,7 +60,13 @@ export function resolveConfig(scriptDir: string, name: string): string | undefin
   return undefined;
 }
 
-/** `resolveConfig` 實際會依序嘗試的兩個路徑,供找不到時的錯誤訊息使用。 */
+/** `resolveConfig` 實際會依序嘗試的路徑(env 優先權存在時 3 個,否則 2 個),供找不到時的錯誤訊息使用。 */
 export function configSearchPaths(scriptDir: string, name: string): string[] {
-  return [join(scriptDir, name), join(ROOT, 'scripts', name)];
+  const paths: string[] = [];
+  const envDir = process.env.GATES_CONFIG_DIR;
+  if (envDir && existsSync(envDir)) {
+    paths.push(join(envDir, name));
+  }
+  paths.push(join(scriptDir, name), join(ROOT, 'scripts', name));
+  return paths;
 }
