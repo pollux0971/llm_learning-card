@@ -25,6 +25,9 @@ export default defineConfig({
       'scripts/**/*.test.ts',
       'features/support/*.test.ts',
     ],
+    // 退化路徑見證器(ADR-044):只在設了 DEGRADED_WITNESS_DIR 時記錄每個測試觸發的退化訊號,
+    // 沒設就一個 hook 都不註冊。vitest.mutate.config.ts 刻意不掛,Stryker 跑的時候是 no-op。
+    setupFiles: ['scripts/degraded-witness.setup.ts'],
     coverage: {
       provider: 'v8',
       // 行覆蓋率只是及格線。真正的品質由 mutation testing 決定,見

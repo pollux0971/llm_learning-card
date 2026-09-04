@@ -1,7 +1,11 @@
 node_modules/
 dist/
 target/
-reports/
+# reports/ 大多是產物(Stryker 的 html),只有退化路徑報告(ADR-044)要進 git:
+# 那是基準數字,之後「未標記數只准降」要拿它比。.raw/ 是跑一次 vitest 的 JSONL,不留。
+reports/*
+!reports/degraded/
+reports/degraded/.raw/
 .stryker-tmp/
 # 跨 worktree 的 Stryker 鎖(P-29)。放在主 repo 的根,不然各 worktree 看不到彼此。
 .stryker.lock

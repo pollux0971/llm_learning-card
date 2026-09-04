@@ -25,7 +25,8 @@
     "snapshot": "tsx scripts/snapshot.ts",
     "prompt:golden": "tsx scripts/prompt-check.ts --golden",
     "tauri": "npm run tauri -w apps/desktop --",
-    "accept:dry": "NODE_OPTIONS=--import=tsx cucumber-js --tags 'not @manual' --dry-run"
+    "accept:dry": "NODE_OPTIONS=--import=tsx cucumber-js --tags 'not @manual' --dry-run",
+    "witness:degraded": "tsx scripts/degraded-report.ts"
   },
   "devDependencies": {
     "@cucumber/cucumber": "^11.3.0",
