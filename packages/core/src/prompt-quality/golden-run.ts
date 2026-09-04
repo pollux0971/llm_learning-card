@@ -10,7 +10,7 @@ import { FakeLlmRouter } from './fake-llm.js';
 import { getGoldenSet, GOLDEN_SET_REGISTRY_FILE } from './golden-sets/registry.js';
 import { runStructuralChecks } from './structural-checks.js';
 import { renderScoresSheet } from './scores.js';
-import type { GoldenOutput, GoldenRunMeta, GoldenRunResult, LlmRouter, LlmTask } from './types.js';
+import type { GoldenOutput, GoldenRunMeta, GoldenRunResult, GoldenSet, LlmRouter, LlmTask } from './types.js';
 
 export const ROOT = resolve(import.meta.dirname, '../../../..');
 /** live run(phase-2)的存放處:進 git,diff 看得到(FEATURE.md「golden 儲存」)。 */
@@ -34,6 +34,22 @@ export class MissingGoldenSetError extends Error {
   }
 }
 
+export class LiveRunOfflineError extends Error {
+  constructor(public readonly task: string) {
+    super(`live golden run 需要雲端,現在連不上(task=${task})。要離線跑就用 --fake,那是重播 fixture、沒有品質資訊。`);
+    this.name = 'LiveRunOfflineError';
+  }
+}
+
+/**
+ * 粗估用的價目表:model → 每百萬 token 的美金單價。
+ * **不是計費依據**,只是讓人知道這次 golden run 大概花多少。價格會變,改這裡就好。
+ * 預設是空的:model 不在表上就只回報 token 數、不填 estimated_cost_usd
+ * ——寧可不給數字,也不要給一個看起來像帳單的假數字。
+ */
+export type ModelPriceTable = Record<string, { inPerMTok: number; outPerMTok: number }>;
+export const DEFAULT_MODEL_PRICES: ModelPriceTable = {};
+
 export interface RunGoldenOptions {
   task: LlmTask;
   /** 這次 run 的日期,預設今天(YYYY-MM-DD)。同一天重跑會覆蓋同一個目錄。 */
@@ -47,6 +63,20 @@ export interface RunGoldenOptions {
    * 測試一律要傳暫存目錄,不要讓測試對 repo 裡的檔案讀寫或刪除(審核意見,ADR-032)。
    */
   baseDir?: string;
+  /**
+   * phase-2:'live' 走 03-llm-router 的真 router 打雲端;預設 'fake' 重播 fixture。
+   * live 會先 probeOnline(),連不上就丟 LiveRunOfflineError,**而且不建立目錄**
+   * ——半個空目錄比沒有目錄更糟,之後 diff 會拿它當一次 run。
+   */
+  mode?: GoldenRunMeta['mode'];
+  /**
+   * live 模式建立 router 的工廠。預設用 03 的 LlmRouterImpl(讀 env 的 provider/model/金鑰)。
+   * 測試傳自己的工廠,或者在 globalThis.fetch 那一層造假——後者是首選,
+   * 那樣 router / adapter / SDK 全都跑真的(見 features/steps/_fake-cloud.mjs 的理由)。
+   */
+  createRouter?: () => LlmRouter;
+  /** 估價用的價目表,預設 DEFAULT_MODEL_PRICES(空的) */
+  prices?: ModelPriceTable;
 }
 
 function gitCommitOf(relPath: string): string {
@@ -66,7 +96,8 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
   const set = getGoldenSet(opts.task);
   if (!set) throw new MissingGoldenSetError(opts.task);
 
-  // Wave 0 phase-1 只有 fake 模式;live 是 phase-2。
+  if ((opts.mode ?? 'fake') === 'live') return runGoldenLive(opts, set);
+
   const mode: GoldenRunMeta['mode'] = 'fake';
   const date = opts.today ?? today();
   const baseDir = opts.baseDir ?? defaultGoldenBaseDir(mode);
@@ -114,4 +145,32 @@ export async function runGolden(opts: RunGoldenOptions): Promise<GoldenRunResult
   );
 
   return { dir, meta, outputs };
+}
+
+/**
+ * live 模式的 golden run(phase-2)。跟 fake 路徑的差別:
+ *   1. router 是 03 的真 router(預設 LlmRouterImpl),provider/model/金鑰讀 env(契約 §11)
+ *   2. **先 probeOnline()**;連不上就丟 LiveRunOfflineError,而且在那之前不建立任何目錄
+ *   3. meta 記 tokens_in / tokens_out 合計,model 在價目表上時再填 estimated_cost_usd
+ *   4. 每次呼叫都經過 router 自己的 log(§10 llm_call 事件),這裡不另外記一份
+ *   5. 沒指定 baseDir 時存到 golden/(進 git),不是 golden-fake/
+ * 其餘(prompt 快照、逐項 output、結構性檢查、SCORES.md)跟 fake 路徑一致。
+ */
+export async function runGoldenLive(opts: RunGoldenOptions, set?: GoldenSet): Promise<GoldenRunResult> {
+  throw new Error('not implemented (12-prompt-quality/phase-2)');
+}
+
+/** 建立 live 模式預設的 router(03-llm-router 的 LlmRouterImpl,讀 env)。 */
+export function createDefaultLiveRouter(): LlmRouter {
+  throw new Error('not implemented (12-prompt-quality/phase-2)');
+}
+
+/** token 合計 → 美金粗估。model 不在表上回 undefined(不猜)。 */
+export function estimateCostUsd(
+  model: string,
+  tokensIn: number,
+  tokensOut: number,
+  prices: ModelPriceTable = DEFAULT_MODEL_PRICES,
+): number | undefined {
+  throw new Error('not implemented (12-prompt-quality/phase-2)');
 }

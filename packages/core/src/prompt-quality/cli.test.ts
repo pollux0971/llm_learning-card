@@ -56,10 +56,18 @@ describe('cli main', () => {
     expect(result.output).toMatch(/registry\.ts/);
   });
 
-  it('--live 在 phase-1 明確拒絕', async () => {
-    const result = await main(['--golden', '--live', '--out', tmpOutDir()]);
+  // phase-2 起 --live 是真的模式(見 live-run.test.ts)。這裡只驗 CLI 這一層的旗標處理,
+  // 不打網路——真正的 live 行為由 runGolden 負責。
+  it('--fake 與 --live 同時給時拒絕', async () => {
+    const result = await main(['--golden', '--fake', '--live', '--out', tmpOutDir()]);
     expect(result.code).toBe(1);
-    expect(result.output).toContain('phase-2');
+    expect(result.output).toContain('--live');
+  });
+
+  it('用法字串把 --live 列出來', async () => {
+    const result = await main([]);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain('--live');
   });
 
   it('--diff 少給目錄時報錯', async () => {

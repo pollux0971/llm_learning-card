@@ -43,5 +43,10 @@
     "from": "11-review-cli",
     "to": "infra",
     "reason": "scripts/review.ts 同上,補 ADR-034 的 .env 載入,side-effect import scripts/_env.ts"
+  },
+  {
+    "from": "12-prompt-quality",
+    "to": "03-llm-router",
+    "reason": "phase-2 的 --live 用 03 的 LlmRouterImpl 打真雲端(golden-run.ts 的 createDefaultLiveRouter,測試在 live-run.test.ts)。硬規則:LLM 呼叫一律經過 llm-router 的介面,不在別處 import provider SDK——這條例外正是為了遵守那條,而不是繞過它"
   }
 ]

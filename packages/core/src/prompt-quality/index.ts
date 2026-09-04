@@ -5,5 +5,7 @@ export * from './fake-llm.js';
 export * from './scores.js';
 export * from './golden-run.js';
 export * from './compare.js';
+export * from './regression.js';
+export { I1_SECURITY_BATCH } from './fixtures/i1-security-batch.js';
 export * from './golden-sets/registry.js';
 export { main as runCli } from './cli.js';
