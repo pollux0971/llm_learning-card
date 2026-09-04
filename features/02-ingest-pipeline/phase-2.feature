@@ -69,6 +69,15 @@ Feature: Questions, second level cards and the dependency graph
     And the other category's entry and order file are untouched
     And a warning naming the remaining cycle is logged
 
+  Scenario: A corrupt graph file is reported under its own name
+    Given the graph file on disk is not valid JSON
+    And the model returns edges containing a cycle on the first attempt
+    And the second attempt keeps forming a new cycle after each edge is dropped, up to the card count limit
+    When dependency analysis runs and fails
+    Then the failure names the corrupt graph file
+    And the corrupt graph file is left on disk byte for byte
+    And exactly one warning is logged, naming the corrupt graph file as the reason
+
   Scenario: The order file is produced
     When dependency analysis runs
     Then an order file exists for the category

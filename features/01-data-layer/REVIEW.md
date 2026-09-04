@@ -91,3 +91,142 @@ npx stryker run --mutate "packages/core/src/schema/graph.ts,!packages/core/src/s
 **PASS**。90.32% → 100%,15 個存活變異全部有明確歸類與處理(3 補測試、5 個 mutant 對應的
 2 處死程式刪除、5 個等價變異附完整理由),四項檢查(boundaries / typecheck / test /
 cucumber @data-layer @phase-3)全過。
+
+---
+
+# 審核輪 · ADR-040 `atomicWriteJson()` 四步寫入保證(commit `215a610` / `79135f3`)
+
+日期 2026-09-04。branch `pollux0971/atomic-write-integrity`。
+
+## A.1 判定
+
+**PASS**。`packages/core/src/ingest/state.ts` 變異分數 **84.78% → 100.00%**(0 存活、
+1 timeout 算殺死、6 個 mutant 被 TypeScript checker 擋掉不計分),四項反向驗證全部如預期
+變紅。有一個 **Windows 的已知限制**要記錄(見 A.5),但它不擋這一輪:桌面端 Windows 是
+I8,現在還沒跑,而且**開發 agent 對它的診斷是錯的**,修法跟他想的不一樣。
+
+## A.2 四步是不是真的四步、順序對不對
+
+實作(`state.ts:38-61`)照 §11b 的字面走:
+
+```
+mkdirSync(dir) → openSync(tmp,'w') → writeSync → fsyncSync(fd) → closeSync(fd)
+              → renameSync(tmp, path) → fsyncDir(dir)
+              → finally: rmSync(tmp, { force: true })(自己的錯內層吞掉)
+```
+
+四步都在,順序對。測試用 `vi.mock('node:fs')` 把 `openSync` / `fsyncSync` / `renameSync` /
+`rmSync` 全部 pass-through 到真 fs、只多記一筆呼叫,再用 `h.calls` 的**索引比大小**鎖住
+順序。「這是檔案的 fsync 還是目錄的 fsync」不看實作用哪個 API,而是看那個 fd 當初開的
+路徑在當下是不是目錄 —— 不綁死寫法,換個等價實作照樣認得出來。這是這一輪最重要的那組
+斷言,不是裝飾。
+
+## A.3 四項反向驗證(我自己動手改壞,確認測試會紅)
+
+| # | 我怎麼改壞 | 結果 | 變紅的測試 |
+|---|---|---|---|
+| 1 | `renameSync` 與 `fsyncDir` 對調 | ✅ 紅 | `fsync(fd) 在 rename 之前、fsync(目錄) 在 rename 之後` —— 訊息直接印出實際序列 `fsync:file → fsync:dir → rename → unlink` |
+| 2 | `fsyncDir` 的 `code !== 'EINVAL'` 改成 catch-all | ✅ 紅 **2 條** | `EIO 時往外丟` 與 `ENOSPC 時往外丟` |
+| 3 | 清理的 `try`/`catch` 拿掉(讓清理的錯冒到 `finally` 外) | ✅ 紅 | `連清理都失敗時,丟出去的仍然是原本那個錯誤` |
+| 4 | (見 02 的 REVIEW,ADR-041 的 re-throw) | ✅ 紅 | — |
+
+每次改壞跑完就 `cp` 還原,`git status` 確認過工作區乾淨。
+
+## A.4 `try`/`finally` 不遮蔽原錯 —— 有測,而且測得對
+
+「rename 失敗**且** unlink 也失敗」這個組合**已經有測試**(`state.test.ts` 的
+`連清理都失敗時…`),不用補。它做對的關鍵是最後那句:
+
+```ts
+expect(h.calls, `沒有嘗試刪 tmp:${...}`).toContain('unlink');
+```
+
+沒有這句的話,一個**完全不清理**的實作也會讓「丟出來的是 rename 的錯」成立 —— 測試會
+變成「斷言沒丟錯」那一類的投機取巧。有這句才真的鎖住「清理有發生 + 清理的錯被吞」兩件事。
+
+## A.5 ⚠️ Windows:開發 agent 的診斷是錯的,結論碰巧對
+
+開發 agent 提報「`openSync(dir,'r')` 在 Windows 會丟 `EISDIR`」。**查證後這是錯的。**
+證據取自 libuv `v1.x` 的 `src/win/fs.c` 與 Microsoft 官方文件,不是印象:
+
+1. `fs__open()` 明確加上 `FILE_FLAG_BACKUP_SEMANTICS`,原始碼的註解就寫著
+   *"Setting this flag makes it possible to open a directory."* —— 所以 **Windows 上
+   `openSync(dir, 'r')` 會成功**,不會丟 `EISDIR`。
+2. 那段 `SET_REQ_UV_ERROR(req, UV_EISDIR, error)` 只在 `ERROR_FILE_EXISTS` **且**帶
+   `O_CREAT` 時才走到 —— 那是用 `'w'`/`'a'` 開目錄的情境,不是我們這裡。
+3. 真正會爆的是**下一步**:`fsyncSync(fd)` 在 Windows 走 `FlushFileBuffers()`,而
+   Microsoft 文件寫死 *"The file handle must have the **GENERIC_WRITE** access right."*
+   我們的 fd 是 `'r'` 開的,只有讀權限 → `FlushFileBuffers` 回 `ERROR_ACCESS_DENIED`
+   → libuv 的 `fs__sync_impl()` 走 `SET_REQ_WIN32_ERROR` → Node 端拿到 **`EACCES`**。
+
+**所以 Windows 上的實際行為是**:tmp 寫好、fsync 好、rename **成功**(磁碟上的檔案是
+對的),然後第 4 步丟 `EACCES` 出來 —— `state/` 的每一次寫入都會丟錯,即使資料其實已經
+寫進去了。影響面是全部呼叫端(`ingest.ts` 的 `needs-review.json` / `ingested.json`、
+`deps.ts` 的 `writeCategoryGraph()` / `removeCategoryGraph()`)。
+
+**為什麼這很重要**:如果照開發 agent 的診斷去「把 `EISDIR` 也加進吞掉的清單」,
+**Windows 一樣會爆**,因為錯誤碼根本不是 `EISDIR` 而是 `EACCES`,而且爆的地方不是 open
+是 fsync。我沒有改契約、也沒有加任何錯誤碼 —— 那是 ADR 的事。留給技術顧問決定的是:
+Windows 上目錄 fsync 這件事本身在語意上要怎麼對應(常見做法是整段跳過,或改用
+`FILE_FLAG_BACKUP_SEMANTICS` + 可寫的 handle,後者 Node 的 `fs` 沒有直接暴露)。
+
+**現在不擋這一輪**:桌面端 Windows 是 I8,還沒跑;Linux / macOS 上四步完全正確。
+
+## A.6 存活變異的處理(7 個,四分類逐條)
+
+| 變異 | 位置 | 分類 | 處理 |
+|---|---|---|---|
+| `} finally {}`(吃掉 `closeSync(fd)`) | `state.ts:45` | **真漏測** | 補測試 |
+| `closeSync(fd)` → `;` | `state.ts:46` | **真漏測** | 同上 |
+| `} finally {}`(吃掉 `fsyncDir` 的 `closeSync`) | `state.ts:76` | **真漏測** | 同上 |
+| `closeSync(fd)` → `;`(`fsyncDir`) | `state.ts:77` | **真漏測** | 同上 |
+| `rmSync(tmp, { force: true })` → `{}` | `state.ts:56` | **真等價** | `Stryker disable next-line all` + 理由 |
+| 同上 → `{ force: false }` | `state.ts:56` | **真等價** | 同上(同一行,一個註解涵蓋) |
+| `.filter((l) => l.trim().length > 0)` → `l.length > 0` | `state.ts:95` | **真漏測** | 補測試 |
+
+**四個 `closeSync` 的漏測**:漏關 fd 在單次寫入上沒有任何症狀,但 `atomicWriteJson()`
+是 state/ 全部寫入的單一入口、桌面端常駐,漏一個就是每次寫入漏一個,跑久了撞 `EMFILE`
+—— 而那時的錯誤會出現在一個跟真正原因完全無關的地方。補的是**成功路徑**與**目錄 fsync
+失敗路徑**兩條「開了就要關」。
+
+寫這組測試時踩到一個真的坑,值得記:第一版用 `Set<number>` 記「關過哪些 fd」**是錯的**
+—— 作業系統會**重用 fd 編號**(關掉 22 之後下一個 open 又拿到 22),集合比對會讓
+「開 22 → 關 22 → 再開 22 沒關」看起來是平的;測試當場就抓到只有 1 個 fd 進 Map(第二次
+open 把第一次的覆寫掉了)。改成記 open/close **事件序列**再重放,才算得準。
+
+**`force: true` 的兩個等價變異**:外層那個 `catch` 本來就吞掉清理自己丟的每一顆錯,
+所以 `force` 唯一的作用(吸收成功路徑上「tmp 早就被 rename 走了」的 ENOENT)在可觀察行為
+上是零。不刪它,因為 ADR-040 指名了「刪不掉就算了」這個形式,而且留著讓意圖不必依賴
+外層 catch 才看得懂 —— 附精確理由的 `Stryker disable next-line all`。
+
+**`l.trim()` 的漏測**:pre-existing,不是這一輪引進的,但在 mutate 範圍內。`log.jsonl`
+是 append-only(§11b 的例外),被中斷或被編輯器補尾巴時空白行是真的會出現的東西,
+`l.length > 0` 會讓那一行進 `JSON.parse` 直接丟、整份 log 讀不出來。補了一條白空格行的
+`readLogEvents` 測試,順手補了「檔案不存在回空陣列」。
+
+## A.7 有沒有投機取巧
+
+沒有。逐條看過:mock 一律 pass-through 到真 fs(不是回假值),斷言的是**磁碟上的實際
+位元組**(`readFileSync(path,'utf8')).toBe(before)`)而不是「沒丟錯」,錯誤比對用
+`toBe(原物件)` 而不是 `toThrow()` 這種抓得太寬的形式,EINVAL 那條還額外斷言
+`h.calls` 裡真的有 `fsync:dir`(否則「不丟錯」可能是**根本沒 fsync 目錄**的結果)。
+
+## A.8 完整驗收結果
+
+| 檢查 | 結果 |
+|---|---|
+| `npm ci` | ✅ |
+| `npm run boundaries` | ✅ |
+| `npm run typecheck` | ✅ |
+| `npx vitest run` | ✅ 66 檔 **1008 passed**(補測試前 1004) |
+| `cucumber-js --tags "not @manual"` | ✅ **293 passed / 0 failed**(164 undefined 是未開工的 phase) |
+| `npm run accept:dry` | ✅ **0 ambiguous** |
+| `npm run standalone` | ✅ 全部通過(9 跑、3 interactive 跳過) |
+| Stryker `state.ts` | ✅ **100.00%**(84.78% → 100.00%) |
+| Stryker `deps.ts` | ✅ **100.00%**(未退步,見 02 的 REVIEW) |
+
+## A.9 本輪修改的檔案
+
+- `packages/core/src/ingest/state.test.ts` —— 補 fd 不外洩 ×2、`readLogEvents` ×2
+- `packages/core/src/ingest/state.ts` —— 只加一個 `Stryker disable next-line all` 註解,
+  行為零改動

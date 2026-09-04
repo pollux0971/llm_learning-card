@@ -571,3 +571,85 @@ fsync **目錄**,所以 rename 本身在斷電下不保證落盤——這同樣�
 
 - `packages/core/src/ingest/deps.test.ts` —— 追加 3 個測試(2 個 `removeCategoryGraph`、
   1 個 `analyzeDependencies` 正常路徑),全部做過反向驗證。實作檔 `deps.ts` **未修改**。
+
+---
+
+# 審核輪 · ADR-041 `GraphFileCorruptError`(commit `dcf3cbd` / `2a18be9`)
+
+日期 2026-09-04。branch `pollux0971/atomic-write-integrity`。ADR-040 那半的報告在
+`features/01-data-layer/REVIEW.md` 的「審核輪 · ADR-040」。
+
+## 9.1 判定
+
+**PASS**。`deps.ts` 變異分數 **100.00%**(上一輪也是 100.00%,**沒有退步**),re-throw
+的反向驗證如預期變紅,四條決定(自己的名字 / 現場不動 / 恰好一筆 / 非 0 退出碼)逐條
+都有斷言撐著。
+
+## 9.2 逐條審查
+
+**(1) 錯誤帶路徑與前 200 個「位元組」。** `deps.ts` 的 `removeCategoryGraph()` 改成
+`readFileSync(depsPath)`(不帶 `'utf8'`)拿 **Buffer**,再
+`raw.subarray(0, CORRUPT_HEAD_BYTES).toString('utf8')` —— 真的是位元組不是字元。測試也
+用 `Buffer.from(bytes,'utf8').subarray(...)` 對照,而不是照抄實作的寫法。測試資料刻意
+用中文(`'\n這後面還有很多東西'.repeat(50)`),多位元組字元下「200 位元組」與
+「200 字元」會給出不同答案,所以這條是真的被鎖住的,不是巧合成立。
+
+**(2) 壞檔現場整個不動。** `throw` 的位置在 `JSON.parse` 的 `catch` 裡,**在**動 order
+檔的程式碼**之前** —— 我確認過控制流,不是只信註解。三處斷言:
+- `deps.test.ts` 的 `it.each(CORRUPT_SAMPLES)`:三種壞法(被截斷 / 空檔 / 被別的東西
+  覆寫)各自 `expect(readFileSync(depsPath,'utf8')).toBe(bytes)`。
+- `壞檔時 order 檔也不動`:`order-security.json` 的內容逐位元組比對。
+- `pipeline.test.ts` 走完整管線後也比對 `deps.json` 位元組。
+- cucumber 的 `the corrupt graph file is left on disk byte for byte` 再驗一次。
+
+**(3) warning 恰好一筆。** `analyzeDependencies()` 把 `removeCategoryGraph()` 包進
+try/catch,只有 `instanceof GraphFileCorruptError` 才記 `reason: 'graph file corrupt'`,
+然後**無條件 re-throw** —— 所以下面那筆「殘留循環」的 `appendLogEvent` 根本到不了。
+測試斷言的是 `warnings.length === 1` **加上** `reason` / `file` 的值,不是只數數量。
+`pipeline.test.ts` 還多一句 `expect(JSON.stringify(warnings)).not.toContain('已略過')`,
+擋掉「數量對但記錯內容」。
+
+**(4) catch-all 的 re-throw → CLI 非 0 退出碼。** `ingest.ts:332` 的
+`if (err instanceof GraphFileCorruptError) throw err;` 在 catch-all 的**第一行**。
+
+## 9.3 反向驗證(我自己動手改壞)
+
+把 `ingest.ts` 那句 re-throw 換成 `void GraphFileCorruptError;`(保留 import 讓
+typecheck 過,只拿掉行為)→ `pipeline.test.ts` 的
+`deps.json 損壞時不吞 GraphFileCorruptError,讓 CLI 以非 0 退出碼結束` **變紅**
+(15 passed / 1 failed)。跑完還原,`git status` 乾淨。
+
+另外三項反向驗證(fsync 順序對調、目錄 fsync 改 catch-all、清理錯誤遮蔽原錯)在
+`features/01-data-layer/REVIEW.md` 的 A.3,全部如預期變紅。
+
+## 9.4 存活變異
+
+`npx stryker run --mutate "packages/core/src/ingest/deps.ts,!packages/core/src/ingest/deps.test.ts"`
+→ **100.00%**,119 killed / 1 timeout / **0 survived** / 51 errors(TypeScript checker 擋掉,
+不計分)。**沒有存活變異要處理**,也沒有比上一輪退步。
+
+## 9.5 有沒有投機取巧
+
+沒有。特別看過三件事:
+- `CORRUPT_SAMPLES` 是**三種**真實壞法的參數化,不是一個硬寫死的 fixture。
+- `pipeline.test.ts` 的 `depsAlwaysCycles` 是**照規則生出來**的(從 prompt 抓 id、每張卡
+  一個自環 + 一個大循環),不是貼一串固定 JSON;它逼出「丟邊達上限仍有殘留循環」那條
+  路徑,才走得到 `removeCategoryGraph()`。
+- cucumber 的 Then 斷言的是磁碟與 log 的實際內容,不是 `depsResult` 的回傳值。
+
+## 9.6 這一輪發現的問題
+
+1. **Windows 上 `atomicWriteJson()` 每次寫入都會丟錯**(ADR-040 那半)。開發 agent 提報
+   的診斷(`openSync(dir)` 丟 `EISDIR`)**經查證是錯的** —— libuv 在 Windows 開檔時帶
+   `FILE_FLAG_BACKUP_SEMANTICS`,開目錄會**成功**;真正會爆的是下一步
+   `FlushFileBuffers()`,它要求 handle 有 `GENERIC_WRITE`,而我們的 fd 是 `'r'` 開的,
+   所以拿到的是 **`EACCES`** 不是 `EISDIR`。**照他的診斷加 `EISDIR` 到吞掉清單並不會修好
+   Windows。** 完整證據與影響範圍見 `features/01-data-layer/REVIEW.md` 的 A.5。
+   我**沒有**改契約也沒有加任何錯誤碼 —— 那是 ADR 的事。桌面端 Windows 是 I8,不擋這一輪。
+2. `writeCategoryGraph()` 的裸 `JSON.parse` 依舊沒包(ADR-041 的 Consequences 2 明講
+   這一輪不動),照留。
+
+## 9.7 本輪修改的檔案
+
+`deps.ts` / `ingest.ts` / `errors.ts` 這一輪**我一個字都沒改**。審核輪只動了
+`packages/core/src/ingest/state.test.ts`(補測試)與 `state.ts`(一個 Stryker 註解)。

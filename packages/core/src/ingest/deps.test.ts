@@ -14,6 +14,7 @@ import {
   removeCyclesLocally,
   writeCategoryGraph,
 } from './deps.js';
+import { CORRUPT_HEAD_BYTES, GraphFileCorruptError } from './errors.js';
 import { detectCycle } from '@core/schema/graph.js';
 import { loadPromptTemplate } from './prompts.js';
 
@@ -996,6 +997,126 @@ describe('removeCategoryGraph: 三個分類只動中間那個', () => {
     removeCategoryGraph(outDir, 'security');
 
     expect(readFileSync(depsPath, 'utf8')).toBe(before);
+  });
+});
+
+// ============================================================== 損壞的 deps.json(ADR-041)
+//
+// deps.json **存在但不是合法 JSON** 是 ADR-038 沒有列到的第四個邊界。它跟另外三個
+// (檔不存在、沒有該 key、order 檔不存在)不同:那三個的磁碟狀態本來就是對的,
+// 這個是真的壞掉的檔。它要有自己的名字——`removeCategoryGraph()` 是在
+// `analyzeDependencies()` 已經在處理另一個失敗(殘留循環)時被呼叫的,圖檔整個讀不
+// 出來的時候,「殘留了哪一條循環」那筆 warning 在語意上根本到不了。
+//
+// 下面這組對應 deps.ts / ingest.ts 的 TODO(ADR-041),現在是紅的。
+
+/** 幾種真實會遇到的壞法:被截斷、空檔、被別的東西覆寫。 */
+const CORRUPT_SAMPLES: [name: string, bytes: string][] = [
+  ['被截斷', '{"security":{"nodes":["sec-0001"],"edges":['],
+  ['空檔', ''],
+  ['被別的東西覆寫', '<<<<<<< HEAD\n這不是 JSON\n'],
+];
+
+describe('removeCategoryGraph:損壞的 deps.json', () => {
+  it.each(CORRUPT_SAMPLES)('壞法「%s」丟 GraphFileCorruptError,不是裸的 SyntaxError', (_name, bytes) => {
+    const outDir = makeOutDir();
+    const depsPath = join(outDir, 'graph', 'deps.json');
+    writeFileSync(depsPath, bytes, 'utf8');
+
+    let thrown: unknown;
+    try {
+      removeCategoryGraph(outDir, 'security');
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown, `丟出來的是 ${String(thrown)}`).toBeInstanceOf(GraphFileCorruptError);
+    // 檔案本身一個位元組都不能被動到:損壞的內容是現場,留給人看。
+    expect(readFileSync(depsPath, 'utf8')).toBe(bytes);
+  });
+
+  it('錯誤帶著路徑與開頭 200 位元組,讓人不用另外開檔就能判斷壞成什麼樣', () => {
+    const outDir = makeOutDir();
+    const depsPath = join(outDir, 'graph', 'deps.json');
+    // 刻意做一個比 200 位元組長很多的壞檔,才驗得到「有截斷」而不是整份倒出來。
+    const head = '{"security":{"nodes":[' + '"sec-0001",'.repeat(40);
+    const bytes = head + '\n這後面還有很多東西'.repeat(50);
+    writeFileSync(depsPath, bytes, 'utf8');
+
+    let thrown: unknown;
+    try {
+      removeCategoryGraph(outDir, 'security');
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(GraphFileCorruptError);
+    const err = thrown as GraphFileCorruptError;
+    expect(err.path).toBe(depsPath);
+    expect(err.head).toBe(Buffer.from(bytes, 'utf8').subarray(0, CORRUPT_HEAD_BYTES).toString('utf8'));
+    // 摘要是摘要,不是整份檔案。
+    expect(err.head.length).toBeLessThan(bytes.length);
+    expect(err.message).toContain(depsPath);
+  });
+
+  it('壞檔時 order 檔也不動——什麼都還沒判斷出來就先刪東西是最糟的順序', () => {
+    const outDir = makeOutDir();
+    const graphDir = join(outDir, 'graph');
+    writeFileSync(join(graphDir, 'deps.json'), '{壞掉的', 'utf8');
+    const orderBefore = JSON.stringify(['sec-0001', 'sec-0002'], null, 2) + '\n';
+    writeFileSync(join(graphDir, 'order-security.json'), orderBefore);
+
+    expect(() => removeCategoryGraph(outDir, 'security')).toThrow(GraphFileCorruptError);
+
+    expect(existsSync(join(graphDir, 'order-security.json'))).toBe(true);
+    expect(readFileSync(join(graphDir, 'order-security.json'), 'utf8')).toBe(orderBefore);
+  });
+});
+
+describe('analyzeDependencies:殘留循環時碰到損壞的 deps.json', () => {
+  it('記一筆 reason 為 graph file corrupt 的 warning(恰好一筆),丟 GraphFileCorruptError,檔案位元組不變', async () => {
+    const outDir = makeOutDir();
+    const depsPath = join(outDir, 'graph', 'deps.json');
+    // 上一次的 run 寫到一半斷掉 / 被別的東西覆寫,檔在但讀不出來。
+    const corrupt = '{"security":{"nodes":["sec-0001"],"edges":[["sec-0001"';
+    writeFileSync(depsPath, corrupt, 'utf8');
+
+    const threeCards: Card[] = [makeCard('sec-0001'), makeCard('sec-0002'), makeCard('sec-0003')];
+    // 跟「丟邊達上限」那個場景同一套腳本:3 個自環吃掉 3 次丟邊上限,三卡循環原封不動。
+    const firstAttemptCycle: [CardId, CardId][] = [
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0001'],
+    ];
+    const chainReactionEdges: [CardId, CardId][] = [
+      ['sec-0001', 'sec-0001'],
+      ['sec-0002', 'sec-0002'],
+      ['sec-0003', 'sec-0003'],
+      ['sec-0001', 'sec-0002'],
+      ['sec-0002', 'sec-0003'],
+      ['sec-0003', 'sec-0001'],
+    ];
+    const { router } = makeDepsRouter([firstAttemptCycle, chainReactionEdges]);
+
+    let thrown: unknown;
+    try {
+      await analyzeDependencies('security', threeCards, router, outDir);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown, `丟出來的是 ${String(thrown)}`).toBeInstanceOf(GraphFileCorruptError);
+
+    // 壞掉的檔留在原地,一個位元組都沒被動過。
+    expect(readFileSync(depsPath, 'utf8')).toBe(corrupt);
+
+    // warning **恰好一筆**,而且是「圖檔壞了」那一筆,不是「殘留了哪一條循環」。
+    // 兩筆都記等於讓讀 log 的人自己去猜哪一筆才是真正的原因。
+    const warnings = logEventsOf(outDir).filter((e) => e.type === 'warning');
+    expect(warnings, JSON.stringify(warnings)).toHaveLength(1);
+    expect(warnings[0]!.reason).toBe('graph file corrupt');
+    expect(warnings[0]!.file).toBe('graph/deps.json');
+    // 殘留循環那筆在語意上到不了:圖檔都讀不出來,報一條循環路徑不描述現在的磁碟狀態。
+    expect(JSON.stringify(warnings)).not.toContain('sec-0001 -> sec-0002 -> sec-0003');
   });
 });
 

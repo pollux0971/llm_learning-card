@@ -20,6 +20,7 @@ import { ensureInitialized } from './init.js';
 import { readLogEvents } from './state.js';
 import type { LlmResult, LlmRouter, LlmTask } from './types.js';
 import { CloudRequiredError as RealCloudRequiredError, OutputTruncatedError } from '../llm/errors.js';
+import { GraphFileCorruptError } from './errors.js';
 
 const CATEGORY = 'security';
 const RAW_REL_PATH = `raw/${CATEGORY}/web-basics.md`;
@@ -73,6 +74,12 @@ interface ScriptedRouterOptions {
   childrenBatchFails?: boolean;
   /** 讓 'ingest.deps' 回應缺少 edges 陣列,模擬整批依賴圖分析失敗。 */
   depsBatchFails?: boolean;
+  /**
+   * 讓 'ingest.deps' 每次都回「每張卡一個自環 + 一個把全部卡串起來的大循環」。
+   * 自環排在每張卡鄰接表的最前面,本地丟邊迴圈會先把 N 個自環各丟一次,丟滿
+   * cards.length 的上限時大循環完全沒被碰到 —— 也就是必定走到 unresolved 分支。
+   */
+  depsAlwaysCycles?: boolean;
   onlineOverride?: boolean;
   /** call() 被呼叫時記錄下來,用於斷言呼叫次數 / 從未被呼叫。 */
   onCall?: (task: LlmTask, prompt: string) => void;
@@ -118,7 +125,17 @@ function scriptedRouter(opts: ScriptedRouterOptions = {}): LlmRouter {
         return { text: questionCandidateJson(), provider: 'fake', model: 'scripted', latency_ms: 0, provisional: false };
       }
       if (task === 'ingest.deps') {
-        const text = opts.depsBatchFails ? JSON.stringify({ notEdges: [] }) : depsEdgesJsonFromPrompt(prompt);
+        let text: string;
+        if (opts.depsBatchFails) {
+          text = JSON.stringify({ notEdges: [] });
+        } else if (opts.depsAlwaysCycles) {
+          const ids = [...prompt.matchAll(/^- (\S+):/gm)].map((m) => m[1]!);
+          const selfLoops = ids.map((id) => [id, id]);
+          const bigCycle = ids.map((id, i) => [id, ids[(i + 1) % ids.length]!]);
+          text = JSON.stringify({ edges: [...selfLoops, ...bigCycle] });
+        } else {
+          text = depsEdgesJsonFromPrompt(prompt);
+        }
         return { text, provider: 'fake', model: 'scripted', latency_ms: 0, provisional: false };
       }
       throw new Error(`scriptedRouter 沒有預期到 task=${task}`);
@@ -175,6 +192,35 @@ describe('runIngestPipeline', () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  // ADR-041:graph/deps.json 讀不出來是**磁碟完整性問題**,不是「這次圖沒算成功」。
+  // 上面第 5 條(依賴圖整批分析失敗就吞掉錯誤、記警告)是對的預設,但這一種失敗
+  // 不能走那條路:吞掉的話 scripts/ingest.ts 會以 0 退出碼結束,操作者以為 ingest
+  // 成功了,而磁碟上躺著一個讀不出來的圖檔;log 裡還會多一筆「已略過」的 warning,
+  // 跟真正的原因無關,違反 ADR-041 的「恰好一筆」。
+  //
+  // TODO(ADR-041):ingest.ts 的 deps catch-all 目前把所有錯誤一視同仁,這個是紅的。
+  it('deps.json 損壞時不吞 GraphFileCorruptError,讓 CLI 以非 0 退出碼結束', async () => {
+    const corrupt = '{"security":{"nodes":["sec-0001"],"edges":[["sec-0001"';
+    const depsPath = join(dir, 'graph', 'deps.json');
+    mkdirSync(join(dir, 'graph'), { recursive: true });
+    writeFileSync(depsPath, corrupt, 'utf8');
+
+    const router = scriptedRouter({ levelZeroCount: 3, childCountPerParent: 1, depsAlwaysCycles: true });
+
+    await expect(
+      runIngestPipeline({ outDir: dir, rawRelPath: RAW_REL_PATH, category: CATEGORY, router }),
+    ).rejects.toBeInstanceOf(GraphFileCorruptError);
+
+    // 壞檔留在原地給人看。
+    expect(readFileSync(depsPath, 'utf8')).toBe(corrupt);
+
+    // warning 恰好一筆,而且是圖檔壞掉那一筆——不是「依賴圖分析失敗,已略過」。
+    const warnings = readLogEvents(join(dir, 'state/log.jsonl')).filter((e) => e.type === 'warning');
+    expect(warnings, JSON.stringify(warnings)).toHaveLength(1);
+    expect(warnings[0]!.reason).toBe('graph file corrupt');
+    expect(JSON.stringify(warnings)).not.toContain('已略過');
   });
 
   it('串起整條管線:level 0 卡 → 考題 → 子卡 → 子卡考題 → 依賴圖', async () => {
