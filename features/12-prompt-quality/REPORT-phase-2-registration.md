@@ -12,11 +12,11 @@ commit `2308401`(未 push),branch `pollux0971/golden-set-registration`,worktree 
 
 | prompt 檔 | 呼叫點 | `LlmTask` |
 |---|---|---|
-| `prompts/ingest/cards.md` | `packages/core/src/ingest/generate-cards.ts:77` | `ingest.cards` 【驗】 |
-| `prompts/ingest/children.md` | `packages/core/src/ingest/children.ts:126` | `ingest.cards` 【驗】 |
+| `prompts/ingest/cards.md` | `packages/core/src/ingest/generate-cards.ts` | `ingest.cards` 【驗】 |
+| `prompts/ingest/children.md` | `packages/core/src/ingest/children.ts` | `ingest.cards` 【驗】 |
 | `prompts/ingest/regenerate.md` | `generate-cards.ts` 的 regenerate 路徑(同一個 `callAndParse`) | `ingest.cards` 【驗】 |
 | `prompts/ingest/questions.md` | `packages/core/src/ingest/questions.ts:132,139` | `ingest.questions` 【驗】 |
-| `prompts/ingest/deps.md` | `packages/core/src/ingest/deps.ts:276` | `ingest.deps` 【驗】 |
+| `prompts/ingest/deps.md` | `packages/core/src/ingest/deps.ts` | `ingest.deps` 【驗】 |
 
 三個檔案的標題自己也寫著 `# ingest.cards — ...`。
 

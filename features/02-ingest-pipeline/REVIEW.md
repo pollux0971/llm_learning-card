@@ -481,7 +481,7 @@ Stryker 表格裡的 `# errors = 45` 是 `stryker.config.json` 的 `checkers: ["
 
 ### (2) 原子性 —— 通過,契約 §11b 滿足
 
-去讀了 `packages/core/src/ingest/state.ts:18` 的 `atomicWriteJson()`:
+去讀了 `packages/core/src/ingest/state.ts` 的 `atomicWriteJson()`:
 
 ```
 openSync(`${path}.tmp`, 'w') → writeSync → fsyncSync(fd) → closeSync → renameSync(tmp, path)

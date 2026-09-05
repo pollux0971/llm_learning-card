@@ -1,4 +1,4 @@
-// SOURCE: template v1.3.4 (eb04f73) sha256=3b5cc5013b08c9f5021dc7cd95adad70edac408b82c7bd26ea0c341cdf3965be — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.1 (ff7f64b) sha256=a3738d6963fe9ea3902b31c7d197e6703d1bf26e2e22d0547056da207162ab08 — 勿手改;升版用 sync-gates.sh
 /**
  * 文件連結檢查(見 docs/03-agile-workflow.md「文件漂移」維護項)。
  *
@@ -28,6 +28,12 @@
  *   4. 目標相對於「連結所在檔案」所在目錄解析,要求該路徑存在(檔案或目錄都算通過)
  *   5. **掃到 0 條連結也要 FAIL**:0 條跟「全部都對」的退出碼一樣是 0,
  *      那是掃描範圍或 stripCode 壞了,不是文件很乾淨(同 check-boundaries / check-standalone)
+ *   6. **backtick 路徑參照(S7)**:`` `path/to/file.ts:123` `` 這種形式的 inline code——
+ *      冒號前面那段長得像檔案路徑(含 `/`,最後一段的檔名含副檔名的 `.`)、冒號後面是
+ *      正整數,就要求冒號前面那段路徑存在(行號本身不驗證,不要求檔案真的有那麼多行;
+ *      正整數只是格式篩選,排除 `port:3000` 這類非路徑的 `word:digits`)。跟規則 3
+ *      的差別:這條只挖掉 fenced code block、**保留** inline code(規則 3 反過來,兩者
+ *      都要挖掉),因為要看的正是 inline code 裡的內容。
  *
  * 用法(repo 根從 `git rev-parse --show-toplevel` 解析,不在 git repo 裡則退回 cwd;
  * `--root <dir>` 明講的話優先於這個推定,測試與跑在別的 repo 上時用):
@@ -54,7 +60,13 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { ROOT as GIT_ROOT } from './_root.js';
+import {
+  DEFAULT_SKIP_DIRS,
+  ROOT as GIT_ROOT,
+  loadGatesConfig as loadSharedGatesConfig,
+  requireConfigType,
+  splitSkipDirs,
+} from './_root.js';
 
 /** 這支腳本在 gate 機器可讀標記(見 CHANGELOG 1.3.2 (C))裡的名字。 */
 const GATE_NAME = 'doc-links';
@@ -67,17 +79,21 @@ export const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
 
 /**
  * 走目錄時,名字完全等於這些就跳過整個子樹(任何深度都算)。
- * 跟主 repo 版 `scripts/check-doc-links.ts` 的 SKIP_DIRS 同步(node_modules、.git、
- * dist、target、.svelte-kit),另加 `.stryker-tmp`(變異測試暫存)與 `archive`
- * (模板專屬,主 repo 沒有這個慣例目錄)。1.2.0/1.2.1 掉了 dist/.git/target/.svelte-kit
- * 四個是迴歸(見 CHANGELOG 1.2.2)。
+ *
+ * S10 之前這支腳本自己維護一份 `DEFAULT_SKIP_SEGMENTS` / `DEFAULT_SKIP_PREFIXES`——跟
+ * `check-boundaries.ts` 各自一份的下場一樣:漏掉的目錄名(例如 `.next`)在一支 gate
+ * 補了、另一支沒補。現在改成 `_root.ts` 的 `DEFAULT_SKIP_DIRS`(所有掃描器共用)當底,
+ * 只在這支腳本自己需要的地方加**它專屬**的兩項:`.stryker-tmp`(變異測試暫存,只有這支
+ * 腳本原本就排除)、`archive`(模板慣例的封存目錄,不是每個專案都有,不放進通用清單)。
+ * `contracts/fixtures` 是這支腳本原本就有的路徑前綴排除,理由不變(刻意造的測試資料,
+ * 不是文件)。
  */
-const DEFAULT_SKIP_SEGMENTS = ['node_modules', '.stryker-tmp', 'dist', '.git', 'target', '.svelte-kit', 'archive'];
-/** 路徑前綴(相對於 ROOT,posix 分隔),整個子樹排除。 */
-const DEFAULT_SKIP_PREFIXES = ['.claude/worktrees', 'contracts/fixtures'];
+const EXTRA_SKIP_SEGMENTS = ['.stryker-tmp', 'archive'];
+const EXTRA_SKIP_PREFIXES = ['contracts/fixtures'];
 
 interface GatesConfig {
   docLinks?: { skipSegments?: unknown; skipPrefixes?: unknown };
+  skipDirs?: unknown;
 }
 
 /**
@@ -92,22 +108,22 @@ interface GatesConfig {
  *       verify-against.sh 用得到)。三處都沒有 → 用內建預設,這份檔本來就是選填設定,
  *       不印任何訊息(見 CHANGELOG 1.3.2 (A))。
  */
-function loadGatesConfig(root: string): GatesConfig {
+function findGatesConfigPath(root: string): string | undefined {
   const candidates: string[] = [];
   const envDir = process.env.GATES_CONFIG_DIR;
   if (envDir && existsSync(envDir)) {
     candidates.push(join(envDir, 'gates.config.json'));
   }
   candidates.push(join(import.meta.dirname, 'gates.config.json'), join(root, 'scripts', 'gates.config.json'));
-  for (const p of candidates) {
-    if (!existsSync(p)) continue;
-    try {
-      return JSON.parse(readFileSync(p, 'utf8')) as GatesConfig;
-    } catch {
-      return {};
-    }
-  }
-  return {};
+  return candidates.find(existsSync);
+}
+
+/** 解析錯誤、不認識的頂層鍵都在這裡大聲失敗(S9),不是未捕捉的堆疊、也不是悄悄回退
+ *  成 `{}`(舊版的 bug:`try { JSON.parse(...) } catch { return {} }` 會讓壞掉的
+ *  `gates.config.json` 看起來像沒填,gate 照樣印 PASS)。 */
+function loadGatesConfig(root: string): GatesConfig {
+  const p = findGatesConfigPath(root);
+  return (loadSharedGatesConfig(p, GATE_NAME) ?? {}) as GatesConfig;
 }
 
 function stringArray(v: unknown): string[] {
@@ -120,13 +136,31 @@ export interface SkipConfig {
 }
 
 /**
- * 內建預設 + `scripts/gates.config.json` 的 `docLinks.skipSegments` / `docLinks.skipPrefixes`
- * **追加**(不是取代;去重)。這份檔不存在或沒填這兩個欄位就只用內建預設。
+ * 內建預設(`DEFAULT_SKIP_DIRS` + 這支腳本專屬的兩項)+ `gates.config.json` 的
+ * `skipDirs`(S10,所有掃描器共用的追加鍵)+ `docLinks.skipSegments` / `docLinks.skipPrefixes`
+ * (這支腳本專屬的追加鍵,行為不變)——三層都是**追加**,不是取代;去重。
  */
 export function resolveSkipConfig(root: string): SkipConfig {
-  const docLinks = loadGatesConfig(root).docLinks ?? {};
-  const skipSegments = [...new Set([...DEFAULT_SKIP_SEGMENTS, ...stringArray(docLinks.skipSegments)])];
-  const skipPrefixes = [...new Set([...DEFAULT_SKIP_PREFIXES, ...stringArray(docLinks.skipPrefixes)])];
+  const config = loadGatesConfig(root);
+  const docLinks = config.docLinks ?? {};
+
+  const base = splitSkipDirs(new Set(DEFAULT_SKIP_DIRS));
+
+  let sharedExtra: string[] = [];
+  if (config.skipDirs !== undefined) {
+    requireConfigType(config.skipDirs, 'skipDirs', 'array', GATE_NAME);
+    sharedExtra = stringArray(config.skipDirs);
+  }
+  const shared = splitSkipDirs(new Set(sharedExtra));
+
+  if (config.docLinks !== undefined) requireConfigType(config.docLinks, 'docLinks', 'object', GATE_NAME);
+
+  const skipSegments = [
+    ...new Set([...base.segments, ...EXTRA_SKIP_SEGMENTS, ...shared.segments, ...stringArray(docLinks.skipSegments)]),
+  ];
+  const skipPrefixes = [
+    ...new Set([...base.prefixes, ...EXTRA_SKIP_PREFIXES, ...shared.prefixes, ...stringArray(docLinks.skipPrefixes)]),
+  ];
   return { skipSegments, skipPrefixes };
 }
 
@@ -230,7 +264,13 @@ function stripInlineCode(line: string): string {
  *      新一層,push
  *   5. 有 top,字元相同,沒有 info 但比 top 短 → 不能收尾,當內文
  */
-export function stripCode(src: string): string {
+/**
+ * `blankInlineCode`(預設 `true`,行為不變)關掉時只挖掉 fenced code block,**保留**
+ * inline code(`` `x` ``)的原文——給 `findBacktickPathRefs` 用:那條規則要看的正是
+ * inline code 裡的內容(`` `path/to/file.ts:123` ``),挖掉就沒東西可比對了。
+ */
+export function stripCode(src: string, opts: { blankInlineCode?: boolean } = {}): string {
+  const blankInlineCode = opts.blankInlineCode ?? true;
   const stack: OpenFence[] = [];
   return src
     .split('\n')
@@ -254,7 +294,8 @@ export function stripCode(src: string): string {
         // 沒有 info 但比 top 短:收不了尾,落到下面當內文
       }
 
-      return stack.length ? blankLine(line) : stripInlineCode(line);
+      if (stack.length) return blankLine(line);
+      return blankInlineCode ? stripInlineCode(line) : line;
     })
     .join('\n');
 }
@@ -283,6 +324,98 @@ export function findRelativeLinks(stripped: string): { target: string; line: num
     if (target.startsWith('//')) continue; // protocol-relative,外部
     if (SCHEME_RE.test(target)) continue; // http: https: mailto: …
     out.push({ target, line: stripped.slice(0, m.index).split('\n').length });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// backtick 路徑參照:`` `path/to/file.ts:123` `` 這種形式(見這支腳本檔頭規則 6)。
+// 行號本身不驗證(不要求檔案真的有那麼多行),只要求:(a) 冒號後面是正整數、
+// (b) 冒號前面那段長得像路徑(含 `/`,最後一段含副檔名的 `.`)、(c) 冒號前面那段
+// 存在。
+// ---------------------------------------------------------------------------
+
+/** `path:123` 形式:路徑段不能含冒號(這樣天然排除 `http://host:8080` 這種帶 scheme 的
+ *  URL——scheme 分隔本身就有一個冒號,會讓路徑段在到達行號之前就配不下去,整條 regex
+ *  直接不匹配,不需要另外用 SCHEME_RE 排除);行號段是正整數(不接受 `0`、不接受
+ *  帶前導零的 `007`)。 */
+const BACKTICK_PATH_LINE_RE = /^([^\s`:]+):([1-9]\d*)$/;
+
+/** 路徑段長得像不像檔案路徑:要有至少一個 `/`,且最後一段(檔名)含副檔名的 `.`。
+ *  用來排除 `port:3000`、`key:value` 這類非路徑的 `word:digits`。 */
+function looksLikePathWithExtension(pathPart: string): boolean {
+  if (!pathPart.includes('/')) return false;
+  const base = pathPart.slice(pathPart.lastIndexOf('/') + 1);
+  return base.includes('.');
+}
+
+/**
+ * 從一行文字裡找出所有 inline code span(`` `x` ``)的內容,**不**挖掉(跟
+ * `stripInlineCode` 用同一套 CommonMark 配對演算法,只是回傳內容而不是拿空白蓋掉)。
+ * 只在單行內配對——跟這支腳本既有的 `stripInlineCode` 同一個既有限制(多行的
+ * inline code span 是罕見的 CommonMark 邊角案例,這支腳本原本就沒處理)。
+ */
+function extractInlineCodeSpans(line: string): string[] {
+  const spans: string[] = [];
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < line.length && line[j] === '`') j++;
+    const n = j - i;
+
+    let k = j;
+    let end = -1;
+    let closeStart = -1;
+    while (k < line.length) {
+      if (line[k] !== '`') {
+        k++;
+        continue;
+      }
+      let e = k;
+      while (e < line.length && line[e] === '`') e++;
+      if (e - k === n) {
+        end = e;
+        closeStart = k;
+        break;
+      }
+      k = e;
+    }
+
+    if (end === -1) {
+      // 沒有配對的收尾:這串反引號只是文字,跳過繼續找下一個。
+      i = j;
+      continue;
+    }
+    spans.push(line.slice(j, closeStart));
+    i = end;
+  }
+  return spans;
+}
+
+export interface BacktickPathRef {
+  /** 冒號前面那段路徑(還沒解析成絕對路徑)。 */
+  target: string;
+  /** 原始文字,給訊息用(`path/to/file.ts:123`,含行號)。 */
+  raw: string;
+  line: number;
+}
+
+/** 在**只挖掉 fenced code block、保留 inline code**的內文裡找 `` `path:N` `` 參照。 */
+export function findBacktickPathRefs(fencesOnlyStripped: string): BacktickPathRef[] {
+  const out: BacktickPathRef[] = [];
+  const lines = fencesOnlyStripped.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    for (const span of extractInlineCodeSpans(lines[i] ?? '')) {
+      const m = BACKTICK_PATH_LINE_RE.exec(span);
+      if (!m) continue;
+      const pathPart = m[1]!;
+      if (!looksLikePathWithExtension(pathPart)) continue;
+      out.push({ target: pathPart, raw: span, line: i + 1 });
+    }
   }
   return out;
 }
@@ -343,12 +476,24 @@ export function checkDocLinks(root: string, skip: SkipConfig = resolveSkipConfig
 
   const files = markdownFiles(root, skip);
   for (const file of files) {
-    const stripped = stripCode(readFileSync(file, 'utf8'));
+    const raw = readFileSync(file, 'utf8');
+
+    const stripped = stripCode(raw);
     for (const { target, line } of findRelativeLinks(stripped)) {
       links++;
       const abs = resolve(dirname(file), targetToPath(target));
       if (existsSync(abs)) continue;
       broken.push({ file: toPosix(relative(root, file)), line, target });
+    }
+
+    // 規則 6:backtick 路徑參照(`` `path/to/file.ts:123` ``)——只挖掉 fenced code
+    // block,保留 inline code 讓 findBacktickPathRefs 去看。
+    const fencesOnly = stripCode(raw, { blankInlineCode: false });
+    for (const { target, raw: rawSpan, line } of findBacktickPathRefs(fencesOnly)) {
+      links++;
+      const abs = resolve(dirname(file), target);
+      if (existsSync(abs)) continue;
+      broken.push({ file: toPosix(relative(root, file)), line, target: `\`${rawSpan}\`` });
     }
   }
 

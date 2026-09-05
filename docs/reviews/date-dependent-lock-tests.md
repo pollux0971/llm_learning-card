@@ -51,7 +51,7 @@ $ npx vitest run scripts/mutate.test.ts -t "預設的 sleep 是真的在睡"
 
 ## 二、兩小時門檻是不是真的 —— 【驗】是
 
-`scripts/mutate.ts:33`
+`scripts/mutate.ts`
 
 ```ts
 export const STALE_AFTER_MS = 2 * 60 * 60_000;

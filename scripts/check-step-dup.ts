@@ -1,4 +1,4 @@
-// SOURCE: template v1.3.4 (eb04f73) sha256=e1a6a49e1920157142915f42db78e8f07b2b3eb7c79e597b221fb70ed7f738d4 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.1 (ff7f64b) sha256=80d384ea2d1f7382908730933e93ecc3c516347dee4c72d14e3155a5eb589898 — 勿手改;升版用 sync-gates.sh
 /**
  * 步驟重複檢查(見 docs/03-agile-workflow.md「便宜的模型做機械工作」與 PITFALLS.md P-02)。
  *
@@ -52,7 +52,7 @@
  */
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { ROOT } from './_root.js';
+import { DEFAULT_SKIP_DIRS, ROOT, loadGatesConfig, requireConfigType, resolveConfig } from './_root.js';
 
 /** 這支腳本在 gate 機器可讀標記(見 CHANGELOG 1.3.2 (C))裡的名字。 */
 const GATE_NAME = 'step-dup';
@@ -69,12 +69,22 @@ function toPosix(p: string): string {
   return p.split('\\').join('/');
 }
 
-function* walk(dir: string): Generator<string> {
+/** S10:跟其餘會走目錄樹的 gate 共用同一份略過清單。 */
+function resolveSkipDirsForStepDup(): Set<string> {
+  const p = resolveConfig(import.meta.dirname, 'gates.config.json');
+  const cfg = loadGatesConfig(p, GATE_NAME);
+  if (cfg?.skipDirs !== undefined) requireConfigType(cfg.skipDirs, 'skipDirs', 'array', GATE_NAME);
+  const extra = Array.isArray(cfg?.skipDirs) ? (cfg.skipDirs as unknown[]).filter((s): s is string => typeof s === 'string') : [];
+  return new Set([...DEFAULT_SKIP_DIRS, ...extra]);
+}
+
+function* walk(dir: string, skipDirs: Set<string>): Generator<string> {
   if (!existsSync(dir)) return;
   for (const name of readdirSync(dir)) {
+    if (skipDirs.has(name)) continue;
     const full = join(dir, name);
     const st = statSync(full);
-    if (st.isDirectory()) yield* walk(full);
+    if (st.isDirectory()) yield* walk(full, skipDirs);
     else if (name.endsWith('.feature')) yield full;
   }
 }
@@ -89,7 +99,8 @@ function folderOf(relPath: string): string | undefined {
 }
 
 function collectFeatureFiles(): string[] {
-  const all = [...walk(join(ROOT, 'features')), ...walk(join(ROOT, 'docs/integration'))];
+  const skipDirs = resolveSkipDirsForStepDup();
+  const all = [...walk(join(ROOT, 'features'), skipDirs), ...walk(join(ROOT, 'docs/integration'), skipDirs)];
   return all.filter((f) => folderOf(toPosix(relative(ROOT, f))) !== undefined);
 }
 

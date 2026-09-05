@@ -1,4 +1,4 @@
-// SOURCE: template v1.3.4 (eb04f73) sha256=24458fccf11ee30900e9aa06134f1be06e6875bd1fd2ff025c2f4f9efae81457 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.1 (ff7f64b) sha256=5465419fc2f0c3409cb43620b116aca305b9e770ff2faaad61505ea57d880de6 — 勿手改;升版用 sync-gates.sh
 /**
  * 場景重複檢查(見 docs/03-agile-workflow.md「契約先於平行、規格先於程式」)。
  *
@@ -55,7 +55,7 @@
  */
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { ROOT, resolveConfig } from './_root.js';
+import { DEFAULT_SKIP_DIRS, ROOT, loadGatesConfig, requireConfigType, resolveConfig } from './_root.js';
 
 /** 這支腳本在 gate 機器可讀標記(見 CHANGELOG 1.3.2 (C))裡的名字。 */
 const GATE_NAME = 'gherkin-dup';
@@ -79,13 +79,12 @@ interface InvalidAllowEntry { scenario: string; onlyUnder?: string }
  *  找不到 `scenario` 欄位的條目整條忽略(連比對的依據都沒有,不算「無效」,只是壞掉的資料)。 */
 function loadAllowEntries(): { valid: AllowEntry[]; invalid: InvalidAllowEntry[] } {
   const p = resolveConfig(import.meta.dirname, 'gates.config.json');
-  if (!p) return { valid: [], invalid: [] };
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(p, 'utf8'));
-  } catch {
-    return { valid: [], invalid: [] };
-  }
+  // 解析錯誤、不認識的頂層鍵在這裡大聲失敗(S9)——舊版 `try { JSON.parse(...) } catch
+  // { return { valid: [], invalid: [] } }` 會讓壞掉的 gates.config.json 悄悄變成
+  // 「沒有任何 allow 條目」,gate 照樣能印 PASS 或 FAIL,但完全沒套用設定。
+  const raw = loadGatesConfig(p, GATE_NAME);
+  if (!raw) return { valid: [], invalid: [] };
+  if (raw.gherkinDup !== undefined) requireConfigType(raw.gherkinDup, 'gherkinDup', 'object', GATE_NAME);
   const list = (raw as { gherkinDup?: { allow?: unknown } }).gherkinDup?.allow;
   if (!Array.isArray(list)) return { valid: [], invalid: [] };
   const valid: AllowEntry[] = [];
@@ -115,18 +114,30 @@ function groupMatchesAllow(group: Scenario[], scenario: string, onlyUnder: strin
   return true;
 }
 
-function* walk(dir: string): Generator<string> {
+/** S10:跟其餘會走目錄樹的 gate 共用同一份略過清單(`_root.ts` 的 `DEFAULT_SKIP_DIRS`
+ *  + `gates.config.json` 的 `skipDirs` 追加),不在這支腳本裡另外寫一份。 */
+function resolveSkipDirsForGherkinDup(): Set<string> {
+  const p = resolveConfig(import.meta.dirname, 'gates.config.json');
+  const cfg = loadGatesConfig(p, GATE_NAME);
+  if (cfg?.skipDirs !== undefined) requireConfigType(cfg.skipDirs, 'skipDirs', 'array', GATE_NAME);
+  const extra = Array.isArray(cfg?.skipDirs) ? (cfg.skipDirs as unknown[]).filter((s): s is string => typeof s === 'string') : [];
+  return new Set([...DEFAULT_SKIP_DIRS, ...extra]);
+}
+
+function* walk(dir: string, skipDirs: Set<string>): Generator<string> {
   if (!existsSync(dir)) return;
   for (const name of readdirSync(dir)) {
+    if (skipDirs.has(name)) continue;
     const full = join(dir, name);
     const st = statSync(full);
-    if (st.isDirectory()) yield* walk(full);
+    if (st.isDirectory()) yield* walk(full, skipDirs);
     else if (name.endsWith('.feature')) yield full;
   }
 }
 
 function collectFeatureFiles(): string[] {
-  return [...walk(join(ROOT, 'features')), ...walk(join(ROOT, 'docs/integration'))];
+  const skipDirs = resolveSkipDirsForGherkinDup();
+  return [...walk(join(ROOT, 'features'), skipDirs), ...walk(join(ROOT, 'docs/integration'), skipDirs)];
 }
 
 interface Scenario { file: string; line: number; name: string; body: string }

@@ -1,4 +1,4 @@
 import { defineConfig } from 'vitest/config';
 export default defineConfig({
-  test: { globals: true, environment: "node", testTimeout: 60000, include: ['scripts/check-doc-links.test.ts'] },
+  test: { globals: true, environment: "node", testTimeout: 60000, include: ['scripts/check-doc-links.test.ts', 'scripts/check-doc-links.local.test.ts'] },
 });

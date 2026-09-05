@@ -1,0 +1,24 @@
+[
+  {
+    "_doc": "check-doc-rot.ts 的黑名單。每一筆:{ \"pattern\": \"<regex>\", \"reason\": \"...\", \"since\": \"YYYY-MM-DD\", \"incident\": \"P-59\", \"note\": \"選填,收斂這條規則時的判斷依據\" }。帶 \"_doc\" 鍵的項目(像這一筆)是說明,不算條目,gate 會跳過。預設 gates.config.json 的 docRot.mode 是 \"report\"(命中只回報、不擋 exit code)——nightmare-assault 的第一版 doc-rot 從 310 筆假警報收斂到 34 筆,規則第一次上線幾乎必然抓到設計沒想到的合理例外,升成 \"enforce\" 前先確認命中清單裡剩下的每一筆都不是「不知道算不算」而是真的確認過的假警報(見 PITFALLS P-71)。docs/02-decision-map.md、docs/adr/**、PITFALLS.md、CHANGELOG.md 預設排除(事故日誌與決策記錄合理地會逐字引用過時/危險的東西)。"
+  },
+  {
+    "pattern": "llm-learning-cards-\\d+",
+    "reason": "寫死的技術顧問 session 名字——換了顧問 session 或換了專案編號就是假的,文件不該硬編這個",
+    "since": "2026-09-05",
+    "incident": "P-59"
+  },
+  {
+    "pattern": "npx\\s+stryker\\s+run",
+    "reason": "裸的 Stryker CLI 指令(npx 直接叫 stryker 的 run 子指令)繞過檔案鎖直接跑變異測試——鎖存在是為了讓審核上限(cap)有意義,抄這個指令會讓鎖形同虛設;要跑就走 npm run mutate",
+    "since": "2026-09-05",
+    "incident": "mutate-lock-bypass",
+    "note": "pattern 用 \\s+ 而不是字面空白:本 repo 的 scripts/mutate.test.ts 會 grep 所有文字檔禁止字面的那條指令(含這份設定檔自己),字面寫法會被自己的守門抓到(2026-09-05 採用 1.4.1 時)"
+  },
+  {
+    "pattern": "核心四項",
+    "reason": "量詞會漂移的措辭——「核心項目」的數量改了,寫死的「四項」沒跟著改,講的話就是錯的;要嘛不寫數字,要嘛每次核對",
+    "since": "2026-09-05",
+    "incident": "nightmare-assault"
+  }
+]

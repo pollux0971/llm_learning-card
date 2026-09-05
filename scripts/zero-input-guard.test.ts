@@ -433,6 +433,29 @@ const ROSTER: Record<string, Entry> = {
   },
 
   // ── 守門腳本(模板 v1.3.4,勿手改;這裡的紅燈走模板升版,不直接改檔) ──
+  'scripts/check-all.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-all',
+        // 不對本 repo 跑(chain 含全套 test,幾分鐘):--root 指到一個只有一條 `node -e 0` 鏈的假 consumer。
+        baselines: {
+          healthy: (s) => {
+            const root = emptyDir(s, 'consumer');
+            file(root, 'package.json', JSON.stringify({ name: 'c', private: true, scripts: { ok: 'node -e 0' } }));
+            file(root, 'scripts/gates.config.json', JSON.stringify({ chain: ['ok'] }));
+            return { args: ['--root', root] };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: 'chain 是空陣列', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": [] }'); return { args: ['--root', root] }; } },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+          { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": ['); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: 'chain 是字串', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": "test" }'); return { args: ['--root', root] }; } },
+        ],
+      },
+    ],
+  },
   'scripts/check-boundaries.ts': {
     kind: 'entry',
     commands: [
@@ -464,6 +487,30 @@ const ROSTER: Record<string, Entry> = {
       },
     ],
   },
+  'scripts/check-doc-rot.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-doc-rot',
+        // 對本 repo 跑會掃五百多個檔,而且 CLAUDE.md 有一處命中(report 模式 exit 0 但輸出含 ✗):
+        // 健康基線改成一個乾淨的假 consumer,黑名單一條、文件一份沒命中。
+        baselines: {
+          healthy: (s) => {
+            const root = emptyDir(s, 'consumer');
+            file(root, 'scripts/doc-rot.blacklist.json', JSON.stringify([{ pattern: 'forbidden-token', reason: 'r', since: '2026-09-05', incident: 'P-0' }]));
+            file(root, 'docs/a.md', '# clean\n');
+            return { args: ['--root', root] };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: '黑名單是空陣列', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/doc-rot.blacklist.json', '[]'); file(root, 'docs/a.md', '# a\n'); return { args: ['--root', root] }; } },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+          { kind: 'malformed', name: 'doc-rot.blacklist.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/doc-rot.blacklist.json', '[{ "pattern": '); file(root, 'docs/a.md', '# a\n'); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: 'doc-rot.blacklist.json 是物件', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/doc-rot.blacklist.json', '{}'); file(root, 'docs/a.md', '# a\n'); return { args: ['--root', root] }; } },
+        ],
+      },
+    ],
+  },
   'scripts/check-gherkin-dup.ts': {
     kind: 'entry',
     commands: [
@@ -475,6 +522,47 @@ const ROSTER: Record<string, Entry> = {
           { kind: 'missing', name: '沒有 features/ 目錄', build: (s) => ({ args: [], cwd: emptyDir(s, 'norepo') }) },
           { kind: 'malformed', name: '.feature 是垃圾文字', build: (s) => { file(s, 'features/01-x/phase-1.feature', 'not gherkin at all\n{{{\n'); return { args: [], cwd: s }; } },
           { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => ({ args: [], env: gatesConfigDir(s, { 'gates.config.json': '{ "gherkinDup": ' }) }) },
+          { kind: 'wrong-type', name: 'gates.config.json 是陣列', build: (s) => ({ args: [], env: gatesConfigDir(s, { 'gates.config.json': '[]' }) }) },
+        ],
+      },
+    ],
+  },
+  'scripts/check-known-defects.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-known-defects',
+        // 對本 repo 跑是 0 目標例外(exit 1,見該檔檔頭 (c)),不是健康路徑。健康基線:一筆登記 + 用
+        // KNOWN_DEFECTS_ENUMERATE_CMD 餵一個 cucumber --format json 形狀的列舉,兩邊剛好對上。
+        baselines: {
+          healthy: (s) => {
+            const root = emptyDir(s, 'consumer');
+            file(root, 'scripts/known-defects.json', JSON.stringify([{ feature: 'features/01-x/phase-1.feature', scenario: 'It is known', reason: 'r', fix_in: '未定', since: '2026-09-05', hard_rule: false }]));
+            const listing = file(root, 'listing.json', JSON.stringify([{ uri: 'features/01-x/phase-1.feature', elements: [{ name: 'It is known', type: 'scenario', tags: [{ name: '@known-defect' }] }] }]));
+            return { args: ['--root', root], env: { KNOWN_DEFECTS_ENUMERATE_CMD: `cat ${listing}` } };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: '登記表只有 _doc、也沒有場景掛 tag(0 目標)', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/known-defects.json', '[{ "_doc": "x" }]'); const listing = file(root, 'listing.json', '[]'); return { args: ['--root', root], env: { KNOWN_DEFECTS_ENUMERATE_CMD: `cat ${listing}` } }; } },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+          { kind: 'malformed', name: 'known-defects.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/known-defects.json', '[{ "feature": '); const listing = file(root, 'listing.json', '[]'); return { args: ['--root', root], env: { KNOWN_DEFECTS_ENUMERATE_CMD: `cat ${listing}` } }; } },
+          { kind: 'wrong-type', name: 'known-defects.json 是物件', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/known-defects.json', '{}'); const listing = file(root, 'listing.json', '[]'); return { args: ['--root', root], env: { KNOWN_DEFECTS_ENUMERATE_CMD: `cat ${listing}` } }; } },
+        ],
+      },
+    ],
+  },
+  'scripts/check-next-gates.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-next-gates',
+        baselines: { healthy: () => ({ args: [] }) },
+        probes: [
+          { kind: 'empty', name: 'features/ 存在但沒有 NEXT.md', build: (s) => { const root = emptyDir(s, 'consumer'); emptyDir(root, 'features/01-x'); return { args: ['--root', root] }; } },
+          // 1.4.1 的 check-next-gates 對不存在的 --root 只印「掃到 0 份 NEXT.md」,不指名那條路徑——
+          // 這是模板的洞(回流候選),基準只准減不准增,所以這裡不填 mention(退出碼與「跟健康不同」仍然要過)。
+          { kind: 'missing', name: '--root 不存在', build: (s) => ({ args: ['--root', missingPath(s, 'nope')] }) },
+          { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => ({ args: [], env: gatesConfigDir(s, { 'gates.config.json': '{ "nextGates": ' }) }) },
           { kind: 'wrong-type', name: 'gates.config.json 是陣列', build: (s) => ({ args: [], env: gatesConfigDir(s, { 'gates.config.json': '[]' }) }) },
         ],
       },

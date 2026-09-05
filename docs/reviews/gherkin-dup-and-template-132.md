@@ -36,9 +36,9 @@ Scenario: The card shows exactly what the real scheduler returns
 
 工單問的是「那六次有沒有各自的意義」。**沒有。**三條證據:
 
-1. `features/steps/i1-content-pipeline.steps.ts:422` —— 那個 When 只做一件事:
+1. `features/steps/i1-content-pipeline.steps.ts` —— 那個 When 只做一件事:
    `this.runCommand('npx tsx scripts/check-standalone.ts', ...)`。無參數、無 IN 範圍、不讀 world 狀態。
-2. `features/steps/_world.ts:126` —— `runCommand` 用 **`cwd: ROOT`**,不是 `this.dir`。
+2. `features/steps/_world.ts` —— `runCommand` 用 **`cwd: ROOT`**,不是 `this.dir`。
    所以六個整合檔各自的 Background(i3 的「built for Linux」、i5 的「installed on Linux」…)
    對這個步驟**完全沒有作用**。
 3. `standalone.json` 全 repo **只有一份**(根目錄,13 個條目),沒有 per-IN 版本。
@@ -55,7 +55,7 @@ Scenario: The card shows exactly what the real scheduler returns
 `@integration @i1 @i2 @i3 @i4 @i5 @i6`,六個整合檔各自那份刪掉。
 
 **為什麼行得通**:`/integrate` 選整合點用的是**純 tag 篩選**
-(`.claude/skills/integration-check/SKILL.md:40`:`--tags "@<in> and not @manual"`),
+(`.claude/skills/integration-check/SKILL.md`:`--tags "@<in> and not @manual"`),
 不是 per-IN profile,也不是路徑篩選。cucumber 的 tag 會從 Feature 標頭繼承到場景,
 所以一份場體被六個 tag 各自選中一次。
 
@@ -145,7 +145,7 @@ CHECKLIST / PITFALLS / VERSION,一支腳本都沒改**,`sync-gates.sh` 兩版逐
 |---|---|
 | 四支守門旗標清單沒少 | ✅ `--root`(boundaries/doc-links/standalone)、`--manifest`/`--only`/`--list`/`--timeout`(standalone)、`--cwd`/`--run`/`--tags`/`--run-phases`(phase-coverage)全在 |
 | 「0 條目 FAIL」守衛還在 | ✅ boundaries / step-dup / gherkin-dup / phase-coverage / doc-links 都有,且 1.3.2 額外補了 `gate=... result=FAIL scanned=0` |
-| `lint:docs` 對 `docs/00-design.md:119` 不誤報 | ✅ 60 檔 / 20 連結 / 0 壞連結 exit 0 |
+| `lint:docs` 對 `docs/00-design.md` 不誤報 | ✅ 60 檔 / 20 連結 / 0 壞連結 exit 0 |
 | 跑 `standalone` 前後數字穩定 | ✅ 14 條 exit 0,前後一致 |
 | `boundaries` 195 檔 / 11 例外 / 0 違規 | ⚠️ **198** 檔 / 11 例外 / 0 違規。**不是迴歸**:把 `HEAD` 版(v1.3.0)的舊腳本抓出來對同一棵樹跑,也印 198。掃描範圍的 diff 只有設定檔搜尋順序,沒動 SKIP_DIRS/EXTS。是 repo 從工單寫成時的 195 長大了。 |
 | `verify-against.sh` 0 差異 | ⚠️ **前提本身在 1.3.2 之下不成立**,見下 |

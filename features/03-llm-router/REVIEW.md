@@ -150,7 +150,7 @@ step 沒有跟既有的撞名。
 | 403(填雲端模型名) | `GatewayModelRejectedError` 直接往外丟,`callGateway` 不接,不觸發任何備援。有測試 |
 | token 過期 | `chat()` 看到 401 就 `invalidateToken()` 重換再重試**一次**,第二次還 401 就丟錯不迴圈。有測試 |
 | probe 的三種失敗 | 401 / 連線被拒 / `/gateway/models` 掛掉,全部回 `{ available: false, models: [] }`,都不 throw。審核時再補了「錯誤狀態碼」「body 形狀不對」「HTML 回應」「逾時」四種 |
-| `spend.ts` 讀的欄位 vs 實際寫進 log 的 | **對得上**。`router.ts:126-134` 與 `router-gateway.ts:234-243` 寫的是 `ts` / `type:'llm_call'` / `provider` / `tokens_in` / `tokens_out`,`spend.ts` 讀的就是這五個。`ingest/questions.ts:191` 那筆重試事件**沒有 `provider` 欄位**,所以 `isLlmCallEvent()` 不會算它——這是對的,那只是重試標記,真正的呼叫由 `router.ts` 另外記一筆,不會重複計費 |
+| `spend.ts` 讀的欄位 vs 實際寫進 log 的 | **對得上**。`router.ts:126-134` 與 `router-gateway.ts:234-243` 寫的是 `ts` / `type:'llm_call'` / `provider` / `tokens_in` / `tokens_out`,`spend.ts` 讀的就是這五個。`ingest/questions.ts` 那筆重試事件**沒有 `provider` 欄位**,所以 `isLlmCallEvent()` 不會算它——這是對的,那只是重試標記,真正的呼叫由 `router.ts` 另外記一筆,不會重複計費 |
 
 契約 §10 本身只定義 `LogEvent` 的 `ts` / `type` + catchall,`llm_call` 的欄位不在契約裡,所以權威是實際的產生端(上面那兩處),不是合成 fixture。開發 agent 用合成 log 驗 `llm-spend.ts` 沒問題(`learning/` 只存在於主 repo,worktree 裡本來就沒有)。
 
@@ -251,7 +251,7 @@ ingest.cards     -> CloudRequiredError code=CLOUD_REQUIRED  ✓
 
 兩個來源:`grade.fill.llm` 那條是 `gateway-always` 造成的(ADR-039 決策 2 本身,不是判斷 1);另外三個是判斷 1 把原本會正確往外丟的 `NoModelError` 換成了閘道的錯誤。
 
-**目前沒有任何 consumer 會壞**——production code 裡唯一對錯誤碼分支的是 `ingest/ingest.ts:169` 的 `code === 'CLOUD_REQUIRED'`,而 `ingest.*` 的行為是對的;沒有任何 production code 分支在 `NO_MODEL` 上。所以這是**潛在**的硬約定偏差,不是現在會爆的 bug,因此**沒有擋這次 PASS**。
+**目前沒有任何 consumer 會壞**——production code 裡唯一對錯誤碼分支的是 `ingest/ingest.ts` 的 `code === 'CLOUD_REQUIRED'`,而 `ingest.*` 的行為是對的;沒有任何 production code 分支在 `NO_MODEL` 上。所以這是**潛在**的硬約定偏差,不是現在會爆的 bug,因此**沒有擋這次 PASS**。
 
 但 §7 路由表是硬約定,而且 `05-grading/phase-3`(離線審核)與 I6 正是未來會分支在 `NO_MODEL` 上的地方。**建議開一個 debug session 修**,最小修法是在備援路徑保留原錯誤:
 
@@ -541,7 +541,7 @@ committed 的測試裡**:`router-gateway.test.ts` 的
 `if`,(b) 往外丟的**不是**原本那個雲端錯誤(那會是 503 之類),而是
 `decideFallback` **自己丟**的 `CloudRequiredError`(它蓋掉了原本的 `err`)。
 
-修正後的版本經查證屬實:`packages/core/src/llm/fallback.ts:116` 就是
+修正後的版本經查證屬實:`packages/core/src/llm/fallback.ts` 就是
 `if (cloud === 'failed') throw new CloudRequiredError(task);`。而且 J8 的破壞
 (把那個 throw 改成 return)讓 16 條紅,其中包含
 `router-gateway.test.ts > … > ingest.cards 不備援,丟 CLOUD_REQUIRED,而且閘道一次都沒被打`
@@ -624,7 +624,7 @@ Stryker 沒有報它」。第一次量出來是 **46.15%**,遠低於標準 80%:1
 | 檔案:行 | 變異 | 分類 | 處理 |
 |---|---|---|---|
 | `spend.ts:167` | `} catch { continue; }` → `} catch {}` | **真等價** —— `continue` 是 `for` 迴圈本體的最後一句,拿掉之後控制流一模一樣 | 不補測試。程式碼已有 `// Stryker disable next-line all` 與理由 |
-| `adapters/gateway.ts:157` | `} catch { return undefined; }` → `} catch {}` | **真等價** —— 函式掉到結尾本來就回 `undefined`,對呼叫端完全一樣 | 不補測試。程式碼已有 `// Stryker disable next-line all` 與理由 |
+| `adapters/gateway.ts` | `} catch { return undefined; }` → `} catch {}` | **真等價** —— 函式掉到結尾本來就回 `undefined`,對呼叫端完全一樣 | 不補測試。程式碼已有 `// Stryker disable next-line all` 與理由 |
 
 四分類的另外三類本輪**都是零**:
 

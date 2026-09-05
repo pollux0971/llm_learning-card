@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# S12(模板 1.4.1,來源 nightmare-assault)——變異測試進行中拒絕別人 commit,第二道防線。
+#
+# 第一道防線是 scripts/py/mutate.py 自己的 `.mutate.lock`(見該檔案的 S12 段落):
+# 一個 mutate.py 正在跑,另一個呼叫端會在**啟動階段**就被拒絕(exit 7/8)。這道防線
+# 補的是另一種形狀:某個流程(人、CI、自動化)沒有透過 mutate.py 本身,而是**直接對
+# 突變測試留下的髒工作區下 `git commit`**——目標檔此刻的內容是被突變過的版本,commit
+# 進去的東西不是任何人真的想要的。這支 hook 在 commit 那一刻擋住這件事。
+#
+# 認得兩種鎖檔(都在 repo 根目錄):
+#   .mutate.lock  —— 本模板 scripts/py/mutate.py 寫的(JSON,含 "pid" 欄位)
+#   .stryker.lock —— 消費者專案自己的 TS 版變異測試驅動工具常見的鎖檔名(同樣是
+#                     JSON、含 "pid" 欄位;模板本身不寫這個檔,純粹認得它、一併檢查)
+#
+# 判斷規則,對每個存在的鎖檔:
+#   - 解析不出 "pid"(壞掉的 JSON,或沒有這個欄位)→ 拒絕,要求人工檢查。
+#   - pid 還活著(`kill -0`)→ 拒絕:另一個變異測試正在跑,等它跑完再 commit。
+#   - pid 已死(殘留鎖)→ 拒絕:提示怎麼復原(.mutate.lock 用 `--recover` 重跑;
+#     .stryker.lock 照消費者專案自己的復原流程)。
+#
+# 這支 hook **不會被 sync-gates.sh 自動安裝進 `.git/hooks/`**(git hooks 天生不受
+# 版本控制,每個開發者的 `.git/hooks/` 是本機獨立目錄,自動覆寫別人手動裝的 hook
+# 是更危險的事)——sync 只把這個檔案本身同步進消費者的安裝目錄,並印出安裝指令,
+# 由使用者自己決定要不要裝、什麼時候裝。見 sync-gates.sh「## pre-commit hook」段。
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+LOCK_NAMES=(".mutate.lock" ".stryker.lock")
+blocked=0
+
+read_pid() {
+  # $1 = 鎖檔路徑 → 印出 "pid" 欄位(數字),解析不出來就不印任何東西、exit 0
+  # (呼叫端看印出來的字串是不是空字串來判斷,不是看退出碼——JSON.parse 本身的
+  # 錯誤處理已經在 node -e 裡面吞掉了,這支腳本不需要再區分「檔案讀不到」跟
+  # 「JSON 壞掉」跟「沒有 pid 欄位」三種情況,對使用者來說都是同一種「解析不出 pid」)。
+  node -e '
+    try {
+      const fs = require("fs");
+      const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      if (typeof data.pid === "number" && Number.isFinite(data.pid)) {
+        process.stdout.write(String(data.pid));
+      }
+    } catch (e) { /* 解析不出來就不印,呼叫端看空字串處理 */ }
+  ' "$1" 2>/dev/null || true
+}
+
+for name in "${LOCK_NAMES[@]}"; do
+  lock="$ROOT/$name"
+  [ -f "$lock" ] || continue
+
+  pid="$(read_pid "$lock")"
+  if [ -z "$pid" ]; then
+    echo "✗ commit 被拒絕:$name 存在但解析不出 pid(內容可能壞掉)——請人工檢查 $lock 後手動處理(確認沒有變異測試在跑、內容跟 git HEAD 一致之後刪除這個檔案)。"
+    blocked=1
+    continue
+  fi
+
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "✗ commit 被拒絕:$name 顯示變異測試正在跑(pid $pid)。等它跑完(或確認那不是你的變異測試、把它停掉)再 commit。"
+    blocked=1
+  else
+    if [ "$name" = ".mutate.lock" ]; then
+      echo "✗ commit 被拒絕:$name 是殘留鎖(pid $pid 已死,通常是上一次執行被中斷)。" \
+           "請對同一個檔案重跑 mutate.py 並加 --recover(見 scripts/py/mutate.py 的 --recover 說明),確認乾淨後再 commit。"
+    else
+      echo "✗ commit 被拒絕:$name 是殘留鎖(pid $pid 已死,通常是上一次執行被中斷)。" \
+           "請照這個專案自己的變異測試工具的復原流程處理 $lock,確認乾淨後再 commit。"
+    fi
+    blocked=1
+  fi
+done
+
+if [ "$blocked" = 1 ]; then
+  exit 1
+fi
+exit 0

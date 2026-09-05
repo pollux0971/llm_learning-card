@@ -1,3 +1,30 @@
 {
-  "cucumberCwd": "."
+  "cucumberCwd": ".",
+  "chain": [
+    "boundaries",
+    "typecheck",
+    "lint:docs",
+    "test",
+    "accept:standalone",
+    "standalone",
+    "accept:dry",
+    "check:steps",
+    "check:gherkin-dup",
+    "accept:coverage",
+    "check:gates",
+    "check:doc-rot",
+    "check:next-gates"
+  ],
+  "nextGates": {
+    "mode": "enforce"
+  },
+  "docRot": {
+    "mode": "report"
+  },
+  "unwired": [
+    {
+      "file": "check-known-defects.ts",
+      "reason": "尚未使用 @known-defect tag"
+    }
+  ]
 }

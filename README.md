@@ -73,6 +73,23 @@ git init && npm install
 4. Wave 0 全部 done 之後:`/integrate I1`。
 5. 開發中想加功能:`/feature <描述>`。做了取捨:`/decide <描述>`。
 
+### clone 完不會自動有的三樣東西(版控外)
+
+`git clone` / `git worktree add` 都不會帶這三樣,每個簽出都要自己做一次:
+
+1. **`.env`**:`LLM_DAILY_CAP_USD`、`LLM_PRICE_IN_PER_M`、`LLM_PRICE_OUT_PER_M`
+   (照 `.env.example`)。驗證:`npx tsx scripts/llm-spend.ts --today` 要回 0 或 1,回 2 就是沒設好。
+2. **`TEMPLATE_DIR`**:`npm run check:gates` 要用它找模板的 `sync-gates.sh`;沒設就用預設的模板 worktree 路徑。
+3. **pre-commit hook**(`scripts/hooks/pre-commit`,模板 v1.4.1 起隨 sync 同步進來;變異測試或全套測試
+   持有 `.stryker.lock` 時拒絕 commit)。hook 不進版控,要手動裝:
+
+   ```bash
+   cp scripts/hooks/pre-commit "$(git rev-parse --git-path hooks)/pre-commit" && chmod +x "$(git rev-parse --git-path hooks)/pre-commit"
+   ```
+
+   用 `git rev-parse --git-path hooks` 而不是寫死 `.git/hooks/`:在 worktree 裡 `.git` 是一個檔案,
+   hooks 目錄在主簽出的 `.git/hooks/`,所有 worktree 共用同一份。
+
 ## Gherkin 用英文
 
 `# language: en`(cucumber 預設),關鍵字 Feature / Background / Scenario / Scenario Outline / Examples / Given / When / Then / And / But。

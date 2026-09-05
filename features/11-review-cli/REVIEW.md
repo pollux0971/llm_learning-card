@@ -23,7 +23,7 @@ phase-1.feature 的 scenario 覆蓋到,所以 14/14 cucumber 全過並不代表�
 }
 ```
 
-**成因**:04-scheduler 的 `applyPassTransition(review, ctx: PassCtx)`(`packages/core/src/scheduler/transitions.ts:39`)
+**成因**:04-scheduler 的 `applyPassTransition(review, ctx: PassCtx)`(`packages/core/src/scheduler/transitions.ts`)
 簽章只吃單一 `{ type, grader }`,一次只記一筆 history、只推進一次 stage。它沒有像
 `applyFailTransition` 的 `FailCtx.answers: FailAnswer[]` 那樣「一次 checkpoint 多筆結果」的介面。
 stage 2 的 checkpoint 是 `['fill', 'apply']` 兩題,兩題都答完才 resolve(`CurrentQuestion.pendingAnswers`

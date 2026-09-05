@@ -112,7 +112,7 @@ gherkin 在 `PATH` 前面插一個必定失敗的 `git` shim(非 0 退出碼)。
 
 - **`phase-2.feature` 的一句話改了(已直接修,不算範圍變更)**:「A newly learned card gets the
   contract's initial state」那個 Scenario 裡,`Then its stage is 1` 改成 `Then the initial stage is 1`。
-  原因:`its stage is {int}` 這句 04-scheduler 的 `features/steps/scheduler.steps.ts:164` 已經先定義了
+  原因:`its stage is {int}` 這句 04-scheduler 的 `features/steps/scheduler.steps.ts` 已經先定義了
   (它讀模組內部的 `singleReview` 變數,跟我這裡的 `this.lastResult`(`createInitialReview` 的回傳值)
   是完全不同的兩件事)。cucumber 的 step 是全域註冊,不分 tag,兩邊字面完全相同就會變成
   ambiguous——我親自跑過 `--dry-run` 驗證過:不改的話,不只我這個 scenario 會炸,04-scheduler

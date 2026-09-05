@@ -152,10 +152,10 @@ docs/00-design.md 抓到的相對連結 = []   ← 空的,沒有 sec-0042-sop.pn
    ```
 2. **掛在會被跑到的鏈上**(這三處都是 `d90cd36` 那個測試 commit 一起加的)
    - `package.json` → `"lint:docs": "tsx scripts/check-doc-links.ts"`
-   - `.claude/skills/autopilot/SKILL.md:39` 的收割檢查鏈:
+   - `.claude/skills/autopilot/SKILL.md` 的收割檢查鏈:
      `npm run boundaries && npm run typecheck && npm run lint:docs && npm test && …`
      ——這條是每次合併都會跑的,不是文件裝飾
-   - `docs/03-agile-workflow.md:91` 的 Definition of Done 選配清單
+   - `docs/03-agile-workflow.md` 的 Definition of Done 選配清單
    - 單元測試本身也會跑:`vitest.config.ts` 的 `include` 有 `scripts/**/*.test.ts`
 3. **真的跑一次那條鏈**
    ```

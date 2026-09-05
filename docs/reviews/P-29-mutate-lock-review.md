@@ -169,7 +169,7 @@ scripts/mutate.ts:15         (docstring:警告哪條路會繞過鎖)
 **`.md` / `.json` 0 命中,達標。** 剩下三處都在程式碼的註解與測試名稱裡,
 是在**說明這條路不能走**,不是可以照抄的指令。
 
-初次 grep 時另外抓到一處:`docs/reviews/P-29-mutate-lock-impl.md:134` 把那條指令
+初次 grep 時另外抓到一處:`docs/reviews/P-29-mutate-lock-impl.md` 把那條指令
 寫在反引號裡(描述缺口的散文)。反引號會讓下一輪的人以為那是指令,已改成「Stryker CLI」,語意不變。
 
 ### 5.1 這一條不能只靠人跑一次 grep

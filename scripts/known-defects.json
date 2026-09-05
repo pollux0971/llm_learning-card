@@ -1,0 +1,5 @@
+[
+  {
+    "_doc": "check-known-defects.ts 的登記表。每一筆代表一個被 @known-defect tag 釘住的已知缺陷場景:{ \"feature\": \"features/NN-x/phase-N.feature\", \"scenario\": \"<場景名稱,逐字>\", \"reason\": \"<缺陷的樣子>\", \"fix_in\": \"<NN-x>/phase-M\" | \"ADR-NNN\" | \"未定\" | \"TBD\", \"since\": \"YYYY-MM-DD\", \"hard_rule\": true | false }。帶 \"_doc\" 鍵的項目(像這一筆)是說明,不算登記,gate 會跳過。hard_rule=true 的登記,fix_in 不准是「未定」/「TBD」——硬規則的違規不能靠一個之後再修的標記合法化。目前是空的:0 筆真正的登記,可以先不要把 check:known-defects 加進 gates.config.json 的 chain,等真的有場景需要掛 @known-defect 再登記。"
+  }
+]

@@ -153,6 +153,50 @@
       "infra"
     ],
     [
+      "scripts/check-all.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-all.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-doc-rot.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-doc-rot.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-known-defects.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-known-defects.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-next-gates.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-next-gates.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-boundaries.local.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-doc-links.local.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-standalone.local.test.ts",
+      "infra"
+    ],
+    [
       "scripts/snapshot.ts",
       "infra"
     ],
@@ -272,5 +316,9 @@
     "apps",
     "scripts"
   ],
-  "contractsOwner": "contracts"
+  "contractsOwner": "contracts",
+  "coverageBaseline": {
+    "managed": 242,
+    "scanned": 242
+  }
 }
