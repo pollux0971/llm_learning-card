@@ -416,6 +416,15 @@ export function describeStatus(status: IntendedStatus): string {
  * `hint` 是「可以降了」的提示,不是失敗。只在 full 才比:部分跑的數字沒意義。
  */
 export function compareBaseline(unmarked: number, baseline: number, scope: RunScope): { fail: string | null; hint: string | null } {
+  // 這個閘門同時擋**兩件事**,拆開任何一半都會壞:
+  //   1. 小跑不比基準(明顯的那半)。
+  //   2. 小跑**不印任何「可以把基準降到 N」的建議**(不明顯、但更危險的那半)。
+  // 為什麼 (2) 比 (1) 危險:FAIL 會擋住你,**提示會誘導你去改基準**。
+  // 而小跑量到的「未標記」天生偏低——極端情況跑一個檔就是 0,而 0 比什麼都低,
+  // 在「只准降」這個方向性檢查下是完美合格的。
+  // 「當量尺的『好』方向剛好是『資料變少』的方向,資料遺失與進步不可區分。」
+  // (來源:nightmare-assault 2026-09-05 的實例——他們的指標被小跑覆寫成 0;
+  //  「提示比 FAIL 危險」這個區分是本專案協調者加的,已回饋給他們寫進規格。)
   if (scope !== 'full') return { fail: null, hint: null };
   if (unmarked > baseline) {
     return {
