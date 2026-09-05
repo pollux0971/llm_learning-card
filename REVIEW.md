@@ -178,30 +178,54 @@ boundaries exit=1
 
 破壞後全部 `git checkout` 還原,`git status` 乾淨,`check:gates` 0 個 ✗。
 
-## 六、全鏈與 junit 對帳
+## 六、全鏈與 junit 對帳(1.4.2 最終狀態)
 
-### `npm run check:all`(第一次完整跑,在 ROSTER / 基準 / blacklist 修正**之前**)
-
-```
-✓ boundaries  ✓ typecheck  ✓ lint:docs  ✗ test (exit 1)  ✓ accept:standalone  ✓ standalone
-✓ accept:dry  ✓ check:steps  ✓ check:gherkin-dup  ✓ accept:coverage  ✓ check:gates  ✓ check:doc-rot  ✓ check:next-gates
-gate=all result=FAIL scanned=13
-```
-13 步 12 綠;`test` 紅的 21 條 = zero-input-guard 19(§二.7,已修,全檔 564 passed)+ mutate.test 2(§二.8,等決定)。
-
-### junit 對帳(名稱 multiset,基準 = main 的 `reports/junit/def8b04.xml`)
+### `npm test` 全套(最後一次,commit `ad76bf3` 的樹)
 
 ```
-baseline total=2689 distinct=2680 ; branch total=2803 distinct=2794
+Test Files  1 failed | 104 passed (105)
+     Tests  2 failed | 2770 passed | 138 skipped (2910)
+FAIL scripts/zero-input-guard.test.ts > check-next-gates   > [missing] --root 不存在:指名有問題的那條路徑
+FAIL scripts/zero-input-guard.test.ts > check-phase-status > [missing] --root 不存在:指名有問題的那條路徑
+```
+**只剩 §二.9 那 2 條**。`mutate.test.ts` 150/150(1.4.2 拆掉字面之後;中途我自己在 REVIEW.md 引了那句 grep 又被它抓到一次,已改寫)。
+
+### `npm run check:all`(1.4.2,14 步)
+
+```
+✓ boundaries
+✓ typecheck
+✓ lint:docs
+✗ test (exit 1)          ← 只有 §二.9 的 2 條探針
+✓ accept:standalone
+✓ standalone
+✓ accept:dry
+✓ check:steps
+✓ check:gherkin-dup
+✓ accept:coverage
+✓ check:gates
+✓ check:doc-rot          (report:CLAUDE.md:77 那 1 處仍在,使用者的檔)
+✓ check:next-gates       (enforce)
+✓ check:phase-status     (report,PASS 38 列)
+gate=all result=FAIL scanned=14
+```
+
+### junit 對帳(名稱 multiset,基準 = main 的 `reports/junit/def8b04.xml`,本分支 = `reports/junit/branch-142b.xml`)
+
+```
+baseline total=2689 distinct=2680 ; branch total=2910 distinct=2901
 same-name duplicates: baseline=9 branch=9
-removed (in baseline, not in branch): 0
-added (in branch, not in baseline): 114
+removed (in baseline, not in branch): 18
+added (in branch, not in baseline): 239
 ```
-- **0 筆消失**;114 筆新增全部是模板的 8 支 `check-*.test.ts`(check-all 11、check-boundaries 26、check-doc-links 6、check-doc-rot 31、check-known-defects 16、check-next-gates 16、check-standalone 14)。
-- `.local` 三支的 85 條名稱跟原本一樣(檔名換了,testcase 名沒換),所以不算新增也不算消失——這正是「比名稱不比檔名」的好處。
-- 同名 testcase 兩邊都是 **9**(工單說 8;多的那 1 筆在基準就有,不是這輪造成)。用 set 會少 9 筆。
-- 這份 junit 是 ROSTER/基準修正**之前**跑的(21 failed 在裡面)。修正後 zero-input-guard 全檔重跑綠;完整鏈交件時會再產一份。
+- **「消失」的 18 筆不是消失,是改名**:就是從基準移除的那 18 條——它們的 testcase 名稱原本帶後綴
+  `〔基準 since 2026-09-05,預期仍紅〕`,拿出基準後後綴消失,所以舊名少 18、新名多 18(在 239 裡)。零筆真的不見。
+- 239 筆新增 = 模板 9 支 `check-*.test.ts`(check-all 11、boundaries 26、doc-links 6、doc-rot 27、known-defects 14、
+  next-gates 17、phase-status 21、standalone 14 = 136)+ zero-input 新 ROSTER 5 支(5 healthy + 20 探針 × 4 項 = 85)+ 上述改名 18。
+- `.local` 三支 85 條名稱不變,不算新增也不算消失。同名 testcase 兩邊都是 **9**(工單說 8,多的那 1 筆基準就有)。
 
-### 尚未綠的唯一一項
+### 交件狀態
 
-`scripts/mutate.test.ts` › 文件裡不准出現繞過鎖的指令 ×2 → 命中 `scripts/check-doc-rot.test.ts:432`(模板檔,見 §二.8)。等協調者決 B1 / B2 / B3。
+- 14 步裡 13 步綠;`test` 紅在且只在 §二.9 的 2 條探針,兩條都是同一個模板缺陷,等協調者決 (i) 回流 / (ii) 探針不填 mention。
+- 依協調者要求的三樣:20 個探針結果見 §二.7 / §二.9;`max` 66→48 的獨立 commit = `d8d4a5c`;
+  重 sync 後對 `scripts/` grep 那句可照抄的 Stryker CLI 指令 = **0 命中(grep exit 1)**。
