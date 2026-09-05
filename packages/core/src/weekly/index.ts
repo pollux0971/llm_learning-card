@@ -2,3 +2,4 @@ export type { CardId, IsoDate, IsoWeek, Weekly, WeeklyEvent, WeeklyRollover, App
 export { isoWeekOf } from './iso-week.js';
 export { isTargetMet } from './target.js';
 export { applyEvent } from './apply-event.js';
+export { WeeklySchema, parseWeekly, type WeeklyParseResult } from './validate.js';

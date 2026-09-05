@@ -1,0 +1,14 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='packages/core/src/schema/{cli-check-questions,validate-question}.test.ts' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": ["clear-text", "progress-append-only"],
+  "coverageAnalysis": "off",
+  "concurrency": 4,
+  "timeoutMS": 300000,
+  "mutate": ["packages/core/src/schema/cli.ts:140-175", "packages/core/src/schema/validate-question.ts:64-92"],
+  "thresholds": { "high": 90, "low": 70, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "target", "apps/desktop/src-tauri"]
+}

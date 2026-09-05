@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { parse as yamlParse } from 'yaml';
 import { validateCard } from './validate-card.js';
 import { initLearningDir } from './init.js';
 import { initGitRepo } from './git-repo.js';
-import { validateQuestionFile, findCardsMissingQuestions } from './validate-question.js';
+import { validateQuestionFile, findCardsMissingQuestions, listCardIds } from './validate-question.js';
 import { validateReview } from './review.js';
 import { validateLogEvent } from './log.js';
 import { validateCategory, validateSettings } from './validate-config.js';
@@ -115,14 +116,60 @@ function runValidateSettings(file: string | undefined): void {
   reportResult(validateSettings(settings));
 }
 
+/**
+ * `check-questions <learning-dir>` —— **三種 0 要分得出來**。
+ *
+ * 修之前:`findCardsMissingQuestions()` 在 `cards/` 不存在時回 `[]`,而這裡只看
+ * 「陣列是不是空的」,於是一個**根本不存在的路徑**印出 `OK` + exit 0。
+ * 「沒有東西缺考題」跟「我沒有檢查任何東西」變成同一個答案。
+ *
+ * 現在的形狀跟 boundaries 那句「掃描 195 個檔案,允許例外 11 條」同一套:
+ * 先印**檢查了幾張卡**(OK 後面沒有數字就不知道那個 OK 有多少份量),
+ * 再讓三種 0 各自有一句話。
+ *
+ * 退出碼:
+ *   0  真的檢查過 N ≥ 1 張卡,全部都有 questions/
+ *   1  檢查過 N ≥ 1 張卡,其中有缺的(既有行為,不動)
+ *   2  **沒東西可檢查**——目錄不在、沒有 cards/、或 cards/ 底下 0 張卡
+ *
+ * 2 而不是 0:對呼叫的人來說「我沒檢查」跟「我檢查完沒問題」是兩件事,跟
+ * 「我檢查出問題」也是兩件事。cli.ts 本來就用 2 表示「這次沒有做成檢查」
+ * (見 usage()),這裡是同一個意思的延伸。剛 init 完的空 vault 會落在 2,
+ * 那是誠實的答案——它確實沒有卡片可以檢查。
+ */
 function runCheckQuestions(dir: string | undefined): void {
   if (!dir) usage();
+
+  if (!existsSync(dir)) {
+    console.error(`✗ check-questions: learning 目錄不存在:${dir}`);
+    console.error('沒有檢查任何東西——這不是「都有考題」,是「找不到要檢查的東西」。');
+    process.exit(2);
+  }
+  if (!statSync(dir).isDirectory()) {
+    console.error(`✗ check-questions: 指到的不是目錄,是一個檔案:${dir}`);
+    process.exit(2);
+  }
+
+  const cardsDir = join(dir, 'cards');
+  if (!existsSync(cardsDir)) {
+    console.error(`✗ check-questions: ${dir} 底下沒有 cards/ 目錄`);
+    console.error('沒有檢查任何東西——先用 cli.ts init 建目錄樹,或確認路徑指對了。');
+    process.exit(2);
+  }
+
+  const cards = listCardIds(dir);
+  if (cards.length === 0) {
+    console.error(`✗ check-questions: 檢查了 0 張卡 —— ${cardsDir} 底下一張卡片都沒有`);
+    console.error('目錄樹是完整的,只是沒有內容。空的 vault 不算「全部都有考題」。');
+    process.exit(2);
+  }
+
   const missing = findCardsMissingQuestions(dir);
   if (missing.length === 0) {
-    console.log('OK');
+    console.log(`OK 檢查了 ${cards.length} 張卡,全部都有 questions/`);
     process.exit(0);
   }
-  console.log('FAIL');
+  console.log(`FAIL 檢查了 ${cards.length} 張卡,其中 ${missing.length} 張缺考題`);
   for (const id of missing) console.log(`  - missing questions/${id}.yaml`);
   process.exit(1);
 }

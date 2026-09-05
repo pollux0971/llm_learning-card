@@ -77,7 +77,19 @@
       "03-llm-router"
     ],
     [
+      "scripts/llm-spend.test.ts",
+      "03-llm-router"
+    ],
+    [
+      "scripts/llm-spend.js",
+      "03-llm-router"
+    ],
+    [
       "scripts/due.ts",
+      "04-scheduler"
+    ],
+    [
+      "scripts/due.test.ts",
       "04-scheduler"
     ],
     [
@@ -89,7 +101,15 @@
       "08-weekly-goal"
     ],
     [
+      "scripts/weekly.test.ts",
+      "08-weekly-goal"
+    ],
+    [
       "scripts/lint.ts",
+      "09-lint"
+    ],
+    [
+      "scripts/lint-missing-dir.test.ts",
       "09-lint"
     ],
     [

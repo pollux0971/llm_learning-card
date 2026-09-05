@@ -677,3 +677,286 @@ Stryker 量過,第一次量是 **46.15%**(23 存活 + 5 零覆蓋)。缺口集�
 **環境備註**:跑 Stryker 時另一個 worktree(`prompt-quality-phase-2`)也在跑 Stryker,
 機器 load average 一度到 26 / 8 核、可用記憶體歸零,我的 Stryker 被 OOM 殺掉兩次。
 最後改成等對方跑完再開始。不是程式問題,但同機器多個 worktree 同時跑變異測試會互相殺。
+
+---
+
+# REVIEW — 五支 0 值守門(分支 `five-zero-guards`,審核輪)
+
+審核對象:`dedd04a`(llm-spend 三態)/ `7622381`(lint --dir)/ `9be29da`(check-questions)/
+`3b03714`(due)/ `0159186`(weekly),HEAD = `0159186`,base = `2c8aacf`。
+五支跨五個 feature(03 / 09 / 01 / 04 / 08)。**完整報告放這裡**(llm-spend 的那個
+真洞是這一輪唯一的 FAIL 項,而 llm-spend 屬 03),01 / 04 / 08 / 09 的 REVIEW.md 各留一段
+摘要指回這裡,不重複貼。
+
+## 結論:**FAIL**(一個真洞,其餘四支 PASS)
+
+- **真洞**:`llm-spend.ts` 的「整份 log 不是 JSONL」沒被擋住。整份是 `"hello"` / `42` /
+  `[]` → **exit 0** 並印「今日 OpenAI 花費 $0.0000 … 今日條目 0 筆」——一份被寫壞的 log
+  變成「有 log 但沒花」,煞車不響。`null` → exit 2 但是靠 `Cannot read properties of null`
+  的例外訊息,沒有行號 / 前 80 字 / 怎麼修。HTML 那種(JSON.parse 直接失敗)是對的。
+  已寫 6 條新測試鎖住(§4;5 條紅,HTML 那條現在就綠),留給開發 agent 修;五個測試檔其餘 115 條全綠(120 條裡紅的只有這 5 條)。
+- 必辦 1 / 2 / 3 都做完,反向驗證全部紅(§1–§3)。
+- 其他四支(lint / check-questions / due / weekly)行為驗過,PASS。
+- 四個 Stryker 分數見 §7。
+
+## 1. 必辦 1:weekly 那條「數學上不可能同時成立」的測試
+
+照協調者裁定換 fixture、不動斷言語意:
+
+```
+- ['欄位型別不對(learned 是字串)', '{"week":"2026-W37","target":7,"learned":"lots","passed_d1":0,"counted":[]}']
++ ['欄位型別不對(learned 是字串)', '{"week":"2026-W37","target":7,"learned":"lots","counted":[]}']
+```
+
+**代價的處理**:換掉之後參數化那組不再涵蓋「`learned` 型別錯 + 原檔本身就有 `passed_d1`」。
+那個組合反而是最像「正常」的壞檔,所以**另外補了一條**,而且不用子字串當代理指標——
+直接看被代理的那件事:捏造出來的 Weekly 走 **stdout**(成功路徑印 JSON 的地方),
+回聲走 **stderr**。`runWeekly()` 改成同時回 `stdout` / `stderr`,新測試斷言
+`stdout === ''`、`stderr` 含 `Weekly` 與 `raw.slice(0, 80)`、不含 `"target_met"`、不噴 stack。
+開發 agent 的 commit 說明本來就寫了「錯誤訊息走 stderr,失敗時 stdout 要乾淨」,
+這條把那個設計判斷鎖住。
+
+## 2. 必辦 2:「三種 0 兩兩不同」從比輸出改成比訊息
+
+開發 agent 點出的病確認屬實,而且**不只三支,是四條**:
+
+| 檔 | 測試 | 原本比什麼 |
+|---|---|---|
+| `scripts/due.test.ts` | 三種 0 的輸出兩兩不同 | 三個含不同暫存路徑的 output |
+| `packages/core/src/schema/cli-check-questions.test.ts` | 三種 0 的輸出兩兩不同 | 同上 |
+| `scripts/llm-spend.test.ts` | log 不存在與 log 空檔的輸出不一樣 | 兩個含不同暫存路徑的 output |
+| `scripts/weekly.test.ts` | 「不是 Weekly」與「讀不到檔」的訊息不一樣 | 同上 |
+
+(llm-spend 純函式層的那條「三種輸出兩兩不同」用的是**同一個**假路徑 `/tmp/x/log.jsonl`,
+差在數字 7 / 0 與「算不出來」,不在此列。)
+
+做法:每個測試檔加一個 `withoutPath(output, ...paths)`,把該次跑用的路徑與它的目錄換成
+`<PATH>` / `<DIR>`,**剩下的才是訊息**;再斷言 (a) 每一句 trim 後非空、(b) `Set.size` 等於
+案例數。每檔一份 3 行的小函式,沒抽共用——`packages/core` 的測試不能 import `scripts/`
+(Wave 0 邊界),抽了反而要開例外。
+
+**反向驗證(驗收條件):把訊息清空 / 改成同一句 → 測試必須紅。** 五個都紅:
+
+```
+$ sed -i 's|  for (const line of lines) console.error(line);|  void lines;|' scripts/due.ts
+$ npx vitest run scripts/due.test.ts -t "三種 0 的訊息兩兩不同"
+     × 三種 0 的訊息兩兩不同(路徑正規化之後比,不是比輸出)
+AssertionError: 有一種 0 一句話都沒說: expected '' not to be ''
+      Tests  1 failed | 11 skipped (12)
+
+$ sed -i 's|  for (const line of lines) console.error(line);|  void lines; console.error("✗ due: 算不出來");|' scripts/due.ts
+$ npx vitest run scripts/due.test.ts -t "三種 0 的訊息兩兩不同"
+AssertionError: 三種 0 有兩種長一樣:
+: expected 1 to be 3
+      Tests  1 failed | 11 skipped (12)
+
+$ sed -i '140,175s/console\.error(/void (/' packages/core/src/schema/cli.ts
+$ npx vitest run packages/core/src/schema/cli-check-questions.test.ts -t "三種 0 的訊息兩兩不同"
+AssertionError: 有一種 0 一句話都沒說: expected '' not to be ''
+      Tests  1 failed | 7 skipped (8)
+
+$ # formatSpendReport 開頭插一行 return '';
+$ npx vitest run scripts/llm-spend.test.ts -t "log 不存在與 log 空檔的訊息不一樣"
+AssertionError: expected '' not to be ''
+      Tests  1 failed | 36 skipped (37)
+
+$ sed -i '39,80s/console\.error(/void (/' scripts/weekly.ts
+$ npx vitest run scripts/weekly.test.ts -t "「不是 Weekly」與「讀不到檔」的訊息不一樣"
+AssertionError: expected '\nnode:internal/modules/run_main:122\…' not to be '\nnode:internal/modules/run_main:122\…'
+      Tests  1 failed | 26 skipped (27)
+```
+
+每次都 `git checkout --` 還原,`git status` 確認只剩五個測試檔有改動。
+
+## 3. 必辦 3:lint 「路徑是檔案」那條守門沒被任何測試守著
+
+確認屬實。刪掉 `scripts/lint.ts` L45–49 之後,`lint(file)` 走到 `mkdirSync(<file>/state)`
+丟 `ENOTDIR`,node exit 1、也不印 `0 problems`,原本那條測試照樣綠。
+
+補的測試(`scripts/lint-missing-dir.test.ts`「路徑是檔案時,是守門的那句人話,不是掉進
+mkdirSync 的 ENOTDIR stack」)斷言:exit 1、含 `不是目錄`、含路徑、含 `init`、
+**不 match stack trace、不含 `ENOTDIR`**。反向驗證:
+
+```
+$ sed -i '45,49d' scripts/lint.ts
+$ npx vitest run scripts/lint-missing-dir.test.ts -t "路徑存在但是一個檔案|路徑是檔案時"
+     × 路徑是檔案時,是守門的那句人話,不是掉進 mkdirSync 的 ENOTDIR stack
+AssertionError: expected 'node:fs:1364\n  const result = bindin…' to contain '不是目錄'
+      Tests  1 failed | 1 passed | 6 skipped (8)
+```
+
+那個 `1 passed` 就是原本那條——沒守門它還是綠,證實開發 agent 的說法。
+「目錄不存在」那條守門本來就被守著(拿掉 `existsSync` 那段會掉進 `statSync` 的 ENOENT
+stack,既有測試要求 `目錄不存在` + `init` 會紅),沒有另外補。
+
+## 4. 追加驗收:整份 log 不是 JSONL —— **真洞**
+
+協調者要求「不能假設極端情形自動被涵蓋」。實跑(`LLM_DAILY_CAP_USD=1` 等三個變數都設):
+
+```
+$ printf '"hello"' > hello.jsonl
+$ npx tsx scripts/llm-spend.ts --day 2026-09-04 --log hello.jsonl
+今日 OpenAI 花費 $0.0000(0 次呼叫,log: …/hello.jsonl,今日條目 0 筆),上限 $1.0000
+>>> exit=0                                            ← 洞
+
+$ printf '42\n' > num.jsonl       → 同上,exit=0          ← 洞
+$ printf '[]\n' > arr.jsonl       → 同上,exit=0          ← 洞
+$ printf 'null\n' > null.jsonl
+算不出來:Cannot read properties of null (reading 'type')
+>>> exit=2                        ← 碼對,但沒有行號 / 前 80 字 / 怎麼修,是例外不是守門
+
+$ printf '<html><body>login</body></html>\n' > page.html
+算不出來:…/page.html 第 1 行不是合法的 JSON,所以今天的花費算不出來:<html><body>login</body></html>(修好或移除該行後重跑;這是花錢的煞車,不會自動跳過壞行)
+>>> exit=2                        ← 對
+```
+
+原因:`buildSpendReport` 只擋 `JSON.parse` 丟例外的行。`"hello"` / `42` / `[]` / `null`
+每一行都是合法 JSON,但沒有一個是契約 §10 的 log 事件(物件 + `ts`);`computeDailySpend`
+拿到字串就當成「不是今天、不是 llm_call」濾掉,結果是「今日條目 0 筆、$0、exit 0」。
+「其中一行壞」與「每一行都壞」確實走了不同分支——前者靠 parse 失敗,後者 parse 全過。
+
+已鎖住的紅測試(`scripts/llm-spend.test.ts`):
+- 純函式層 5 條參數化:`"hello"` / `42` / `[]` / `null` / HTML → `unknown`,原因含
+  `第 1 行`、該行前 80 字、`不會自動跳過`(HTML 這條現在就綠,其餘 4 條紅)。
+- CLI 層 1 條:整份 `"hello"` → exit 2、含 `算不出來`、不印預算句(紅)。
+
+**留給開發 agent**:parse 成功之後還要驗「是物件、不是陣列、`ts` 是字串」,不是就走
+`badLineReason()` 同一句(行號 / 前 80 字 / 怎麼修)。不改 `packages/core` 的
+`readDailySpend()`(那支是讀事件,P-22 的方向仍然對)。
+
+## 5. 三態實跑與 exit 2 三樣的實際文字
+
+```
+exit 0  今日 OpenAI 花費 $0.0000(0 次呼叫,log: <path>,今日條目 2 筆),上限 $1.0000
+exit 1  今日 OpenAI 花費 $0.0225(1 次呼叫,log: <path>,今日條目 1 筆),上限 $0.0225 — 今日預算已用完
+        (cap 設 0.0225,spent == cap → 1,測試「花費剛好等於上限 → exit 1」)
+exit 2  算不出來:<path> 第 2 行不是合法的 JSON,所以今天的花費算不出來:not json(修好或移除該行後重跑;這是花錢的煞車,不會自動跳過壞行)
+        ├ 行號:「第 2 行」(1-based)
+        ├ 前 80 字:「not json」(長行測試證實截到 80 且不整行倒出)
+        └ 怎麼修:「修好或移除該行後重跑;這是花錢的煞車,不會自動跳過壞行」
+exit 2  算不出來:讀不到 log 檔 <path>:ENOENT: no such file or directory, open '<path>'
+exit 2  算不出來:環境變數 LLM_DAILY_CAP_USD 沒有設定(在 .env 或 shell 裡設一個非負數字)
+```
+
+壞行反轉(不分哪天)驗過:壞行夾在兩筆 2025 年的條目中間也 unknown(既有測試綠)。
+
+## 6. 其他驗證
+
+- **weekly**:壞 JSON → exit 1 + 「讀不到」(回歸鎖已有,沒動);`{}` / `[]` / `"hi"` / `42` /
+  `null` / 少欄位 / 型別錯 → exit 1,訊息含 `Weekly`、`它實際是:<前 80 字>`、
+  `第一個對不上的地方:…`,stdout 乾淨。
+- **lint --dir 打錯不建目錄**:`existsSync(missing) === false`、沒有 `<dir>/state`,訊息含
+  `目錄不存在` + 路徑 + `init`;沒給 `--dir` 仍 exit 2。
+- **check-questions 三種 0**:目錄不在 / 沒 cards/ / cards 空 → 各自一句、exit 2、不印 `OK`;
+  健康 → `OK 檢查了 2 張卡`;有缺 → `FAIL 檢查了 2 張卡,其中 1 張缺考題`。
+- **due 三種 0**:空表 / 缺檔 / 壞 JSON / 不是 Review 表 → exit 1、不說「沒有到期的卡片」、
+  不噴 stack;健康 → `(讀到 2 張卡)` 分母。
+- **`git diff 2c8aacf..HEAD -- '*.test.ts' '*.steps.ts' '*.feature'`**:**0 行**,確認開發 agent
+  沒動測試。
+
+## 7. Stryker(四個設定檔,全部 `npm run mutate -- <設定檔>`)
+
+設定檔都在 repo 根目錄、都是 `testRunner: "command"`(測試是 spawn `npx tsx` 的子行程,
+Stryker 的 vitest runner 在行程內切 mutant,子行程看不到;command runner 用環境變數
+`__STRYKER_ACTIVE_MUTANT__`,子行程會繼承),各自只跑蓋得到那支的測試檔
+(`MUTATE_TEST_GLOB` + `vitest.mutate.config.ts`)。**跑兩輪**:第一輪是開發 agent 交來的
+測試原樣(只做了必辦 1–3),第二輪是補完存活變異之後。
+
+| 設定檔 | 變異範圍 | 測試 | 開發回報 | 第一輪 | **第二輪** |
+|---|---|---|---|---|---|
+| `stryker.zero-guards-llmspend.json` | `scripts/llm-spend.ts` | `scripts/llm-spend.test.ts`(`-t '^(?!.*整份)'` 排除 6 條紅) | 77.47% | 77.47%(141 殺 / 41 活) | **98.90%**(178 殺 + 2 timeout / 2 活) |
+| `stryker.zero-guards-lint.json` | `scripts/lint.ts` 全檔 | `scripts/lint-missing-dir.test.ts` | 41.46% | 58.54%(24 / 17) | **70.73%**(29 / 12) |
+| `stryker.zero-guards-lint-guard.json` | `scripts/lint.ts:20-49`(守門) | 同上 | 37.50% | — | **100.00%**(23 / 0) |
+| `stryker.zero-guards-due.json` | `scripts/due.ts` | `scripts/due.test.ts` | 58.82% | 60.29%(41 / 27) | **97.06%**(66 / 2) |
+| `stryker.zero-guards-checkq.json` | `cli.ts:140-175` + `validate-question.ts:64-92` | `cli-check-questions.test.ts` + `validate-question.test.ts` | 89.90% | 87.30%(55 / 8) | **100.00%(63 / 0;第二輪半途 96.83%,補「一種 0 只講一件事」兩條後三跑到 100)** |
+
+指令一律 `npm run mutate -- <設定檔>`(走 P-29 的跨 worktree 鎖;第一輪等了另一個
+worktree 的 Stryker 約 10 分鐘,鎖有在做事)。
+
+### 第二輪還活著的,逐條
+
+**llm-spend(2 活,2 timeout)**
+- `L209 const events = ["Stryker was here"]`:塞一個字串進事件陣列,`computeDailySpend`
+  當成「不是事件」默默略過 → 結果不變。**等價**於現況,但它跟 §4 的洞是同一族
+  (非物件的事件被靜默忽略);實作修好 §4 之後這個 mutant 仍然等價(它不是 parse 出來的行)。
+- `L229 typeof e.ts === 'string' → true`:沒有 `ts` 的條目走到 `dayOf(undefined)`,
+  `new Date(undefined)` 是 Invalid Date → `NaN-NaN-NaN` ≠ 今天。**等價**。
+- 2 個 timeout:Stryker 算殺掉。沒有列出是哪兩個(clear-text 不印 Timeout),
+  誠實講:timeout 是「測試沒在時限內回來」,不等於「測試看出差別」。
+
+**lint(12 活)**
+- `L17 i >= 0 → i > 0`:`--dir` 永遠不可能在 argv[0](那是 node)。**等價**。
+- `L54 / 57 / 58×5 / 59 / 61 / 63 / 64 / 66`(11 個):全部在 `lint()` **之後**的寫報告路徑。
+  `lint-missing-dir.test.ts` 檔頭寫明「成功時的輸出歸另一半」;main 已經有
+  `scripts/lint.test.ts` + `stryker.user-facing-lint.json` 蓋這一段(本 base 沒有)。
+  在這裡再寫一份會跟 main 撞——**不補,留給合併後 main 的那份**。守門那段
+  (L20–49)單獨跑是 100%。
+
+**due(2 活)**
+- `L43 i >= 0 → i > 0`:同 lint L17,**等價**。
+- `L89 '(無)' → ''`:`safeParse` 失敗時 `issues[0]` 一定在,`first ? … : '(無)'` 的
+  else 分支**到不了**。死程式,不補。
+
+**check-questions**
+- 第二輪跑完剩 2 個(L150 / L157 的 `process.exit(2)` 拿掉:守門句印完不收工,接著再印下一種 0 的句子)。補「一種 0 只講一件事」兩條斷言後第三跑 **0 活**。
+
+### 第二輪補了什麼測試(對應殺掉的變異)
+
+- `llm-spend.test.ts`:`parseSpendArgs` 11 條(預設路徑、`--today` 清 day、`--day`/`--log`
+  缺值或接到旗標、四種壞日期、不認得的參數);cap = 0 是不設限 / cap 負數 unknown;
+  今日條目排除別天與沒 `ts` 的;`formatSpendReport` 句首、`無上限`、`今日預算已用完`;
+  CLI `--json` 算得出來的六個欄位;**算得出來走 stdout、算不出來走 stderr**(這條殺掉
+  4 個「換 console.log / console.error」的 mutant,而且對接 stdout 的協調者有意義);
+  參數壞掉的訊息含 `算不出來:` 與格式提示。
+- `lint-missing-dir.test.ts`:「目錄不存在」那條補 `不會幫你建出來` 與不噴 stack
+  (拿掉 `process.exit(1)` 會印完人話再掉進 `statSync` 的 ENOENT);用法含 `用法`;
+  守門不誤傷真的目錄(init 一個 vault 跑 lint → exit 0、兩句守門話都沒出現)。
+- `due.test.ts`:缺檔含 `讀不到` 與 ENOENT;壞 JSON 含 `不是合法的 JSON`、parse 原因、
+  `它開頭長這樣:`,長壞檔只印 80 字;不是 Review 表的 6 個案例各鎖
+  `不是一份 reviews.json` / `它實際是:<前 80>` / `第一個對不上的地方:<where>`
+  (根層 `(根): `、`sec-0001: `、巢狀 `sec-0001.stage: `),長的只印 80 字;
+  空表兩句補充;到期清單的標題分母、`types=fill,apply`(stage 2 有兩種題型)、
+  `STUCK` 只在卡住的那張行尾、沒卡住的行尾乾淨。
+- `cli-check-questions.test.ts`:三種 0 各鎖補充句(`沒有檢查任何東西` / `init` /
+  `空的 vault`);路徑是檔案 → exit 2 + `不是目錄` + 不噴 stack;**一種 0 只講一件事**
+  (拿掉 `process.exit(2)` 會接著再印下一種 0)。
+
+## 8. 完整驗收(main 的清單;base 比 main 舊,跑不到的註明)
+
+```
+npm run boundaries        → 掃描 204 個檔案,允許例外 11 條 ✓ 無違規
+npm run typecheck         → 0 error
+npm run lint:docs         → exit 0
+npm test                  → 87 檔:85 passed / 2 failed;1783 條:1776 passed / 7 failed
+                            7 紅 = 本輪 5 條鎖洞的紅(§4)+ scripts/mutate.test.ts 的 2 條
+                            (鎖的 fixture 日期過了 STALE_AFTER_MS,main 的 8081fc9
+                            「stop two lock tests from going stale with the calendar」已修;
+                            本分支沒碰 mutate.ts / mutate.test.ts)
+npm run accept:dry        → 502 scenarios,ambiguous = 0
+npm run accept:standalone → 158 scenarios (158 passed) / 696 steps (696 passed)
+npm run standalone        → 全部通過
+npm run check:steps       → ✓ 無重複定義
+npm run check:gherkin-dup → ✗ 3 組逐字相同(06-test-card/phase-2 與 docs/integration/i1–i6 的
+                            「Every standalone entry point still runs」);這些 .feature 本分支
+                            一個字沒動,main 已改 scanner 與那些檔(standalone-regression.feature),
+                            是 base 舊,不是本輪缺漏
+npm run accept:coverage   → ✓ 全部 phase 檔至少涵蓋 1 個場景
+check:gates               → 本 base 沒有這個 script(main 的模板 v1.3.4 才有),跑不到
+```
+
+## 9. 本輪改動的檔案
+
+- `scripts/weekly.test.ts`:fixture 換掉、補 stdout/stderr 分開的那條、兩句比較改比訊息。
+- `scripts/due.test.ts`、`packages/core/src/schema/cli-check-questions.test.ts`:三種 0 改比訊息。
+- `scripts/llm-spend.test.ts`:兩句比較改比訊息;新增 6 條「整份不是 JSONL」(純函式 5 條:4 紅 + HTML 1 綠;CLI 1 條:紅)。
+- `scripts/lint-missing-dir.test.ts`:補「守門句 vs ENOTDIR stack」那條。
+- 新增 `stryker.zero-guards-{llmspend,lint,lint-guard,due,checkq}.json`。
+- 第二輪為了殺存活變異補的測試見 §7 末段(四個測試檔都有)。
+- 本檔與 01 / 04 / 08 / 09 的 REVIEW.md 摘要。
+
+實作檔(`scripts/*.ts`、`packages/core/src/schema/cli.ts`)**沒有動**——反向驗證的改動全部還原。
+`contracts/` 與 `raw/` 未觸碰。
+
+**下一輪**:開發 agent 修 §4 的洞,讓 5 條紅轉綠;之後重跑
+`npm run mutate -- stryker.zero-guards-llmspend.json`(設定檔裡的 `-t '^(?!.*整份)'`
+是因為 Stryker 的 dry run 不能有紅,修好後把那段拿掉)。

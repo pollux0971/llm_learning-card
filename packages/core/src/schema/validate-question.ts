@@ -56,13 +56,13 @@ export function validateQuestionFile(raw: unknown): ValidationResult {
 const CARD_FILE_RE = /^([a-z]{2,6}-\d{4})\.md$/;
 
 /**
- * 掃 learning 目錄下的 cards/ 與 questions/,回報每一張卡有沒有對應的
- * questions/<id>.yaml。純粹的一致性檢查(哪些卡缺考題),不產生內容
- * (產生內容是 02-ingest-pipeline 的事)。
+ * 掃 `cards/<分類>/` 底下所有卡片檔,回傳卡片 id。**分母**——呼叫端要說得出
+ * 「檢查了 N 張卡」,而不是只知道「缺的有幾張」。`cards/` 不存在時回空陣列;
+ * 「沒有 cards/」跟「cards/ 底下 0 張卡」的差別由呼叫端自己分
+ * (見 cli.ts 的 runCheckQuestions)。
  */
-export function findCardsMissingQuestions(learningDir: string): CardId[] {
+export function listCardIds(learningDir: string): CardId[] {
   const cardsDir = join(learningDir, 'cards');
-  const questionsDir = join(learningDir, 'questions');
   if (!existsSync(cardsDir)) return [];
 
   const ids: CardId[] = [];
@@ -75,7 +75,20 @@ export function findCardsMissingQuestions(learningDir: string): CardId[] {
     }
   }
 
-  return ids.filter((id) => !existsSync(join(questionsDir, `${id}.yaml`)));
+  return ids;
+}
+
+/**
+ * 掃 learning 目錄下的 cards/ 與 questions/,回報每一張卡有沒有對應的
+ * questions/<id>.yaml。純粹的一致性檢查(哪些卡缺考題),不產生內容
+ * (產生內容是 02-ingest-pipeline 的事)。
+ *
+ * 只回**缺的**那些,所以「回了空陣列」有兩種意思:每張卡都有考題、或者
+ * 根本沒有卡可以檢查。要分得出來的呼叫端請自己配 `listCardIds()` 當分母。
+ */
+export function findCardsMissingQuestions(learningDir: string): CardId[] {
+  const questionsDir = join(learningDir, 'questions');
+  return listCardIds(learningDir).filter((id) => !existsSync(join(questionsDir, `${id}.yaml`)));
 }
 
 export { countBlanks };

@@ -451,3 +451,21 @@ AFTER outer tracked:  learning/state/reviews.json     ← 使用者的資料被 
 - `packages/core/src/schema/git-repo.ts` —— **只加兩個 `Stryker disable next-line all` 註解,
   行為零改動**
 - `standalone.json` —— 新增 `01-data-layer-snapshot` 入口(ADR-042 Consequences 5 的後半句)
+
+---
+
+## 五支 0 值守門(分支 `five-zero-guards`)—— `cli.ts check-questions` 這一支的摘要
+
+完整報告在 `features/03-llm-router/REVIEW.md` 的「五支 0 值守門」一節(五支跨五個 feature,
+報告只放一份)。這裡只留跟 01 有關的結論:
+
+- **審核對象**:`9be29da`(`packages/core/src/schema/cli.ts` 的 `check-questions`:目錄不在 /
+  沒有 cards/ / cards 空 → exit 2 各一句;`OK` / `FAIL` 帶「檢查了 N 張卡」;
+  `validate-question.ts` 新增 `listCardIds()` 當分母,`findCardsMissingQuestions()` 行為不變)。
+- **結論**:**PASS**。三種 0 實跑各自一句、exit 2、不印 `OK`;既有 38 條
+  `validate-question.test.ts` 仍綠。
+- **這一輪動了的測試**(`cli-check-questions.test.ts`):「三種 0 兩兩不同」從比輸出改成
+  **比訊息**(路徑正規化後比;三句清空會紅,證據在完整報告 §2);補路徑是檔案 → exit 2 +
+  `不是目錄`;三種 0 各鎖補充句;「一種 0 只講一件事」(守門後要收工)。
+- **Stryker**:`npm run mutate -- stryker.zero-guards-checkq.json`(`cli.ts:140-175` +
+  `validate-question.ts:64-92`)→ 87.30% → **100.00%**(63 / 0)。
