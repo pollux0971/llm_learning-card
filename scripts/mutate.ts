@@ -43,6 +43,13 @@ export const STALE_AFTER_MS = 2 * 60 * 60_000;
  */
 export const CORRUPT_GRACE_MS = 10_000;
 
+/**
+ * 持鎖者在跑什麼。這把鎖從 P-29 的「只有 Stryker」變成「Stryker 與全套 vitest 共用」
+ * (見 scripts/run-tests.ts),等鎖的人要知道對面是哪一種,訊息才講得出人話。
+ * 舊格式的鎖檔沒有這欄,parseLock 要能照樣解(缺欄 = undefined,不是壞檔)。
+ */
+export type LockTask = 'stryker' | 'test';
+
 /** 鎖檔內容。契約沒有規定這個型別(infra,不進 contracts/)。 */
 export interface LockInfo {
   pid: number;
@@ -50,6 +57,8 @@ export interface LockInfo {
   startedAt: string;
   /** 持鎖者的 worktree 路徑,等鎖時印給人看。 */
   cwd: string;
+  /** 持鎖者在跑 Stryker 還是全套測試。舊鎖檔沒有這欄。 */
+  task?: LockTask;
 }
 
 /** 讀鎖的結果。`mtimeMs` 是給壞檔寬限期用的。 */
@@ -86,6 +95,12 @@ export interface AcquireDeps {
   maxWaitMs?: number;
   staleAfterMs?: number;
   corruptGraceMs?: number;
+  /**
+   * 「持鎖者跟我是不是同一個 worktree」。預設是下面那個真的問 git 的 sameWorktree。
+   * 不管注入的是哪個,acquireLock 都會把它包成「同一組路徑只問一次」——測試靠這個
+   * 注入一個會數次數的,釘住「等 360 次只問 1 次 git」(不然假時鐘走完 90 分鐘要真跑 720 次 git)。
+   */
+  sameWorktree?: (a: string, b: string) => boolean;
 }
 
 /** 拿到鎖之後的把手。`release` 必須是冪等的(finally 與 signal handler 都會叫)。 */
@@ -114,6 +129,7 @@ export class LockTimeoutError extends Error {
  * `code` 是數字或根本不存在的時候比出來一樣是 false,多一層守衛不會改變任何人的行為。
  */
 function errnoCode(err: unknown): string | undefined {
+  // Stryker disable next-line OptionalChaining: 只有 `throw null` / `throw undefined` 才分得出 `?.` 與 `.`,呼叫端接的全是 fs / child_process 丟的 Error(P-29 審核輪判定)
   return (err as { code?: string } | null | undefined)?.code;
 }
 
@@ -127,6 +143,7 @@ function errnoCode(err: unknown): string | undefined {
  * 主 repo 裡 git 可能回相對路徑(`.git`),所以先 resolve 再 dirname。
  */
 export function strykerLockPath(cwd: string = process.cwd()): string {
+  // Stryker disable next-line MethodExpression: `.trim()` 拿掉,尾巴的 `\n` 落在最後一段、被下一行的 dirname() 整段吃掉,輸出位元組完全相同(P-29 審核輪判定)
   const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd, encoding: 'utf8' }).trim();
   return join(dirname(resolve(cwd, common)), LOCK_FILENAME);
 }
@@ -170,19 +187,26 @@ export function readLock(lockPath: string): LockRead | null {
 /** 解析鎖檔內容。格式不合(不是 JSON、少欄位、pid 不是數字)一律回 null。 */
 export function parseLock(raw: string): LockInfo | null {
   let value: unknown;
+  // Stryker disable BlockStatement: try 或 catch 的區塊清空之後 value 都留 undefined,下一行 typeof 守衛一樣回 null(P-29 審核輪判定;next-line 放在 catch 前面會被掛到 try 上,所以用範圍形式)
   try {
     value = JSON.parse(raw);
   } catch {
     return null;
   }
+  // Stryker restore BlockStatement
+  // Stryker disable next-line ConditionalExpression: typeof 那半段被後面 `typeof pid !== 'number'` 完全遮住(數字 / 字串的 .pid 都是 undefined),不可分辨(P-29 審核輪判定)
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const { pid, startedAt, cwd } = value as Record<string, unknown>;
+  const { pid, startedAt, cwd, task } = value as Record<string, unknown>;
   if (typeof pid !== 'number') return null;
   if (typeof cwd !== 'string') return null;
   // JSON 的數字一定是有限的,所以 pid 只要檢查型別。startedAt 反過來:型別對還不夠,
   // 解不出時間的字串('not-a-date')會讓年齡計算變 NaN,那比壞檔更難查。
   if (typeof startedAt !== 'string' || Number.isNaN(Date.parse(startedAt))) return null;
-  return { pid, startedAt, cwd };
+  const info: LockInfo = { pid, startedAt, cwd };
+  // task 是標籤,不是鎖的效力:舊格式沒有這欄、或值認不得,都**不是壞檔**。
+  // 判成壞檔會在寬限期一過被當殘鎖刪掉——刪掉一把活的、別人正在用的鎖。認得才帶。
+  if (task === 'stryker' || task === 'test') info.task = task;
+  return info;
 }
 
 /** 判一把讀到的鎖是活的還是殘的。 */
@@ -234,6 +258,7 @@ export function tryAcquire(lockPath: string, info: LockInfo): boolean {
     // fsync 是因為鎖的讀者是別的程序:留在 page cache 裡沒關係,但機器掉電之後
     // 半截鎖檔會擋到寬限期。寫完就同步,反正一輪只做一次。
     writeSync(fd, `${JSON.stringify(info)}\n`);
+    // Stryker disable next-line CallExpression: fsync 保的是掉電之後鎖檔不是半截,同一台沒斷電的機器上觀察不到(P-29 審核輪判定)
     fsyncSync(fd);
   } finally {
     closeSync(fd);
@@ -253,27 +278,38 @@ export function releaseLock(lockPath: string, pid: number): boolean {
   // 讀不出 pid 就證明不了這把是自己的,不刪。
   if (info === null) return false;
   if (info.pid !== pid) return false;
-  return removeLockFile(lockPath);
+  // 回傳值原本是 removeLockFile 的布林,P-29 審核輪指出「讀得到鎖卻刪不到(別人搶先刪)」那一格沒有呼叫端在看,
+  // 所以 removeLockFile 改回 void;這裡「讀得到、pid 對、沒丟例外」就是刪掉了。
+  removeLockFile(lockPath);
+  return true;
 }
 
 /**
  * 無條件刪鎖檔。只有兩個呼叫端:確認過是自己的鎖(releaseLock),
- * 或確認過是殘鎖(acquireLock)。回傳是否真的刪掉。
+ * 或確認過是殘鎖(acquireLock)。檔案已經不在也算成功;其他錯誤往外丟。
  */
-function removeLockFile(lockPath: string): boolean {
+function removeLockFile(lockPath: string): void {
   try {
     unlinkSync(lockPath);
   } catch (err) {
-    // 別人先刪掉了,結果一樣好,不是錯誤。
-    if (errnoCode(err) === 'ENOENT') return false;
+    // 別人先刪掉了,結果一樣好,不是錯誤。其他錯誤(EACCES、EISDIR…)要往外丟:
+    // 「以為刪了其實沒刪」等於留下一把殘鎖,下一個人白等到兩小時規則觸發。
+    if (errnoCode(err) === 'ENOENT') return;
     throw err;
   }
-  return true;
 }
 
-/** 這個程序的鎖檔內容。 */
-export function selfLockInfo(cwd: string = process.cwd(), nowIso: string = new Date().toISOString()): LockInfo {
-  return { pid: process.pid, startedAt: nowIso, cwd };
+/** 這個程序的鎖檔內容。`task` 是持鎖者在跑什麼;不給就是舊格式(沒有 task 欄)。 */
+export function selfLockInfo(
+  cwd: string = process.cwd(),
+  nowIso: string = new Date().toISOString(),
+  task?: LockTask,
+): LockInfo {
+  const info: LockInfo = { pid: process.pid, startedAt: nowIso, cwd };
+  // 沒給 task 就不放那個 key:JSON 化之後要跟舊格式一模一樣(不是 `"task": undefined`,
+  // JSON.stringify 會把它丟掉沒錯,但 `'task' in info` 這種判斷會看到它)。
+  if (task !== undefined) info.task = task;
+  return info;
 }
 
 /**
@@ -291,6 +327,11 @@ export async function acquireLock(lockPath: string, deps: AcquireDeps = {}): Pro
   const retryMs = deps.retryMs ?? RETRY_INTERVAL_MS;
   const maxWaitMs = deps.maxWaitMs ?? MAX_WAIT_MS;
 
+  // 「自己的鏈 / 別人的」每次重試都要判,而 sameWorktree 每判一次要問 git 兩次。
+  // 等 90 分鐘是 360 次重試;測試用假時鐘走完整個 90 分鐘時那 720 次 git 是真的跑
+  // (實測 load 17 時 2.4 秒,load 30+ 就貼近 vitest 5 秒的逾時)。自己的 cwd 在一次等待裡
+  // 不會變;持鎖者**會**變(前一個放掉、另一個 worktree 搶到),所以 key 要同時帶兩邊。
+  const same = memoizeSameWorktree(deps.sameWorktree ?? sameWorktree);
   const startedAt = now();
   for (;;) {
     if (tryAcquire(lockPath, info)) {
@@ -306,7 +347,8 @@ export async function acquireLock(lockPath: string, deps: AcquireDeps = {}): Pro
     const verdict = classifyLock(read, { ...deps, now: now(), isAlive });
     if (verdict.kind === 'stale') {
       // 殘鎖是「馬上可以用」,不是「等 15 秒再看一次」。清掉直接重搶。
-      log(`清掉殘留的 Stryker 鎖:${verdict.why}`);
+      // 鎖是 Stryker 跟全套測試共用的,不能講成「Stryker 鎖」——看的人會去找一個不存在的 Stryker。
+      log(`清掉殘留的鎖 ${LOCK_FILENAME}:${verdict.why}`);
       removeLockFile(lockPath);
       continue;
     }
@@ -314,22 +356,137 @@ export async function acquireLock(lockPath: string, deps: AcquireDeps = {}): Pro
     const waitedMs = now() - startedAt;
     if (waitedMs >= maxWaitMs) {
       // 放棄不等於接管:鎖不是我的,不能刪。留給下一個人或兩小時的殘鎖規則處理。
+      // 訊息要講清楚三件事:等的是哪把鎖(不是「Stryker 的鎖」,它是共用的)、持鎖者在跑什麼、
+      // 鎖在哪裡。持鎖者讀不出(壞檔寬限期內)時 info 是 null,那就講「讀不出」,不印 undefined。
+      const holderText =
+        verdict.info === null
+          ? '持鎖者讀不出'
+          : `持鎖者 pid ${verdict.info.pid} 在跑 ${taskLabel(verdict.info.task)}(cwd=${verdict.info.cwd})`;
       throw new LockTimeoutError(
-        `等 Stryker 的鎖等超過 ${maxWaitMs / 60_000} 分鐘還是拿不到,放棄。鎖:${lockPath}(${verdict.why})`,
+        `等 ${LOCK_FILENAME} 等超過 ${maxWaitMs / 60_000} 分鐘還是拿不到,放棄。${holderText}。鎖:${lockPath}(${verdict.why})`,
         waitedMs,
         verdict.info,
       );
     }
-    log(waitingMessage(verdict.info, waitedMs));
+    log(waitingMessage(verdict.info, waitedMs, { selfCwd: info.cwd, maxWaitMs, sameWorktree: same }));
     await sleep(retryMs);
   }
 }
 
-/** 等鎖時印的那一行。抽出來是為了讓測試釘住格式。 */
-export function waitingMessage(holder: LockInfo | null, waitedMs: number): string {
+/**
+ * 等鎖訊息需要的上下文:我是誰(selfCwd)、等多久會放棄(maxWaitMs)。
+ * `sameWorktree` 可注入,預設是下面那個真的問 git 的。
+ */
+export interface WaitContext {
+  /** 等鎖的這個程序的 cwd。預設 process.cwd()。 */
+  selfCwd?: string;
+  /** 印「逾時 N 分鐘」用。預設 MAX_WAIT_MS。 */
+  maxWaitMs?: number;
+  sameWorktree?: (a: string, b: string) => boolean;
+}
+
+/**
+ * 兩個路徑是不是同一個 worktree。
+ *
+ * 為什麼要有這個:five-zero-guards 的審核 agent 看到「鎖被佔著」,把**自己排的鏈**
+ * (同一個 worktree 裡前一個指令還沒放鎖)讀成別的 worktree 佔的,差點手動刪 .stryker.lock。
+ * 光印 cwd 讓 agent 自己比對已經證明不夠,所以由程式判,訊息直接寫成人話。
+ *
+ * 判法:各自 `git rev-parse --show-toplevel`,相同就是同一個 worktree。任一邊不是 git 目錄
+ * 或路徑不存在 → 退回比對 resolve 後的路徑;還是不一樣就當**別人的**——不確定時往
+ * 「別人的、不要刪」保守,跟 pidIsAlive 的 EPERM 同一個方向。**不可以丟例外**:
+ * 持鎖者的 worktree 可能已經被 `git worktree remove` 掉了,那時候還在等鎖的人不能因此爆掉。
+ */
+export function sameWorktree(a: string, b: string): boolean {
+  const rootA = worktreeRoot(a);
+  const rootB = worktreeRoot(b);
+  // Stryker disable next-line ConditionalExpression,LogicalOperator: 三個變異都只在「一邊問得到 git、一邊問不到、但 resolve 後路徑相同」時才分得出,而同一個路徑不可能一邊是 git 目錄一邊不是
+  if (rootA !== null && rootB !== null) return rootA === rootB;
+  // 任一邊問不到 git(不是 git 目錄、路徑不存在):只剩路徑本身可比。
+  // 這裡不能用「另一邊的根包含這個路徑」之類的猜法——猜錯的方向是「把別人的當自己的」。
+  return resolve(a) === resolve(b);
+}
+
+/**
+ * 這個目錄所在的 worktree 根(`git rev-parse --show-toplevel`)。問不到回 null,**不丟**。
+ *
+ * 要用 `--show-toplevel` 而不是 `--git-common-dir`:後者對同一個主 repo 底下的所有 worktree
+ * 都回同一個 `.git/`(strykerLockPath 正是靠這點算出同一把鎖),拿它來判會把所有 worktree
+ * 都判成自己的——那就是這個函式要防的誤判本身。
+ */
+function worktreeRoot(dir: string): string | null {
+  try {
+    // Stryker disable next-line MethodExpression: `.trim()` 拿掉,兩邊的根都多同一個 `\n`,比對結果不變
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: dir,
+      encoding: 'utf8',
+      // stderr 不接管:不是 git 目錄時 git 會抱怨一行,那不是給等鎖的人看的。
+      // Stryker disable next-line ArrayDeclaration,StringLiteral: 這個選項只決定 git 的抱怨會不會印到終端機,回傳值與判斷都不變
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    // 路徑不存在(spawn ENOENT)、不是 git 目錄(exit 128)、git 不在——全部當「問不到」。
+    return null;
+  }
+}
+
+/**
+ * sameWorktree 的記憶版:同一組 (a, b) 只問一次。給 acquireLock 的重試迴圈用。
+ * key 用 `\0` 接:路徑裡不會有 NUL,所以 ('a', 'b\0c') 跟 ('a\0b', 'c') 這種對撞不存在。
+ */
+function memoizeSameWorktree(same: (a: string, b: string) => boolean): (a: string, b: string) => boolean {
+  const seen = new Map<string, boolean>();
+  return (a, b) => {
+    const key = `${a}\0${b}`;
+    let hit = seen.get(key);
+    if (hit === undefined) {
+      hit = same(a, b);
+      seen.set(key, hit);
+    }
+    return hit;
+  };
+}
+
+/** 持鎖者在跑什麼,給人看。舊格式的鎖沒有 task:講「Stryker 或全套測試」,不猜。 */
+function taskLabel(task: LockTask | undefined): string {
+  return task === 'stryker' ? 'Stryker' : task === 'test' ? '全套測試' : 'Stryker 或全套測試';
+}
+
+/**
+ * 等鎖時印的那一段。抽出來是為了讓測試釘住格式。
+ *
+ * 兩行:第一行是事實(鎖檔名、持鎖者 pid、在跑什麼、cwd),第二行是**判斷**——
+ * 「這是你自己排的鏈,繼續等」或「這是別的 worktree,不要刪鎖、不要 kill」——
+ * 再加上「逾時 N 分鐘,已等 M」。格式由 scripts/mutate.test.ts §14 釘住。
+ */
+export function waitingMessage(holder: LockInfo | null, waitedMs: number, ctx: WaitContext = {}): string {
+  const selfCwd = ctx.selfCwd ?? process.cwd();
+  const maxWaitMs = ctx.maxWaitMs ?? MAX_WAIT_MS;
+  const same = ctx.sameWorktree ?? sameWorktree;
+
+  // 第一行:事實。持鎖者讀不出時(剛 openSync 還沒寫完)每一欄都要有東西,不能印 undefined。
   const who = holder === null ? '另一個 worktree' : holder.cwd;
   const pid = holder === null ? '讀不出' : String(holder.pid);
-  return `等 ${who} 的 Stryker(pid ${pid})跑完,已等 ${Math.round(waitedMs / 1000)} 秒…`;
+  const doing = taskLabel(holder === null ? undefined : holder.task);
+  const fact = `等待 ${LOCK_FILENAME}(持鎖者 pid ${pid} 在跑 ${doing}, cwd=${who})`;
+
+  // 第二行:判斷。三種,互斥——同時出現兩句,看的人又得自己猜。
+  // 讀不出持鎖者就分不出是誰的,那時候不能說是自己的(說是自己的,agent 會覺得可以動它)。
+  const verdict =
+    holder === null
+      ? '鎖檔還讀不出持鎖者(可能剛建好還沒寫完),分不出是誰的。不要刪鎖,不要 kill。'
+      : same(selfCwd, holder.cwd)
+        ? '這是你自己排的鏈(同一個 worktree),正常,繼續等。'
+        : '這是別的 worktree 佔的。不要刪鎖,不要 kill 那個 pid。';
+
+  const timing = `逾時 ${maxWaitMs / 60_000} 分鐘,已等 ${waitedText(waitedMs)}。`;
+  return `${fact}\n→ ${verdict}${timing}`;
+}
+
+/** 已等多久,給人看:不到一分鐘講秒,滿一分鐘講分鐘(無條件捨去,「已等 6 分鐘」不是 6.5)。 */
+function waitedText(waitedMs: number): string {
+  if (waitedMs < 60_000) return `${Math.floor(waitedMs / 1000)} 秒`;
+  return `${Math.floor(waitedMs / 60_000)} 分鐘`;
 }
 
 /** installCleanup 需要的最小 process 介面,測試注入假的。 */
@@ -391,6 +548,12 @@ export interface RunDeps {
   argv?: string[];
   lockPath?: string;
   acquire?: (lockPath: string) => Promise<HeldLock>;
+  /**
+   * 交給預設 acquireLock 的注入(時鐘、sleep、log、retryMs…)。測試要走**真的**拿鎖迴圈
+   * 但不真的睡 15 秒時用這個;給了 `acquire` 就不看。`info.task` 一律是 'stryker',
+   * 這裡給的 `info` 只蓋 pid / cwd / startedAt。
+   */
+  lock?: AcquireDeps;
   runStryker?: (args: string[]) => Promise<number>;
   installCleanup?: (release: () => void) => () => void;
   log?: (msg: string) => void;
@@ -404,7 +567,11 @@ export interface RunDeps {
  */
 export async function runMutate(deps: RunDeps = {}): Promise<number> {
   const argv = deps.argv ?? process.argv;
-  const acquire = deps.acquire ?? ((path: string) => acquireLock(path));
+  const acquire =
+    deps.acquire ??
+    ((path: string) =>
+      // 展開 deps.lock 再蓋 info.task:給的 info 只能蓋 pid / cwd / startedAt,標籤一律是 stryker。
+      acquireLock(path, { ...deps.lock, info: { ...(deps.lock?.info ?? selfLockInfo()), task: 'stryker' } }));
   const runStryker = deps.runStryker ?? spawnStryker;
   const install = deps.installCleanup ?? ((release: () => void) => installCleanup(release));
   const log = deps.log ?? ((msg: string) => console.log(msg));
@@ -480,6 +647,7 @@ export function isMainModule(argv1: string | undefined, moduleUrl: string): bool
   return resolve(argv1) === resolve(fileURLToPath(moduleUrl));
 }
 
+// Stryker disable all: 頂層 bootstrap。測試是 import 這個模組,`if (true)` 會在 vitest worker 裡起真的 Stryker(還去搶真的鎖),`if (false)` 只有把腳本當指令跑才看得到;P-29 與審核輪都判「不在單元測試裡殺」
 if (isMainModule(process.argv[1], import.meta.url)) {
   // 不用 top-level await:這個檔案會被測試的臨時腳本 import,
   // 那些腳本在 repo 外面,tsx 會當 CJS 轉譯,頂層 await 會直接爆掉。

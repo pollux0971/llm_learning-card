@@ -165,6 +165,14 @@
       "infra"
     ],
     [
+      "scripts/run-tests.ts",
+      "infra"
+    ],
+    [
+      "scripts/run-tests.test.ts",
+      "infra"
+    ],
+    [
       "scripts/degraded-report.ts",
       "infra"
     ],
