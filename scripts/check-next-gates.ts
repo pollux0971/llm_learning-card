@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=935b6721ee43748bd1273f691e68800b442df09366fe490419fd963e5c9f7e0b — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=935b6721ee43748bd1273f691e68800b442df09366fe490419fd963e5c9f7e0b — 勿手改;升版用 sync-gates.sh
 /**
  * NEXT.md 的 gate 引用檢查(來源 AI_KM)。
  *

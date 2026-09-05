@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=43e3e09f6bea3e69b1231d392c9580c793963cbafd6db45691433291a4075d60 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=43e3e09f6bea3e69b1231d392c9580c793963cbafd6db45691433291a4075d60 — 勿手改;升版用 sync-gates.sh
 /**
  * 已知缺陷登記表檢查(S8,來源 nightmare-assault)。
  *

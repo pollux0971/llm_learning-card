@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=62792d356f60c0b7875df87f58c777eff4f6bd6086d7f177e9700e43699dfa32 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=62792d356f60c0b7875df87f58c777eff4f6bd6086d7f177e9700e43699dfa32 — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-boundaries.ts 的單元測試(模板 1.4.0 S4:空落點表要 FAIL + glue 角色)。
  *

@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=80d384ea2d1f7382908730933e93ecc3c516347dee4c72d14e3155a5eb589898 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=80d384ea2d1f7382908730933e93ecc3c516347dee4c72d14e3155a5eb589898 — 勿手改;升版用 sync-gates.sh
 /**
  * 步驟重複檢查(見 docs/03-agile-workflow.md「便宜的模型做機械工作」與 PITFALLS.md P-02)。
  *

@@ -185,6 +185,14 @@
       "infra"
     ],
     [
+      "scripts/check-phase-status.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-phase-status.test.ts",
+      "infra"
+    ],
+    [
       "scripts/check-boundaries.local.test.ts",
       "infra"
     ],
@@ -318,7 +326,7 @@
   ],
   "contractsOwner": "contracts",
   "coverageBaseline": {
-    "managed": 242,
-    "scanned": 242
+    "managed": 244,
+    "scanned": 244
   }
 }

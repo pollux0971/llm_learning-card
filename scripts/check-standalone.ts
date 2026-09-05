@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=485eac66d0cfa5bdfb962502fd4f8214f946b936bcdd1f08436804de434dc15b — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=485eac66d0cfa5bdfb962502fd4f8214f946b936bcdd1f08436804de434dc15b — 勿手改;升版用 sync-gates.sh
 /**
  * 單獨執行檢查(見 docs/02-decision-map.md ADR-005)。跑 standalone.json 裡每個非互動指令,
  * 要求退出碼符合預期且輸出含 expect 關鍵字。

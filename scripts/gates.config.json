@@ -13,7 +13,8 @@
     "accept:coverage",
     "check:gates",
     "check:doc-rot",
-    "check:next-gates"
+    "check:next-gates",
+    "check:phase-status"
   ],
   "nextGates": {
     "mode": "enforce"
@@ -26,5 +27,8 @@
       "file": "check-known-defects.ts",
       "reason": "尚未使用 @known-defect tag"
     }
-  ]
+  ],
+  "phaseStatus": {
+    "mode": "report"
+  }
 }

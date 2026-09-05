@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=a3738d6963fe9ea3902b31c7d197e6703d1bf26e2e22d0547056da207162ab08 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=a3738d6963fe9ea3902b31c7d197e6703d1bf26e2e22d0547056da207162ab08 — 勿手改;升版用 sync-gates.sh
 /**
  * 文件連結檢查(見 docs/03-agile-workflow.md「文件漂移」維護項)。
  *

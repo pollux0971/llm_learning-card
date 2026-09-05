@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=c46a93f09e7b65d10ae5a587c96f4a021ebabcaf441ec7a3afd22eef3b0bb30b — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=c46a93f09e7b65d10ae5a587c96f4a021ebabcaf441ec7a3afd22eef3b0bb30b — 勿手改;升版用 sync-gates.sh
 /**
  * 單一入口:把「必跑鏈」(gates.config.json 的 `chain`)依序跑過一次。
  *

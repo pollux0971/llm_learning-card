@@ -559,9 +559,7 @@ const ROSTER: Record<string, Entry> = {
         baselines: { healthy: () => ({ args: [] }) },
         probes: [
           { kind: 'empty', name: 'features/ 存在但沒有 NEXT.md', build: (s) => { const root = emptyDir(s, 'consumer'); emptyDir(root, 'features/01-x'); return { args: ['--root', root] }; } },
-          // 1.4.1 的 check-next-gates 對不存在的 --root 只印「掃到 0 份 NEXT.md」,不指名那條路徑——
-          // 這是模板的洞(回流候選),基準只准減不准增,所以這裡不填 mention(退出碼與「跟健康不同」仍然要過)。
-          { kind: 'missing', name: '--root 不存在', build: (s) => ({ args: ['--root', missingPath(s, 'nope')] }) },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
           { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => ({ args: [], env: gatesConfigDir(s, { 'gates.config.json': '{ "nextGates": ' }) }) },
           { kind: 'wrong-type', name: 'gates.config.json 是陣列', build: (s) => ({ args: [], env: gatesConfigDir(s, { 'gates.config.json': '[]' }) }) },
         ],
@@ -579,6 +577,29 @@ const ROSTER: Record<string, Entry> = {
           { kind: 'missing', name: '--cwd 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: [...ONE_FOLDER_DRY_RUN, '--cwd', p], mention: p }; } },
           { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => ({ args: ONE_FOLDER_DRY_RUN, env: gatesConfigDir(s, { 'gates.config.json': '{ "cucumberCwd": ' }) }) },
           { kind: 'wrong-type', name: 'cucumberCwd 是數字', build: (s) => ({ args: ONE_FOLDER_DRY_RUN, env: gatesConfigDir(s, { 'gates.config.json': '{ "cucumberCwd": 5 }' }) }) },
+        ],
+      },
+    ],
+  },
+  'scripts/check-phase-status.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-phase-status',
+        // 對本 repo 跑會對 done / in-progress 的 phase 真起 cucumber(分鐘級):健康基線改成一個只有一列 `todo`
+        // 的假 consumer(todo 不需要真跑),探的是 FEATURE.md 與設定檔怎麼被讀,不是 cucumber。
+        baselines: {
+          healthy: (s) => {
+            const root = emptyDir(s, 'consumer');
+            file(root, 'features/01-x/FEATURE.md', '| Phase | 標題 | 階段 | 狀態 | 完成日 |\n|---|---|---|---|---|\n| 1 | a | Wave 0 | todo | |\n');
+            return { args: ['--root', root] };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: 'features/ 存在但沒有 FEATURE.md', build: (s) => { const root = emptyDir(s, 'consumer'); emptyDir(root, 'features/01-x'); return { args: ['--root', root] }; } },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+          { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'features/01-x/FEATURE.md', '| Phase | 標題 | 階段 | 狀態 | 完成日 |\n|---|---|---|---|---|\n| 1 | a | Wave 0 | todo | |\n'); file(root, 'scripts/gates.config.json', '{ "phaseStatus": '); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: 'phaseStatus.mode 是數字', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'features/01-x/FEATURE.md', '| Phase | 標題 | 階段 | 狀態 | 完成日 |\n|---|---|---|---|---|\n| 1 | a | Wave 0 | todo | |\n'); file(root, 'scripts/gates.config.json', '{ "phaseStatus": { "mode": 5 } }'); return { args: ['--root', root] }; } },
         ],
       },
     ],

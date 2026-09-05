@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=1b93e85ff6cc307532c972d2ba4fd355e46d205a2cac1a9210957fae016d08c3 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=84fdbb28407ba9b5e3711965de7042a64cdb437f657fb76e3155cba94eca01ab — 勿手改;升版用 sync-gates.sh
 /**
  * 所有守門腳本共用的 repo 根解析。
  *
@@ -229,6 +229,7 @@ export function requireConfigType(value: unknown, key: string, kind: ConfigValue
  *   skipDirs                    — 所有掃描器共用的略過目錄清單(S10,見 SKIP_DIRS)
  *   docRot                      — check-doc-rot.ts(S7)
  *   knownDefects                — check-known-defects.ts(S8)
+ *   phaseStatus                 — check-phase-status.ts(S15)
  */
 export const KNOWN_GATES_CONFIG_KEYS = [
   'cucumberCwd',
@@ -242,6 +243,7 @@ export const KNOWN_GATES_CONFIG_KEYS = [
   'skipDirs',
   'docRot',
   'knownDefects',
+  'phaseStatus',
 ] as const;
 
 /** `obj` 的頂層鍵裡,有沒有不在 `knownKeys` 的——通常是打錯字(`"chian"` 之類)。

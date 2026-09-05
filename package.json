@@ -25,6 +25,7 @@
     "check:doc-rot": "tsx scripts/check-doc-rot.ts",
     "check:next-gates": "tsx scripts/check-next-gates.ts",
     "check:known-defects": "tsx scripts/check-known-defects.ts",
+    "check:phase-status": "tsx scripts/check-phase-status.ts",
     "boundaries": "tsx scripts/check-boundaries.ts",
     "snapshot": "tsx scripts/snapshot.ts",
     "prompt:golden": "tsx scripts/prompt-check.ts --golden",

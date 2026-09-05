@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=8676fa2c41a3ae9e6dd4840cafba2ee3ee03f67d0fb2e495a4afdcc38f5bed26 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=8676fa2c41a3ae9e6dd4840cafba2ee3ee03f67d0fb2e495a4afdcc38f5bed26 — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-standalone.ts 的單元測試(模板 1.4.0 S3:pending 語意 + `_doc` metadata)。
  *

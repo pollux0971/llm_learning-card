@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.1 (ff7f64b) sha256=3a5e18c688f7b1f28666cfa0ce13b321f0342ac7839dea8a59127c11cbbde5c7 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.2 (1c1d403) sha256=3a5e18c688f7b1f28666cfa0ce13b321f0342ac7839dea8a59127c11cbbde5c7 — 勿手改;升版用 sync-gates.sh
 /**
  * 邊界檢查(見 docs/02-decision-map.md ADR-004 / ADR-014)。
  *
