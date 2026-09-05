@@ -130,3 +130,25 @@ timeout/survived 的判定會因系統負載而不同,但下列 7 個真正的�
 - 新增本檔案 `features/04-scheduler/REVIEW.md`。
 
 `contracts/` 與 `raw/` 均未觸碰。
+
+---
+
+## 五支 0 值守門(分支 `five-zero-guards`)—— `scripts/due.ts` 這一支的摘要
+
+完整報告在 `features/03-llm-router/REVIEW.md` 的「五支 0 值守門」一節(五支跨五個 feature,
+報告只放一份)。這裡只留跟 04 有關的結論:
+
+- **審核對象**:`3b03714`(`scripts/due.ts`:空表 / 缺檔 / 壞 JSON / 不是 Review 表 → exit 1,
+  各一句;算得成時印分母「讀到 N 張卡」)。
+  - **後續修正(ADR-045 裁定)**:空表 `{}` 改為**附條件的 exit 0**——exit 0、印基數
+    (讀到 0 張卡、到期 0 張)、跟安靜日的輸出不同;缺檔 / 壞 JSON / 不是 Review 表仍 exit 1。
+    due.ts 只讀 reviews.json 不看 cards/,分不出「有卡沒紀錄」跟「沒卡」,所以只有兩種邊界。
+- **結論**:**PASS**。三種 0 實跑各自一句、不噴 stack、不說「沒有到期的卡片」;
+  健康路徑印得出分母;standalone.json 的 04 那條仍通過。
+- **這一輪動了的測試**(`scripts/due.test.ts`):「三種 0 兩兩不同」從比輸出改成**比訊息**
+  (路徑正規化後比;把三句清空或改成同一句,測試會紅,證據在完整報告 §2);
+  另補缺檔 / 壞 JSON / 不是 Review 表的訊息內容、80 字截斷、空表補充句、到期清單的
+  分母 / `types=fill,apply` / `STUCK` 行尾。
+- **Stryker**:`npm run mutate -- stryker.zero-guards-due.json` → 60.29% → **97.06%**
+  (66 殺 / 2 活;2 個都是等價或死程式:`argv` 索引不可能是 0、zod 失敗時 `issues[0]`
+  一定在)。
