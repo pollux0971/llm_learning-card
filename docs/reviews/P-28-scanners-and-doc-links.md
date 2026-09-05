@@ -4,7 +4,7 @@
 分支 `pollux0971/scanner-and-doc-links`,審核起點 HEAD = `8beac58`。
 
 這張工單跨 `scripts/`,不屬於任何單一 feature,所以報告放在新開的 `docs/reviews/` 底下,
-而不是塞進某個 `features/NN-*/REVIEW.md`,也不是覆蓋根目錄那份還停留在 03-llm-router 的 `REVIEW.md`。
+而不是塞進某個 `features/NN-*/REVIEW.md`,也不是覆蓋根目錄那份還停留在 03-llm-router 的 `REVIEW.md`(2026-09-05 已移到 `docs/reviews/03-llm-router-phase-2-round-1.md`,根目錄那個位置現在是空的)。
 
 ## 結論:**PASS**(有兩個回報但不擋的發現)
 

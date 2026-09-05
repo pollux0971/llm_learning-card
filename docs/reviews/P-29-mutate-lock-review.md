@@ -6,7 +6,7 @@
 **放這裡的理由**:這張跨 `scripts/`,沒有對應的 `features/NN-xxx/`。
 P-28 的同類工單(掃描器 + 文件連結)就放 `docs/reviews/P-28-scanners-and-doc-links.md`,
 而 P-29 的實作輪 / 測試輪回報也已經在 `docs/reviews/` 底下,照同一個慣例接上第三份。
-根目錄的 `REVIEW.md` 是 `03-llm-router/phase-2` 專用的,不是共用檔,不該往裡塞。
+根目錄的 `REVIEW.md` 是 `03-llm-router/phase-2` 專用的,不是共用檔,不該往裡塞。(2026-09-05:這段警告寫了兩次仍然被覆蓋一次,所以改成機械修法——那個檔已移到 `docs/reviews/03-llm-router-phase-2-round-1.md`,根目錄不再有 `REVIEW.md`。)
 
 ## 結論:**PASS**
 
