@@ -17,10 +17,18 @@
  * 算不成的時候三句話兩兩不同。
  *
  * 退出碼:
- *   0  讀到 N ≥ 1 張卡而且算完了(今天到期幾張都算成功,包含 0 張)
- *   1  沒算成:沒給參數、檔案不存在、不是合法 JSON、不是 Review 表、或空表
+ *   0  算完了:讀到 N 張卡(N 可以是 0),今天到期幾張都算成功
+ *   1  沒算成:沒給參數、檔案不存在、不是合法 JSON、不是 Review 表
  *
  * 1 這個碼是照 lint / weekly 這一批的共同約定選的,不是 due.ts 自創。
+ *
+ * **空表 `{}` 是「附條件的 exit 0」(ADR-045)。** `{}` 是合法的 reviews.json——剛 init 完、
+ * 還沒開始複習就長這樣,跟 review.ts 的邊界 2 同一個判斷,所以不是錯誤。條件是:
+ *   1. 輸出要印基數(讀到 0 張卡、到期 0 張);
+ *   2. 空表(N=0)跟安靜日(N>0、到期 0)**兩句不得相同**,而且空表那句不可以說
+ *      「沒有到期的卡片」——那句話一出現使用者就會把它當結論。
+ * due.ts 只讀 reviews.json、從不看 cards/,所以它分不出「有卡但沒紀錄」跟「連卡都沒有」;
+ * 那個區別歸 review.ts(它有 `--dir`,印得出「N 張卡、M 張未排程」)。這裡只有兩種邊界。
  *
  * P-50:讀 `state/` 的入口一律用 schema 驗過再用,不准 `as Review`、不准 `?? {}`。
  * 這裡用契約自己的 `ReviewSchema`(§4),不是自己寫一份結構檢查——自己寫的那份
@@ -91,15 +99,6 @@ if (!table.success) {
 }
 
 const cardCount = Object.keys(table.data).length;
-if (cardCount === 0) {
-  // 空表**不是**「今天剛好都不用複習」。這裡刻意不講那句話,連提都不提——
-  // 那句話一旦出現在畫面上,使用者就會把它當成結論。
-  fail([
-    `✗ due: ${statePath} 讀到 0 張卡,是一份空的複習表`,
-    '  這不是「今天沒事」,是「沒有複習資料可以算」。',
-    '  剛 init 完是正常的;不是的話,檢查路徑有沒有指錯、或 state/ 有沒有被寫壞。',
-  ]);
-}
 
 // schema 驗過了,兩邊的 Review 是同一個形狀(契約 §4 對 scheduler/types.ts),
 // 只是宣告在兩個地方(scheduler 那份說明了 Wave 0 不 import contracts 的理由)。
@@ -107,7 +106,14 @@ if (cardCount === 0) {
 const reviews = table.data as unknown as Record<CardId, Review>;
 const due = buildDueList(reviews, today);
 
-if (due.length === 0) {
+if (cardCount === 0) {
+  // 空表:正當的 exit 0(ADR-045),但**不是**「今天剛好都不用複習」。這裡刻意不講
+  // 那句話,連提都不提——那句話一旦出現在畫面上,使用者就會把它當成結論。
+  // 基數(0 張卡、到期 0 張)一定要印,跟下面安靜日那句才分得開。
+  console.log(`${today} 讀到 0 張卡,到期 0 張:${statePath} 是一份空的複習表`);
+  console.log('  這不是「今天沒事」,是「沒有複習資料可以算」。');
+  console.log('  剛 init 完是正常的;不是的話,檢查路徑有沒有指錯、或 state/ 有沒有被寫壞。');
+} else if (due.length === 0) {
   console.log(`${today} 沒有到期的卡片(讀到 ${cardCount} 張卡)`);
 } else {
   console.log(`${today} 到期 ${due.length} 張(讀到 ${cardCount} 張卡):`);

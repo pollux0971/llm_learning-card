@@ -22,10 +22,19 @@
  *
  *   1. **印出讀到幾張卡**——「沒有到期」後面要接得出分母。
  *   2. **三種 0 兩兩不同**:空表 / 缺檔 / 壞檔,三句話不可以有兩句一樣。
- *   3. **退出碼分得開**:0 = 讀到 N ≥ 1 張卡並且算完了(今天到期幾張都算成功);
- *      1 = 沒算成(檔案不存在、不是合法 JSON、不是 Review 表、或空表)。
+ *   3. **退出碼分得開**:0 = 算完了(讀到 N 張卡,N 可以是 0;今天到期幾張都算成功);
+ *      1 = 沒算成(檔案不存在、不是合法 JSON、不是 Review 表)。
  *      1 這個碼是照 lint / weekly 這一批的共同約定選的,不是 due.ts 自創。
  *   4. **不噴 stack trace**,一句人話。
+ *
+ * ── 空表 `{}` 為什麼是 exit 0(ADR-045 裁定)──
+ * `{}` 是合法的 reviews.json:剛 init 完、還沒開始複習就是這樣,跟 review.ts 的邊界 2
+ * 同一個判斷。所以是**附條件的 exit 0**:(1) exit 0;(2) 輸出含基數(讀到 0 張卡、
+ * 到期 0 張);(3) 空表跟安靜日(N>0、到期 0)各餵一次,兩份輸出**不得相同**。
+ * 這個檔案原本要它 exit 1,那是本分支自己的規格,跟 ADR-045 互斥;以 ADR 為準。
+ *
+ * 只有兩種邊界、沒有第三種:due.ts 只讀 reviews.json,從不看 cards/,分不出「有卡但
+ * 沒紀錄」跟「連卡都沒有」——那個區別歸 review.ts(有 `--dir`,印「N 張卡、M 張未排程」)。
  */
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -131,17 +140,29 @@ describe('scripts/due.ts:算得成的時候', () => {
 });
 
 describe('scripts/due.ts:三種 0', () => {
-  it('空的 {} → exit 1,而且不可以說「沒有到期的卡片」', () => {
-    const { code, output } = runDue(stateFile('{}'));
+  it('空的 {} → 附條件的 exit 0(ADR-045):exit 0、印基數、跟安靜日的輸出不同', () => {
+    const empty = runDue(stateFile('{}'));
+    const quiet = runDue(stateFile(HEALTHY_NOT_DUE));
 
-    expect(code).toBe(1);
-    expect(output).not.toMatch(NOTHING_DUE);
-    // 要說清楚是「一張卡都沒有」,不是「今天沒事」。
-    expect(output).toMatch(/0\s*張|一張.*都沒有|沒有任何/);
+    // 條件 1:exit 0——{} 是合法的 reviews.json,剛 init 完就長這樣,不是錯誤。
+    expect(empty.code).toBe(0);
+
+    // 條件 2:輸出含基數。「掃了 N 張、到期 0 張」兩個數字都要在,不然 0 沒有份量。
+    expect(empty.output).toMatch(/0\s*張卡/);
+    expect(empty.output).toMatch(/到期\s*0\s*張/);
+
+    // 條件 3:空表跟安靜日(N>0、到期 0)各餵一次,兩份輸出不得相同。
+    // 兩邊都 exit 0、都是「今天 0 張到期」,只剩訊息能分——所以比的是訊息本身。
+    expect(quiet.code).toBe(0);
+    expect(empty.output.trim()).not.toBe('');
+    expect(empty.output, `空表跟安靜日長一樣:\n${empty.output}`).not.toBe(quiet.output);
+
+    // 空表那句不可以說「沒有到期的卡片」——那是安靜日的結論句,一出現使用者就會當真。
+    expect(empty.output).not.toMatch(NOTHING_DUE);
     // 兩句補充各有用途:一句說這不是「今天沒事」,一句說剛 init 完是正常的、否則去查路徑。
-    expect(output).toContain('沒有複習資料可以算');
-    expect(output).toContain('init');
-  }, SPAWN_TIMEOUT_MS);
+    expect(empty.output).toContain('沒有複習資料可以算');
+    expect(empty.output).toContain('init');
+  }, SPAWN_TIMEOUT_MS * 2);
 
   it('檔案不存在 → exit 1,一句人話,不噴 stack trace', () => {
     const missing = join(tmpDir(), 'nope.json');
