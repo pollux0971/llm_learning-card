@@ -123,6 +123,7 @@ function listDirs(dir: string): string[] {
       .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name))
       .map((e) => e.name);
   } catch {
+    // Stryker disable next-line ArrayDeclaration: 這個回傳值一定再過一次 hasTestFile → readdirSync,不存在的名字在那層被濾成 false;任何非空陣列(`["Stryker was here"]`)結果都一樣,真等價(覆核輪判定,2026-09-05)
     return [];
   }
 }

@@ -1271,9 +1271,12 @@ describe('SIGTERM 之後 Stryker 子行程不留', () => {
 // `spawnVitest`(scripts/run-tests.ts)那邊已經做了 detached + 對整個 process group 送 signal,
 // 而且實測歸零。這裡釘的是 `spawnStryker` 要**對稱**:主行程死,整個 group 一起死。
 //
-// 假 stryker 用 sh 寫:起 3 個背景 `sleep` 當 worker、把 pid 寫檔、然後 `wait`。
-// sh 吃到 SIGTERM 會自己死,但**不會**替背景子行程收屍——跟真 Stryker 留孤兒是同一個形狀。
+// 假 stryker 用 node 寫:spawn 3 個 `sleep` 當 worker、把 pid 寫檔、然後留著不退。
+// node 吃到 SIGTERM / SIGINT 會自己死,但**不會**替子行程收屍——跟真 Stryker 留孤兒是同一個形狀。
 // 只 signal 主行程 → 3 個 sleep 全活(紅);signal 整個 group → 3 個全死(綠)。
+// 第一版是 sh 腳本 + `sleep &`:POSIX 規定非互動 sh 用 `&` 起的子行程 **SIGINT 設成忽略**,
+// 群組送 SIGINT 時 3 個 sleep 全活——那是 sh 的規矩,不是 spawnStryker 的洞(真 Stryker 的 worker
+// 是 node,實測 SIGINT 也歸零)。改成 node 起 worker,SIGTERM / SIGINT 兩個版本才都測得到真的東西。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 造「mutate.ts 的複本 + 會 fork 3 個 worker 的假 stryker」的沙盒。 */
@@ -1285,17 +1288,20 @@ function sandboxWithForkingStryker(dir: string): { runner: string; pidFile: stri
   const pidFile = join(dir, 'stryker.pid');
   const workersFile = join(dir, 'workers.pid');
   const bin = join(dir, 'node_modules', '.bin', 'stryker');
-  // 三個 worker 各自是一個 sleep 行程;`$!` 就是那個 sleep 的 pid。最後一行 `wait` 讓 sh
-  // 留在那裡當「Stryker 主行程」。sleep 300 不是 600:測試若紅,finally 會收掉;萬一沒收到,
-  // 5 分鐘也會自己走。
+  // 三個 worker 各自是一個 sleep 行程(同一個 process group,signal 的預設處置)。setInterval 讓
+  // node 留在那裡當「Stryker 主行程」。sleep 300 不是 600:測試若紅,finally 會收掉;萬一沒收到,
+  // 5 分鐘也會自己走。沙盒沒有 package.json → 這個檔是 CommonJS,用 require。
   writeFileSync(
     bin,
-    `#!/bin/sh
-echo $$ > ${JSON.stringify(pidFile)}
-sleep 300 >/dev/null 2>&1 & echo $! >> ${JSON.stringify(workersFile)}
-sleep 300 >/dev/null 2>&1 & echo $! >> ${JSON.stringify(workersFile)}
-sleep 300 >/dev/null 2>&1 & echo $! >> ${JSON.stringify(workersFile)}
-wait
+    `#!/usr/bin/env node
+const { spawn } = require('node:child_process');
+const { writeFileSync, appendFileSync } = require('node:fs');
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+for (let i = 0; i < 3; i++) {
+  const w = spawn('sleep', ['300'], { stdio: 'ignore' });
+  appendFileSync(${JSON.stringify(workersFile)}, w.pid + '\\n');
+}
+setInterval(() => {}, 1000);
 `,
     'utf8',
   );
@@ -1323,9 +1329,9 @@ function readWorkerPids(workersFile: string): number[] {
     .filter((n) => Number.isInteger(n) && n > 0);
 }
 
-describe('SIGTERM 之後 Stryker 的 worker 不留', () => {
+describe.each(['SIGTERM', 'SIGINT'] as const)('%s 之後 Stryker 的 worker 不留', (sig) => {
   it(
-    '殺掉 npm run mutate,stryker 底下 fork 出來的 worker 也要跟著死,一個都不能留',
+    `殺掉 npm run mutate(${sig}),stryker 底下 fork 出來的 worker 也要跟著死,一個都不能留`,
     async () => {
       const dir = tmp('mutate-workerkill');
       const lockPath = join(dir, '.stryker.lock');
@@ -1353,8 +1359,10 @@ describe('SIGTERM 之後 Stryker 的 worker 不留', () => {
         for (const w of workers) expect(pidIsAlive(w), `worker ${w} 起來就死了`).toBe(true);
         expect(existsSync(lockPath)).toBe(true);
 
-        // 只打 runner 這一個 pid——`kill <pid>`、被 timeout 砍、被 supervisor 收都是這個形狀。
-        child.kill('SIGTERM');
+        // 只打 runner 這一個 pid——`kill <pid>`、Ctrl-C、被 timeout 砍、被 supervisor 收都是這個形狀。
+        // SIGINT 也要 0:Stryker 是 detached 起的,終端機的 Ctrl-C 只會送到 mutate.ts 的 group,
+        // 不會直接到 Stryker 那組,全靠 forward 轉。實測(2026-09-05,真 Stryker,5 個 worker)兩種都歸零。
+        child.kill(sig);
         await exited;
 
         // 給 kernel 一點時間收屍;3 個都死了就不用等滿。
@@ -1383,6 +1391,92 @@ describe('SIGTERM 之後 Stryker 的 worker 不留', () => {
           }
         }
         if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+});
+
+// 12c. 審核輪:group kill 只打**自己**的 Stryker group,別的 worktree 的 worker 不動
+//
+// 兩個 worktree 同時跑(一個持真鎖在跑、一個在等;或各自用不同的鎖檔真的同時跑),其中一個被
+// SIGTERM,另一個的 worker **不可以被誤殺**——group kill 打錯 group 會把別人跑到一半的驗收砍掉。
+// 實測(2026-09-05,真 Stryker,兩邊各 5 個 worker,先殺 X 與先殺 Y 各做一次):被殺那邊的
+// group 歸零,另一邊 worker 一個不少。這裡用兩個沙盒各自 fork 3 個 sleep 釘住同一件事。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SIGTERM 只收自己的 Stryker group,別的 worktree 的 worker 不動', () => {
+  it(
+    '兩個 runner 各帶 3 個 worker:殺 A → A 的 3 個死、B 的 3 個活、B 的鎖還在;再殺 B → 全死',
+    async () => {
+      const dirA = tmp('mutate-groupkill-a');
+      const dirB = tmp('mutate-groupkill-b');
+      const A = sandboxWithForkingStryker(dirA);
+      const B = sandboxWithForkingStryker(dirB);
+      const lockA = join(dirA, '.stryker.lock');
+      const lockB = join(dirB, '.stryker.lock');
+      // 不能寫 `workers.some(pidIsAlive)`:索引會被塞進 pidIsAlive 可注入的 `kill`(見 §12b)。
+      const alive = (w: number) => pidIsAlive(w);
+      const settle = async (workers: number[]) => {
+        const gone = Date.now() + 5_000;
+        while (workers.some(alive) && Date.now() < gone) await new Promise((r) => setTimeout(r, 100));
+      };
+      const start = (runner: string, lockPath: string) => {
+        const child = spawn(process.execPath, ['--import', 'tsx', runner, lockPath], { cwd: REPO_ROOT });
+        let out = '';
+        child.stdout.on('data', (c) => (out += String(c)));
+        child.stderr.on('data', (c) => (out += String(c)));
+        // 等 `exit` 不等 `close`,理由同 §12b:孤兒會握著繼承來的管線。
+        const exited = new Promise<number | null>((res) => child.on('exit', (code) => res(code)));
+        return { child, exited, out: () => out };
+      };
+
+      const ra = start(A.runner, lockA);
+      const rb = start(B.runner, lockB);
+      let wa: number[] = [];
+      let wb: number[] = [];
+      try {
+        const deadline = Date.now() + SPAWN_TIMEOUT_MS - 5_000;
+        while ((readWorkerPids(A.workersFile).length < 3 || readWorkerPids(B.workersFile).length < 3) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        wa = readWorkerPids(A.workersFile);
+        wb = readWorkerPids(B.workersFile);
+        expect(wa, `A 的假 stryker 沒把 3 個 worker 起起來:${ra.out()}`).toHaveLength(3);
+        expect(wb, `B 的假 stryker 沒把 3 個 worker 起起來:${rb.out()}`).toHaveLength(3);
+        const strykerB = Number(readFileSync(B.pidFile, 'utf8').trim());
+        expect(existsSync(lockA)).toBe(true);
+        expect(existsSync(lockB)).toBe(true);
+
+        // 殺 A。B 那邊什麼都不該變。
+        ra.child.kill('SIGTERM');
+        await ra.exited;
+        await settle(wa);
+        expect(wa.filter(alive), `A 死了但 A 的 worker 還在:${ra.out()}`).toEqual([]);
+        expect(existsSync(lockA), `A 死了鎖還在:${ra.out()}`).toBe(false);
+        // 這條是核心:B 的 3 個 worker、B 的 stryker、B 的鎖,一個都不能被 A 的 group kill 波及。
+        expect(wb.filter(alive), `殺 A 波及到 B 的 worker(B 活著的:${wb.filter(alive).length}/3):${rb.out()}`).toEqual(wb);
+        expect(pidIsAlive(strykerB), `殺 A 把 B 的 stryker 也殺了:${rb.out()}`).toBe(true);
+        expect(existsSync(lockB), `殺 A 把 B 的鎖也放了:${rb.out()}`).toBe(true);
+
+        // 再殺 B,現在才全死。
+        rb.child.kill('SIGTERM');
+        await rb.exited;
+        await settle(wb);
+        expect(wb.filter(alive), `B 死了但 B 的 worker 還在:${rb.out()}`).toEqual([]);
+        expect(pidIsAlive(strykerB)).toBe(false);
+        expect(existsSync(lockB)).toBe(false);
+      } finally {
+        for (const w of [...wa, ...wb]) {
+          try {
+            process.kill(w, 'SIGKILL');
+          } catch {
+            // 已經死了。
+          }
+        }
+        for (const r of [ra, rb]) {
+          if (r.child.exitCode === null && r.child.signalCode === null) r.child.kill('SIGKILL');
+        }
       }
     },
     SPAWN_TIMEOUT_MS,

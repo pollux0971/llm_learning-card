@@ -25,7 +25,7 @@
  * §5 兩個行程排隊、§8 SIGTERM 之後鎖不留——那兩件事在單一行程裡假不出來。
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
@@ -402,6 +402,50 @@ describe('isPartialRun 的超集規則(§2b)', () => {
     writeFileSync(join(d, 'packages', 'core', 'node_modules', 'dep', 'a.test.ts'), '', 'utf8');
     // packages 現在沒有自己的測試檔 → 三個根,三個全給就是全套。
     expect(isPartialRun(['scripts', 'apps', 'features'], d)).toBe(false);
+  });
+
+  // 下面三條是覆核輪補的:第一次跑嚴格級變異,run-tests.ts 這段掃描碼存活 6 個、沒覆蓋 2 個,全在這裡。
+
+  it('*.test.ts 要在檔名**結尾**:a.test.ts.bak、b.test.tsx 都不算(regex 的 $ 錨點)', () => {
+    const d = cwdLikeRepo();
+    mkdirSync(join(d, 'tools'), { recursive: true });
+    writeFileSync(join(d, 'tools', 'a.test.ts.bak'), '', 'utf8');
+    writeFileSync(join(d, 'tools', 'b.test.tsx'), '', 'utf8');
+    // 沒有 $ 的話 `.test.ts` 會對到這兩個,tools 就變成第五個根、四個全給就不再是 100%。
+    expect(isPartialRun([...ROOTS], d)).toBe(false);
+  });
+
+  it('dist / target / coverage / reports 四個建置產物目錄不掃:頂層的不是根,根底下的也不算數', () => {
+    // 每個名字各自一條斷言:少掃任何一個(例如 SKIP_DIRS 漏了 'coverage')都要有一條紅。
+    for (const name of ['dist', 'target', 'coverage', 'reports']) {
+      const d = cwdLikeRepo();
+      // 頂層:`reports/x.test.ts`(Stryker 會把整個專案複製進 reports 底下的沙盒)不是第五個根。
+      mkdirSync(join(d, name, 'deep'), { recursive: true });
+      writeFileSync(join(d, name, 'deep', 'x.test.ts'), '', 'utf8');
+      expect(isPartialRun([...ROOTS], d), `頂層 ${name}/ 被當成測試根`).toBe(false);
+      // 根底下:tools 本身沒測試,只有 tools/<name>/ 裡有 → tools 不是根。
+      mkdirSync(join(d, 'tools', name), { recursive: true });
+      writeFileSync(join(d, 'tools', name, 'y.test.ts'), '', 'utf8');
+      expect(isPartialRun([...ROOTS], d), `tools/${name}/ 讓 tools 變成測試根`).toBe(false);
+    }
+  });
+
+  it('讀不到的頂層目錄(沒有讀權限)不是測試根,也不會讓判定炸掉', () => {
+    // root 看得到任何目錄,chmod 000 擋不住 → 這條在 root 底下不成立,跳過而不是假綠。
+    if (process.getuid?.() === 0) return;
+    const d = cwdLikeRepo();
+    const sealed = join(d, 'sealed');
+    mkdirSync(sealed, { recursive: true });
+    writeFileSync(join(sealed, 'x.test.ts'), '', 'utf8');
+    chmodSync(sealed, 0o000);
+    try {
+      // 裡面明明有 x.test.ts,但讀不到就不能算它是根:四個全給還是 100%。
+      // readdirSync 丟 EACCES 要被接住回 false,不是往外丟、也不是當成「有」。
+      expect(isPartialRun([...ROOTS], d)).toBe(false);
+    } finally {
+      // afterAll 的 rmSync 要能進去刪。
+      chmodSync(sealed, 0o700);
+    }
   });
 
   it('cwd 底下一個測試根都沒有(或 cwd 不存在)→ 超集規則不介入,§2 的規則照舊', () => {
