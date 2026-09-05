@@ -1259,6 +1259,136 @@ describe('SIGTERM 之後 Stryker 子行程不留', () => {
   );
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 12b. 審核輪(allsuite-lock 的另一半):SIGTERM 之後 Stryker 的 **worker** 也不留
+//
+// §12 只驗了「stryker 主行程死掉」。Stryker 本來就會開一票 worker(child-process-proxy-worker)
+// 跑變異,而且跑得久(90 分鐘逾時),中途被打斷的機率高。實測(2026-09-05,本 worktree,
+// `npm run mutate -- stryker.scanner-mutatelock.json`,worker 起來後對跑 mutate.ts 的那個 node
+// 送 SIGTERM):5 個 worker 剩 **1 個**孤兒,5 秒後還活著;打 tsx 啟動器那個 pid 也是剩 1。
+// 孤兒 worker 正是這整條線要解的問題的成因之一:機器被壓垮 → 探針逾時 → 假紅 → 紅燈被當雜訊。
+//
+// `spawnVitest`(scripts/run-tests.ts)那邊已經做了 detached + 對整個 process group 送 signal,
+// 而且實測歸零。這裡釘的是 `spawnStryker` 要**對稱**:主行程死,整個 group 一起死。
+//
+// 假 stryker 用 sh 寫:起 3 個背景 `sleep` 當 worker、把 pid 寫檔、然後 `wait`。
+// sh 吃到 SIGTERM 會自己死,但**不會**替背景子行程收屍——跟真 Stryker 留孤兒是同一個形狀。
+// 只 signal 主行程 → 3 個 sleep 全活(紅);signal 整個 group → 3 個全死(綠)。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 造「mutate.ts 的複本 + 會 fork 3 個 worker 的假 stryker」的沙盒。 */
+function sandboxWithForkingStryker(dir: string): { runner: string; pidFile: string; workersFile: string } {
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
+  cpSync(MUTATE_MODULE, join(dir, 'scripts', 'mutate.ts'));
+
+  const pidFile = join(dir, 'stryker.pid');
+  const workersFile = join(dir, 'workers.pid');
+  const bin = join(dir, 'node_modules', '.bin', 'stryker');
+  // 三個 worker 各自是一個 sleep 行程;`$!` 就是那個 sleep 的 pid。最後一行 `wait` 讓 sh
+  // 留在那裡當「Stryker 主行程」。sleep 300 不是 600:測試若紅,finally 會收掉;萬一沒收到,
+  // 5 分鐘也會自己走。
+  writeFileSync(
+    bin,
+    `#!/bin/sh
+echo $$ > ${JSON.stringify(pidFile)}
+sleep 300 >/dev/null 2>&1 & echo $! >> ${JSON.stringify(workersFile)}
+sleep 300 >/dev/null 2>&1 & echo $! >> ${JSON.stringify(workersFile)}
+sleep 300 >/dev/null 2>&1 & echo $! >> ${JSON.stringify(workersFile)}
+wait
+`,
+    'utf8',
+  );
+  chmodSync(bin, 0o755);
+
+  const runner = join(dir, 'runner.mts');
+  writeFileSync(
+    runner,
+    `import { runMutate } from ${JSON.stringify(join(dir, 'scripts', 'mutate.ts'))};
+// 只給 lockPath:runStryker 走預設值,也就是真的 spawnStryker。
+const code = await runMutate({ lockPath: process.argv[2], argv: ['node', 'x'] });
+console.log('EXITED ' + code);
+`,
+    'utf8',
+  );
+  return { runner, pidFile, workersFile };
+}
+
+/** 讀 workers.pid,回目前寫進去的 pid(可能還沒寫滿)。 */
+function readWorkerPids(workersFile: string): number[] {
+  if (!existsSync(workersFile)) return [];
+  return readFileSync(workersFile, 'utf8')
+    .split('\n')
+    .map((l) => Number(l.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
+describe('SIGTERM 之後 Stryker 的 worker 不留', () => {
+  it(
+    '殺掉 npm run mutate,stryker 底下 fork 出來的 worker 也要跟著死,一個都不能留',
+    async () => {
+      const dir = tmp('mutate-workerkill');
+      const lockPath = join(dir, '.stryker.lock');
+      const { runner, pidFile, workersFile } = sandboxWithForkingStryker(dir);
+
+      const child = spawn(process.execPath, ['--import', 'tsx', runner, lockPath], { cwd: REPO_ROOT });
+      let out = '';
+      child.stdout.on('data', (c) => (out += String(c)));
+      child.stderr.on('data', (c) => (out += String(c)));
+      // 等 `exit` 不等 `close`:孤兒 worker 會把繼承來的 stdout/stderr 管線握著不放,
+      // `close` 要等管線全關才發——測試會在該紅的時候吊到逾時,而不是紅在「孤兒還活著」那條斷言上。
+      const exited = new Promise<number | null>((res) => child.on('exit', (code) => res(code)));
+
+      let workers: number[] = [];
+      try {
+        // 等到 3 個 worker 真的都起來(pgrep 數得到)為止。
+        const deadline = Date.now() + SPAWN_TIMEOUT_MS - 5_000;
+        while (readWorkerPids(workersFile).length < 3 && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        workers = readWorkerPids(workersFile);
+        expect(workers, `假 stryker 沒把 3 個 worker 起起來:${out}`).toHaveLength(3);
+        const strykerPid = Number(readFileSync(pidFile, 'utf8').trim());
+        expect(pidIsAlive(strykerPid)).toBe(true);
+        for (const w of workers) expect(pidIsAlive(w), `worker ${w} 起來就死了`).toBe(true);
+        expect(existsSync(lockPath)).toBe(true);
+
+        // 只打 runner 這一個 pid——`kill <pid>`、被 timeout 砍、被 supervisor 收都是這個形狀。
+        child.kill('SIGTERM');
+        await exited;
+
+        // 給 kernel 一點時間收屍;3 個都死了就不用等滿。
+        const gone = Date.now() + 5_000;
+        // 不能寫 `workers.some(pidIsAlive)`:some / filter 會把索引當第二個參數塞進去,
+        // 那是 pidIsAlive 可注入的 `kill`,索引 0 → `kill = 0` → TypeError → 被當成「活著」。
+        // 第一版就是這樣紅在假孤兒上的。
+        const alive = (w: number) => pidIsAlive(w);
+        while (workers.some(alive) && Date.now() < gone) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+
+        const survivors = workers.filter(alive);
+        // 主行程死了、鎖放了,但 worker 還在跑 = 下一個拿到鎖的人跟這幾個 worker 搶 CPU,
+        // 正是這把鎖要防的假紅。要的是 **0**,不是「少幾個」。
+        expect(survivors, `stryker 主行程死了但 worker 還活著(孤兒 ${survivors.length}/3):${out}`).toEqual([]);
+        expect(pidIsAlive(strykerPid), `stryker (pid ${strykerPid}) 還活著:${out}`).toBe(false);
+        expect(existsSync(lockPath), `SIGTERM 之後鎖還在:${out}`).toBe(false);
+      } finally {
+        // 測試紅的時候孤兒是真的:自己收掉,不留 3 個 sleep 給下一條測試或下一個人。
+        for (const w of workers) {
+          try {
+            process.kill(w, 'SIGKILL');
+          } catch {
+            // 已經死了。
+          }
+        }
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+});
+
 describe('鎖的位置不看測試套件自己在哪裡跑', () => {
   it(
     '從 worktree 裡起跑、不給 lockPath:鎖落在主 repo 的根,不是那個 worktree 的根',

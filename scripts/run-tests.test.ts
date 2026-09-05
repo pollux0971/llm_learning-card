@@ -11,6 +11,9 @@
  * 這個檔案守四件事:
  *   §2 **哪條線算小範圍**——單檔 / 小範圍 vitest **不准搶鎖**,不然日常開發沒法用。
  *      這條最容易做過頭,所以線釘死在測試裡,改線先改這裡。
+ *   §2b **超集漏**——給的路徑聯集涵蓋了**所有**含測試檔的頂層目錄(現況 packages / scripts /
+ *      apps / features 四個)→ 跑的是 100%,仍算全套、要拿鎖。測試根是**掃出來的**,不從 vitest
+ *      config 推(config 會變,改 config 的人不會想到要同步這裡)。錯的方向仍然是多鎖。
  *   §5 兩個 worktree 同時發起全套 → 第二個**真的等待**,不是直接跑。
  *   §6 一邊 Stryker、一邊全套 → **互斥**,兩個方向都要。
  *   §7 逾時 / 殘鎖 / 壞檔寬限**沿用** mutate.ts 的 acquireLock,這支不重新發明。
@@ -152,6 +155,10 @@ describe('isPartialRun(小範圍的線)', () => {
     mkdirSync(join(d, 'scripts'), { recursive: true });
     mkdirSync(join(d, 'packages', 'core'), { recursive: true });
     writeFileSync(join(d, 'scripts', 'mutate.test.ts'), '', 'utf8');
+    // 兩個測試根(scripts、packages),不是一個:§2b 的超集規則說「給的路徑涵蓋**所有**含測試檔的
+    // 頂層目錄就是全套」。只有一個根的話,`scripts/` 就是 100%,下面「給了存在的目錄 → 小範圍」
+    // 那幾條會變成在測超集,不是在測「目錄算小範圍」。
+    writeFileSync(join(d, 'packages', 'core', 'core.test.ts'), '', 'utf8');
     return d;
   }
 
@@ -257,6 +264,221 @@ describe('isPartialRun(小範圍的線)', () => {
     const d = cwdWithFiles();
     expect(isPartialRun(['.'], `${d}/scripts/..`)).toBe(false);
     expect(isPartialRun(['scripts'], `${d}/scripts/..`)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2b. 超集漏:四個頂層目錄全給,判成小範圍卻跑了 100%
+//
+// `npm test -- packages scripts apps features`:四個都存在、都不是 cwd 或 cwd 的祖先,
+// §2 的規則判成小範圍 → 不拿鎖。**但它跑的是整套。** 這是 nightmare-assault 的工人拿我們的
+// 「小範圍誤判」表去量出來的 9 種之一(其他 8 種我們不中:沒有單一 testpaths 目錄、npm test 的
+// cwd 永遠是 repo 根、`--root` 的值一律當全套所以多鎖)。
+//
+// 裁定(技術顧問):小範圍判定之後**再加一層**——給定路徑的聯集涵蓋了所有「含 *.test.ts 的
+// 頂層目錄」→ 仍算全套。測試根**掃 repo 頂層目錄**算出來,**不從 vitest config 推**。
+// 錯的方向仍然是多鎖。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('isPartialRun 的超集規則(§2b)', () => {
+  /**
+   * 一個長得像本 repo 的臨時 cwd:四個含測試檔的頂層目錄(測試檔藏在不同深度)、
+   * 一個沒有測試檔的頂層目錄(docs)、一個頂層檔案(vitest.config.ts)。
+   * 現況實測(2026-09-05,repo 根):packages 76 檔、scripts 13、apps 7、features 1,就是這四個。
+   */
+  const ROOTS = ['packages', 'scripts', 'apps', 'features'] as const;
+  function cwdLikeRepo(): string {
+    const d = tmp('run-tests-superset');
+    mkdirSync(join(d, 'packages', 'core', 'src'), { recursive: true });
+    writeFileSync(join(d, 'packages', 'core', 'src', 'scheduler.test.ts'), '', 'utf8');
+    mkdirSync(join(d, 'scripts'), { recursive: true });
+    writeFileSync(join(d, 'scripts', 'mutate.test.ts'), '', 'utf8');
+    mkdirSync(join(d, 'apps', 'desktop', 'src', 'lib'), { recursive: true });
+    writeFileSync(join(d, 'apps', 'desktop', 'src', 'lib', 'store.test.ts'), '', 'utf8');
+    mkdirSync(join(d, 'features', 'support'), { recursive: true });
+    writeFileSync(join(d, 'features', 'support', 'helpers.test.ts'), '', 'utf8');
+    mkdirSync(join(d, 'docs', 'reviews'), { recursive: true });
+    writeFileSync(join(d, 'docs', 'reviews', 'x.md'), '', 'utf8');
+    writeFileSync(join(d, 'vitest.config.ts'), '', 'utf8');
+    return d;
+  }
+
+  it('四個測試根全給 → 全套(拿鎖):那就是 100%,只是換了個寫法', () => {
+    // 這條是這半的核心。
+    expect(isPartialRun([...ROOTS], cwdLikeRepo())).toBe(false);
+  });
+
+  it('順序、結尾斜線、絕對路徑、重複給都不影響:看的是聯集,不是字面也不是個數', () => {
+    const d = cwdLikeRepo();
+    expect(isPartialRun(['features', 'apps', 'scripts', 'packages'], d)).toBe(false);
+    expect(isPartialRun(['packages/', 'scripts/', 'apps/', 'features/'], d)).toBe(false);
+    expect(isPartialRun(ROOTS.map((r) => join(d, r)), d)).toBe(false);
+    expect(isPartialRun(['packages', join(d, 'scripts'), 'apps/', './features'], d)).toBe(false);
+    // 同一個根給三次還是只涵蓋一個根,不是「給了 ≥ 4 個就算全套」。
+    expect(isPartialRun(['scripts', 'scripts', 'scripts', 'scripts'], d)).toBe(true);
+  });
+
+  it('給三個 → 仍是小範圍(不拿鎖):少一個根就不是 100%', () => {
+    const d = cwdLikeRepo();
+    expect(isPartialRun(['packages', 'scripts', 'apps'], d)).toBe(true);
+    expect(isPartialRun(['scripts', 'apps', 'features'], d)).toBe(true);
+    expect(isPartialRun(['packages', 'features'], d)).toBe(true);
+    expect(isPartialRun(['packages'], d)).toBe(true);
+  });
+
+  it('四個根全給再多給旗標 → 還是全套(旗標不改變範圍,§2 同一條)', () => {
+    expect(isPartialRun(['--reporter=verbose', ...ROOTS, '--bail=1'], cwdLikeRepo())).toBe(false);
+  });
+
+  it('沒有測試檔的頂層目錄不是測試根:給它不算涵蓋,少給它也不算漏', () => {
+    const d = cwdLikeRepo();
+    // docs 沒有 *.test.ts。三個根 + docs 還是三個根 → 小範圍。
+    expect(isPartialRun(['packages', 'scripts', 'apps', 'docs'], d)).toBe(true);
+    // 四個根 + docs → 全套;docs 不會把「還差一個」的錯覺帶進來。
+    expect(isPartialRun([...ROOTS, 'docs'], d)).toBe(false);
+  });
+
+  it('頂層檔案不是測試根:vitest.config.ts 存在也不算一個要涵蓋的目錄', () => {
+    const d = cwdLikeRepo();
+    expect(isPartialRun([...ROOTS], d)).toBe(false);
+    expect(isPartialRun(['vitest.config.ts', 'packages', 'scripts', 'apps'], d)).toBe(true);
+  });
+
+  it('根底下的檔案或子目錄不算涵蓋那個根:scripts/mutate.test.ts + 其他三個根 → 小範圍', () => {
+    const d = cwdLikeRepo();
+    expect(isPartialRun(['scripts/mutate.test.ts', 'packages', 'apps', 'features'], d)).toBe(true);
+    expect(isPartialRun(['packages/core', 'scripts', 'apps', 'features'], d)).toBe(true);
+    // 子目錄湊起來也不算:packages/core 不等於 packages(packages 底下可能還有別的套件)。
+    expect(isPartialRun(['packages/core', 'packages/core/src', 'scripts', 'apps', 'features'], d)).toBe(true);
+  });
+
+  it('測試根是掃出來的,不是寫死的:新增一個含測試檔的頂層目錄,判定跟著變', () => {
+    const d = cwdLikeRepo();
+    expect(isPartialRun([...ROOTS], d)).toBe(false);
+    // 多一個含測試檔的頂層目錄 → 原本的四個就不再是 100%。
+    mkdirSync(join(d, 'tools', 'deep', 'er'), { recursive: true });
+    writeFileSync(join(d, 'tools', 'deep', 'er', 'cli.test.ts'), '', 'utf8');
+    expect(isPartialRun([...ROOTS], d)).toBe(true);
+    expect(isPartialRun([...ROOTS, 'tools'], d)).toBe(false);
+    // 反過來:拿掉一個根的測試檔,剩三個根,三個全給就是全套。
+    rmSync(join(d, 'tools'), { recursive: true, force: true });
+    rmSync(join(d, 'features', 'support', 'helpers.test.ts'));
+    expect(isPartialRun(['packages', 'scripts', 'apps'], d)).toBe(false);
+  });
+
+  it('只認 *.test.ts:.spec.ts、.test.js、test.ts(沒有點)都不會把一個目錄變成測試根', () => {
+    const d = cwdLikeRepo();
+    mkdirSync(join(d, 'tools'), { recursive: true });
+    writeFileSync(join(d, 'tools', 'a.spec.ts'), '', 'utf8');
+    writeFileSync(join(d, 'tools', 'b.test.js'), '', 'utf8');
+    writeFileSync(join(d, 'tools', 'test.ts'), '', 'utf8');
+    writeFileSync(join(d, 'tools', 'test.ts.bak'), '', 'utf8');
+    // tools 不是測試根 → 四個仍是 100%。
+    expect(isPartialRun([...ROOTS], d)).toBe(false);
+    // 真的放一個 *.test.ts 進去才算。
+    writeFileSync(join(d, 'tools', 'c.test.ts'), '', 'utf8');
+    expect(isPartialRun([...ROOTS], d)).toBe(true);
+  });
+
+  it('node_modules 與點開頭的目錄不掃:裡面的 *.test.ts 不會製造一個永遠涵蓋不到的假根', () => {
+    // 這條是這個規則的命門。node_modules 裡有幾百個 *.test.ts(現況 190 檔),.stryker-tmp 的
+    // 沙盒更是整個專案的複本。它們若算根,四個全給永遠「還差一個」→ 永遠小範圍 → 規則形同虛設。
+    const d = cwdLikeRepo();
+    mkdirSync(join(d, 'node_modules', 'some-dep', 'src'), { recursive: true });
+    writeFileSync(join(d, 'node_modules', 'some-dep', 'src', 'index.test.ts'), '', 'utf8');
+    mkdirSync(join(d, '.stryker-tmp', 'sandbox-123', 'scripts'), { recursive: true });
+    writeFileSync(join(d, '.stryker-tmp', 'sandbox-123', 'scripts', 'mutate.test.ts'), '', 'utf8');
+    mkdirSync(join(d, '.git', 'hooks'), { recursive: true });
+    writeFileSync(join(d, '.git', 'hooks', 'x.test.ts'), '', 'utf8');
+    expect(isPartialRun([...ROOTS], d)).toBe(false);
+    // 而且就算有人把它們也寫進去,也不會因此變成「多涵蓋了根」以外的東西:還是全套。
+    expect(isPartialRun([...ROOTS, 'node_modules', '.stryker-tmp'], d)).toBe(false);
+  });
+
+  it('根底下的 node_modules 不算:packages/core/node_modules 裡的測試檔不會讓 packages 變成根', () => {
+    const d = cwdLikeRepo();
+    rmSync(join(d, 'packages', 'core', 'src', 'scheduler.test.ts'));
+    mkdirSync(join(d, 'packages', 'core', 'node_modules', 'dep'), { recursive: true });
+    writeFileSync(join(d, 'packages', 'core', 'node_modules', 'dep', 'a.test.ts'), '', 'utf8');
+    // packages 現在沒有自己的測試檔 → 三個根,三個全給就是全套。
+    expect(isPartialRun(['scripts', 'apps', 'features'], d)).toBe(false);
+  });
+
+  it('cwd 底下一個測試根都沒有(或 cwd 不存在)→ 超集規則不介入,§2 的規則照舊', () => {
+    // 「涵蓋所有根」對空集合是空泛的真;但那不是 100%,那是「這裡沒有測試」。
+    // 拿存在的檔案判小範圍的舊規則要留著,不然 `絕對路徑也算` 那條(cwd=/nowhere)就翻了。
+    const d = tmp('run-tests-no-roots');
+    mkdirSync(join(d, 'src'), { recursive: true });
+    writeFileSync(join(d, 'src', 'a.ts'), '', 'utf8');
+    expect(isPartialRun(['src'], d)).toBe(true);
+    expect(isPartialRun([], d)).toBe(false);
+    const elsewhere = cwdLikeRepo();
+    expect(isPartialRun([join(elsewhere, 'scripts', 'mutate.test.ts')], '/nowhere/at/all')).toBe(true);
+  });
+
+  it('cwd 的祖先或 cwd 自己混在四個根裡 → 還是全套(§2 那半句蓋過一切,不會被這層翻回小範圍)', () => {
+    const d = cwdLikeRepo();
+    expect(isPartialRun(['.', ...ROOTS], d)).toBe(false);
+    expect(isPartialRun(['..', 'packages'], d)).toBe(false);
+  });
+
+  it('真的 repo:packages scripts apps features 四個全給 → 全套;少一個 → 小範圍', () => {
+    // 這條釘的是「現況就是這四個」。多了或少了一個含測試檔的頂層目錄,這條會紅——那是對的:
+    // 那時候要來這裡改 ROOTS,順便想一下 package.json / 文件裡的例子要不要跟著改。
+    expect(isPartialRun([...ROOTS], REPO_ROOT)).toBe(false);
+    expect(isPartialRun(['packages', 'scripts', 'apps'], REPO_ROOT)).toBe(true);
+    expect(isPartialRun(['scripts'], REPO_ROOT)).toBe(true);
+  });
+});
+
+describe('runTests 的超集:四個根全給要拿鎖', () => {
+  it('`npm test -- packages scripts apps features`:鎖被別人握著就要排隊,不能直接跑', async () => {
+    // isPartialRun 判對了還不夠,要確認 runTests 真的去拿鎖(跟 `npm test -- .` 那條同一個形狀)。
+    const dir = tmp('run-tests-superset-queues');
+    const lockPath = holdLiveLock(dir);
+    let acquired = 0;
+    let ran: string[] | undefined;
+    const code = await runTests({
+      argv: ['node', 'run-tests.ts', '--', 'packages', 'scripts', 'apps', 'features'],
+      lockPath,
+      acquire: async (p) => {
+        acquired += 1;
+        return { lockPath: p, info: info(), release: () => {} };
+      },
+      runVitest: async (args) => {
+        ran = args;
+        return 0;
+      },
+      installCleanup: () => () => {},
+      log: () => {},
+      cwd: REPO_ROOT,
+    });
+    expect(code).toBe(0);
+    expect(acquired).toBe(1);
+    // 參數原樣給 vitest:是拿不拿鎖的問題,不是改使用者要跑什麼。
+    expect(ran).toEqual(['run', 'packages', 'scripts', 'apps', 'features']);
+  });
+
+  it('三個根:鎖被別人握著照樣立刻跑(這層不能把小範圍做過頭)', async () => {
+    const dir = tmp('run-tests-three-roots');
+    const lockPath = holdLiveLock(dir);
+    const before = readFileSync(lockPath, 'utf8');
+    let ran = false;
+    const code = await runTests({
+      argv: ['node', 'run-tests.ts', '--', 'packages', 'scripts', 'apps'],
+      lockPath,
+      lock: { sleep: NEVER_SLEEP, log: () => {}, isAlive: () => true },
+      runVitest: async () => {
+        ran = true;
+        return 0;
+      },
+      installCleanup: () => () => {},
+      log: () => {},
+      cwd: REPO_ROOT,
+    });
+    expect(code).toBe(0);
+    expect(ran).toBe(true);
+    expect(readFileSync(lockPath, 'utf8')).toBe(before);
   });
 });
 
