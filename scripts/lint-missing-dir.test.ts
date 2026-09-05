@@ -89,7 +89,12 @@ describe('scripts/lint.ts --dir 指到不存在的目錄', () => {
   }, SPAWN_TIMEOUT_MS);
 
   it('守門不誤傷真的目錄:剛 init 完的 vault 不會被說成「不存在」或「不是目錄」', () => {
-    // 只盯守門這半邊(exit 0 + 兩句守門話都沒出現);成功時報告長什麼樣歸 lint.steps.ts。
+    // 只盯守門這半邊(兩句守門話都沒出現);成功時報告長什麼樣歸 lint.steps.ts。
+    //
+    // 剛 init 完的 vault 是 0 張卡,而 main 的 P-28 規定「掃到 0 張卡一律 exit 1」
+    // (lint.ts 檔頭與 0 張卡那段)。所以這裡是 exit 1,但**理由必須是 P-28 的
+    // 「掃描到 0 張卡」**,不是這個檔案守的「目錄不存在 / 不是目錄」——退出碼一樣,
+    // 靠訊息分。這條原本斷言 exit 0,那是 P-28 合進來之前的規格,已過期。
     const dir = join(tmpDir(), 'vault');
     const init = spawnSync('npx', ['tsx', 'packages/core/src/schema/cli.ts', 'init', dir], {
       cwd: REPO_ROOT,
@@ -99,7 +104,8 @@ describe('scripts/lint.ts --dir 指到不存在的目錄', () => {
     expect(init.status).toBe(0);
 
     const { code, output } = runLint(dir);
-    expect(code).toBe(0);
+    expect(code).toBe(1);
+    expect(output).toContain('0 張卡');
     expect(output).not.toContain('目錄不存在');
     expect(output).not.toContain('不是目錄');
   }, SPAWN_TIMEOUT_MS * 2);
