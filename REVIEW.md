@@ -1,18 +1,21 @@
-# 採用模板 v1.4.1 — 交接
+# 採用模板 v1.4.1 → v1.4.2 — 交接
 
 分支 `pollux0971/template-141`,基底 `1e3b7a8`(main 之後只多一個 `c60173f`,只動 `scripts/degraded-report.ts`,不衝突)。
-模板來源:tag `template/v1.4.1` = `ff7f64b`。
+模板來源:先 tag `template/v1.4.1` = `ff7f64b`,再依協調者的 B2 決定升到 `template/v1.4.2` = `1c1d403`(模板為本 repo 的 P-83 出的修補版)。
+
+**commit 切法**(依協調者要求,基準變動獨立):`f9ba3fa` 1.4.1 實作 → `d8d4a5c` zero-input 基準 66→48(只動基準檔)→ `4a239e2` 升 1.4.2 + phase-status 接線 → 最後一個 commit 是本檔的收尾。
 
 ## 一、結論先講
 
-- 守門同步到 **v1.4.1 (ff7f64b)**,18 支 `.ts` 全部帶 SOURCE 標頭;`check:gates` 綠(含接線檢查)。
-- `check:all` 一個指令跑完整鏈,chain 14 步(§2.1 現有 11 步 + `check:doc-rot` + `check:next-gates`;`check:known-defects` 走 `unwired`)。
+- 守門同步到 **v1.4.2 (1c1d403)**,20 支 `.ts` 全部帶 SOURCE 標頭;`check:gates` 綠(含接線檢查)。對 `scripts/` grep 那句可照抄的 Stryker CLI 指令(協調者要的那條 grep)→ **0 命中**,grep exit 1(1.4.1 時 1 處:`check-doc-rot.test.ts:432`)。
+- `check:all` 一個指令跑完整鏈,chain **14 步**(§2.1 現有 11 步 + `check:doc-rot` + `check:next-gates` + `check:phase-status`;`check:known-defects` 走 `unwired`)。
+- `check:phase-status`(1.4.2 新守門)report 模式,對本 repo:12 份 FEATURE.md / 38 列,**PASS,沒有漂移**。照 P-71 維持 report,不切 enforce。
 - `check:next-gates`:report 模式 PASS scanned=12 → 已切 **enforce**,仍 PASS。
 - `check:doc-rot`:只命中 **1 處**(`CLAUDE.md:77`,使用者的檔,照指示不動)→ **仍是 report**,沒清完不切 enforce。
 - `check:doc-links`:18 處 `file:line` 全部拿掉行號(路徑本身都還存在,沒有一處需要改路徑)→ PASS。
-- boundaries:量到 **242 / 242**(工單寫 222),基準寫 242。
+- boundaries:1.4.1 時量到 **242 / 242**(工單寫 222);1.4.2 多兩檔 → **244 / 244**,基準寫 244。
 - 三條反向驗證都實際做過、都紅(輸出見 §四)。
-- 全鏈與 junit 對帳結果見 §五。
+- **還剩 2 條紅**,都是同一個模板缺陷(§二.9),等協調者決定;其餘全綠。全鏈與 junit 對帳見 §六。
 
 ## 二、工單沒預料到、需要協調者知道的事
 
@@ -80,11 +83,10 @@
   standalone 在「設定檔是壞 JSON / 型別錯 / 不存在」時的裸 stack、同 healthy、exit 0 都修掉了。測試明講「從基準移除、max 改小」,
   已從 `scripts/zero-input-guard.baseline.json` 拿掉 18 筆,`max` 66 → 48(那是設定檔)。**這是 1.4.1 真的還了 18 筆債。**
 - **ROSTER 完整性**:4 支新入口(`check-all` / `check-doc-rot` / `check-known-defects` / `check-next-gates`)不在清單 → 紅。
-  已各補一筆宣告式 entry(healthy 基線 + 四種探針),照 `check-gherkin-dup` 的形狀;`check-all` 與 `check-doc-rot`、
-  `check-known-defects` 的健康基線用 `--root` 指到假 consumer(對本 repo 跑分別是「跑整條鏈」「掃 500 檔且 CLAUDE.md 有命中」
-  「0 目標例外 exit 1」,都不是健康路徑)。全檔 564 passed / 136 skipped,**沒有新增任何基準條目**。
-- 順帶量到一個模板的洞(回流候選):`check-next-gates --root <不存在>` 只印「掃到 0 份 NEXT.md」,**不指名那條路徑**
-  (其餘三支都指名)。基準只准減不准增,所以那個探針不填 `mention`,註解寫明。
+  已各補一筆宣告式 entry(healthy 基線 + 四種探針),照 `check-gherkin-dup` 的形狀;1.4.2 後再補第 5 支 `check-phase-status`。
+  `check-all` / `check-doc-rot` / `check-known-defects` / `check-phase-status` 的健康基線用 `--root` 指到假 consumer(對本 repo 跑分別是
+  「跑整條鏈」「掃 500 檔且 CLAUDE.md 有命中」「0 目標例外 exit 1」「對 38 個 done phase 真起 cucumber」,都不是健康路徑)。
+  結果:5 個 healthy 基線全過;20 個探針 18 全過、2 個只差「指名路徑」一項(§二.9)。**沒有新增任何基準條目,`max` 沒有因新入口變大。**
 
 ### 8. `mutate.test.ts`「文件裡不准出現繞過鎖的指令」撞到模板的測試資料
 
@@ -92,7 +94,36 @@
 - `scripts/doc-rot.blacklist.json`(本 repo 的設定):那條規則的 `pattern` 與 `reason` 是字面寫法。已改成
   `npx\s+stryker\s+run`、`reason` 改寫、加 `note` 說明理由;`--self-test` 3/3 仍命中。
 - `scripts/check-doc-rot.test.ts:432`(**模板檔**,SOURCE 標頭,不能改):測試資料裡的字面規則。
-  處置等協調者決定(B1 = mutate.test.ts 對帶 SOURCE 標頭的檔案開例外;B2 = 回流模板把測試資料拆字串;見 §五)。
+  **協調者決 B2、拒絕 B1**(「來源可查 ≠ 內容可信」,SOURCE 豁免等於幫整個目錄開後門)。模板出 **1.4.2**:fixture 改 `['npx','stryker','run'].join(' ')`、黑名單改 `\s+` regex、新增 `no-bypass-literal.test.ts`(PITFALLS P-83)。本 repo 重 sync 到 1.4.2 後 `mutate.test.ts` 150/150 綠。
+
+### 9. 兩個探針不過:`check-next-gates` / `check-phase-status` 對不存在的 `--root` 不指名路徑(**等你決定,沒塞進基準**)
+
+zero-input ROSTER 補的 5 支新入口 × 4 種探針 = 20 個探針,每個探針有「退出碼非 0 / 不噴裸 stack / 跟 healthy 不同 / 指名路徑(有給 mention 才比)」幾項檢查。
+**18 個探針全項通過;2 個探針只有「指名有問題的那條路徑」那一項不過**,形狀一模一樣:
+
+```
+$ npx tsx scripts/check-next-gates.ts --root /tmp/definitely-not-here
+✗ next-gates: 掃到 0 份 NEXT.md
+這不是很乾淨,是掃描器壞了。features/ 底下沒有任何 NN-name 資料夾有 NEXT.md,或 --root 指錯路徑時就長這樣。
+gate=next-gates result=FAIL scanned=0
+
+$ npx tsx scripts/check-phase-status.ts --root /tmp/definitely-not-here
+✗ 掃到 0 份 FEATURE.md。這不是很乾淨,是掃描器壞了。
+gate=phase-status result=FAIL scanned=0
+```
+
+對照同一批裡有做對的兩支(`check-doc-rot`、`check-all`):
+```
+✗ 設定檔未找到於 /tmp/definitely-not-here/scripts/doc-rot.blacklist.json(--root 明講時不退回腳本自身目錄;要指定別處請設 GATES_CONFIG_DIR)
+```
+
+ADR-045 鎖 1:新入口必須先達標才進 main,基準只收守門誕生前的洞、`max` 不准變大——所以這 2 條**沒有**進基準,
+探針也**沒有**拿掉 `mention` 來放寬(我一開始對 next-gates 那條拿掉過,已還原成誠實的紅)。兩條路都要你講:
+- (i) **回流模板**:兩支對 `--root` 明講且目錄不存在時,像 doc-rot / check-all 一樣印出那條路徑(1.4.3)。本 repo 等新版再 sync。
+- (ii) 判定「0 份 + 『--root 指錯路徑時就長這樣』」已足夠指名問題 → 探針不填 `mention`(那項檢查會 skip)。
+我的傾向是 (i):其餘三支都指名,這兩支不指名是不一致,不是設計。
+
+`check:all` 的 `test` 步因此仍紅(就這 2 條)。其餘 13 步全綠。
 
 ## 三、做了什麼(照工單順序)
 
@@ -105,7 +136,8 @@
 7. next-gates:report PASS 12 → 切 enforce → PASS 12。
 8. boundaries:先量(231 → 加 11 檔後 242/242 100%),`coverageBaseline: {managed: 242, scanned: 242}`。
 9. hook:不裝(§二.3),README 寫落地步驟。
-10. 驗收:§四、§五。
+10. 驗收:§四、§五、§六。
+11. **升 1.4.2**(協調者 B2):重 sync 20 支;`package.json` 加 `check:phase-status`;`gates.config.json` 加 `phaseStatus.mode=report`、chain 第 14 步;owners 加 2 檔、基準 244;ROSTER 加第 5 支。`doc-rot.blacklist.json` 是 copy-once,1.4.2 升級指南要手改的那一筆我在 1.4.1 時就已改成 `\s+` 寫法。
 
 `{{PARALLEL_CAP}}` = 3(SKILL.md 由協調者改)。`CLAUDE.md`、`.claude/skills/` 都沒動。
 
