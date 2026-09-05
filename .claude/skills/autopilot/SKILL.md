@@ -187,6 +187,15 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
   **順序也重要:先 `reply` 再 `ack`** —— ack 之後 `check` 就抓不到那個 msg_id 了,只能退而用 `send`(就是踩坑的那次)。
 - `check --wait` 可能回**已處理過的舊訊息**(`"replayed": true`),要 `--ack <deliveryId>` 再等下一則,不然空轉
 - 開 worktree 明確指定起點(`--base-branch main` 或 `git worktree add -b <branch> <path> main`),開完驗 `git merge-base --is-ancestor main <branch>`(P-18)
+- **新 worktree 有三樣東西 clone 完不會自動有,派工時要講**(2026-09-05,worker 自己撞到並自己解決,但下一個還會再撞):
+  1. **`.env`** —— 沒有它 `npm test` 的全套跑不動。worker 要自己
+     `export LLM_DAILY_CAP_USD=1 LLM_PRICE_IN_PER_M=2.5 LLM_PRICE_OUT_PER_M=10`,
+     或從主簽出連過去。**驗證方式:`npx tsx scripts/llm-spend.ts --today` 要回 0 或 1,回 2 就是沒設好。**
+  2. **pre-commit hook**(`scripts/hooks/pre-commit` 要自己 `cp` 到 `.git/hooks/` 並 `chmod +x`)
+  3. **`TEMPLATE_DIR`** —— `check:gates` 在 worktree 要設,不然找不到模板。
+  這三樣的共同形狀是「**在版控外面**」,所以 `git clone` / `worktree add` 都不會帶。
+  模板 1.4.2 會把它做成 `TASK.md.template` 的第 0 步與 CHECKLIST 的一節;**在那之前由派工說明帶。**
+
 - **續用舊 worktree 之前先 `git merge main`(不 rebase)。** P-18 只管「開的時候」,但一個 worktree
   活好幾輪之後,main 早就往前跑了 —— 實例:`a93e59b` 的 base 落後 origin/main 約 6 條。
   那次無害(中間沒人動同一批檔),但**無害是運氣,不是設計**。先 merge 的好處是
