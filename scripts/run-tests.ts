@@ -13,6 +13,13 @@
  *   npm test -- scripts/mutate.test.ts         # 給了存在的檔案 / 目錄 → **不拿鎖**,直接跑
  *   npx vitest run scripts/mutate.test.ts      # 根本不經過這支 → 當然不拿鎖
  *
+ * **`--` 可省略,但邊界在哪要講清楚**(2026-09-05 實測,協調者):
+ *   `npm test scripts/x.test.ts` 與 `npm test -- scripts/x.test.ts` **等價** ——
+ *   `npm test` 是 npm 的特例別名,會把尾隨參數接在 script 尾巴那個 `--` 之後。
+ *   (實測 `npm test scripts/mutate.test.ts` → 1 檔 150 條、沒取鎖;當全套會是 97 檔。)
+ *   **但直接叫腳本 `npx tsx scripts/run-tests.ts scripts/x.test.ts`(沒有 `--`)會當全套**,
+ *   因為那時沒有人幫你補那個 `--`。技術顧問就是量了後者、推廣成前者才推論錯的。
+ *
  * **哪條線算「小範圍」**(釘在 scripts/run-tests.test.ts §2,改線先改測試):
  * `--` 之後有任何一個**存在於磁碟上的檔案或目錄**當位置參數,**而且它不是 cwd 本身或 cwd 的祖先**,
  * 就是小範圍,不拿鎖。
