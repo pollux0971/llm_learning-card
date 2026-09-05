@@ -1,4 +1,65 @@
-# REVIEW — 全套 vitest 與 Stryker 共用一把鎖(測試輪,只寫紅)
+# REVIEW — 全套 vitest 與 Stryker 共用一把鎖(開發輪:59 紅做綠)
+
+接測試輪 `d27bebe`(59 紅 / 124 綠)。**沒碰任何 `*.test.ts` / `*.steps.ts` / `*.feature`。**
+`git merge main`(`48816bf`)已做;merge 時 git 把上一輪的交接 REVIEW.md 當成「對改名檔的修改」
+塞進 `docs/reviews/03-llm-router-phase-2-round-1.md`,已修正:那份從 main 還原(263 行),
+交接檔留在根目錄(下面「測試輪」段落原文)。
+
+## 結果
+
+| 檢查 | 結果 |
+|---|---|
+| `npx vitest run scripts/run-tests.test.ts scripts/mutate.test.ts` | **183 / 183 綠** |
+| `npm test`(全套,經鎖) | 92 檔、2418 綠 / 123 skip,exit 0,145 秒 |
+| `npm run typecheck` / `boundaries` / `lint:docs` | 過 |
+| `git diff --stat` | 只有 `package.json`、`scripts/mutate.ts`、`scripts/run-tests.ts` |
+| 反向驗證(`isPartialRun` 永遠回 true) | **19 紅**:§2 六條、§4 五條、§5 三條、§6 一條、§7 三條、§8 一條 → 那條線有被測到 |
+
+### `npm test` 真的排隊了(這是這張工單的產出)
+
+驗法:先用一支小腳本以 `cwd=/data/python/llm_learning-cards`(主簽出,別的 worktree)、`task: 'stryker'`
+握住真的 `/data/python/llm_learning-cards/.stryker.lock` 60 秒,期間:
+
+- `npm test -- scripts/mutate.test.ts`(小範圍)→ **沒等**,12 秒跑完 138 綠。
+- `npm test`(全套)→ 等了 3 輪(45 秒),訊息如下,持鎖者放掉後才起 vitest;跑完鎖不在。
+
+```
+等待 .stryker.lock(持鎖者 pid 3942232 在跑 Stryker, cwd=/data/python/llm_learning-cards)
+→ 這是別的 worktree 佔的。不要刪鎖,不要 kill 那個 pid。逾時 90 分鐘,已等 0 秒。
+等待 .stryker.lock(持鎖者 pid 3942232 在跑 Stryker, cwd=/data/python/llm_learning-cards)
+→ 這是別的 worktree 佔的。不要刪鎖,不要 kill 那個 pid。逾時 90 分鐘,已等 15 秒。
+```
+
+同一個 worktree 的鏈(自己 worktree 握鎖、從子目錄發起全套):
+
+```
+等待 .stryker.lock(持鎖者 pid 3983521 在跑 Stryker, cwd=/home/pollux/orca/workspaces/llm_learning-cards/stryker-lock-allsuite)
+→ 這是你自己排的鏈(同一個 worktree),正常,繼續等。逾時 90 分鐘,已等 0 秒。
+```
+
+## 改了哪裡、為什麼
+
+| 檔案 | 改動 |
+|---|---|
+| `package.json` | `"test": "tsx scripts/run-tests.ts --"`(§9) |
+| `scripts/run-tests.ts` | `vitestArgs`(同 strykerArgs 形狀)、`isPartialRun`(`some(不是 - 開頭 && existsSync(resolve(cwd, arg)))`,一行,不猜旗標)、`runTests`(小範圍直接跑、連 strykerLockPath 都不算;全套走 acquireLock,`deps.lock` 展開再蓋 `task: 'test'`;LockTimeoutError → 1;finally + installCleanup 兩條路) |
+| `scripts/mutate.ts` | `parseLock` 只認 `'stryker' \| 'test'`,其他丟欄不丟鎖;`selfLockInfo` 沒 task 不放 key;`sameWorktree` 各自 `--show-toplevel`,問不到(不存在 / 非 git)退回 resolve 比對,不丟;`waitingMessage` 兩行格式(事實 / 判斷 + 逾時與已等);`acquireLock` 傳 `{ selfCwd: info.cwd, maxWaitMs, sameWorktree: 記憶版 }`;`runMutate` 接 `deps.lock`,蓋 `task: 'stryker'` |
+
+## 審核輪請看
+
+1. **`memoizedSameWorktree`**(acquireLock 內,同一組路徑只問 git 一次)。純效能,測試看不出來,
+   Stryker 會有等價變異活下來。證據:拿掉快取跑「等滿 90 分鐘」那條(360 次重試 × 2 次 git),
+   load 17 時 2.4 秒過,離 vitest 5 秒逾時不遠;load 30+ 會假紅。要不要留,審核輪決定。
+2. `isPartialRun` 對 `.`、`''` 這種「存在的目錄」也判小範圍不拿鎖(照測試輪的線,沒特判)。
+   `npm test -- .` 其實是全套但沒鎖。沒改,因為工單說那條線不動;要收緊先改測試。
+3. `LockTimeoutError` 的訊息還寫「等 Stryker 的鎖」、殘鎖訊息還寫「清掉殘留的 Stryker 鎖」。
+   後者被既有測試釘住(mutate.test.ts §12);前者沒釘但為了不擴散 diff 沒動。鎖已經是共用的,文案可以之後改。
+4. 嚴格級:審核輪跑 `npm run mutate -- --mutate "scripts/mutate.ts,scripts/run-tests.ts"`。
+
+---
+
+# 測試輪原文(d27bebe)
+
 
 分支 `pollux0971/stryker-lock-allsuite`,基底 main `9243d06`(含 `5748a38`)。
 這一輪**只寫測試與簽章骨架**,函式體一律 `throw new Error('TODO(開發輪)…')`,

@@ -23,10 +23,20 @@
  * 這支不重新發明任何一條鎖的規則。
  */
 import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isMainModule, type AcquireDeps, type HeldLock } from './mutate.js';
+import {
+  LockTimeoutError,
+  acquireLock,
+  installCleanup,
+  isMainModule,
+  selfLockInfo,
+  strykerLockPath,
+  type AcquireDeps,
+  type HeldLock,
+} from './mutate.js';
 
 export interface RunTestsDeps {
   argv?: string[];
@@ -48,8 +58,11 @@ export interface RunTestsDeps {
  * (使用者自己打了 `run` 就不補第二次)。跟 strykerArgs 同一個形狀。
  */
 export function vitestArgs(argv: string[]): string[] {
-  void argv;
-  throw new Error('TODO(開發輪):vitestArgs 未實作');
+  // 只認**第一個** `--`:後面再出現的是使用者要給 vitest 的,原樣送過去。
+  const at = argv.indexOf('--');
+  const passthrough = at === -1 ? [] : argv.slice(at + 1);
+  // 一律是 `run`,不是裸 vitest(那會進 watch,把鎖握到天荒地老)。
+  return passthrough[0] === 'run' ? passthrough : ['run', ...passthrough];
 }
 
 /**
@@ -57,9 +70,9 @@ export function vitestArgs(argv: string[]): string[] {
  * 規則見檔頭:有任何一個**存在的檔案 / 目錄**當位置參數 → true(不拿鎖)。
  */
 export function isPartialRun(passthrough: string[], cwd: string = process.cwd()): boolean {
-  void passthrough;
-  void cwd;
-  throw new Error('TODO(開發輪):isPartialRun 未實作');
+  // 只看「存在不存在」,不猜哪些旗標帶值:`--reporter verbose` 的 verbose 在磁碟上不存在,
+  // 自然被當全套;`npm test -- mutate` 這種子字串 pattern 也一樣——故意往「多鎖一次」錯。
+  return passthrough.some((arg) => !arg.startsWith('-') && existsSync(resolve(cwd, arg)));
 }
 
 /**
@@ -67,8 +80,46 @@ export function isPartialRun(passthrough: string[], cwd: string = process.cwd())
  * 回傳退出碼:vitest 自己的退出碼;等鎖超時 1(跟 runMutate 一樣,而且不跑 vitest)。
  */
 export async function runTests(deps: RunTestsDeps = {}): Promise<number> {
-  void deps;
-  throw new Error('TODO(開發輪):runTests 未實作');
+  const argv = deps.argv ?? process.argv;
+  const runVitest = deps.runVitest ?? spawnVitest;
+  const install = deps.installCleanup ?? ((release: () => void) => installCleanup(release));
+  const log = deps.log ?? ((msg: string) => console.log(msg));
+  const cwd = deps.cwd ?? process.cwd();
+
+  const args = vitestArgs(argv);
+  // args[0] 一定是 `run`,後面才是使用者給 vitest 的東西。
+  if (isPartialRun(args.slice(1), cwd)) {
+    // 小範圍:連鎖都不碰(不算鎖的路徑、不 acquire、不掛 signal)。日常開發的命脈。
+    return runVitest(args);
+  }
+
+  const lockPath = deps.lockPath ?? strykerLockPath();
+  const acquire =
+    deps.acquire ??
+    ((path: string) =>
+      // 展開 deps.lock 再蓋 info.task:給的 info 只能蓋 pid / cwd / startedAt,標籤一律是 test。
+      acquireLock(path, { ...deps.lock, info: { ...(deps.lock?.info ?? selfLockInfo()), task: 'test' } }));
+
+  let held: HeldLock;
+  try {
+    held = await acquire(lockPath);
+  } catch (err) {
+    // 等超過上限:回 1、不跑 vitest。鎖不是我的,不動它(跟 runMutate 一樣)。
+    if (err instanceof LockTimeoutError) {
+      log(err.message);
+      return 1;
+    }
+    throw err;
+  }
+
+  // finally 管正常結束與例外;signal 走 installCleanup 那條路(finally 跑不到)。兩邊都要有。
+  const uninstall = install(() => held.release());
+  try {
+    return await runVitest(args);
+  } finally {
+    uninstall();
+    held.release();
+  }
 }
 
 // Stryker disable all
@@ -100,7 +151,6 @@ function spawnVitest(args: string[]): Promise<number> {
     });
   });
 }
-void spawnVitest; // TODO(開發輪):runTests 的預設 runVitest 用它;現在只是不讓 tsc 抱怨沒人用。
 // Stryker restore all
 
 /** 同 mutate.ts:只有被當成指令跑的時候才執行,測試 import 這個模組不能起 vitest。 */

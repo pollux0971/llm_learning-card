@@ -185,13 +185,17 @@ export function parseLock(raw: string): LockInfo | null {
     return null;
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const { pid, startedAt, cwd } = value as Record<string, unknown>;
+  const { pid, startedAt, cwd, task } = value as Record<string, unknown>;
   if (typeof pid !== 'number') return null;
   if (typeof cwd !== 'string') return null;
   // JSON 的數字一定是有限的,所以 pid 只要檢查型別。startedAt 反過來:型別對還不夠,
   // 解不出時間的字串('not-a-date')會讓年齡計算變 NaN,那比壞檔更難查。
   if (typeof startedAt !== 'string' || Number.isNaN(Date.parse(startedAt))) return null;
-  return { pid, startedAt, cwd };
+  const info: LockInfo = { pid, startedAt, cwd };
+  // task 是標籤,不是鎖的效力:舊格式沒有這欄、或值認不得,都**不是壞檔**。
+  // 判成壞檔會在寬限期一過被當殘鎖刪掉——刪掉一把活的、別人正在用的鎖。認得才帶。
+  if (task === 'stryker' || task === 'test') info.task = task;
+  return info;
 }
 
 /** 判一把讀到的鎖是活的還是殘的。 */
@@ -286,9 +290,11 @@ export function selfLockInfo(
   nowIso: string = new Date().toISOString(),
   task?: LockTask,
 ): LockInfo {
-  // TODO(開發輪):帶 task 進去。exactOptionalPropertyTypes:task 是 undefined 時不要放進物件。
-  void task;
-  return { pid: process.pid, startedAt: nowIso, cwd };
+  const info: LockInfo = { pid: process.pid, startedAt: nowIso, cwd };
+  // 沒給 task 就不放那個 key:JSON 化之後要跟舊格式一模一樣(不是 `"task": undefined`,
+  // JSON.stringify 會把它丟掉沒錯,但 `'task' in info` 這種判斷會看到它)。
+  if (task !== undefined) info.task = task;
+  return info;
 }
 
 /**
@@ -306,6 +312,11 @@ export async function acquireLock(lockPath: string, deps: AcquireDeps = {}): Pro
   const retryMs = deps.retryMs ?? RETRY_INTERVAL_MS;
   const maxWaitMs = deps.maxWaitMs ?? MAX_WAIT_MS;
 
+  // 「自己的鏈 / 別人的」每次重試都要判,而 sameWorktree 每判一次要問 git 兩次。
+  // 等 90 分鐘是 360 次重試;測試用假時鐘走完整個 90 分鐘時那 720 次 git 是真的跑
+  // (實測 load 17 時 2.4 秒,load 30+ 就貼近 vitest 5 秒的逾時)。持鎖者與自己的 cwd
+  // 在一次等待裡不會變,所以同一組路徑只問一次。
+  const same = memoizedSameWorktree();
   const startedAt = now();
   for (;;) {
     if (tryAcquire(lockPath, info)) {
@@ -335,7 +346,7 @@ export async function acquireLock(lockPath: string, deps: AcquireDeps = {}): Pro
         verdict.info,
       );
     }
-    log(waitingMessage(verdict.info, waitedMs));
+    log(waitingMessage(verdict.info, waitedMs, { selfCwd: info.cwd, maxWaitMs, sameWorktree: same }));
     await sleep(retryMs);
   }
 }
@@ -365,9 +376,47 @@ export interface WaitContext {
  * 持鎖者的 worktree 可能已經被 `git worktree remove` 掉了,那時候還在等鎖的人不能因此爆掉。
  */
 export function sameWorktree(a: string, b: string): boolean {
-  void a;
-  void b;
-  throw new Error('TODO(開發輪):sameWorktree 未實作');
+  const rootA = worktreeRoot(a);
+  const rootB = worktreeRoot(b);
+  if (rootA !== null && rootB !== null) return rootA === rootB;
+  // 任一邊問不到 git(不是 git 目錄、路徑不存在):只剩路徑本身可比。
+  // 這裡不能用「另一邊的根包含這個路徑」之類的猜法——猜錯的方向是「把別人的當自己的」。
+  return resolve(a) === resolve(b);
+}
+
+/**
+ * 這個目錄所在的 worktree 根(`git rev-parse --show-toplevel`)。問不到回 null,**不丟**。
+ *
+ * 要用 `--show-toplevel` 而不是 `--git-common-dir`:後者對同一個主 repo 底下的所有 worktree
+ * 都回同一個 `.git/`(strykerLockPath 正是靠這點算出同一把鎖),拿它來判會把所有 worktree
+ * 都判成自己的——那就是這個函式要防的誤判本身。
+ */
+function worktreeRoot(dir: string): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: dir,
+      encoding: 'utf8',
+      // stderr 不接管:不是 git 目錄時 git 會抱怨一行,那不是給等鎖的人看的。
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    // 路徑不存在(spawn ENOENT)、不是 git 目錄(exit 128)、git 不在——全部當「問不到」。
+    return null;
+  }
+}
+
+/** sameWorktree 的記憶版:同一組 (a, b) 只問 git 一次。給 acquireLock 的重試迴圈用。 */
+function memoizedSameWorktree(): (a: string, b: string) => boolean {
+  const seen = new Map<string, boolean>();
+  return (a, b) => {
+    const key = `${a}\0${b}`;
+    let hit = seen.get(key);
+    if (hit === undefined) {
+      hit = sameWorktree(a, b);
+      seen.set(key, hit);
+    }
+    return hit;
+  };
 }
 
 /**
@@ -378,12 +427,35 @@ export function sameWorktree(a: string, b: string): boolean {
  * 再加上「逾時 N 分鐘,已等 M」。格式由 scripts/mutate.test.ts §14 釘住。
  */
 export function waitingMessage(holder: LockInfo | null, waitedMs: number, ctx: WaitContext = {}): string {
-  // TODO(開發輪):用 ctx 判「自己的鏈 / 別人的」並換成兩行格式。下面是 P-29 的舊格式,
-  // 留著讓既有測試(§5、§12)維持綠,新測試(§14)在這裡紅。
-  void ctx;
+  const selfCwd = ctx.selfCwd ?? process.cwd();
+  const maxWaitMs = ctx.maxWaitMs ?? MAX_WAIT_MS;
+  const same = ctx.sameWorktree ?? sameWorktree;
+
+  // 第一行:事實。持鎖者讀不出時(剛 openSync 還沒寫完)每一欄都要有東西,不能印 undefined。
   const who = holder === null ? '另一個 worktree' : holder.cwd;
   const pid = holder === null ? '讀不出' : String(holder.pid);
-  return `等 ${who} 的 Stryker(pid ${pid})跑完,已等 ${Math.round(waitedMs / 1000)} 秒…`;
+  const task = holder === null ? undefined : holder.task;
+  // 舊格式的鎖沒有 task:講「Stryker 或全套測試」,不猜。
+  const doing = task === 'stryker' ? 'Stryker' : task === 'test' ? '全套測試' : 'Stryker 或全套測試';
+  const fact = `等待 ${LOCK_FILENAME}(持鎖者 pid ${pid} 在跑 ${doing}, cwd=${who})`;
+
+  // 第二行:判斷。三種,互斥——同時出現兩句,看的人又得自己猜。
+  // 讀不出持鎖者就分不出是誰的,那時候不能說是自己的(說是自己的,agent 會覺得可以動它)。
+  const verdict =
+    holder === null
+      ? '鎖檔還讀不出持鎖者(可能剛建好還沒寫完),分不出是誰的。不要刪鎖,不要 kill。'
+      : same(selfCwd, holder.cwd)
+        ? '這是你自己排的鏈(同一個 worktree),正常,繼續等。'
+        : '這是別的 worktree 佔的。不要刪鎖,不要 kill 那個 pid。';
+
+  const timing = `逾時 ${maxWaitMs / 60_000} 分鐘,已等 ${waitedText(waitedMs)}。`;
+  return `${fact}\n→ ${verdict}${timing}`;
+}
+
+/** 已等多久,給人看:不到一分鐘講秒,滿一分鐘講分鐘(無條件捨去,「已等 6 分鐘」不是 6.5)。 */
+function waitedText(waitedMs: number): string {
+  if (waitedMs < 60_000) return `${Math.floor(waitedMs / 1000)} 秒`;
+  return `${Math.floor(waitedMs / 60_000)} 分鐘`;
 }
 
 /** installCleanup 需要的最小 process 介面,測試注入假的。 */
@@ -464,7 +536,11 @@ export interface RunDeps {
  */
 export async function runMutate(deps: RunDeps = {}): Promise<number> {
   const argv = deps.argv ?? process.argv;
-  const acquire = deps.acquire ?? ((path: string) => acquireLock(path));
+  const acquire =
+    deps.acquire ??
+    ((path: string) =>
+      // 展開 deps.lock 再蓋 info.task:給的 info 只能蓋 pid / cwd / startedAt,標籤一律是 stryker。
+      acquireLock(path, { ...deps.lock, info: { ...(deps.lock?.info ?? selfLockInfo()), task: 'stryker' } }));
   const runStryker = deps.runStryker ?? spawnStryker;
   const install = deps.installCleanup ?? ((release: () => void) => installCleanup(release));
   const log = deps.log ?? ((msg: string) => console.log(msg));
