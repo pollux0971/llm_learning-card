@@ -1663,3 +1663,249 @@ describe('清殘鎖時要印出理由', () => {
     expect(why).toContain(String(DEAD_PID));
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. 等待訊息要分得出「自己排的鏈」與「別人」;鎖檔多一欄 task
+//
+// 2026-09-05 踩到的:five-zero-guards 的審核 agent 看到「鎖被佔著」,把**自己持有的鎖**
+// (同一個 worktree 裡前一個指令還沒放)讀成別的 worktree 佔的,差點手動刪 .stryker.lock——
+// 那會直接回到互相 OOM(之前燒掉過約 $25 和兩小時)。只印 cwd 讓 agent 自己比對已經證明
+// 不夠(它就是沒比對出來),所以由程式判、訊息直接寫成人話,兩種文案都要有測試蓋到。
+//
+// 這把鎖現在也給全套 vitest 用(scripts/run-tests.ts),鎖檔多一欄 task 記持鎖者在跑什麼,
+// 等鎖的人才講得出「對面是 Stryker」還是「對面是全套」。舊格式的鎖沒有這欄,照樣要能解。
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { sameWorktree, type LockTask } from './mutate.js';
+
+describe('parseLock 的 task 欄', () => {
+  it('task 是 "stryker" / "test" 時保留', () => {
+    for (const task of ['stryker', 'test'] as LockTask[]) {
+      const parsed = parseLock(JSON.stringify(info({ task })));
+      expect(parsed?.task).toBe(task);
+    }
+  });
+
+  it('舊格式(沒有 task 欄)照樣解得出來,task 是 undefined——不是壞檔', () => {
+    // 判成壞檔 = 10 秒寬限期一過就被當殘鎖刪掉 = 刪掉一把活的、別人正在用的鎖。
+    const parsed = parseLock(JSON.stringify({ pid: 1, startedAt: new Date(T0).toISOString(), cwd: '/w' }));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.task).toBeUndefined();
+  });
+
+  it('task 是認不得的字串時,丟掉那一欄但鎖照樣算合法(不因為一個標籤刪別人的鎖)', () => {
+    const parsed = parseLock(JSON.stringify({ ...info(), task: 'coverage' }));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.pid).toBe(4242);
+    expect(parsed?.task).toBeUndefined();
+  });
+
+  it('task 不是字串(數字 / 物件)時同上:丟掉那一欄,鎖照樣合法', () => {
+    expect(parseLock(JSON.stringify({ ...info(), task: 7 }))?.pid).toBe(4242);
+    expect(parseLock(JSON.stringify({ ...info(), task: {} }))?.pid).toBe(4242);
+    expect(parseLock(JSON.stringify({ ...info(), task: 7 }))?.task).toBeUndefined();
+  });
+});
+
+describe('selfLockInfo 的 task', () => {
+  it('給了 task 就寫進去', () => {
+    expect(selfLockInfo('/w', new Date(T0).toISOString(), 'test').task).toBe('test');
+    expect(selfLockInfo('/w', new Date(T0).toISOString(), 'stryker').task).toBe('stryker');
+  });
+
+  it('不給 task 時物件裡**沒有**那個 key(不是 task: undefined——JSON 化之後要跟舊格式一樣)', () => {
+    const self = selfLockInfo('/w', new Date(T0).toISOString());
+    expect('task' in self).toBe(false);
+  });
+});
+
+describe('sameWorktree', () => {
+  it('同一個 worktree 的根與子目錄 → 同一個', () => {
+    const { wtA } = gitRepoWithWorktrees();
+    const sub = join(wtA, 'packages', 'core');
+    mkdirSync(sub, { recursive: true });
+    expect(sameWorktree(wtA, sub)).toBe(true);
+    expect(sameWorktree(sub, wtA)).toBe(true);
+    expect(sameWorktree(wtA, wtA)).toBe(true);
+  });
+
+  it('兩個不同的 worktree → 不同(就算掛在同一個主 repo 底下)', () => {
+    // 這條是關鍵:strykerLockPath 對兩個 worktree 算出**同一把鎖**,但「同一把鎖」不等於
+    // 「同一個 worktree」。用 --git-common-dir 判會把所有 worktree 都判成自己的。
+    const { wtA, wtB } = gitRepoWithWorktrees();
+    expect(sameWorktree(wtA, wtB)).toBe(false);
+  });
+
+  it('worktree 與主 repo → 不同', () => {
+    const { main, wtA } = gitRepoWithWorktrees();
+    expect(sameWorktree(main, wtA)).toBe(false);
+  });
+
+  it('不是 git 目錄:路徑相同才算同一個', () => {
+    const d = tmp('mutate-samewt-nogit');
+    mkdirSync(join(d, 'x'), { recursive: true });
+    expect(sameWorktree(d, d)).toBe(true);
+    expect(sameWorktree(d, join(d, 'x'))).toBe(false);
+  });
+
+  it('持鎖者的路徑已經不存在(worktree 被 remove 掉了)→ 當別人的,而且**不丟例外**', () => {
+    // 等鎖的人不能因為對面的 worktree 沒了就爆掉;不確定就往「別人的、不要刪」保守。
+    const { wtA } = gitRepoWithWorktrees();
+    expect(() => sameWorktree('/this/path/does/not/exist', wtA)).not.toThrow();
+    expect(sameWorktree('/this/path/does/not/exist', wtA)).toBe(false);
+    expect(sameWorktree(wtA, '/this/path/does/not/exist')).toBe(false);
+  });
+});
+
+describe('waitingMessage:自己的鏈 vs 別人的', () => {
+  const same = () => true;
+  const other = () => false;
+  const holder = info({ pid: 2636796, cwd: '/home/x/five-zero-guards', task: 'stryker' });
+
+  it('第一行是事實:鎖檔名、持鎖者 pid、cwd', () => {
+    const m = waitingMessage(holder, 6 * 60_000, { selfCwd: '/home/x/five-zero-guards', sameWorktree: same });
+    expect(m).toContain('等待 .stryker.lock');
+    expect(m).toContain('pid 2636796');
+    expect(m).toContain('cwd=/home/x/five-zero-guards');
+  });
+
+  it('同一個 worktree → 「這是你自己排的鏈」,而且不能出現「別的 worktree」', () => {
+    const m = waitingMessage(holder, 6 * 60_000, { selfCwd: '/home/x/five-zero-guards/packages', sameWorktree: same });
+    expect(m).toContain('這是你自己排的鏈');
+    expect(m).toContain('同一個 worktree');
+    expect(m).toContain('繼續等');
+    // 兩種文案互斥:同時出現兩句,agent 又要自己猜。
+    expect(m).not.toContain('別的 worktree');
+  });
+
+  it('不同 worktree → 「這是別的 worktree 佔的」+ 不要刪鎖、不要 kill,而且不能出現「自己」', () => {
+    const m = waitingMessage(holder, 6 * 60_000, { selfCwd: '/home/x/other-wt', sameWorktree: other });
+    expect(m).toContain('這是別的 worktree 佔的');
+    expect(m).toContain('不要刪鎖');
+    expect(m).toContain('不要 kill');
+    expect(m).not.toContain('自己');
+  });
+
+  it('逾時與已等的時間都在,單位是分鐘(≥ 60 秒)', () => {
+    const m = waitingMessage(holder, 6 * 60_000 + 30_000, { selfCwd: '/x', sameWorktree: other });
+    expect(m).toContain('逾時 90 分鐘');
+    expect(m).toContain('已等 6 分鐘');
+  });
+
+  it('不到一分鐘講秒,剛好一分鐘講分鐘', () => {
+    expect(waitingMessage(holder, 59_000, { selfCwd: '/x', sameWorktree: other })).toContain('已等 59 秒');
+    expect(waitingMessage(holder, 60_000, { selfCwd: '/x', sameWorktree: other })).toContain('已等 1 分鐘');
+  });
+
+  it('maxWaitMs 可以調,印出來的逾時跟著變', () => {
+    const m = waitingMessage(holder, 0, { selfCwd: '/x', sameWorktree: other, maxWaitMs: 5 * 60_000 });
+    expect(m).toContain('逾時 5 分鐘');
+  });
+
+  it('持鎖者在跑什麼要講出來:Stryker / 全套測試', () => {
+    const s = waitingMessage(info({ task: 'stryker' }), 0, { selfCwd: '/x', sameWorktree: other });
+    const t = waitingMessage(info({ task: 'test' }), 0, { selfCwd: '/x', sameWorktree: other });
+    expect(s).toContain('Stryker');
+    expect(s).not.toContain('全套');
+    expect(t).toContain('全套');
+  });
+
+  it('舊格式的鎖(沒有 task)不能印 undefined,也不能亂猜——講「Stryker 或全套測試」', () => {
+    const m = waitingMessage(info(), 0, { selfCwd: '/x', sameWorktree: other });
+    expect(m).not.toContain('undefined');
+    expect(m).toContain('Stryker');
+    expect(m).toContain('全套');
+  });
+
+  it('讀不出持有者(剛建鎖還沒寫完)→ 分不出是誰的,一樣寫「不要刪鎖」', () => {
+    const m = waitingMessage(null, 0, { selfCwd: '/x', sameWorktree: same });
+    expect(m).toContain('不要刪鎖');
+    expect(m).not.toContain('undefined');
+    // 分不出來就不能說是自己的——說是自己的,agent 會覺得可以動它。
+    expect(m).not.toContain('自己排的鏈');
+  });
+
+  it('不給 sameWorktree 時用真的 sameWorktree 判:同一個 git worktree 的根與子目錄 → 自己的鏈', () => {
+    const { wtA, wtB } = gitRepoWithWorktrees();
+    const sub = join(wtA, 'packages');
+    mkdirSync(sub, { recursive: true });
+    expect(waitingMessage(info({ cwd: sub }), 0, { selfCwd: wtA })).toContain('自己排的鏈');
+    expect(waitingMessage(info({ cwd: wtB }), 0, { selfCwd: wtA })).toContain('別的 worktree');
+  });
+
+  it('不給 selfCwd 時用 process.cwd():持鎖者寫的就是這個 cwd → 自己的鏈', () => {
+    expect(waitingMessage(info({ cwd: process.cwd() }), 0)).toContain('自己排的鏈');
+  });
+});
+
+describe('acquireLock 印的等待訊息帶著「自己 / 別人」的判斷', () => {
+  it('持鎖者跟我在同一個 worktree → 每一行都說這是自己排的鏈', async () => {
+    const { wtA } = gitRepoWithWorktrees();
+    const p = join(wtA, '.stryker.lock');
+    const holderCwd = join(wtA, 'packages');
+    mkdirSync(holderCwd, { recursive: true });
+    tryAcquire(p, info({ pid: 4242, cwd: holderCwd, task: 'stryker' }));
+    const logs: string[] = [];
+    const clock = fakeClock((n) => {
+      if (n === 2) rmSync(p);
+    });
+    await acquireLock(p, {
+      info: info({ pid: 555, cwd: wtA, task: 'test' }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: (m) => logs.push(m),
+      isAlive: () => true,
+    });
+    expect(logs).toHaveLength(2);
+    for (const line of logs) {
+      expect(line).toContain('自己排的鏈');
+      expect(line).not.toContain('別的 worktree');
+    }
+  });
+
+  it('持鎖者在別的 worktree → 每一行都說不要刪鎖、不要 kill', async () => {
+    const { wtA, wtB } = gitRepoWithWorktrees();
+    const p = join(wtA, '.stryker.lock');
+    tryAcquire(p, info({ pid: 4242, cwd: wtB, task: 'test' }));
+    const logs: string[] = [];
+    const clock = fakeClock((n) => {
+      if (n === 2) rmSync(p);
+    });
+    await acquireLock(p, {
+      info: info({ pid: 555, cwd: wtA, task: 'stryker' }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: (m) => logs.push(m),
+      isAlive: () => true,
+    });
+    expect(logs).toHaveLength(2);
+    for (const line of logs) {
+      expect(line).toContain('別的 worktree');
+      expect(line).toContain('不要刪鎖');
+      expect(line).toContain('不要 kill');
+      expect(line).toContain('4242');
+    }
+  });
+
+  it('已等的時間跟逾時一起印,而且每次重試都在變', async () => {
+    const dir = tmp('mutate-wait-msg-progress');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 4242, cwd: '/other/worktree', task: 'stryker' }));
+    const logs: string[] = [];
+    const clock = fakeClock((n) => {
+      if (n === 5) rmSync(p);
+    });
+    await acquireLock(p, {
+      info: info({ pid: 555, cwd: dir }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: (m) => logs.push(m),
+      isAlive: () => true,
+    });
+    expect(logs).toHaveLength(5);
+    expect(logs[0]).toContain('已等 0 秒');
+    expect(logs[3]).toContain('已等 45 秒');
+    expect(logs[4]).toContain('已等 1 分鐘');
+    for (const line of logs) expect(line).toContain('逾時 90 分鐘');
+  });
+});

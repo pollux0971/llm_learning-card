@@ -424,6 +424,13 @@ const ROSTER: Record<string, Entry> = {
       'Stryker 的包裝:任何參數都會拿鎖、真的起 Stryker 跑幾分鐘到幾十分鐘,輸入處理是 Stryker 的不是它的。' +
       '參數轉換(strykerArgs)與鎖的行為在 scripts/mutate.test.ts 用注入的假 runStryker 測。',
   },
+  'scripts/run-tests.ts': {
+    kind: 'excluded',
+    reason:
+      '全套 vitest 的包裝(跟 Stryker 共用 .stryker.lock 排隊):沒有參數就拿鎖、真的起整套 vitest,' +
+      '在 vitest 裡再起一個 vitest 是遞迴。參數轉換(vitestArgs / isPartialRun)與鎖的行為在 ' +
+      'scripts/run-tests.test.ts 用注入的假 runVitest 測。',
+  },
 
   // ── 守門腳本(模板 v1.3.4,勿手改;這裡的紅燈走模板升版,不直接改檔) ──
   'scripts/check-boundaries.ts': {

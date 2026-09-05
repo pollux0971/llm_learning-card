@@ -43,6 +43,13 @@ export const STALE_AFTER_MS = 2 * 60 * 60_000;
  */
 export const CORRUPT_GRACE_MS = 10_000;
 
+/**
+ * 持鎖者在跑什麼。這把鎖從 P-29 的「只有 Stryker」變成「Stryker 與全套 vitest 共用」
+ * (見 scripts/run-tests.ts),等鎖的人要知道對面是哪一種,訊息才講得出人話。
+ * 舊格式的鎖檔沒有這欄,parseLock 要能照樣解(缺欄 = undefined,不是壞檔)。
+ */
+export type LockTask = 'stryker' | 'test';
+
 /** 鎖檔內容。契約沒有規定這個型別(infra,不進 contracts/)。 */
 export interface LockInfo {
   pid: number;
@@ -50,6 +57,8 @@ export interface LockInfo {
   startedAt: string;
   /** 持鎖者的 worktree 路徑,等鎖時印給人看。 */
   cwd: string;
+  /** 持鎖者在跑 Stryker 還是全套測試。舊鎖檔沒有這欄。 */
+  task?: LockTask;
 }
 
 /** 讀鎖的結果。`mtimeMs` 是給壞檔寬限期用的。 */
@@ -271,8 +280,14 @@ function removeLockFile(lockPath: string): boolean {
   return true;
 }
 
-/** 這個程序的鎖檔內容。 */
-export function selfLockInfo(cwd: string = process.cwd(), nowIso: string = new Date().toISOString()): LockInfo {
+/** 這個程序的鎖檔內容。`task` 是持鎖者在跑什麼;不給就是舊格式(沒有 task 欄)。 */
+export function selfLockInfo(
+  cwd: string = process.cwd(),
+  nowIso: string = new Date().toISOString(),
+  task?: LockTask,
+): LockInfo {
+  // TODO(開發輪):帶 task 進去。exactOptionalPropertyTypes:task 是 undefined 時不要放進物件。
+  void task;
   return { pid: process.pid, startedAt: nowIso, cwd };
 }
 
@@ -325,8 +340,47 @@ export async function acquireLock(lockPath: string, deps: AcquireDeps = {}): Pro
   }
 }
 
-/** 等鎖時印的那一行。抽出來是為了讓測試釘住格式。 */
-export function waitingMessage(holder: LockInfo | null, waitedMs: number): string {
+/**
+ * 等鎖訊息需要的上下文:我是誰(selfCwd)、等多久會放棄(maxWaitMs)。
+ * `sameWorktree` 可注入,預設是下面那個真的問 git 的。
+ */
+export interface WaitContext {
+  /** 等鎖的這個程序的 cwd。預設 process.cwd()。 */
+  selfCwd?: string;
+  /** 印「逾時 N 分鐘」用。預設 MAX_WAIT_MS。 */
+  maxWaitMs?: number;
+  sameWorktree?: (a: string, b: string) => boolean;
+}
+
+/**
+ * 兩個路徑是不是同一個 worktree。
+ *
+ * 為什麼要有這個:five-zero-guards 的審核 agent 看到「鎖被佔著」,把**自己排的鏈**
+ * (同一個 worktree 裡前一個指令還沒放鎖)讀成別的 worktree 佔的,差點手動刪 .stryker.lock。
+ * 光印 cwd 讓 agent 自己比對已經證明不夠,所以由程式判,訊息直接寫成人話。
+ *
+ * 判法:各自 `git rev-parse --show-toplevel`,相同就是同一個 worktree。任一邊不是 git 目錄
+ * 或路徑不存在 → 退回比對 resolve 後的路徑;還是不一樣就當**別人的**——不確定時往
+ * 「別人的、不要刪」保守,跟 pidIsAlive 的 EPERM 同一個方向。**不可以丟例外**:
+ * 持鎖者的 worktree 可能已經被 `git worktree remove` 掉了,那時候還在等鎖的人不能因此爆掉。
+ */
+export function sameWorktree(a: string, b: string): boolean {
+  void a;
+  void b;
+  throw new Error('TODO(開發輪):sameWorktree 未實作');
+}
+
+/**
+ * 等鎖時印的那一段。抽出來是為了讓測試釘住格式。
+ *
+ * 兩行:第一行是事實(鎖檔名、持鎖者 pid、在跑什麼、cwd),第二行是**判斷**——
+ * 「這是你自己排的鏈,繼續等」或「這是別的 worktree,不要刪鎖、不要 kill」——
+ * 再加上「逾時 N 分鐘,已等 M」。格式由 scripts/mutate.test.ts §14 釘住。
+ */
+export function waitingMessage(holder: LockInfo | null, waitedMs: number, ctx: WaitContext = {}): string {
+  // TODO(開發輪):用 ctx 判「自己的鏈 / 別人的」並換成兩行格式。下面是 P-29 的舊格式,
+  // 留著讓既有測試(§5、§12)維持綠,新測試(§14)在這裡紅。
+  void ctx;
   const who = holder === null ? '另一個 worktree' : holder.cwd;
   const pid = holder === null ? '讀不出' : String(holder.pid);
   return `等 ${who} 的 Stryker(pid ${pid})跑完,已等 ${Math.round(waitedMs / 1000)} 秒…`;
@@ -391,6 +445,12 @@ export interface RunDeps {
   argv?: string[];
   lockPath?: string;
   acquire?: (lockPath: string) => Promise<HeldLock>;
+  /**
+   * 交給預設 acquireLock 的注入(時鐘、sleep、log、retryMs…)。測試要走**真的**拿鎖迴圈
+   * 但不真的睡 15 秒時用這個;給了 `acquire` 就不看。`info.task` 一律是 'stryker',
+   * 這裡給的 `info` 只蓋 pid / cwd / startedAt。
+   */
+  lock?: AcquireDeps;
   runStryker?: (args: string[]) => Promise<number>;
   installCleanup?: (release: () => void) => () => void;
   log?: (msg: string) => void;
