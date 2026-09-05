@@ -61,8 +61,21 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
    **數字對得上,內容少了四條。**
 
    ⚠️ **比的時候要用 multiset 或完整限定名(檔案 + suite + name),不要用 `set(names)`** ——
-   本 repo 實測 1691 個 testcase 只有 **1683 個不重複名稱**(8 個同名),
-   用集合比會**憑空少掉 8 筆**,那本身就是一個「看起來乾淨」的假象。
+   本 repo **一直都有同名 testcase**,用集合比會憑空少掉那幾筆,那本身就是一個「看起來乾淨」的假象。
+
+   **不要記那個數字,它會腐爛** —— 這裡曾經寫死「1691 個 testcase / 1683 個不重複 / 8 個同名」,
+   2026-09-05 實測已經是 **2689 / 2680 / 9**(worker 回報 9,我自己量過才改)。**要用就當場量:**
+   ```bash
+   python3 -c "
+   import sys,xml.etree.ElementTree as ET; from collections import Counter
+   c=Counter()
+   for tc in ET.parse(sys.argv[1]).getroot().iter('testcase'): c[tc.get('name','')]+=1
+   print('總數',sum(c.values()),'不重複',len(c),'差',sum(c.values())-len(c))
+   for k,v in c.items():
+       if v>1: print(f'   x{v}  {k[:70]}')
+   " reports/junit/<sha>.xml
+   ```
+   (現在那 9 個:`countBodyWords` 的 8 條參數化案例 + `SIGTERM 之後鎖不留` 1 條。)
 
    **合併後跑的是 main 現在的完整檢查清單,不是分支開工時的那份。** 分支 base 比 main 舊的時候,
    main 上可能已經多了新的守門 —— 那些**在分支上根本不存在**,所以「分支全綠」不等於「合併後全綠」,
