@@ -684,10 +684,10 @@ describe('量尺 · 乙 · assessRunCompleteness:ran_all 是量出來的,不是 
     expect(VITEST_EXIT_JSON).toBe(VITEST_EXIT_FILE);
   });
 
-  it('三個條件全滿足 → ranAll,reason 是 null,collected = numTotalTests − pending − todo', () => {
+  it('三個條件全滿足 → ranAll,reason 是 null,collected = numTotalTests − pending − todo,skipped/vitestSkipped 兩邊都是 0', () => {
     const d = dir();
     evidence(d, { total: 3, passed: 3 }, 0);
-    expect(assessRunCompleteness(d, 3)).toEqual({ ranAll: true, reason: null, status: 0, ran: 3, collected: 3 });
+    expect(assessRunCompleteness(d, 3)).toEqual({ ranAll: true, reason: null, status: 0, ran: 3, collected: 3, skipped: 0, vitestSkipped: 0 });
   });
 
   it('退出碼 1(有測試紅,但套件跑完)→ 仍然 ranAll:紅綠是 vitest 的事', () => {
@@ -696,10 +696,12 @@ describe('量尺 · 乙 · assessRunCompleteness:ran_all 是量出來的,不是 
     expect(assessRunCompleteness(d, 3)).toMatchObject({ ranAll: true, reason: null, status: 1 });
   });
 
-  it('skipped / todo 不算要跑的:total 5、pending 1、todo 1、紀錄 3 → ranAll,collected 3', () => {
+  it('todo 不算要跑的:total 5、pending 1(見證器也記 1 筆 skipped)、todo 1、紀錄 3 → ranAll,collected 3', () => {
+    // pending 1 若見證器沒對應寫 1 筆 skipped,等式 (2) 就不成立(0 ≠ 1)——那正是新規格要抓的,
+    // 所以這裡補上第三個參數 1,模擬「見證器也記了那一筆 skipped」的乾淨情況。
     const d = dir();
     evidence(d, { total: 5, passed: 3, pending: 1, todo: 1 }, 0);
-    expect(assessRunCompleteness(d, 3)).toMatchObject({ ranAll: true, collected: 3, ran: 3 });
+    expect(assessRunCompleteness(d, 3, 1)).toMatchObject({ ranAll: true, collected: 3, ran: 3 });
   });
 
   it('條件 1 · 退出碼不是 0 或 1(137 = 被 kill)→ 不算,reason 帶退出碼', () => {
@@ -784,10 +786,11 @@ describe('量尺 · 乙 · assessRunCompleteness:ran_all 是量出來的,不是 
     expect(r.reason).toMatch(/收到 4\/3/);
   });
 
-  it('條件 3 · 0 筆紀錄對 0 個要跑的(全部 skip)→ 等號成立,但那是 readRecords 那關先擋的事,這裡只管等號', () => {
+  it('條件 3 · 0 筆紀錄對 0 個要跑的(全部 skip,見證器也記了 2 筆 skipped)→ 等號成立,但那是 readRecords 那關先擋的事,這裡只管等號', () => {
+    // pending 2 沒有對應的 2 筆 skipped 的話,等式 (2) 會不成立——同上一條,補第三個參數。
     const d = dir();
     evidence(d, { total: 2, pending: 2 }, 0);
-    expect(assessRunCompleteness(d, 0)).toMatchObject({ ranAll: true, ran: 0, collected: 0 });
+    expect(assessRunCompleteness(d, 0, 2)).toMatchObject({ ranAll: true, ran: 0, collected: 0 });
   });
 });
 
@@ -906,6 +909,9 @@ describe('量尺 · 乙 · 子行程:宣稱 --full 但 ran_all 量出來是假 �
   });
 
   it('自己起 vitest 時:加 --reporter=json --outputFile(是加不是換,default reporter 還在),raw 目錄留下兩個證據檔,紀錄數 == 要跑的數', () => {
+    // 這條(跟同檔其他用 run() 的測試不同)是真的起一個 tsx + vitest 子行程跑一個測試檔,
+    // 冷啟動就會超過 vitest 預設的 5000ms 測試逾時,即使單獨跑也一樣(2026-09-05 量過)。
+    // spawnSync 本身的 90_000ms 逾時(見 run())沒變,這裡放寬的是外層 it() 的逾時。
     const r = run(['--', 'packages/core/src/weekly/iso-week.test.ts']);
     expect(r.status).toBe(0);
     // 指令列印出來的就是實際 spawn 的參數:default 與 json 兩個 reporter 都在
@@ -931,19 +937,22 @@ describe('量尺 · 乙 · 子行程:宣稱 --full 但 ran_all 量出來是假 �
     // 只跑一個檔是部分跑(沒有宣稱全套),但 ranAll 是量出來的:這次量出來為真
     expect(r.summary).toMatchObject({ scope: 'partial', ranAll: true });
     rmSync(raw, { recursive: true, force: true });
-  });
+  }, 30_000);
 });
 
 /**
- * 乙的條件 3 靠見證器「每個**跑了的**測試恰好一列」。setup 檔頭寫「skipped 沒有 afterEach,不進分母」,
- * 對 `it.skip` / `it.todo` 成立,對測試本體裡的 `ctx.skip()` **不成立**(vitest 4 照樣跑 afterEach),
- * 見證器就多寫一列 `signals: {}`——2026-09-05 全套實測 2910 列對 vitest 的 2772 個要跑的,差的 138
- * 全是 zero-input-guard 的 ctx.skip()。列數 ≠ 要跑的數,ran_all 在乾淨的全套上也會是假。
+ * 乙的等式 (2) 靠見證器「每個 pending 的測試(runtime skip 與靜態 skip)恰好一列,標 skipped」。
+ * runtime `ctx.skip()`:vitest 4 照樣跑 afterEach,見證器照樣寫一列、標 skipped,它在 skip 之前
+ * 觸發過的訊號記在它自己名下,不沖到 outside(ADR-047 更正:兩種來源的錯法不同,混一桶分不出來)。
+ * 靜態 skip(`it.skip` / `skipIf` / `-t` 篩掉的)沒有 afterEach,由 `afterAll` 走一遍 suite tasks 補一列
+ * `skipped`、`signals: {}`——這樣見證器的「skipped 列數」才會跟 vitest 的 `numPendingTests` 同一個定義,
+ * 等式 (2) 才擋得住「靜態 skip 沒有列可寫,ran_all 假紅」這個洞(2026-09-05 量過:live-run.test.ts:289
+ * 的 `it.skipIf` 那個檔案有其他會跑的測試,`afterAll` 正常觸發,補得到)。
  * 這裡用 `--dir` 指到一個臨時目錄跑一個小 probe(setupFiles 仍是 repo 的,136ms),釘住:
- * runtime skip 的測試**不寫列**;它在 skip 之前觸發過的訊號**不丟**,沖到 outside(跟 beforeAll 同一個歸屬規則)。
+ * runtime skip 與靜態 skip 都寫一列 skipped;outside 是 0,不含 skip 前觸發的訊號。
  */
-describe('量尺 · 乙 · 見證器:runtime ctx.skip() 的測試不寫列,列數才等於 vitest 要跑的數', () => {
-  it('probe:1 passed、1 ctx.skip()(skip 前觸發一個訊號)、1 it.skip、1 todo → 只有 passed 那一列 + 一列 outside 帶那個訊號', () => {
+describe('量尺 · 乙 · 見證器:runtime ctx.skip() 與靜態 skip 都寫一列 skipped,outside 不含 skip 前的訊號', () => {
+  it('probe:1 passed、1 ctx.skip()(skip 前觸發一個訊號)、1 it.skip、1 todo → passed 一列 ran + 兩列 skipped,outside 0', () => {
     const scratch = mkdtempSync(join(tmpdir(), 'lc-skip-probe-'));
     try {
       const raw = join(scratch, 'raw');
@@ -976,14 +985,23 @@ describe('量尺 · 乙 · 見證器:runtime ctx.skip() 的測試不寫列,列�
       const rows = readdirSync(raw)
         .filter((f) => f.endsWith('.jsonl'))
         .flatMap((f) => readFileSync(join(raw, f), 'utf8').split('\n').filter((l) => l.trim() !== ''))
-        .map((l) => JSON.parse(l) as { file: string; test: string; signals: Record<string, number> });
-      const tests = rows.filter((x) => x.test !== OUTSIDE_ANY_TEST);
+        .map((l) => JSON.parse(l) as { file: string; test: string; signals: Record<string, number>; status?: string });
+      const named = rows.filter((x) => x.test !== OUTSIDE_ANY_TEST);
       const outside = rows.filter((x) => x.test === OUTSIDE_ANY_TEST);
-      expect(tests.map((x) => x.test)).toEqual(['probe > passes']);
-      expect(tests).toHaveLength(json.numTotalTests - json.numPendingTests - json.numTodoTests);
-      // skip 前觸發的訊號不丟:歸到檔案層級的 outside,跟 beforeAll 的規則一樣
-      expect(outside).toHaveLength(1);
-      expect(outside[0]!.signals).toEqual({ 'llm.fallback.cloud-failed': 1 });
+      const ran = named.filter((x) => x.status !== 'skipped');
+      const skipped = named.filter((x) => x.status === 'skipped');
+      // 寫列的總數(ran + skipped)= numTotalTests − numTodoTests(todo 不寫列)
+      expect(named).toHaveLength(json.numTotalTests - json.numTodoTests);
+      expect(ran.map((x) => x.test)).toEqual(['probe > passes']);
+      expect(skipped.map((x) => x.test).sort()).toEqual(['probe > runtime skip after a signal', 'probe > static skip']);
+      // runtime skip 在 skip 之前觸發的訊號記在它自己名下,不沖到 outside
+      const runtimeSkip = skipped.find((x) => x.test === 'probe > runtime skip after a signal');
+      expect(runtimeSkip?.signals).toEqual({ 'llm.fallback.cloud-failed': 1 });
+      // 靜態 skip 沒有 afterEach 可以觸發任何訊號,補的那一列 signals 是空的
+      const staticSkip = skipped.find((x) => x.test === 'probe > static skip');
+      expect(staticSkip?.signals).toEqual({});
+      // outside 只抓「測試之外觸發的」;這個 probe 沒有 beforeAll/afterAll 層級的訊號,理應是 0
+      expect(outside).toHaveLength(0);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
