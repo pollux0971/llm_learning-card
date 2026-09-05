@@ -180,6 +180,16 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 - `worker-start` 只用在一個 worktree 的**第一輪**。同一 worktree 的第二、三輪(debug / 再審):
   `terminal create` → `terminal send 'claude --dangerously-skip-permissions' --enter` → `terminal wait --for tui-idle` → `dispatch --inject`。
   少中間兩步會 `no recognized agent detected`;重用舊終端機常 `agent_unconfigured`。**永遠開新終端機**,交接靠 worktree 裡的 REVIEW.md(P-17)
+- **dispatch 之後不要看回傳值,去看對方的狀態。**(2026-09-05,`nightmare-assault` 回饋)
+  他們用 `terminal send` **少了 `--enter`** → 文字進了草稿框 → 回 `{"ok": true}`;**連送四封全 ok**,
+  接收端閒置 **42 分鐘**、`in:0/out:0`、`ctx 0%`。是因為「工人 25 分鐘沒 commit」才去看螢幕發現的。
+  **判準一句:這個 `ok` 證明的是「我的動作成功」,還是「對方真的收到了」?**
+  絕大多數 API 的回傳值裡這兩件事是同一個 `ok`。
+  **檢查:dispatch 後幾分鐘內讀對方螢幕,看三件事 —— (a) 沒有 `draft:` 那一行、
+  (b) token 計數 / ctx% 從 0 動起來、(c) 第一個 commit 出現。三者皆無 → 當作沒送到,重新交接。**
+  卡住的草稿用 `--interrupt` 清掉(他們實測有效)。
+  ⚠️ **不要用 `terminal show` 有沒有報錯來驗** —— 工具的話正是壞掉的那一層,拿它驗它自己是套套邏輯(§4c 第 3 種)。
+
 - **worker 用 `orchestration ask` 阻塞時,只能用 `orchestration reply --id <msg_id>` 解,`send` 不行**(P-45)。
   `send` 送得到那個終端機,但**不會解除 `ask` 的阻塞** —— worker 等到逾時後自己走保守選項,
   而協調者以為自己回了。**兩邊都以為溝通成功,而且沒有任何錯誤訊息。**
