@@ -17,7 +17,7 @@
 | Stryker 正常跑完 | worker 0、stryker 0、鎖 no |
 | 兩個 worktree 同時跑,殺一個 | 被殺那邊 group 歸零,**另一邊 worker 一個不少**(等鎖中 / 兩邊都在跑 × 先殺 X / 先殺 Y,共 3 種都做) |
 | 嚴格級變異(`scripts/mutate.ts,scripts/run-tests.ts`) | 第一次 **98.25**(run-tests.ts 93.70:6 存活 + 2 沒覆蓋,全在新加的掃描碼);補 3 條測試 + 1 行等價註解後 **100.00**(446 killed + 9 timeout,0 存活 0 沒覆蓋) |
-| 全鏈 12 步 | CHAIN_SUMMARY_PLACEHOLDER |
+| 全鏈 12 步 | 全部 exit=0(含 `accept:dry` 0 ambiguous) |
 
 ## 二、覆核實作輪的三件
 
@@ -242,7 +242,24 @@ AssertionError: A 死了但 A 的 worker 還在
 
 ## 六、全鏈(每步退出碼)
 
-CHAIN_PLACEHOLDER
+`git merge main` 之後(`Already up to date`),依序執行,每步都是**單獨的 `npm run <script>` 呼叫**、非平行:
+
+| 步驟 | 指令 | exit |
+|---|---|---|
+| 1 | `npm run boundaries` | 0 |
+| 2 | `npm run typecheck` | 0 |
+| 3 | `npm run lint:docs` | 0(掃 71 個 md、20 條相對連結,無壞連結) |
+| 4 | `npm test` | 0(579 通過、138 略過;起手排過一次 `.stryker.lock` 隊,訊息是「這是你自己排的鏈」,等後正常跑) |
+| 5 | `npm run accept:standalone` | 0 |
+| 6 | `npm run standalone` | 0 |
+| 7 | `npm run accept:dry` | 0(497 scenarios:150 undefined + 347 skipped;2263 steps:611 undefined + 1652 skipped;**0 ambiguous**——摘要行完全沒出現 ambiguous 字樣) |
+| 8 | `npm run check:steps` | 0 |
+| 9 | `npm run check:gherkin-dup` | 0 |
+| 10 | `npm run accept:coverage` | 0 |
+| 11 | `npm run check:gates`(`TEMPLATE_DIR` 指向本輪指定的 agent worktree) | 0 |
+| 12 | `npm run check:all` | 0(14 個 gate 全 PASS,含 boundaries / doc-links / next-gates / phase-status 等) |
+
+跑完 `git status --short` 是乾淨的,沒有殘留探針目錄或補丁檔。
 
 ## 七、留給下一張
 
