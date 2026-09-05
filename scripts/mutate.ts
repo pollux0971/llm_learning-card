@@ -606,13 +606,24 @@ export async function runMutate(deps: RunDeps = {}): Promise<number> {
 function spawnStryker(args: string[]): Promise<number> {
   const bin = join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '.bin', 'stryker');
   return new Promise((done) => {
-    const child = spawn(bin, args, { stdio: 'inherit' });
+    // Stryker 起在**自己的 process group**(`detached: true`),signal 轉給整個 group 而不是只給
+    // Stryker 主行程——跟 scripts/run-tests.ts 的 spawnVitest 同一個形狀。實測(2026-09-05):
+    // 只 SIGTERM 主行程,Stryker 自己會收大部分 worker,但 5 個 child-process-proxy-worker 會剩 1 個
+    // 孤兒繼續跑;打整個 group 才歸零(§12b)。
+    const child = spawn(bin, args, { stdio: 'inherit', detached: true });
 
     // 我們自己攔了 SIGINT / SIGTERM,預設「連子行程一起收掉」的行為就沒了。
     // 用 prependListener 排在 installCleanup 的 handler **前面**:那個 handler 會直接
     // process.exit,排在它後面永遠不會跑到,Stryker 就變成孤兒繼續吃記憶體——
     // 鎖放掉了、吃記憶體的還在,正是這支要防的踩踏。
-    const forward = (sig: 'SIGINT' | 'SIGTERM') => () => void child.kill(sig);
+    const forward = (sig: 'SIGINT' | 'SIGTERM') => () => {
+      // 負的 pid = 整個 process group。group 已經沒了(ESRCH)就當作已經死透,不能丟。
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, sig);
+      } catch {
+        void child.kill(sig);
+      }
+    };
     const onInt = forward('SIGINT');
     const onTerm = forward('SIGTERM');
     process.prependListener('SIGINT', onInt);
