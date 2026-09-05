@@ -1,4 +1,158 @@
-# REVIEW — 全套 vitest 與 Stryker 共用一把鎖(開發輪:59 紅做綠)
+# REVIEW — 全套 vitest 與 Stryker 共用一把鎖(審核輪)
+
+接開發輪 `c52cb76`(183/183 綠)。本輪 `git merge main`(`f283235`,含整條 `five-zero-guards`)→ `4107c68`。
+merge 後 `docs/reviews/03-llm-router-phase-2-round-1.md` 確認 **263 行**、開頭是「# REVIEW — 03-llm-router/phase-2(第一輪)」,
+沒有再被交接檔污染。**本輪有動測試檔**(工單允許)。
+
+## 結果一句話
+
+| 檢查 | 結果 |
+|---|---|
+| `npm test`(全套,經鎖;merge main 後、第一批改完) | 97 檔、2555 綠 / 123 skip,exit 0,249 秒 |
+| `npm test`(全套,經鎖;**最後一版**,排在自己的 Stryker 後面等到才跑) | **97 檔、2566 綠 / 123 skip,exit 0,182 秒** |
+| `npx vitest run scripts/run-tests.test.ts scripts/mutate.test.ts` | **211 / 211 綠**(開發輪 183 + 本輪新增 28) |
+| `boundaries` / `typecheck` / `lint:docs` / `standalone` / `accept:dry`(0 ambiguous)/ `check:steps` / `check:gherkin-dup` / `accept:coverage` / `check:gates` / `accept:standalone`(158 場景全過) | 全部 exit 0 |
+| 嚴格級變異(`npm run mutate -- stryker.scanner-mutatelock.json --mutate scripts/mutate.ts,scripts/run-tests.ts`) | **100.00%**,392 killed / 9 timeout / 0 survived / 0 no-cov;第一輪交件是 91.88%,35 個存活逐一分類在「變異」段 |
+
+環境:這個 worktree 沒 `.env`,用 `export LLM_DAILY_CAP_USD=1 LLM_PRICE_IN_PER_M=2.5 LLM_PRICE_OUT_PER_M=10 TEMPLATE_DIR=…/agent-a551c3d51889a2793/template`。
+`npx tsx scripts/llm-spend.ts --today` 回 **2**,但那是 five-zero-guards 之後的「算不出來:讀不到 `learning/state/log.jsonl`」
+(這個 worktree 沒有那個檔),不是 cap 沒設——工單「回 2 就是沒設好」那句在 merge 了 five-zero-guards 之後已經不準。
+
+## 開發輪留的三件
+
+### 1. `memoizedSameWorktree` 記憶化 —— 不是等價變異,是缺一個可觀察點
+
+開發輪說「純效能,Stryker 會有等價變異」。我的判定:**真缺口**。記憶化的行為是「等 360 次只問 1 次 git」,
+那是可以數的,只是原本 `sameWorktree` 寫死在 acquireLock 裡沒地方數。處置:
+
+- `AcquireDeps` 多一個可注入的 `sameWorktree`(軟約定,函式簽章),acquireLock 不管注入的是哪個都包成記憶版 `memoizeSameWorktree(fn)`。
+- 新測試(mutate.test.ts 最後一段「acquireLock 對 sameWorktree 的記憶化」,5 條):
+  - 等滿 90 分鐘 360 次重試 → 注入的函式**只被叫 1 次**,而且每行判斷都來自注入的答案(路徑 `/me` vs `/holder` 真問 git 是別人的,注入說自己的就印自己的)。
+  - 對照組:注入說「別人的」→ 每行都印別的 worktree。
+  - **持鎖者中途換人**(第一個放掉、另一個 worktree 搶到)→ 兩組各問一次,`calls` 精確等於 `[['/me','/holder-1'],['/me','/holder-2']]`。這條殺 key 只看一邊的變異。
+  - 持鎖者 cwd 只差結尾斜線也算不同的一組(記憶層不替 sameWorktree 做正規化)。
+  - 不注入時走真的 git(子目錄 vs 根,同一個 worktree → 自己的鏈),證明預設沒被記憶化吃掉。
+
+### 2. `isPartialRun` 對 `.` —— 是洞,已補,而且不只 `.`
+
+先實測再下結論(鎖由一支小腳本以 `task: 'stryker'`、本 worktree 的 cwd 握著):
+
+| 形狀 | 開發輪的行為 | `vitest list <形狀>` 的檔案數 | 判定 |
+|---|---|---|---|
+| `npm test -- .` | 不拿鎖,直接起 vitest | 2661(= 不給任何參數) | **洞** |
+| `npm test -- ''` | 不拿鎖 | 2661 | **洞** |
+| `npm test -- /` | 不拿鎖 | 2661 | **洞** |
+| `npm test -- scripts/..` | 不拿鎖 | 2661 | **洞** |
+| `npm test -- ..` | 不拿鎖 | 0(vitest 找不到檔) | 沒損失,但一併擋 |
+| `npm test -- . scripts/mutate.test.ts` | 不拿鎖 | 2661(filter 是「或」) | **洞** |
+
+修法(`scripts/run-tests.ts`,線改成:存在的檔案 / 目錄,**而且不是 cwd 本身或 cwd 的祖先**;
+只要有一個位置參數是 cwd 自己或祖先就整個當全套,旁邊多幾個真檔案也救不回來)。
+測試釘在 run-tests.test.ts §2 新增 7 條(`.`/``/`./`、`scripts/..`、`..`/`/`、絕對路徑的 cwd 自己、混著給、
+cwd 底下的目錄與**名字以 cwd 開頭的兄弟目錄**仍是小範圍、cwd 給沒正規化的路徑),§3 新增 1 條 runTests 層的
+「`-- .` 鎖被別人握著就要排隊,參數原樣給 vitest」。修完重新實測:上表六個形狀全部印「等待 .stryker.lock…」,
+`scripts/mutate.test.ts` 與 `scripts/` 照舊直接跑。
+
+沒補的殘餘:`npm test -- s scripts/x.test.ts`(子字串 pattern 混一個真路徑)還是小範圍不拿鎖。pattern 單獨給是全套,
+混著給就被真路徑救成小範圍。要補得改成「所有位置參數都得是真路徑」,但那會讓 `npm test -- scripts/x.test.ts -t 名字`
+(很常見)也去排隊。我判斷不值得,記在這裡。
+
+### 3. `LockTimeoutError` 文案 —— 已改,兩處,都有測試
+
+- 逾時:`等 .stryker.lock 等超過 N 分鐘還是拿不到,放棄。持鎖者 pid X 在跑 全套測試(cwd=…)。鎖:<path>(<why>)`。
+  持鎖者讀不出(壞檔寬限期)→ `持鎖者讀不出`,不印 undefined / null。
+- 殘鎖:`清掉殘留的鎖 .stryker.lock:<why>`(原本「清掉殘留的 Stryker 鎖」,被 mutate.test.ts 釘住的那條已改)。
+- 「在跑什麼」的三態字樣抽成 `taskLabel`,waitingMessage 與逾時訊息共用一份。
+- 新測試(mutate.test.ts「LockTimeoutError 的訊息」,4 條):持鎖者 test / stryker / 舊格式無 task / 壞檔,
+  每條都斷言 `not.toContain('Stryker 的鎖')`。
+
+## 自己找的形狀
+
+| 試了什麼 | 結果 |
+|---|---|
+| `npm test -- --coverage`(只有旗標) | 拿鎖排隊 ✅;訊息「這是你自己排的鏈」(持鎖者在同 worktree) |
+| `npm test -- src/does-not-exist.ts` | 拿鎖排隊 ✅(刻意保守,確認如此) |
+| 等鎖時 Ctrl-C(SIGINT 給 npm 的 process group) | 等的人走掉,持鎖者的鎖檔**一個位元組都沒變**(cmp 相同),沒殘鎖 ✅ |
+| 等鎖時 SIGTERM(只打 tsx 那個 pid) | 同上 ✅ |
+| 別的 worktree(`/data/python/llm_learning-cards`,task=test)握鎖,`npm run mutate` | 排隊,訊息「持鎖者 … 在跑 全套測試 … 這是別的 worktree 佔的」✅ |
+| 本 worktree 的 `npm test` 握鎖(真的在跑全套),`npm run mutate` 隨後發起 | 排隊,「在跑 全套測試 … 這是你自己排的鏈」✅;npm test 跑完它才起 Stryker |
+| 本 worktree 的 Stryker 握鎖,`npm test` | 排隊,「在跑 Stryker … 這是你自己排的鏈」✅ → **雙向都驗了**,而且沒有出現「別的 worktree」的誤判 |
+| 正在跑全套(鎖是自己的)時 Ctrl-C | 鎖刪掉 ✅,vitest 整棵死掉 ✅ |
+| 正在跑全套時 **SIGTERM 只打 tsx 那個 pid**(`kill <pid>`、被 timeout 砍、被 supervisor 收) | 鎖刪掉 ✅,**但 vitest 的 6 個 fork worker 被孤兒化,繼續把整套跑完**——鎖已放、負載還在,正是這把鎖要防的假紅。對照組:裸 `npx vitest run` 主行程吃 SIGTERM,7 個 worker 剩 6 個,所以這是 vitest 自己的行為,不是本分支引進的 |
+| 從真的 TTY(`script -qec`)跑 `npm test -- scripts/run-tests.test.ts` | 53 綠,detached 起 vitest 沒有 SIGTTIN 之類的問題 ✅ |
+
+孤兒 worker 那條我修了(`spawnVitest`:`detached: true` 讓 vitest 自成 process group,signal 轉給整個 group `process.kill(-pid)`,
+group 已經沒了就退回 `child.kill`)。修完重做:SIGTERM 只打 tsx → 鎖刪掉、**vitest 相關行程 0 個**;Ctrl-C 給 npm 的 group → 同樣乾淨。
+這段在 `// Stryker disable all` 裡(在 vitest 裡再起 vitest 是遞迴,跟 spawnStryker 同一個理由),證據只有上面的實測。
+`spawnStryker` 我**沒動**:沒實測 Stryker 主行程死掉會不會留 worker,不憑猜改。
+
+## 變異
+
+指令(每一輪都同一條;`stryker.scanner-mutatelock.json` 的 vitest config 本輪加進 `scripts/run-tests.test.ts`,不然 run-tests.ts 的變異沒有測試打):
+
+```
+npm run mutate -- stryker.scanner-mutatelock.json --mutate scripts/mutate.ts,scripts/run-tests.ts
+```
+
+踩到兩個坑,記下來免得下一輪重踩:Stryker 10 的 `-c` 是 `--concurrency`(config 檔是位置參數,不是 `--configFile`);
+run-tests.test.ts 有一條比對原始碼字面「`LOCK_FILENAME = '.stryker.lock'`」,沙盒裡初始值被包成 mutant 開關,dry run 直接紅——改成驗 import 的值 + `export const LOCK_FILENAME` 宣告。
+
+| 輪次 | 總分 | covered | killed | timeout | survived | no cov |
+|---|---|---|---|---|---|---|
+| 開發輪交件(本輪測試補到 211 條、只加 kill 之前) | **91.88%**(mutate.ts 93.80 / run-tests.ts 82.89) | 93.18% | 387 | 9 | 29 | 6 |
+| 補測試 + 等價標記後 | **99.75%**(mutate.ts 99.70 / run-tests.ts 100) | 99.75% | 393 | 9 | 1 | 0 |
+| 最後一輪(把那 1 個的 disable 換成範圍形式;排在最後一版 `npm test` 後面等到才跑) | **100.00%**(mutate.ts 100 / run-tests.ts 100) | 100.00% | 392 | 9 | 0 | 0 |
+
+第一輪 29 + 6 = 35 個,**逐一**分類(行號是開發輪交件的行號):
+
+| 判定 | 檔:行 | 變異 | 處置與精確理由 |
+|---|---|---|---|
+| **真缺口 → 補測試** | run-tests.ts:106、107(no cov) | 預設 `installCleanup` / `log` | 測試全都注入了。新增 §11「預設接線」:不注入時 SIGTERM/SIGINT 的 listenerCount 在跑的時候 +1、跑完歸零;逾時訊息真的印到 console.log |
+| **真缺口 → 補測試** | run-tests.ts:81、82 | `.filter(!startsWith('-'))` 拿掉 / 改 endsWith | 只有旗標剛好跟一個檔案同名時才分得出。cwd 裡放 `-t`、`--coverage` 兩個檔 → 仍是全套 |
+| **真缺口 → 補測試** | run-tests.ts:95 | `endsWith(sep)` → `startsWith` | 前綴少了分隔符會把 `/tmp/x` 當成 `/tmp/xy` 的祖先。加了那對目錄的測試 |
+| **真缺口 → 補測試** | run-tests.ts:108 | `deps.cwd ?? process.cwd()` → `&&` | 測試都給 `cwd: REPO_ROOT` 而 process.cwd() 也是 REPO_ROOT。新測試:同一個相對路徑、cwd 換成臨時目錄 → 要拿鎖 |
+| **真缺口 → 補測試** | run-tests.ts:112 | `args.slice(1)` → `args` | 只有 cwd 裡有個叫 `run` 的檔案才分得出。放一個,只給旗標 → 仍要拿鎖 |
+| **真缺口 → 補測試** | run-tests.ts:122 | `deps.lock?.info` → `.info` | 沒有一條測試不給 `lock`。新測試:不給 lock 也不給 acquire,走真的 acquireLock,鎖檔 task=test |
+| **真缺口 → 補測試** | run-tests.ts:137 | `install(() => held.release())` → 空函式 | 舊測試只驗 install 被叫,沒驗 callback 真的刪鎖。新測試在 runVitest 裡叫那個 callback,鎖要不在 |
+| **真缺口 → 補測試** | mutate.ts:199 | `typeof startedAt !== 'string'` 拿掉 | P-29 判「被 Date.parse 遮住」——**不對**:`Date.parse(['2026-…'])` 會把單元素陣列轉成字串解成合法時間。新測試:陣列 / 數字的 startedAt 回 null |
+| **真缺口 → 補測試** | mutate.ts:257、258 | `finally { closeSync }` 清空 | P-29 判「要撞 EMFILE 不值得」——不用撞,`readdirSync('/proc/self/fd').length` 直接數。200 次拿鎖 / 撞鎖 / 放鎖前後 fd 數相同 |
+| **真缺口 → 補測試** | mutate.ts:285、287:9 | removeLockFile 的 catch 清空 / `if (true) return` | ENOENT 以外的錯(目錄 chmod 555 → EACCES)要往外丟。releaseLock 與 acquireLock 的殘鎖路都加了 |
+| **死程式 → 刪** | mutate.ts:287:45 | `return false` → `true` | P-29 就說沒有呼叫端在看 removeLockFile 的回傳值、建議改 void。本輪照做:`removeLockFile(): void`,releaseLock 自己回 true |
+| **真缺口 → 補測試** | mutate.ts:457 | `'讀不出'` → `''` | 舊測試 `toContain('讀不出')` 被第二行的「鎖檔還讀不出持鎖者」救活。改釘 `'pid 讀不出'` |
+| **真等價 → disable** | mutate.ts:132 | `?.code` → `.code` | 只有 `throw null` 才分得出;四個呼叫端接的都是 fs / child_process 的 Error(P-29 同判) |
+| **真等價 → disable** | mutate.ts:145 | git-common-dir 的 `.trim()` | 尾巴 `\n` 落在最後一段被 dirname() 吃掉,輸出位元組相同(P-29 同判) |
+| **真等價 → disable(範圍形式)** | mutate.ts:190 | JSON.parse 的 `catch { return null }` 清空 | 清空後 value 留 undefined,下一行 typeof 守衛一樣回 null(P-29 同判)。next-line 放在 `} catch` 前面會被掛到 try 上、殺不掉,所以用 `disable … restore` 包住整個 try/catch |
+| **真等價 → disable** | mutate.ts:193 | `typeof value !== 'object'` 拿掉 | 數字 / 字串的 `.pid` 是 undefined,被下一個守衛遮住(P-29 同判) |
+| **觀察不到 → disable** | mutate.ts:256 | `fsyncSync` 拿掉 | 保的是掉電之後的半截檔,同一台機器看不到(P-29 同判) |
+| **真等價 → disable** | mutate.ts:394 ×3 | sameWorktree 的 `&&` / 兩個 `true` | 三個都只在「一邊問得到 git、一邊問不到、resolve 後路徑卻相同」才分得出;同一個路徑不可能一邊是 git 目錄一邊不是 |
+| **真等價 → disable** | mutate.ts:409 | show-toplevel 的 `.trim()` | 兩邊都多同一個 `\n`,比對不變 |
+| **真等價 → disable** | mutate.ts:413 ×2 | `stdio` 陣列清空 / 一格清空 | 只決定 git 的抱怨會不會印到終端機,回傳值與判斷不變 |
+| **頂層 bootstrap → disable all** | mutate.ts:638 ×2 + 638/641(no cov);run-tests.ts:191 ×2 + 191/192(no cov) | `if (isMainModule…)` 真 / 假、區塊、callback | 測試是 import 這個模組的。`if (true)` 會在 vitest worker 裡起真的 Stryker / 全套 vitest **並去搶真的鎖**(第一輪那個變異「存活」時大概真的起過);`if (false)` 只有把腳本當指令跑才看得到。P-29 同一個判定,本輪把理由寫進 disable 註解 |
+
+`memoizeSameWorktree` 的變異(開發輪預告的「等價變異」):**一個都沒活下來**,第一輪就全被新的 5 條記憶化測試殺掉。
+
+## 改了哪些檔
+
+| 檔案 | 改動 |
+|---|---|
+| `scripts/run-tests.ts` | `isPartialRun` 的線加「不是 cwd 本身或祖先」、有一個這種就整個當全套;`spawnVitest` detached + 整個 group 收 signal;bootstrap 加 disable 註解 |
+| `scripts/mutate.ts` | `AcquireDeps.sameWorktree` 可注入(軟約定);`memoizeSameWorktree(fn)`;逾時 / 殘鎖文案;`taskLabel`;`removeLockFile` 改 void 並讓非 ENOENT 往外丟;等價變異的 disable 註解(每個都寫理由) |
+| `scripts/run-tests.test.ts` | +36 條(§2 洞的形狀 7、§3 `-- .` 排隊 1、§10 字面比對改法、§11 預設接線 4 / 邊界 3 / release callback 1),53 → 89 |
+| `scripts/mutate.test.ts` | +11 條(逾時文案 4、記憶化 5、守衛與資源 3)並改兩條既有斷言(殘鎖文案、`pid 讀不出`),136 → 150 |
+| `vitest.scanner-mutatelock.config.ts` | include 加 `scripts/run-tests.test.ts` |
+| `REVIEW.md` | 本檔 |
+
+沒動:`contracts/`、`raw/`、`prompts/`、`package.json`、任何 `.feature`。
+
+## 下一輪 / 合併前請看
+
+1. `spawnStryker`(mutate.ts)跟 `spawnVitest` 原本是同一個形狀,我只改了 vitest 那邊(有實測);Stryker 主行程死掉會不會留 worker 沒驗。要對稱改之前先實測。
+2. `npm test -- s scripts/x.test.ts` 那個殘餘(上面 §2 末尾)是有意識留下的,不是漏。
+3. 工單裡「`llm-spend.ts --today` 回 2 就是沒設好」在 merge 了 five-zero-guards 之後要改成「回 2 看訊息:讀不到 log 是這個 worktree 沒 `learning/state/`,不是 cap」。
+
+---
+
+# 開發輪原文(c52cb76)
 
 接測試輪 `d27bebe`(59 紅 / 124 綠)。**沒碰任何 `*.test.ts` / `*.steps.ts` / `*.feature`。**
 `git merge main`(`48816bf`)已做;merge 時 git 把上一輪的交接 REVIEW.md 當成「對改名檔的修改」

@@ -14,17 +14,22 @@
  *   npx vitest run scripts/mutate.test.ts      # 根本不經過這支 → 當然不拿鎖
  *
  * **哪條線算「小範圍」**(釘在 scripts/run-tests.test.ts §2,改線先改測試):
- * `--` 之後有任何一個**存在於磁碟上的檔案或目錄**當位置參數,就是小範圍,不拿鎖。
+ * `--` 之後有任何一個**存在於磁碟上的檔案或目錄**當位置參數,**而且它不是 cwd 本身或 cwd 的祖先**,
+ * 就是小範圍,不拿鎖。
  * 其他一律當全套:沒有位置參數、只有旗標、旗標的值(`--reporter verbose` 的 verbose)、
  * 以及 vitest 的子字串 pattern(`npm test -- mutate`)。pattern 也當全套是**故意往安全的方向錯**:
  * 多鎖一次的代價是等幾分鐘,漏鎖一次的代價是整輪 OOM 或假紅。要快就給真的路徑。
+ *
+ * 「cwd 本身或祖先」那半句是審核輪補的洞:`.`、`''`、`./`、`/`、`scripts/..` 全都「存在」,
+ * 但 vitest 拿它們當 filter 會跑**整套**(實測 `vitest list .` 跟 `vitest list` 都是 2661 條),
+ * 沒鎖跑整套正是這支要防的事。`..` 也擋(vitest 對它找到 0 個檔,擋了沒損失)。
  *
  * 逾時、殘鎖、壞檔寬限、signal 清理**全部沿用** scripts/mutate.ts 的 acquireLock,
  * 這支不重新發明任何一條鎖的規則。
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -67,12 +72,28 @@ export function vitestArgs(argv: string[]): string[] {
 
 /**
  * `passthrough`(已經去掉 `--` 與 `run` 的 vitest 參數)是不是小範圍。
- * 規則見檔頭:有任何一個**存在的檔案 / 目錄**當位置參數 → true(不拿鎖)。
+ * 規則見檔頭:有任何一個**存在的檔案 / 目錄**當位置參數,而且不是 cwd 本身或 cwd 的祖先 → true(不拿鎖)。
  */
 export function isPartialRun(passthrough: string[], cwd: string = process.cwd()): boolean {
+  const here = resolve(cwd);
   // 只看「存在不存在」,不猜哪些旗標帶值:`--reporter verbose` 的 verbose 在磁碟上不存在,
   // 自然被當全套;`npm test -- mutate` 這種子字串 pattern 也一樣——故意往「多鎖一次」錯。
-  return passthrough.some((arg) => !arg.startsWith('-') && existsSync(resolve(cwd, arg)));
+  const existing = passthrough
+    .filter((arg) => !arg.startsWith('-'))
+    .map((arg) => resolve(here, arg))
+    .filter((target) => existsSync(target));
+  // 存在,但解析出來是 cwd 自己(`.`、`''`、`./`、`scripts/..`)或 cwd 的祖先(`..`、`/`):
+  // 那是整個 repo,vitest 會跑全套。只要有一個這種,旁邊再多幾個真的檔案也救不回來
+  // (vitest 的 filter 是「或」),所以它蓋過一切,不是 some() 裡的一員。
+  if (existing.some((target) => isSameOrAncestor(target, here))) return false;
+  return existing.length > 0;
+}
+
+/** `dir` 是不是 `here` 本身或它的祖先。兩邊都已經 resolve 過。`/` 已經以 sep 結尾,不能再接一個。 */
+function isSameOrAncestor(dir: string, here: string): boolean {
+  if (dir === here) return true;
+  const prefix = dir.endsWith(sep) ? dir : dir + sep;
+  return here.startsWith(prefix);
 }
 
 /**
@@ -126,12 +147,25 @@ export async function runTests(deps: RunTestsDeps = {}): Promise<number> {
 /**
  * 真的把 vitest 叫起來。測試一律注入假的 `runVitest`(這支在 vitest 裡面跑,再起一個 vitest
  * 是遞迴),所以這一段沒有測試覆蓋——跟 mutate.ts 的 spawnStryker 同樣用 disable 標掉。
+ *
+ * vitest 起在**自己的 process group**(`detached: true`),signal 轉給整個 group 而不是只給
+ * vitest 主行程。實測(審核輪,2026-09-05):只 SIGTERM vitest 主行程,它會死,但它 fork 出來的
+ * 6 個 worker 會被孤兒化、繼續把整套跑完——那時鎖已經放掉了,下一個拿到鎖的人跟這 6 個 worker
+ * 搶 CPU,正是這把鎖要防的假紅。終端機的 Ctrl-C 沒這個問題(SIGINT 是給整個前景 group 的),
+ * 但 `kill <pid>`、被 supervisor 收掉、被 timeout 砍掉都是只打一個 pid。
  */
 function spawnVitest(args: string[]): Promise<number> {
   const bin = join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '.bin', 'vitest');
   return new Promise((done) => {
-    const child = spawn(bin, args, { stdio: 'inherit' });
-    const forward = (sig: 'SIGINT' | 'SIGTERM') => () => void child.kill(sig);
+    const child = spawn(bin, args, { stdio: 'inherit', detached: true });
+    const forward = (sig: 'SIGINT' | 'SIGTERM') => () => {
+      // 負的 pid = 整個 process group。group 已經沒了(ESRCH)就當作已經死透,不能丟。
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, sig);
+      } catch {
+        void child.kill(sig);
+      }
+    };
     const onInt = forward('SIGINT');
     const onTerm = forward('SIGTERM');
     process.prependListener('SIGINT', onInt);
@@ -154,6 +188,7 @@ function spawnVitest(args: string[]): Promise<number> {
 // Stryker restore all
 
 /** 同 mutate.ts:只有被當成指令跑的時候才執行,測試 import 這個模組不能起 vitest。 */
+// Stryker disable all: 頂層 bootstrap,理由同 mutate.ts 末尾——`if (true)` 會在 vitest worker 裡再起一個全套 vitest 並搶真的鎖
 if (isMainModule(process.argv[1], import.meta.url)) {
   void runTests().then((code) => {
     process.exitCode = code;

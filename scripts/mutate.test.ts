@@ -1597,7 +1597,8 @@ describe('訊息裡的單位換算', () => {
   it('讀不出持有者時,兩個備用字樣都要在(空字串等於沒訊息)', () => {
     const msg = waitingMessage(null, 0);
     expect(msg).toContain('另一個 worktree');
-    expect(msg).toContain('讀不出');
+    // 第二行的判斷也有「讀不出」三個字,所以要釘 pid 那一格本身,不然它變空字串抓不到。
+    expect(msg).toContain('pid 讀不出');
   });
 });
 
@@ -1656,9 +1657,11 @@ describe('清殘鎖時要印出理由', () => {
 
     expect(held.info.pid).toBe(process.pid);
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toContain('清掉殘留的 Stryker 鎖');
+    // 鎖是共用的:不能叫「Stryker 鎖」(看的人會去找一個不存在的 Stryker),要講鎖檔名。
+    expect(logs[0]).toContain('清掉殘留的鎖 .stryker.lock');
+    expect(logs[0]).not.toContain('Stryker 鎖');
     // 冒號後面必須有東西——那就是 verdict.why。
-    const why = logs[0]!.split('鎖:')[1] ?? '';
+    const why = logs[0]!.split('.stryker.lock:')[1] ?? '';
     expect(why.trim().length).toBeGreaterThan(0);
     expect(why).toContain(String(DEAD_PID));
   });
@@ -1907,5 +1910,249 @@ describe('acquireLock 印的等待訊息帶著「自己 / 別人」的判斷', (
     expect(logs[3]).toContain('已等 45 秒');
     expect(logs[4]).toContain('已等 1 分鐘');
     for (const line of logs) expect(line).toContain('逾時 90 分鐘');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 審核輪(2026-09-05)補的:鎖已經是 Stryker 與全套測試共用的,逾時訊息不能再講「Stryker 的鎖」;
+// acquireLock 的 sameWorktree 記憶化是有行為可測的(問幾次),不是純效能。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('LockTimeoutError 的訊息:講鎖檔名與持鎖者在跑什麼,不講「Stryker 的鎖」', () => {
+  /** 等到逾時,回那個 error。holder 由呼叫端寫好。 */
+  async function timeoutAgainst(lockPath: string): Promise<LockTimeoutError> {
+    const clock = fakeClock();
+    const err = await acquireLock(lockPath, {
+      info: info({ pid: 555, cwd: '/me', task: 'test' }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: () => {},
+      isAlive: () => true,
+      retryMs: 60_000,
+      maxWaitMs: 3 * 60_000,
+      staleAfterMs: Number.POSITIVE_INFINITY,
+      corruptGraceMs: Number.POSITIVE_INFINITY,
+      sameWorktree: () => false,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LockTimeoutError);
+    return err as LockTimeoutError;
+  }
+
+  it('持鎖者在跑全套測試 → 訊息說「全套測試」、帶 pid 與 cwd,而且沒有「Stryker 的鎖」', async () => {
+    const dir = tmp('mutate-timeout-msg-test');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 4242, cwd: '/busy/worktree', task: 'test' }));
+    const err = await timeoutAgainst(p);
+    expect(err.message).toContain('.stryker.lock');
+    expect(err.message).toContain('3 分鐘');
+    expect(err.message).toContain('持鎖者 pid 4242 在跑 全套測試');
+    expect(err.message).toContain('cwd=/busy/worktree');
+    expect(err.message).toContain(p);
+    expect(err.message).not.toContain('Stryker 的鎖');
+    expect(err.message).not.toContain('undefined');
+  });
+
+  it('持鎖者在跑 Stryker → 訊息說「Stryker」(講的是它在跑什麼,不是鎖叫什麼)', async () => {
+    const dir = tmp('mutate-timeout-msg-stryker');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 4243, cwd: '/busy/worktree', task: 'stryker' }));
+    const err = await timeoutAgainst(p);
+    expect(err.message).toContain('持鎖者 pid 4243 在跑 Stryker(');
+    expect(err.message).not.toContain('Stryker 的鎖');
+  });
+
+  it('舊格式的鎖(沒有 task)→ 「Stryker 或全套測試」,不猜', async () => {
+    const dir = tmp('mutate-timeout-msg-old');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 4244, cwd: '/busy/worktree' }));
+    const err = await timeoutAgainst(p);
+    expect(err.message).toContain('在跑 Stryker 或全套測試');
+  });
+
+  it('壞檔還在寬限期(持鎖者讀不出)→ 說「持鎖者讀不出」,不印 undefined', async () => {
+    const dir = tmp('mutate-timeout-msg-corrupt');
+    const p = join(dir, '.stryker.lock');
+    writeFileSync(p, '{not json', 'utf8');
+    const err = await timeoutAgainst(p);
+    expect(err.holder).toBeNull();
+    expect(err.message).toContain('持鎖者讀不出');
+    expect(err.message).toContain('.stryker.lock');
+    expect(err.message).not.toContain('undefined');
+    expect(err.message).not.toContain('null');
+  });
+});
+
+describe('acquireLock 對 sameWorktree 的記憶化:同一組路徑只問一次', () => {
+  /** 一個會數次數、記參數的 sameWorktree。 */
+  function counting(answer: boolean) {
+    const calls: [string, string][] = [];
+    return { calls, fn: (a: string, b: string) => (calls.push([a, b]), answer) };
+  }
+
+  it('等滿 90 分鐘(360 次重試)只問 1 次,而且每一行的判斷都來自注入的那個', async () => {
+    const dir = tmp('mutate-memo-360');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 4242, cwd: '/holder', task: 'stryker' }));
+    const clock = fakeClock();
+    const same = counting(true);
+    const logs: string[] = [];
+    const err = await acquireLock(p, {
+      info: info({ pid: 555, cwd: '/me', task: 'test' }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: (m) => logs.push(m),
+      isAlive: () => true,
+      staleAfterMs: Number.POSITIVE_INFINITY,
+      sameWorktree: same.fn,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LockTimeoutError);
+    expect(clock.sleeps).toHaveLength(MAX_WAIT_MS / RETRY_INTERVAL_MS);
+    expect(logs).toHaveLength(MAX_WAIT_MS / RETRY_INTERVAL_MS);
+    // 這條就是「記憶化是行為,不是純效能」:360 行訊息,只准問 1 次。
+    expect(same.calls).toEqual([['/me', '/holder']]);
+    // '/me' 跟 '/holder' 真問 git 是「別人的」;每一行都說「自己的」= 判斷真的來自注入的函式。
+    for (const line of logs) expect(line).toContain('自己排的鏈');
+  });
+
+  it('注入的說「別人的」→ 每一行都說別的 worktree(對照組,證明不是寫死的)', async () => {
+    const dir = tmp('mutate-memo-other');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 4242, cwd: '/holder', task: 'test' }));
+    const same = counting(false);
+    const logs: string[] = [];
+    const clock = fakeClock((n) => {
+      if (n === 3) rmSync(p);
+    });
+    await acquireLock(p, {
+      info: info({ pid: 555, cwd: '/me', task: 'test' }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: (m) => logs.push(m),
+      isAlive: () => true,
+      sameWorktree: same.fn,
+    });
+    expect(logs).toHaveLength(3);
+    for (const line of logs) expect(line).toContain('別的 worktree');
+    expect(same.calls).toHaveLength(1);
+  });
+
+  it('持鎖者中途換人(另一個 worktree 搶到)→ 新的一組要再問一次,兩組各問一次', async () => {
+    const dir = tmp('mutate-memo-switch');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 4242, cwd: '/holder-1', task: 'stryker' }));
+    const same = counting(false);
+    const logs: string[] = [];
+    const clock = fakeClock((n) => {
+      // 第 2 次睡完:第一個放掉、第二個(別的 cwd)立刻搶到;第 4 次睡完:第二個也放掉。
+      if (n === 2) {
+        rmSync(p);
+        tryAcquire(p, info({ pid: 4343, cwd: '/holder-2', task: 'test' }));
+      }
+      if (n === 4) rmSync(p);
+    });
+    await acquireLock(p, {
+      info: info({ pid: 555, cwd: '/me', task: 'test' }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: (m) => logs.push(m),
+      isAlive: () => true,
+      sameWorktree: same.fn,
+    });
+    expect(logs).toHaveLength(4);
+    expect(logs[0]).toContain('4242');
+    expect(logs[3]).toContain('4343');
+    // key 只看其中一邊(例如只看 selfCwd)的話,第二個持鎖者會拿到第一個的答案,而且這裡只會問 1 次。
+    expect(same.calls).toEqual([
+      ['/me', '/holder-1'],
+      ['/me', '/holder-2'],
+    ]);
+  });
+
+  it('持鎖者的 cwd 只差一個結尾斜線也算不同的一組,要再問(key 不能把路徑正規化掉)', async () => {
+    // sameWorktree 自己會 resolve;記憶化那層不該替它做判斷,原樣當 key。
+    const dir = tmp('mutate-memo-key');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 1, cwd: '/y/z', task: 'stryker' }));
+    const same = counting(true);
+    const clock = fakeClock((n) => {
+      if (n === 1) {
+        rmSync(p);
+        tryAcquire(p, info({ pid: 2, cwd: '/y/z/', task: 'stryker' }));
+      }
+      if (n === 2) rmSync(p);
+    });
+    await acquireLock(p, {
+      info: info({ pid: 555, cwd: '/x', task: 'test' }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: () => {},
+      isAlive: () => true,
+      sameWorktree: same.fn,
+    });
+    expect(same.calls).toEqual([
+      ['/x', '/y/z'],
+      ['/x', '/y/z/'],
+    ]);
+  });
+
+  it('不注入時走真的 sameWorktree:同一個 git worktree 的持鎖者是自己的鏈(記憶化沒有把預設吃掉)', async () => {
+    const { wtA } = gitRepoWithWorktrees();
+    const p = join(wtA, '.stryker.lock');
+    // 自己在子目錄、持鎖者在根:路徑不同,只有真的問 git 才知道是同一個 worktree。
+    const me = join(wtA, 'scripts');
+    mkdirSync(me, { recursive: true });
+    tryAcquire(p, info({ pid: 4242, cwd: wtA, task: 'stryker' }));
+    const logs: string[] = [];
+    const clock = fakeClock((n) => {
+      if (n === 1) rmSync(p);
+    });
+    await acquireLock(p, {
+      info: info({ pid: 555, cwd: me, task: 'test' }),
+      now: clock.now,
+      sleep: clock.sleep,
+      log: (m) => logs.push(m),
+      isAlive: () => true,
+    });
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('自己排的鏈');
+  });
+});
+
+describe('審核輪(2026-09-05)補殺的變異:守衛與資源', () => {
+  it('parseLock:startedAt 是陣列(["2026-…"])也回 null——Date.parse 會把單元素陣列轉成字串再解,typeof 守衛不是多餘的', () => {
+    expect(parseLock(JSON.stringify({ pid: 1, startedAt: [new Date(T0).toISOString()], cwd: '/x' }))).toBeNull();
+    expect(parseLock(JSON.stringify({ pid: 1, startedAt: T0, cwd: '/x' }))).toBeNull();
+  });
+
+  it('tryAcquire 不漏 fd:拿 200 次鎖(含 200 次 EEXIST),/proc/self/fd 的數量不變', () => {
+    // P-29 說「要撞 EMFILE 才看得到,不值得」。不用撞:Linux 上 /proc/self/fd 直接數得到。
+    const dir = tmp('mutate-fd-leak');
+    const p = join(dir, '.stryker.lock');
+    const fds = () => readdirSync('/proc/self/fd').length;
+    const before = fds();
+    for (let i = 0; i < 200; i += 1) {
+      expect(tryAcquire(p, info({ pid: i + 1 }))).toBe(true);
+      expect(tryAcquire(p, info({ pid: i + 1 }))).toBe(false);
+      expect(releaseLock(p, i + 1)).toBe(true);
+    }
+    expect(fds()).toBe(before);
+  });
+
+  it('刪鎖時碰到 ENOENT 以外的錯(目錄不可寫 → EACCES)要往外丟,不能當成刪掉了', async () => {
+    // 「以為刪了其實沒刪」= 留下一把殘鎖,下一個人白等到兩小時規則觸發。
+    const dir = tmp('mutate-unlink-eacces');
+    const p = join(dir, '.stryker.lock');
+    tryAcquire(p, info({ pid: 777 }));
+    chmodSync(dir, 0o555);
+    try {
+      expect(() => releaseLock(p, 777)).toThrow(/EACCES|EPERM/);
+      // 殘鎖那條路也一樣:清不掉就要丟,不能靜靜地重試到逾時。
+      await expect(
+        acquireLock(p, { info: info({ pid: 999, cwd: dir }), now: () => T0, sleep: async () => {}, log: () => {}, isAlive: () => false }),
+      ).rejects.toThrow(/EACCES|EPERM/);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+    expect(existsSync(p)).toBe(true);
   });
 });

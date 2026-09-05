@@ -25,9 +25,10 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 
 import {
+  LOCK_FILENAME,
   LockTimeoutError,
   MAX_WAIT_MS,
   RETRY_INTERVAL_MS,
@@ -204,6 +205,59 @@ describe('isPartialRun(小範圍的線)', () => {
     expect(isPartialRun(['scripts/run-tests.test.ts'])).toBe(true);
     expect(isPartialRun(['this-path-does-not-exist-anywhere'])).toBe(false);
   });
+
+  // 審核輪(2026-09-05)補的洞:「存在的目錄」也包括 cwd 自己跟它的祖先,而 vitest 拿它們當 filter
+  // 會跑**整套**(實測 `vitest list .`、`vitest list ''`、`vitest list /` 都是 2661 條,跟不給一樣)。
+  // 整套沒鎖正是這支要防的事,所以這些一律當全套。
+  it('cwd 自己(`.`、``、`./`)→ 全套(拿鎖):存在,但那是整個 repo', () => {
+    const d = cwdWithFiles();
+    expect(isPartialRun(['.'], d)).toBe(false);
+    expect(isPartialRun([''], d)).toBe(false);
+    expect(isPartialRun(['./'], d)).toBe(false);
+  });
+
+  it('繞回 cwd 的路徑(`scripts/..`、`./scripts/../`)→ 全套:看的是解析後的位置,不是字面', () => {
+    const d = cwdWithFiles();
+    expect(isPartialRun(['scripts/..'], d)).toBe(false);
+    expect(isPartialRun(['./scripts/../'], d)).toBe(false);
+    expect(isPartialRun(['packages/core/../..'], d)).toBe(false);
+  });
+
+  it('cwd 的祖先(`..`、`/`)→ 全套', () => {
+    const d = cwdWithFiles();
+    expect(isPartialRun(['..'], d)).toBe(false);
+    expect(isPartialRun(['/'], d)).toBe(false);
+    // `/` 本身以分隔符結尾,前綴比對不能變成 `//`。
+    expect(isPartialRun(['/', 'scripts/'], d)).toBe(false);
+  });
+
+  it('絕對路徑寫的 cwd 自己(有沒有結尾斜線都一樣)→ 全套', () => {
+    const d = cwdWithFiles();
+    expect(isPartialRun([d], d)).toBe(false);
+    expect(isPartialRun([`${d}/`], d)).toBe(false);
+  });
+
+  it('cwd 自己跟一個真的檔案混著給 → 還是全套:`.` 那個 filter 已經涵蓋整套', () => {
+    const d = cwdWithFiles();
+    expect(isPartialRun(['.', 'scripts/mutate.test.ts'], d)).toBe(false);
+    expect(isPartialRun(['scripts/mutate.test.ts', '..'], d)).toBe(false);
+  });
+
+  it('cwd 底下的目錄還是小範圍(前綴比對只擋「祖先」,不擋「後代」)', () => {
+    const d = cwdWithFiles();
+    expect(isPartialRun(['scripts'], d)).toBe(true);
+    expect(isPartialRun(['scripts/'], d)).toBe(true);
+    expect(isPartialRun([join(d, 'packages', 'core')], d)).toBe(true);
+    // 名字只是以 cwd 的名字開頭的**兄弟**目錄,不是祖先也不是自己:照舊看存不存在。
+    mkdirSync(`${d}-sibling`, { recursive: true });
+    expect(isPartialRun([`${d}-sibling`], d)).toBe(true);
+  });
+
+  it('cwd 給的是相對或沒正規化的路徑也一樣判(兩邊都先 resolve)', () => {
+    const d = cwdWithFiles();
+    expect(isPartialRun(['.'], `${d}/scripts/..`)).toBe(false);
+    expect(isPartialRun(['scripts'], `${d}/scripts/..`)).toBe(true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -259,6 +313,33 @@ describe('runTests 小範圍時不拿鎖', () => {
     expect(ran).toBe(true);
     // 別人的鎖一個位元組都不能動。
     expect(readFileSync(lockPath, 'utf8')).toBe(before);
+  });
+
+  it('`npm test -- .` 不是小範圍:鎖被別人握著就要排隊,不能直接跑', async () => {
+    // 審核輪補的洞的 runTests 層:isPartialRun 判對了還不夠,要確認 runTests 真的去拿鎖。
+    const dir = tmp('run-tests-dot-queues');
+    const lockPath = holdLiveLock(dir);
+    let acquired = 0;
+    let ran: string[] | undefined;
+    const code = await runTests({
+      argv: ['node', 'run-tests.ts', '--', '.'],
+      lockPath,
+      acquire: async (p) => {
+        acquired += 1;
+        return { lockPath: p, info: info(), release: () => {} };
+      },
+      runVitest: async (args) => {
+        ran = args;
+        return 0;
+      },
+      installCleanup: () => () => {},
+      log: () => {},
+      cwd: REPO_ROOT,
+    });
+    expect(code).toBe(0);
+    expect(acquired).toBe(1);
+    // 參數原樣給 vitest:是拿不拿鎖的問題,不是改使用者要跑什麼。
+    expect(ran).toEqual(['run', '.']);
   });
 
   it('小範圍時退出碼一樣原樣往外傳', async () => {
@@ -826,7 +907,166 @@ describe('不重新發明鎖', () => {
   });
 
   it('mutate.ts 還是鎖的唯一定義處(LOCK_FILENAME 只在那裡)', () => {
+    // 值從 import 驗、宣告從原始碼驗。不能比對「LOCK_FILENAME = '.stryker.lock'」整段字面:
+    // Stryker 的沙盒會把初始值包成 mutant 開關,那段字面就不在了,dry run 直接紅(審核輪 2026-09-05 踩到)。
+    expect(LOCK_FILENAME).toBe('.stryker.lock');
     const src = readFileSync(MUTATE_MODULE, 'utf8');
-    expect(src).toContain("LOCK_FILENAME = '.stryker.lock'");
+    expect(src).toMatch(/export const LOCK_FILENAME\b/);
+    expect(readFileSync(RUN_TESTS_MODULE, 'utf8')).not.toMatch(/const LOCK_FILENAME\b/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 11. 審核輪(2026-09-05)補殺的變異:預設接線、旗標與路徑的邊界、release 真的會刪鎖
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('runTests 的預設接線(不注入時)', () => {
+  it('不給 lock 也不給 acquire:走真的 acquireLock,鎖檔標 task: "test",跑完鎖不在', async () => {
+    // `deps.lock?.info` 的 `?.` 拿掉會在這裡炸。
+    const dir = tmp('run-tests-defaults-lock');
+    const lockPath = join(dir, '.stryker.lock');
+    let seen: string | undefined;
+    const code = await runTests({
+      argv: ['node', 'run-tests.ts'],
+      lockPath,
+      runVitest: async () => {
+        seen = readFileSync(lockPath, 'utf8');
+        return 0;
+      },
+      installCleanup: () => () => {},
+      log: () => {},
+    });
+    expect(code).toBe(0);
+    expect(parseLock(seen ?? '')?.task).toBe('test');
+    expect(parseLock(seen ?? '')?.pid).toBe(process.pid);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it('不給 installCleanup:真的把 SIGTERM / SIGINT handler 掛到 process 上,跑完拆掉', async () => {
+    const dir = tmp('run-tests-defaults-install');
+    const term0 = process.listenerCount('SIGTERM');
+    const int0 = process.listenerCount('SIGINT');
+    let during: [number, number] | undefined;
+    await runTests({
+      argv: ['node', 'run-tests.ts'],
+      lockPath: join(dir, '.stryker.lock'),
+      lock: { sleep: NEVER_SLEEP, log: () => {} },
+      runVitest: async () => {
+        during = [process.listenerCount('SIGTERM'), process.listenerCount('SIGINT')];
+        return 0;
+      },
+      log: () => {},
+    });
+    expect(during).toEqual([term0 + 1, int0 + 1]);
+    expect(process.listenerCount('SIGTERM')).toBe(term0);
+    expect(process.listenerCount('SIGINT')).toBe(int0);
+  });
+
+  it('不給 log:等鎖逾時的訊息印到 console.log', async () => {
+    const dir = tmp('run-tests-defaults-log');
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void lines.push(a.join(' ')));
+    try {
+      const code = await runTests({
+        argv: ['node', 'run-tests.ts'],
+        lockPath: join(dir, '.stryker.lock'),
+        acquire: async () => {
+          throw new LockTimeoutError('等太久了啦', 123, null);
+        },
+        runVitest: async () => {
+          throw new Error('等鎖逾時不該跑 vitest');
+        },
+        installCleanup: () => () => {},
+      });
+      expect(code).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lines).toEqual(['等太久了啦']);
+  });
+
+  it('不給 cwd:用 process.cwd() 判;給了 cwd 就用給的,不偷看 process.cwd()', async () => {
+    // 套件在 repo 根跑:`scripts/run-tests.test.ts` 相對 process.cwd() 存在 → 小範圍。
+    let acquired = 0;
+    const acquire = async (p: string) => {
+      acquired += 1;
+      return { lockPath: p, info: info(), release: () => {} };
+    };
+    const base = { runVitest: async () => 0, installCleanup: () => () => {}, log: () => {}, acquire };
+    const dir = tmp('run-tests-cwd');
+    await runTests({ ...base, argv: ['node', 'run-tests.ts', '--', 'scripts/run-tests.test.ts'], lockPath: join(dir, '.stryker.lock') });
+    expect(acquired).toBe(0);
+    // 同一個相對路徑,cwd 改成一個沒有 scripts/ 的臨時目錄 → 不存在 → 全套,要拿鎖。
+    // `deps.cwd ?? process.cwd()` 變成 `deps.cwd && process.cwd()` 的話,這裡會拿 process.cwd() 判成小範圍。
+    await runTests({ ...base, argv: ['node', 'run-tests.ts', '--', 'scripts/run-tests.test.ts'], lockPath: join(dir, '.stryker.lock'), cwd: dir });
+    expect(acquired).toBe(1);
+  });
+});
+
+describe('isPartialRun 的邊界(補殺)', () => {
+  it('旗標就算剛好有同名檔案存在也不是路徑(`-t` 檔在 cwd 裡 → 還是全套)', () => {
+    const d = tmp('run-tests-flag-file');
+    writeFileSync(join(d, '-t'), '', 'utf8');
+    writeFileSync(join(d, '--coverage'), '', 'utf8');
+    expect(existsSync(join(d, '-t'))).toBe(true);
+    expect(isPartialRun(['-t'], d)).toBe(false);
+    expect(isPartialRun(['--coverage'], d)).toBe(false);
+  });
+
+  it('cwd 的名字剛好以某個存在目錄的名字開頭(/tmp/x 對 /tmp/xy)→ 那不是祖先,還是小範圍', () => {
+    // 前綴比對少了分隔符的話,/tmp/x 會被當成 /tmp/xy 的祖先。
+    const base = tmp('run-tests-prefix');
+    const short = join(base, 'x');
+    const cwd = join(base, 'xy');
+    mkdirSync(short);
+    mkdirSync(cwd);
+    expect(isPartialRun([short], cwd)).toBe(true);
+  });
+
+  it('runTests 只拿 `run` 後面的參數判:cwd 裡剛好有個叫 run 的檔案,只給旗標還是全套', async () => {
+    const d = tmp('run-tests-run-file');
+    writeFileSync(join(d, 'run'), '', 'utf8');
+    let acquired = 0;
+    const code = await runTests({
+      argv: ['node', 'run-tests.ts', '--', '--reporter=dot'],
+      lockPath: join(d, '.stryker.lock'),
+      acquire: async (p) => {
+        acquired += 1;
+        return { lockPath: p, info: info(), release: () => {} };
+      },
+      runVitest: async () => 0,
+      installCleanup: () => () => {},
+      log: () => {},
+      cwd: d,
+    });
+    expect(code).toBe(0);
+    expect(acquired).toBe(1);
+  });
+});
+
+describe('交給 installCleanup 的 release 真的會刪鎖', () => {
+  it('signal handler 拿到的那個 callback 叫下去,鎖檔就不在了(不是一個空函式)', async () => {
+    const dir = tmp('run-tests-release-cb');
+    const lockPath = join(dir, '.stryker.lock');
+    let handler: (() => void) | undefined;
+    let goneDuring: boolean | undefined;
+    await runTests({
+      argv: ['node', 'run-tests.ts'],
+      lockPath,
+      lock: { sleep: NEVER_SLEEP, log: () => {} },
+      installCleanup: (release) => {
+        handler = release;
+        return () => {};
+      },
+      runVitest: async () => {
+        expect(existsSync(lockPath)).toBe(true);
+        handler?.();
+        goneDuring = !existsSync(lockPath);
+        return 0;
+      },
+      log: () => {},
+    });
+    expect(handler).toBeDefined();
+    expect(goneDuring).toBe(true);
   });
 });
