@@ -1,7 +1,8 @@
 /**
  * 退化路徑見證器的彙總(ADR-044)。**報告模式**:哪些測試走了退化分支只報告、不執法。
- * 退出碼非 0 只有三種情況:彙總本身壞掉(掃到 0 個測試、找不到輸入)、**登記表過期**、
- * **未標記數超過基準**(後兩條是技術顧問對「152 → 161」的裁定,見下)。
+ * 退出碼非 0 只有五種情況:彙總本身壞掉(掃到 0 個測試、找不到輸入)、**登記表過期**、
+ * **未標記數超過基準**(這兩條是技術顧問對「152 → 161」的裁定,見下),以及量尺自己腐爛的兩種
+ * (ADR-047,見「量尺自己不准腐爛」):**訊號目錄漂移**、**宣稱全套但沒跑完**。
  *
  * 用法:
  *   npx tsx scripts/degraded-report.ts                 # 跑一次 vitest(全部)再彙總
@@ -13,7 +14,27 @@
  *
  * 流程:設 `DEGRADED_WITNESS_DIR=reports/degraded/.raw/<時戳>/` 跑 vitest
  * (`scripts/degraded-witness.setup.ts` 會在那裡一個 worker 寫一個 JSONL),再讀回來彙總。
+ * 自己起 vitest 時**加**(不是換)`--reporter=json --outputFile=<raw>/vitest.json`,並把退出碼記到
+ * `<raw>/vitest-exit.json`:這兩個是 ran_all 的證據(見下)。
  * 報告旁邊同時寫一份 `<sha>.json`,只有數字,給之後「未標記數只准降」比對用。
+ *
+ * **量尺自己不准腐爛(ADR-047)**。ADR-044 說「哪些測試走了退化分支」只報告不執法;這裡執法的是
+ * 量尺本身,兩條:
+ *
+ *   甲 · **訊號目錄與程式碼的呼叫點必須一一對上。** 「未標記 152」完全建立在目錄是完整的:目錄少一條
+ *        = 少一批可能未標記的測試,漂移會往「更好」的方向動。兩個方向都 FAIL:程式碼有、目錄沒有 →
+ *        「訊號未登記」;目錄有、程式碼沒有 → 「訊號無呼叫點」。目錄不容忍暫時的空:刪分支的人就是該
+ *        改目錄的人,同一個 commit(跟零輸入守門鎖 2、登記過期同形)。
+ *   乙 · **「宣稱全套、實際沒跑完」也要擋。** 沒帶 vitest 參數 / `--in … --full` 是**宣稱**;
+ *        `ran / collected` 是**驗證**。ran_all 要退出碼 ∈ {0, 1}、`vitest.json` 存在可解析且數字一致,
+ *        **再加兩個等式,兩邊來源不同,任一不等就假**:
+ *          (1) 見證器 status ≠ skipped 的列數 === vitest passed + failed   ——抓「宣稱全套但沒跑完」
+ *          (2) 見證器 status = skipped 的列數 === vitest skipped(pending)  ——抓「skip 突然變多」
+ *        (2) 正是 `.env` 那一類坑的形狀:環境缺東西 → 整批被 ctx.skip() → 數字看起來很乾淨;壓成一個等式
+ *        (列數 = total − pending − todo)兩邊會跟著一起變,抓不到。
+ *        基準只在 scope=full **而且** ran_all 量出來為真時才比;不然印「讀不到(全套未跑完:…)」,
+ *        **而且不印任何降基準的提示**——提示比 FAIL 危險:FAIL 擋住你,提示誘導你去改基準。
+ *        (--in 一份沒有這兩個證據檔的舊目錄 + --full → 讀不到;沒有 --full 就沒有宣稱,不擋。)
  *
  * **「刻意」登記表(`scripts/degraded-intended.json`)**:有些測試存在的目的就是要走某條
  * 退化分支(ADR-044 補的那 9 個就是)。它們登記在表裡,報告把它們從「未標記」扣掉,
@@ -131,8 +152,13 @@ interface Args {
   vitestArgs: string[];
 }
 
+/**
+ * 這支腳本自己的四個選項(`--in` `--out` `--intended` `--full`)**在 `--` 前後都認**:vitest 沒有這四個
+ * 名字,所以不會搶;`--` 之後其餘的東西原封不動交給 vitest。`--` 之前不認得的參數是錯誤。
+ */
 export function parseArgs(argv: string[]): Args {
   const args: Args = { full: false, vitestArgs: [] };
+  let afterDash = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--in' || a === '--out' || a === '--intended') {
@@ -144,9 +170,10 @@ export function parseArgs(argv: string[]): Args {
       else args.intended = value;
     } else if (a === '--full') {
       args.full = true;
-    } else if (a === '--') {
-      args.vitestArgs = argv.slice(i + 1);
-      break;
+    } else if (a === '--' && !afterDash) {
+      afterDash = true;
+    } else if (afterDash) {
+      args.vitestArgs.push(a);
     } else throw new UsageError(`不認得的參數:${a}\n${USAGE}`);
   }
   if (args.full && args.inDir === undefined) throw new UsageError(`--full 只跟 --in 一起用(自己跑 vitest 時沒帶參數就是整套)。\n${USAGE}`);
@@ -208,6 +235,20 @@ export function findCallSites(root: string): { sites: Map<string, CallSite[]>; u
   return { sites, unknown };
 }
 
+/**
+ * 甲(ADR-047):目錄與呼叫點一一對上,漂了是 FAIL 不是 ⚠。回傳每一條問題一句話;空陣列就是對上了。
+ * 「未登記」的在前(每一處各一行,要修的是每一處),「無呼叫點」的按目錄順序在後。
+ * 呼叫點清單是空陣列跟沒有 key 一樣算沒有呼叫點。
+ */
+export function catalogDriftProblems(found: { sites: Map<string, CallSite[]>; unknown: Array<CallSite & { signal: string }> }): string[] {
+  const problems: string[] = [];
+  for (const u of found.unknown) problems.push(`訊號未登記:${u.signal} @ ${u.file}:${u.line}`);
+  for (const s of Object.keys(DEGRADED_SIGNALS)) {
+    if ((found.sites.get(s) ?? []).length === 0) problems.push(`訊號無呼叫點:${s},若該退化分支已刪除,請在同一個 commit 從目錄移除`);
+  }
+  return problems;
+}
+
 function locateSnippet(root: string, item: NotInstrumented): string {
   const full = join(root, item.file);
   if (!existsSync(full)) return `${item.file}:?(檔案不存在)`;
@@ -247,7 +288,13 @@ export function describeRecordProblem(value: unknown): string | null {
   if (typeof r.file !== 'string') return '缺 file 欄位,或 file 不是字串';
   if (typeof r.test !== 'string') return '缺 test 欄位,或 test 不是字串';
   if (typeof r.signals !== 'object' || r.signals === null || Array.isArray(r.signals)) return '缺 signals 欄位,或 signals 不是物件';
+  if (r.status !== undefined && r.status !== 'ran' && r.status !== 'skipped') return `status 只能是 ran / skipped(或省略 = ran),現在是 ${JSON.stringify(r.status)}`;
   return null;
+}
+
+/** 一列是不是 runtime `ctx.skip()` 的測試。省略 status 的舊 JSONL 一律當 ran。 */
+export function isSkippedRecord(r: Pick<WitnessRecord, 'status'>): boolean {
+  return r.status === 'skipped';
 }
 
 /** 讀 `<dir>/*.jsonl`。壞的一行丟 UsageError,訊息帶「檔案:行」跟怎麼壞的;整個 dir 讀完才回。 */
@@ -436,6 +483,149 @@ export function compareBaseline(unmarked: number, baseline: number, scope: RunSc
   return { fail: null, hint: null };
 }
 
+// ────────────────────────────────────────────────────────────── 乙:ran_all 是量出來的
+/** vitest `--reporter=json --outputFile` 寫在 raw 目錄裡的檔名。 */
+export const VITEST_JSON = 'vitest.json';
+/** 這支腳本自己起 vitest 時記下的退出碼:`{ status, signal }`。 */
+export const VITEST_EXIT_JSON = 'vitest-exit.json';
+
+export interface RunCompleteness {
+  /** 三個條件全滿足。 */
+  ranAll: boolean;
+  /** 沒跑完的理由,一句人話,開頭固定是「退出碼 X,收到 N/M」;跑完了是 null。 */
+  reason: string | null;
+  /** vitest 的退出碼:number;null 是被訊號終止;undefined 是沒有 vitest-exit.json(不是這支腳本跑出來的目錄)。 */
+  status: number | null | undefined;
+  /** 等式 (1) 左邊:見證器 status ≠ skipped 的 test-end 紀錄數(aggregate 之前、不含 outside)。 */
+  ran: number;
+  /** 等式 (1) 右邊:vitest 跑完本體的 numPassedTests + numFailedTests(= numTotalTests − pending − todo);讀不到 vitest.json 就是 null。 */
+  collected: number | null;
+  /** 等式 (2) 左邊:見證器 status = skipped 的列數(runtime ctx.skip())。 */
+  skipped: number;
+  /** 等式 (2) 右邊:vitest 的 numPendingTests;讀不到 vitest.json 就是 null。 */
+  vitestSkipped: number | null;
+}
+
+interface VitestJsonCounts {
+  numTotalTests: number;
+  numPassedTests: number;
+  numFailedTests: number;
+  numPendingTests: number;
+  numTodoTests: number;
+  success: boolean;
+}
+
+/** vitest.json 的形狀哪裡不對。對了就 null。只看 ran_all 用得到的六個欄位。 */
+function describeVitestJsonProblem(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '最外層不是物件';
+  const v = value as Record<string, unknown>;
+  if (typeof v.success !== 'boolean') return '缺 success 欄位(不是 vitest --reporter=json 的形狀)';
+  for (const key of ['numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'numTodoTests'] as const) {
+    if (typeof v[key] !== 'number' || !Number.isInteger(v[key])) return `缺 ${key},或不是整數`;
+  }
+  return null;
+}
+
+/** 「退出碼 X,收到 N/M」——stdout 那句「讀不到(全套未跑完:…)」括號裡的就是這個。 */
+export function describeIncomplete(c: Pick<RunCompleteness, 'status' | 'ran' | 'collected'>): string {
+  return `退出碼 ${c.status === undefined ? '?' : String(c.status)},收到 ${c.ran}/${c.collected ?? '?'}`;
+}
+
+/** 兩個等式各自的數字:「跑了 N/M,跳過 A/B」。左邊是見證器數的,右邊是 vitest 說的。 */
+export function describeEquations(c: Pick<RunCompleteness, 'ran' | 'collected' | 'skipped' | 'vitestSkipped'>): string {
+  return `(1) 跑了 ${c.ran}/${c.collected ?? '?'},(2) 跳過 ${c.skipped}/${c.vitestSkipped ?? '?'}`;
+}
+
+/**
+ * 乙:ran_all 的條件全部 AND。`ran` / `skipped` 是見證器的列數(不含 outside),由呼叫端從 JSONL 數出來;
+ * `skipped` 省略 = 0(有 status 欄位之前的舊 JSONL 沒有 skipped 列,所以那種目錄只要 vitest 有 pending 就對不上——
+ * 那是讀不到,不是跑完了)。
+ *   1. `vitest-exit.json` 在、退出碼 ∈ {0, 1}(1 只是有測試紅,套件跑完了;137 / null 是被 kill)。
+ *   2. `vitest.json` 在、是合法 JSON、有 success、numTotalTests === passed + failed + pending + todo。
+ *   3. 等式 (1):ran === passed + failed(等號,不是 ≥:多了是見證器重複寫,一樣不算)。
+ *   4. 等式 (2):skipped === pending。兩個等式來源不同,任一不等就假,reason 把兩邊數字都講出來。
+ * 不丟錯:讀不到就是讀不到,理由寫進 reason,由呼叫端決定要不要 FAIL(宣稱全套才 FAIL)。
+ */
+export function assessRunCompleteness(dir: string, ran: number, skipped = 0): RunCompleteness {
+  const details: string[] = [];
+  let status: number | null | undefined;
+  const exitPath = join(dir, VITEST_EXIT_JSON);
+  if (!existsSync(exitPath)) {
+    status = undefined;
+    details.push(`找不到 ${VITEST_EXIT_JSON}(這份目錄不是這支腳本跑出來的,不知道 vitest 怎麼結束的)`);
+  } else {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(exitPath, 'utf8'));
+    } catch (err) {
+      parsed = undefined;
+      details.push(`${VITEST_EXIT_JSON} 不是合法的 JSON(${err instanceof Error ? err.message : String(err)})`);
+    }
+    const raw = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>).status : undefined;
+    if (raw === null) {
+      status = null;
+      details.push(`退出碼 null:vitest 被訊號終止${typeof (parsed as Record<string, unknown>).signal === 'string' ? `(${String((parsed as Record<string, unknown>).signal)})` : ''}`);
+    } else if (typeof raw === 'number') {
+      status = raw;
+      if (raw !== 0 && raw !== 1) details.push(`退出碼 ${raw} 不是 0 或 1:vitest 沒有正常結束(137 是被 kill)`);
+    } else {
+      status = undefined;
+      if (parsed !== undefined) details.push(`${VITEST_EXIT_JSON} 缺 status 欄位`);
+    }
+  }
+
+  let collected: number | null = null;
+  let vitestSkipped: number | null = null;
+  const jsonPath = join(dir, VITEST_JSON);
+  if (!existsSync(jsonPath)) {
+    details.push(`找不到 ${VITEST_JSON}(vitest 沒寫完就死了,或這份目錄不是這支腳本跑出來的)`);
+  } else {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(jsonPath, 'utf8'));
+    } catch (err) {
+      parsed = undefined;
+      details.push(`${VITEST_JSON} 不是合法的 JSON(寫到一半?${err instanceof Error ? err.message : String(err)})`);
+    }
+    if (parsed !== undefined) {
+      const problem = describeVitestJsonProblem(parsed);
+      if (problem !== null) details.push(`${VITEST_JSON} ${problem}`);
+      else {
+        const counts = parsed as VitestJsonCounts;
+        const sum = counts.numPassedTests + counts.numFailedTests + counts.numPendingTests + counts.numTodoTests;
+        if (counts.numTotalTests !== sum) {
+          details.push(`${VITEST_JSON} 數字不一致:numTotalTests ${counts.numTotalTests} ≠ passed + failed + pending + todo = ${sum}`);
+        } else {
+          // = numTotalTests − pending − todo,上面剛驗過總和,兩種算法同一個數。
+          collected = counts.numPassedTests + counts.numFailedTests;
+          vitestSkipped = counts.numPendingTests;
+        }
+      }
+    }
+  }
+
+  // 等式 (1):宣稱全套但沒跑完。
+  if (collected !== null && ran !== collected) {
+    details.push(
+      ran < collected
+        ? `等式 (1) 不成立:見證器跑了 ${ran} 列少於 vitest passed + failed = ${collected}(半路死掉?)`
+        : `等式 (1) 不成立:見證器跑了 ${ran} 列多於 vitest passed + failed = ${collected}(見證器重複寫?)`,
+    );
+  }
+  // 等式 (2):skip 突然變多(或變少)。環境缺東西 → 整批 ctx.skip() → (1) 兩邊跟著一起變,只有這條會紅。
+  if (vitestSkipped !== null && skipped !== vitestSkipped) {
+    details.push(
+      skipped < vitestSkipped
+        ? `等式 (2) 不成立:見證器跳過 ${skipped} 列少於 vitest skipped = ${vitestSkipped}(it.skip / describe.skip 沒有 afterEach 不寫列;或舊 JSONL 沒有 status 欄位)`
+        : `等式 (2) 不成立:見證器跳過 ${skipped} 列多於 vitest skipped = ${vitestSkipped}(見證器重複寫?)`,
+    );
+  }
+
+  const ok = (status === 0 || status === 1) && collected !== null && ran === collected && vitestSkipped !== null && skipped === vitestSkipped && details.length === 0;
+  const head = describeIncomplete({ status, ran, collected });
+  return { ranAll: ok, reason: ok ? null : `${head};${details.join(';')}`, status, ran, collected, skipped, vitestSkipped };
+}
+
 // ────────────────────────────────────────────────────────────── 彙總
 export interface TestRow {
   file: string;
@@ -464,6 +654,17 @@ export interface Summary {
   /** 這次沒跑到、不判的條數(只在 partial 會非 0) */
   intendedNotRun: number;
   scope: RunScope;
+  /** 乙:量出來的「全套跑完」,不是 cmdline 說的。基準只在 scope=full 且 ranAll 時才比。 */
+  ranAll: boolean;
+  /** ranAll 為假的理由(「退出碼 X,收到 N/M;…」);為真是 null。 */
+  ranAllReason: string | null;
+  /** 乙的兩個等式,左邊是見證器數的、右邊是 vitest 說的:(1) ran / collected、(2) skipped / vitestSkipped。 */
+  ranAllRan: number;
+  ranAllCollected: number | null;
+  ranAllSkipped: number;
+  ranAllVitestSkipped: number | null;
+  /** runtime ctx.skip() 的測試列數(status = skipped):不進分母、不進 outside、不進四桶;§6a。 */
+  skippedRows: number;
   crossOwnerTests: number;
   signalsInCatalog: number;
   signalsWithCallSites: number;
@@ -471,9 +672,15 @@ export interface Summary {
   outsideRows: number;
 }
 
-export function aggregate(records: WitnessRecord[]): { rows: TestRow[]; outside: TestRow[] } {
+/**
+ * 三桶:`rows` 是跑了的測試(同名多筆合併);`skipped` 是 runtime ctx.skip() 的(一列一筆,不合併——
+ * 它們是等式 (2) 的左邊,vitest 那邊也是各算一個);`outside` 是測試之外觸發的。skipped 不進 rows:
+ * 它沒跑完,不算分母、不算觸發、登記表對它也算「找不到這個測試」(被 skip 了就是過期)。
+ */
+export function aggregate(records: WitnessRecord[]): { rows: TestRow[]; skipped: TestRow[]; outside: TestRow[] } {
   const byKey = new Map<string, TestRow>();
   const outside: TestRow[] = [];
+  const skipped: TestRow[] = [];
   for (const r of records) {
     const signals = new Map<DegradedSignal, number>();
     for (const [s, n] of Object.entries(r.signals)) {
@@ -483,13 +690,17 @@ export function aggregate(records: WitnessRecord[]): { rows: TestRow[]; outside:
       outside.push({ file: r.file, test: r.test, signals });
       continue;
     }
+    if (isSkippedRecord(r)) {
+      skipped.push({ file: r.file, test: r.test, signals });
+      continue;
+    }
     const key = `${r.file}::${r.test}`;
     const row = byKey.get(key);
     if (row === undefined) byKey.set(key, { file: r.file, test: r.test, signals });
     else for (const [s, n] of signals) row.signals.set(s, (row.signals.get(s) ?? 0) + n);
   }
   const rows = [...byKey.values()].sort((a, b) => a.file.localeCompare(b.file) || a.test.localeCompare(b.test));
-  return { rows, outside };
+  return { rows, skipped, outside };
 }
 
 function kindOf(signal: DegradedSignal): DegradedKind {
@@ -511,15 +722,21 @@ export function renderReport(opts: {
   sha: string;
   command: string;
   rows: TestRow[];
+  /** runtime ctx.skip() 的測試(§6a);省略 = 沒有(舊呼叫端)。 */
+  skipped?: TestRow[];
   outside: TestRow[];
   sites: Map<string, CallSite[]>;
   unknown: Array<CallSite & { signal: string }>;
   intended: IntendedRegistry;
   checks: IntendedCheck[];
   scope: RunScope;
+  completeness: RunCompleteness;
 }): { markdown: string; summary: Summary } {
-  const { root, sha, command, rows, outside, sites, unknown, intended, checks, scope } = opts;
+  const { root, sha, command, rows, outside, sites, unknown, intended, checks, scope, completeness } = opts;
+  const skipped = opts.skipped ?? [];
   const owners = loadOwners(root);
+  // 乙:宣稱全套(scope=full)但量出來沒跑完 → 「未標記」那一列不能說可以降、等於、超過——它就是讀不到。
+  const unreadable = scope === 'full' && !completeness.ranAll ? `讀不到(全套未跑完:${describeIncomplete(completeness)})` : null;
   const allSignals = Object.keys(DEGRADED_SIGNALS) as DegradedSignal[];
 
   // 訊號 → 觸發它的測試
@@ -553,6 +770,13 @@ export function renderReport(opts: {
     intendedStale: checks.filter((c) => isStale(c.status)).length,
     intendedNotRun: checks.filter((c) => c.status.kind === 'not-run').length,
     scope,
+    ranAll: completeness.ranAll,
+    ranAllReason: completeness.reason,
+    ranAllRan: completeness.ran,
+    ranAllCollected: completeness.collected,
+    ranAllSkipped: completeness.skipped,
+    ranAllVitestSkipped: completeness.vitestSkipped,
+    skippedRows: skipped.length,
     crossOwnerTests: cross.length,
     signalsInCatalog: allSignals.length,
     signalsWithCallSites: allSignals.filter((s) => (sites.get(s) ?? []).length > 0).length,
@@ -570,8 +794,9 @@ export function renderReport(opts: {
   L.push(`| 量測的 commit | \`${sha}\` |`);
   L.push(`| 產生時間 | ${summary.generatedAt} |`);
   L.push(`| 指令 | \`${md(command)}\` |`);
-  L.push(`| 範圍 | ${scope === 'full' ? '全套(基準比對有效)' : '部分(只跑了一部分或 --in 既有目錄;不比基準,沒跑到的登記不判)'} |`);
-  L.push(`| 測試檔 / 測試(只算實際執行的;skipped 沒有 afterEach,不進分母) | ${summary.testFiles} / ${summary.tests} |`);
+  L.push(`| 範圍 | ${scope === 'full' ? (unreadable === null ? '全套(基準比對有效)' : `全套(宣稱),但 ran_all 量出來是假:${unreadable};不比基準`) : '部分(只跑了一部分或 --in 既有目錄;不比基準,沒跑到的登記不判)'} |`);
+  L.push(`| ran_all(量出來的:退出碼 ∈ {0,1}、\`${VITEST_JSON}\` 一致、等式 (1) 跑了 = passed + failed、等式 (2) 跳過 = skipped) | ${completeness.ranAll ? `是(${describeIncomplete(completeness)};${describeEquations(completeness)})` : `否:${md(completeness.reason ?? '')}`} |`);
+  L.push(`| 測試檔 / 測試(只算實際執行的;it.skip / todo 沒有列,runtime ctx.skip() 的列標 skipped、不進分母) | ${summary.testFiles} / ${summary.tests} |`);
   L.push(`| 訊號目錄 / 有呼叫點 / 被觸發 | ${summary.signalsInCatalog} / ${summary.signalsWithCallSites} / ${summary.signalsTriggered} |`);
   L.push('');
   L.push('## 1. 基準數字(四桶)');
@@ -582,9 +807,20 @@ export function renderReport(opts: {
   L.push(`| 其中觸發 \`swallow\`(失敗 → 正常值)的 | ${summary.testsTriggeringSwallow} | 「測試綠但走錯路」最典型的來源 |`);
   L.push(`| 其中觸發 \`default-path\`(沒給 → 自選一條路)的 | ${summary.testsTriggeringDefaultPath} | 不知情地測了 stub / 預設路徑 |`);
   L.push(`| **刻意**:登記為故意走退化分支的測試 | **${summary.testsIntended}** | 登記表 ${intended.entries.length} 條(過期 ${summary.intendedStale}${summary.intendedNotRun > 0 ? `,這次沒跑到 ${summary.intendedNotRun}` : ''}),§3a |`);
-  L.push(`| **未標記**:觸發了、但沒登記為刻意的 | **${summary.testsUnmarked}** | 基準 **${summary.unmarkedBaseline}**,只准降${scope === 'full' ? (summary.testsUnmarked > summary.unmarkedBaseline ? ' — **超過基準,FAIL**' : summary.testsUnmarked < summary.unmarkedBaseline ? ' — 低於基準,可以降' : ' — 等於基準') : '(部分跑,不比)'} |`);
+  const baselineNote =
+    scope !== 'full'
+      ? '(部分跑,不比)'
+      : unreadable !== null
+        ? ` — **${unreadable},不比**;要比基準請重跑整套`
+        : summary.testsUnmarked > summary.unmarkedBaseline
+          ? ' — **超過基準,FAIL**'
+          : summary.testsUnmarked < summary.unmarkedBaseline
+            ? ' — 低於基準,可以降'
+            : ' — 等於基準';
+  L.push(`| **未標記**:觸發了、但沒登記為刻意的 | **${summary.testsUnmarked}** | 基準 **${summary.unmarkedBaseline}**,只准降${baselineNote} |`);
   L.push(`| **跨擁有者觸發**(測試的資料夾 ≠ 訊號的資料夾) | **${summary.crossOwnerTests}** | 最值得看:測試自以為在測 A,卻走了 B 的退化分支(§4) |`);
   L.push(`| 測試之外觸發的紀錄(beforeAll / 檔案頂層 / afterAll) | ${summary.outsideRows} | 歸不到單一測試,列在 §6 |`);
+  L.push(`| 被跳過的測試(runtime ctx.skip(),等式 (2) 的左邊) | ${summary.skippedRows} | 環境 / 前置條件問題,不是接線問題;跟 §6 分開,列在 §6a |`);
   L.push('');
 
   // §2 訊號目錄
@@ -692,6 +928,22 @@ export function renderReport(opts: {
   }
   L.push('');
 
+  // §6a 被跳過的
+  L.push('## 6a. 被跳過的測試(runtime ctx.skip())');
+  L.push('');
+  L.push(`vitest 4 對 \`ctx.skip()\` 照樣跑 afterEach,見證器寫一列標 \`skipped\`。它們**不進分母、不進四桶、不進 §6**——§6 抓的是測試之外的接線問題,這裡是環境 / 前置條件問題,兩種錯法不同,不混桶。等式 (2) 拿這裡的列數跟 vitest 的 skipped 對:skip 突然變多就紅。共 ${skipped.length} 列;只列 skip 之前觸發過訊號的(那些訊號歸在它自己名下,不丟)。`);
+  L.push('');
+  const skippedWithSignals = skipped.filter((r) => r.signals.size > 0);
+  if (skipped.length === 0) L.push('(沒有)');
+  else if (skippedWithSignals.length === 0) L.push(`(${skipped.length} 列,skip 之前都沒有觸發訊號)`);
+  else {
+    for (const r of skippedWithSignals) {
+      const sig = [...r.signals.entries()].map(([s, n]) => `\`${s}\` ×${n}`).join(', ');
+      L.push(`- \`${r.file}\` — ${md(r.test)} → ${sig}`);
+    }
+  }
+  L.push('');
+
   // §7 掃過但沒計數
   L.push('## 7. 掃描過但沒計數的分支');
   L.push('');
@@ -749,7 +1001,8 @@ function main(): void {
   if (inDir === undefined) {
     inDir = join(root, 'reports/degraded/.raw', timestamp());
     mkdirSync(inDir, { recursive: true });
-    const vitestArgs = ['vitest', 'run', ...args.vitestArgs];
+    // 乙的證據:json reporter 是**加**不是換(default 的輸出還要給人看),寫進 raw 目錄跟 JSONL 放一起。
+    const vitestArgs = ['vitest', 'run', '--reporter=default', '--reporter=json', `--outputFile=${toPosix(relative(root, join(inDir, VITEST_JSON)))}`, ...args.vitestArgs];
     command = `DEGRADED_WITNESS_DIR=${relative(root, inDir)} npx ${vitestArgs.join(' ')}`;
     console.log(`▶ ${command}`);
     const r = spawnSync('npx', vitestArgs, {
@@ -757,6 +1010,7 @@ function main(): void {
       stdio: 'inherit',
       env: { ...process.env, DEGRADED_WITNESS_DIR: inDir },
     });
+    writeFileSync(join(inDir, VITEST_EXIT_JSON), `${JSON.stringify({ status: r.status, signal: r.signal })}\n`, 'utf8');
     // vitest 紅了也照樣彙總:報告模式不執法,紅綠是 vitest 自己的事。但要講出來。
     if (r.status !== 0) console.log(`⚠ vitest 退出碼 ${r.status ?? 'null'},報告照樣產生,紅燈請看上面 vitest 的輸出`);
   } else {
@@ -775,30 +1029,53 @@ function main(): void {
     );
   }
 
-  const { rows, outside } = aggregate(records);
-  const { sites, unknown } = findCallSites(root);
+  const { rows, skipped, outside } = aggregate(records);
+  // 乙:兩個等式的左邊都是 JSONL 的 test-end 列數(aggregate 之前;同名多筆各算一列,因為 vitest 那邊也是各算一個)。
+  const testEnds = records.filter((r) => r.test !== OUTSIDE_ANY_TEST);
+  const completeness = assessRunCompleteness(
+    inDir,
+    testEnds.filter((r) => !isSkippedRecord(r)).length,
+    testEnds.filter((r) => isSkippedRecord(r)).length,
+  );
+  const found = findCallSites(root);
+  const { sites, unknown } = found;
   const checks = checkIntended(intended.entries, rows, scope, (rel) => existsSync(join(root, rel)));
-  const { markdown, summary } = renderReport({ root, sha, command, rows, outside, sites, unknown, intended, checks, scope });
+  const { markdown, summary } = renderReport({ root, sha, command, rows, skipped, outside, sites, unknown, intended, checks, scope, completeness });
 
   const out = args.out ?? join(root, 'reports/degraded', `${sha}.md`);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, markdown, 'utf8');
   writeFileSync(out.replace(/\.md$/, '.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
 
+  // 乙:宣稱全套(scope=full)但 ran_all 量出來是假 → 基準讀不到,當部分跑比(也就是不比、不提示)。
+  const unreadable = scope === 'full' && !completeness.ranAll ? `讀不到(全套未跑完:${describeIncomplete(completeness)})` : null;
   console.log(`\n退化路徑報告:${relative(root, out)}${scope === 'partial' ? '(部分跑:不比基準,沒跑到的登記不判)' : ''}`);
-  console.log(`  測試 ${summary.tests}(${summary.testFiles} 檔)`);
+  console.log(`  測試 ${summary.tests}(${summary.testFiles} 檔);ran_all:${completeness.ranAll ? `真(${describeIncomplete(completeness)})` : `假(${completeness.reason ?? ''})`}`);
+  console.log(`  等式 ${describeEquations(completeness)};跳過的列 ${summary.skippedRows};測試之外 ${summary.outsideRows}`);
   console.log(`  觸發退化分支:${summary.testsTriggeringAny}(swallow ${summary.testsTriggeringSwallow},default-path ${summary.testsTriggeringDefaultPath})`);
-  console.log(`  刻意(登記表 ${intended.entries.length} 條):${summary.testsIntended};未標記:${summary.testsUnmarked};基準:${summary.unmarkedBaseline}`);
+  console.log(`  刻意(登記表 ${intended.entries.length} 條):${summary.testsIntended};未標記:${summary.testsUnmarked};基準:${unreadable ?? summary.unmarkedBaseline}`);
   console.log(`  跨擁有者:${summary.crossOwnerTests};訊號 目錄/呼叫點/觸發:${summary.signalsInCatalog}/${summary.signalsWithCallSites}/${summary.signalsTriggered}`);
 
-  // 規則 1:登記表不准腐爛。規則 3:未標記只准降。兩條都是報告寫完才判,報告要留著看。
-  const stale = checks.filter((c) => isStale(c.status));
+  // 四道閘都是報告寫完才判,報告要留著看。順序:量尺自己(甲、乙)在前,量出來的數字(規則 1、規則 3)在後。
   const problems: string[] = [];
+  // 甲:目錄與呼叫點一一對上。
+  const drift = catalogDriftProblems(found);
+  if (drift.length > 0) {
+    problems.push(`訊號目錄漂移 ${drift.length} 條(packages/contracts/src/witness.ts 與程式碼的呼叫點對不上;ADR-047):`);
+    for (const p of drift) problems.push(`  - ${p}`);
+  }
+  // 乙:宣稱全套但沒跑完。沒有 --full 的 --in、`-- <參數>` 的小跑沒有宣稱,不擋。
+  if (unreadable !== null) {
+    problems.push(`宣稱全套但沒跑完:${completeness.reason ?? describeIncomplete(completeness)}。基準${unreadable},不比、也不印降基準的提示;要比基準請重跑整套(npx tsx scripts/degraded-report.ts)`);
+  }
+  // 規則 1:登記表不准腐爛。
+  const stale = checks.filter((c) => isStale(c.status));
   if (stale.length > 0) {
     problems.push(`登記過期 ${stale.length} 條(${relative(root, intendedPath)}):`);
     for (const c of stale) problems.push(`  - ${c.entry.file} :: ${c.entry.test} :: ${c.entry.signal}\n    ${describeStatus(c.status)}`);
   }
-  const baseline = compareBaseline(summary.testsUnmarked, intended.unmarkedBaseline, scope);
+  // 規則 3:未標記只准降。只在「宣稱全套 且 量出來跑完了」才比;讀不到就當部分跑,連提示都不印。
+  const baseline = compareBaseline(summary.testsUnmarked, intended.unmarkedBaseline, unreadable === null ? scope : 'partial');
   if (baseline.fail !== null) problems.push(baseline.fail);
   if (baseline.hint !== null) console.log(`  ℹ ${baseline.hint}`);
   if (problems.length > 0) throw new LockError(problems.join('\n'));
