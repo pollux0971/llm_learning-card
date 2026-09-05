@@ -758,10 +758,16 @@ const ROSTER: Record<string, Entry> = {
             build: (s) => { const p = missingPath(s, 'log.jsonl'); return { args: ['--day', SPEND_DAY, '--log', p], env: SPEND_ENV, mention: p }; },
           },
           {
-            // 缺的不是檔案是環境變數:log 健康、cap 是空字串(loadEnvFile 不會用 .env 蓋掉它)。
+            // 缺的不是檔案是環境變數:log 健康、cap 是**空字串**(不是 unset)。
+            // 為什麼是空字串:探針的 env 疊在 process.env 上,真的把 key 拿掉(`undefined`)在有 `.env`
+            // 的機器上會被 `_env.ts` 的 loadEnvFile 補回一個值 → exit 0 → 探針紅;loadEnvFile 不會蓋掉
+            // 已存在的變數(含空字串),所以空字串是唯一不受 `.env` 影響、又必定 exit 2 的形狀。
+            // 代價:這條踩的是 strictNumberEnv 的「是空的」分支,不是「沒有設定」分支——審核輪破壞驗證
+            // 過:把「沒有設定」改回 0 這條仍綠,把「是空的」改回 0 這條才紅。真正 unset 的分支由
+            // scripts/llm-spend.test.ts 的「LLM_DAILY_CAP_USD 沒設」守(純函式,env 用參數傳,不碰 .env)。
             // 要 exit 2 而且點名是哪個變數——就是乾淨簽出時基線壞掉的那條訊息,現在當探針守著。
             kind: 'missing',
-            name: 'LLM_DAILY_CAP_USD 沒有設定',
+            name: 'LLM_DAILY_CAP_USD 是空字串(unset 由 llm-spend.test.ts 守)',
             build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `${llmCallLine(SPEND_DAY)}\n`)], env: { ...SPEND_ENV, LLM_DAILY_CAP_USD: '' }, mention: 'LLM_DAILY_CAP_USD' }),
           },
           { kind: 'malformed', name: 'log.jsonl 每一行都是壞 JSON', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '{ "ts": \n{{{\n')], env: SPEND_ENV }), against: ['healthy', 'quiet'] },

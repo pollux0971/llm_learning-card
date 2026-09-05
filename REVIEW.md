@@ -84,5 +84,79 @@
 - `scripts/zero-input-guard.test.ts`
   - `SPEND_DAY` 底下新增 `SPEND_ENV` 常數 + 註解(為什麼寫死、為什麼只注入三個、loadEnvFile 不覆蓋的決定性)。
   - llm-spend 的 `baselines.healthy / quiet` 與 5 支既有探針各加 `env: SPEND_ENV`。
-  - 新增探針 `[missing] LLM_DAILY_CAP_USD 沒有設定`。
+  - 新增探針 `[missing] LLM_DAILY_CAP_USD 是空字串(unset 由 llm-spend.test.ts 守)`(審核輪改名,理由見 §7.1)。
 - 沒動:`.env`、`.env.example`、`scripts/zero-input-guard.baseline.json`、`scripts/llm-spend.ts`、`scripts/_env.ts`。
+
+---
+
+## 七、審核輪(2026-09-05,同一分支;審核輪可以動測試檔)
+
+### 7.1 覆核上一輪三件,各自的證據
+
+| 要確認的 | 證據 | 結論 |
+|---|---|---|
+| `SPEND_ENV` 寫死在測試檔 | `scripts/zero-input-guard.test.ts:334`:`const SPEND_ENV: Record<string, string> = { LLM_DAILY_CAP_USD: '1', LLM_PRICE_IN_PER_M: '2.5', LLM_PRICE_OUT_PER_M: '10' };` 是字面量 | ✅ |
+| 不讀 `process.env` | 那一行 `grep -c 'process.env'` = 0;整個 llm-spend 區塊(`awk '/label: .llm-spend./,/^      },$/'` 切出來)`grep -c 'process.env'` = 0 | ✅ |
+| 不整包 `...process.env` 蓋 | 同上 0 命中;spawn 端是 `env: { ...withoutNodeOptions(process.env), ...inv.env }`(`:1046`),fixture 疊在**上面**,方向是 fixture 蓋 shell,不是 shell 蓋 fixture | ✅ |
+| 每支 spawn 都掛上 | llm-spend 區塊 `grep -c 'args: \['` = **8**(2 基線 + 6 探針);`grep -c 'env: \(SPEND_ENV\|{ \.\.\.SPEND_ENV\)'` = **8**;有 `args:` 沒 `env:` 的行 = **0** | ✅ 掛 8、漏 0 |
+
+**破壞驗證(新探針)** —— `scripts/llm-spend.ts` 的 `strictNumberEnv` 有兩個分支會給「cap 缺」exit 2:`raw === undefined`(沒有設定)與 `raw.trim() === ''`(是空的)。兩個各破一次(sed 改成 `return 0`,trap 還原,還原後 `git diff --stat -- scripts/llm-spend.ts` 為空):
+
+| 破壞 | `npx vitest run scripts/zero-input-guard.test.ts -t llm-spend` | `npx vitest run scripts/llm-spend.test.ts -t 沒設` |
+|---|---|---|
+| (i) `raw === undefined` → `return 0` | **25 passed / 0 failed(綠,沒抓到)** | 3 failed(`LLM_DAILY_CAP_USD 沒設` / `LLM_PRICE_IN_PER_M 沒設` / `LLM_PRICE_OUT_PER_M 沒設`) |
+| (ii) `raw.trim() === ''` → `return 0` | **2 failed**:`[missing] LLM_DAILY_CAP_USD 沒有設定:退出碼非 0`、`…:指名有問題的那條路徑`;23 passed | (沒跑,這條不是它守的) |
+
+**發現:探針名字說「沒有設定」,實際踩的是「是空的」分支。** 工單要的破壞是「沒設就 exit 2 改成回 0 → 那條要紅」,照字面做(破壞 i)那條**不紅**。真正 unset 的分支是 `llm-spend.test.ts` 的純函式測試在守(env 用參數傳,不碰 `.env`)。
+
+**為什麼探針不能用真的 unset**:探針的 env 是疊在 `process.env` 上的,把 key 拿掉要傳 `undefined`(Node 實測 `spawnSync(…, {env:{...process.env, LLM_DAILY_CAP_USD: undefined}})` 子行程看到 `undefined`,可行);但在**有 `.env` 的機器**上,`_env.ts` 的 `loadEnvFile` 會把 unset 的變數補回來 → exit 0 → 探針紅。空字串是唯一「不受 `.env` 影響、又必定 exit 2」的形狀(loadEnvFile 不覆蓋已存在的變數,含空字串,§7.2 的 G 量過)。
+
+**處置**:探針改名 `LLM_DAILY_CAP_USD 是空字串(unset 由 llm-spend.test.ts 守)`,註解寫明兩個分支各由誰守、以及為什麼不用 unset。基準檔沒有這條(`grep -c LLM_DAILY_CAP_USD scripts/zero-input-guard.baseline.json` = 0),改名不動基準。
+
+### 7.2 工單沒點名的形狀,直接跑 `npx tsx scripts/llm-spend.ts --day 2026-09-01 --log <一行健康 llm_call>`(shell 無任何 `LLM_*`,`env | grep -c '^LLM_'` = 0;臨時 `.env` 用 `trap 'rm -f .env' EXIT`)
+
+| 形狀 | 實際輸出 | exit |
+|---|---|---|
+| A 沒 `.env`、沒 export(對照) | `算不出來:環境變數 LLM_DAILY_CAP_USD 沒有設定(在 .env 或 shell 裡設一個非負數字)` | 2 |
+| B `.env` 有 `LLM_DAILY_CAP_USD=`(空),另兩個好 | `算不出來:環境變數 LLM_DAILY_CAP_USD 是空的(在 .env 或 shell 裡設一個非負數字)` | 2 |
+| C `.env` `LLM_DAILY_CAP_USD=abc` | `算不出來:環境變數 LLM_DAILY_CAP_USD 不是非負數字:"abc"` | 2 |
+| D `.env` 只有 `cap=1`,少兩個價格 | `算不出來:環境變數 LLM_PRICE_IN_PER_M 沒有設定(…)` | 2 |
+| E `.env` 有 cap 與 OUT,少 IN | `算不出來:環境變數 LLM_PRICE_IN_PER_M 沒有設定(…)` | 2 |
+| F `.env` 三個都好(對照) | `今日 OpenAI 花費 $0.0125(1 次呼叫,log: …/log.jsonl,今日條目 1 筆),上限 $1.0000` | 0 |
+| G `.env` 三個都好 **+ shell `LLM_DAILY_CAP_USD=`**(探針的形狀) | `算不出來:環境變數 LLM_DAILY_CAP_USD 是空的(…)` | 2 |
+
+- **B vs A:空字串跟沒設定「結果一樣、訊息不一樣」**——同 exit 2、同點名變數,但一個說「是空的」一個說「沒有設定」。應該不一樣:`.env` 裡寫了 `KEY=` 是人打了一半,跟根本沒寫那一行是兩種修法,訊息分開是對的。這也是 7.1 那個探針名字要改的根據。
+- **D / E:只點名第一個少的,不是全部。** `buildSpendReport` 三個 `strictNumberEnv` 依序 early-return。使用者少兩個會被退回兩次(修完 IN 再被說 OUT)。這是 `scripts/llm-spend.ts` 的產品行為,不在這張工單範圍(審核輪只動測試檔),**列為建議**:一次列齊三個缺的,一行改動(先收集再回)。要做的話 `llm-spend.test.ts` 的 8 條「點得出變數名」測試都照樣過,可以加一條「少兩個 → 兩個都點名」。
+- **G 就是探針的形狀**:`.env` 明明好的,shell 給空字串仍然 exit 2「是空的」——證明 loadEnvFile 不蓋已存在的空字串,探針在有 `.env` 的機器上一樣穩。
+
+Node 22.15.1 `process.loadEnvFile` 直接量:shell `=''` + 檔 `=5` → `""`;shell `=9` + 檔 `=5` → `"9"`;unset + 檔 `=5` → `"5"`;unset + 檔 `=`(空)→ `""`。
+
+**trap 中途失敗會不會刪**(`( trap 'rm -f .env' EXIT; …; <失敗> )`,每次做完 `ls .env`):
+
+| 失敗方式 | `.env` 事後 |
+|---|---|
+| 正常結束 | removed |
+| `exit 1`(指令中途失敗) | removed(subshell exit=1) |
+| `kill -TERM $BASHPID` | removed(exit 143) |
+| `kill -INT $BASHPID` | removed |
+| `kill -KILL`(setsid 隔離跑) | **留著**(SIGKILL 不能 trap,預期) |
+
+結論:除了 SIGKILL / 斷電,trap 都會刪。上一輪的驗證方式站得住。
+
+### 7.3 全鏈(`export TEMPLATE_DIR=/data/python/llm_learning-cards/.claude/worktrees/agent-a551c3d51889a2793/template`,`git merge main` → Already up to date)
+
+| 步驟 | 退出碼 | 耗時 | 備註 |
+|---|---|---|---|
+| boundaries | 0 | | |
+| typecheck | 0 | | |
+| lint:docs | 0 | | |
+| test | 0 | 169s | 105 檔 / 2776 passed / 0 failed / 138 skipped;先等別的 worktree(lock-orphan)的 Stryker 鎖 30 秒才拿到,預期 |
+| accept:standalone | 0 | 20s |  |
+| standalone | 0 | 10s |  |
+| accept:dry | 0 | 4s | 0 ambiguous(2263 steps:611 undefined、1652 skipped,undefined 是還沒做的 phase,不是本輪的) |
+| check:steps | 0 | 0s |  |
+| check:gherkin-dup | 0 | 0s |  |
+| accept:coverage | 0 | 83s |  |
+| check:gates | 0 | 1s | 「守門內容自同步以來未被更動」 |
+| check:all | 0 | 341s |  |
+
