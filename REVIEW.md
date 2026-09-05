@@ -160,3 +160,45 @@ Node 22.15.1 `process.loadEnvFile` 直接量:shell `=''` + 檔 `=5` → `""`;she
 | check:gates | 0 | 1s | 「守門內容自同步以來未被更動」 |
 | check:all | 0 | 341s |  |
 
+### 7.4 嚴格級變異(第二輪審核,同一分支續做)
+
+**不跑 `npm run mutate -- --mutate scripts/zero-input-guard.test.ts`**:那是測試檔本身,「殺不殺得掉」這個概念在測試檔上不成立(沒有另一組獨立測試去驗證斷言對不對)。真正該驗的是這輪守著的實作:`scripts/llm-spend.ts`,既有設定檔 `stryker.zero-guards-llmspend.json` 就是指到這支,改用它。
+
+`git merge main` 之後(帶著 WIP commit c081311 裡已經做的 `NOT_JSON`/`NOT_EVENT` 訊息區分、兩條 `Stryker disable` 等價標記、拿掉 `-t '^(?!.*整份)'` 過濾器),先跑一次確認起點:
+
+```
+npm run mutate -- stryker.zero-guards-llmspend.json
+```
+```
+All files | 99.51 | 99.51 | 203 killed | 2 timeout | 1 survived | 0 no cov | 0 errors
+[Survived] ConditionalExpression
+scripts/llm-spend.ts:200:10
+-     return ts === undefined || typeof ts === 'string';
++     return true;
+```
+
+**逐一分類**(不用「等價變異」一句帶過):
+
+1. **真缺口(那 1 個存活)**——`isLogEvent` 最後一行的型別檢查被換成 `return true`,沒有測試抓到。追蹤:這行存在的唯一理由是擋「`ts` 存在但不是字串(例如數字)」的行(檔案 190–196 行的註解已經寫明:這種行如果被當事件收進 `events`,後果是低估花費)。既有的「整份檔都不是 JSONL」六個案例(`"hello"`/`42`/`[]`/`null`/HTML)全部在**更前面**的檢查就被擋掉(`typeof value !== 'object'`、`Array.isArray`、`=== null`),沒有一個案例走到「是物件、但 `ts` 是數字」這條路——是真的沒測到。
+   **處置**:`scripts/llm-spend.test.ts` 的同一個 `cases` 陣列加一條 `['整份是一個物件,但 ts 是數字不是字串', '{"ts":20260901}\n', '不是 log 事件']`。
+
+2. **2 個 timeout(不是存活,不用另外補測試)**:分數公式把 killed 跟 timeout 都算進分子(`(203+2)/206 ≈ 99.51%`,跟報的數字對得上)。timeout 代表變異後的程式碼讓測試跑不完,行為確實變了,只是抓到的手段是逾時不是斷言——算「有抓到」。
+
+3. **既有的 2 個 `Stryker disable` 等價標記(不在存活清單裡,因為停用後 Stryker 根本不會試;工單要求逐一分類,所以自己動手追蹤驗證一次,不是照抄上一輪的話)**:
+   - `llm-spend.ts:243`(`const events: SpendEvents = []` → ArrayDeclaration 塞一個字串進去)。追蹤:字串元素不經過 `isLogEvent`(它是初值,不是從解析迴圈 `push` 進去的),下游 `computeDailySpend` 用 `isLlmCallEvent` 擋(字串沒有 `.type`,`undefined === 'llm_call'` 為假),`entriesToday` 的 filter 也用 `typeof e.ts === 'string'` 擋(字串沒有 `.ts`)。兩邊都靜靜跳過,跟空陣列行為一樣——**真等價**。
+   - `llm-spend.ts:271`(`typeof e.ts === 'string'` → `true`,ConditionalExpression)。追蹤:能走到這行的 `e` 都已經過 `isLogEvent`,`e.ts` 只可能是 `undefined` 或字串;拿掉檢查後 `dayOf(undefined)`(`new Date(undefined)` = Invalid Date)算出 `"NaN-NaN-NaN"`,永遠不等於合法的 `day`,跟原本被濾掉的結果一樣——**真等價**。註解裡「守著這個 typeof 是給型別、不是給行為」這句站得住,不用改。
+
+4. **設定檔本身這輪也改了一行**——`stryker.zero-guards-llmspend.json` 拿掉 `-t '^(?!.*整份)'` 過濾器(WIP commit 裡已做)。驗過**這個改動是必要的**:第 1 點新加的邊界案例就在被排除的「整份」describe block 裡,不拿掉這個過濾器,新測試根本不會被 Stryker 執行到,分數不會反映真相。
+
+補上第 1 點的邊界測試後(`npx vitest run scripts/llm-spend.test.ts` 先確認 55 passed),重跑:
+
+```
+npm run mutate -- stryker.zero-guards-llmspend.json
+```
+```
+All files | 100.00 | 100.00 | 204 killed | 2 timeout | 0 survived | 0 no cov | 0 errors
+Final mutation score of 100.00 is greater than or equal to break threshold 0
+```
+
+**0 存活。**
+

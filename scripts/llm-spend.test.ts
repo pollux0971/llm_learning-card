@@ -367,6 +367,9 @@ describe('buildSpendReport:整份檔都不是 JSONL,也是算不出來', () => {
     ['整份是一個陣列 []', '[]\n', '不是 log 事件'],
     ['整份是 null', 'null\n', '不是 log 事件'],
     ['整份是一段 HTML', '<html><body>login</body></html>\n<p>please sign in</p>\n', '不是合法的 JSON'],
+    // ts 存在卻是數字(不是字串也不是 undefined):isLogEvent 最後一行專門擋這種,漏接會
+    // 讓這行悄悄混進 events,變成低估花費(審核輪 Stryker:isLogEvent 的型別檢查改成 `return true` 曾存活)。
+    ['整份是一個物件,但 ts 是數字不是字串', '{"ts":20260901}\n', '不是 log 事件'],
   ];
 
   for (const [name, content, what] of cases) {
