@@ -10,13 +10,18 @@
  *   { "file": "packages/core/src/llm/router-gateway.test.ts",
  *     "test": "GatewayLlmRouter > 備援 > 雲端 5xx 改走閘道",
  *     "signals": { "llm.fallback.cloud-failed": 1, ... } }
- * **每一個測試都寫一行**,沒觸發的 signals 是 `{}`——彙總要的是「N / M 個測試」,
- * 分母也得從這裡來。
+ * **每一個跑了的測試都寫一行**,沒觸發的 signals 是 `{}`——彙總要的是「N / M 個測試」,
+ * 分母也得從這裡來。「跑了的」是 vitest 算進 `numTotalTests − numPendingTests − numTodoTests`
+ * 的那些:`it.skip` / `it.todo` 沒有 afterEach,天生不會有列;測試本體裡的 `ctx.skip()`
+ * vitest 4 **照樣跑 afterEach**,但它在 vitest 眼裡是 pending,所以這裡也**不寫列**——
+ * 不然列數永遠比要跑的數多(2026-09-05 實測 2910 對 2772,差的 138 全是 zero-input-guard
+ * 的 runtime skip),`degraded-report.ts` 的 ran_all(ADR-047)在乾淨的全套上也會是假。
  *
  * 歸屬規則:
  * - 測試本體(含它的 beforeEach / afterEach)裡觸發的,記在那個測試名下。
  * - 在 beforeAll / 檔案頂層觸發的,沒有測試可以歸,記成 `test: "(outside any test)"`
  *   那一行,在下一個測試開始前沖出去——**不丟掉**,丟掉就是這支工具自己在退化。
+ * - runtime skip 的測試在 skip **之前**觸發的,同樣不丟:沖到 outside(它沒有列可以歸)。
  * - 最後一個測試之後才觸發的(afterAll),在 worker 結束時沖出去,同樣記成 outside。
  *
  * 彙總:`npx tsx scripts/degraded-report.ts`(見那支檔案的檔頭)。
@@ -73,6 +78,14 @@ if (outDir !== undefined && outDir !== '') {
   });
 
   afterEach((ctx) => {
+    // runtime `ctx.skip()`:vitest 在跑 afterEach 之前就把 result 標成 skip / pending
+    // (@vitest/runner 的 failTask 對 PendingError 的處理)。它不算「跑了的」,不寫列;
+    // skip 之前觸發過的訊號沖到 outside,跟 beforeAll 同一條歸屬規則。
+    const result = ctx.task.result as (typeof ctx.task.result & { pending?: boolean }) | undefined;
+    if (result?.pending === true || result?.state === 'skip') {
+      flushOutside();
+      return;
+    }
     write({ file: relative(root, ctx.task.file.filepath), test: fullTestName(ctx.task), signals: tally.drain() });
   });
 
