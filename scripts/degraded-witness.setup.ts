@@ -17,7 +17,16 @@
  *   (2026-09-05 實測全套 138 筆,全是 zero-input-guard 缺 `.env` 的 runtime skip)。**照樣寫一列、標 skipped**,
  *   不進分母;`degraded-report.ts` 的 ran_all(ADR-047)拿它跟 vitest 的 `numPendingTests` 對——那是第二個等式,
  *   抓的是「環境缺東西 → 整批被跳過 → 數字看起來很乾淨」。
- * - `it.skip` / `it.todo` 沒有 afterEach,天生不會有列。
+ * - 靜態 skip(`it.skip` / `it.skipIf(true)` / `describe.skip` 底下的、`-t` 篩掉的、beforeAll 掛掉被連坐的)
+ *   沒有 afterEach,但 vitest **一樣算 pending**。所以在檔案的 `afterAll(suite)` 走一遍 `suite.tasks`,
+ *   凡是 `type === 'test' && mode === 'skip'` 而 afterEach 沒寫過的,補一列 `skipped`、`signals: {}`——
+ *   等式 (2) 的左邊才會跟 vitest 的 `numPendingTests` 同一個定義(它就是數 `mode === 'skip' || result.state === 'skip'`)。
+ *   runtime `ctx.skip()` 的測試跑完之後 vitest 也會把 `mode` 改成 skip,所以要靠「afterEach 寫過的 id」去重,
+ *   不然那一列會寫兩次。
+ * - `it.todo` 是 `mode === 'todo'`,vitest 算 `numTodoTests` 不算 pending,不寫列。
+ * - **做不到的一種**:整份檔案的測試全是靜態 skip(例如整檔 `describe.skip`)時,vitest 把 File 本身標成 skip,
+ *   **afterAll 不跑**,那些 pending 就沒有列——等式 (2) 會紅,reason 會指名是這種情況(見 degraded-report.ts)。
+ *   現況 repo 沒有這種檔;真的需要整檔 skip 就會紅在那裡,不會靜默。
  *
  * 歸屬規則:
  * - 測試本體(含它的 beforeEach / afterEach)裡觸發的,記在那個測試名下;runtime skip 的測試在 skip **之前**
@@ -82,16 +91,33 @@ if (outDir !== undefined && outDir !== '') {
     flushOutside();
   });
 
+  /** afterEach 寫過的 task id:afterAll 補靜態 skip 的列時拿來去重(runtime skip 跑完 mode 也會變 skip)。 */
+  const written = new Set<string>();
+
   afterEach((ctx) => {
     // runtime `ctx.skip()`:vitest 在跑 afterEach 之前就把 result 標成 skip / pending
     // (@vitest/runner 的 failTask 對 PendingError 的處理)。照樣寫一列,標 skipped;
     // skip 之前觸發過的訊號記在它自己名下,不沖到 outside(見檔頭的歸屬規則)。
     const result = ctx.task.result as (typeof ctx.task.result & { pending?: boolean }) | undefined;
     const status: WitnessStatus = result?.pending === true || result?.state === 'skip' ? 'skipped' : 'ran';
+    written.add(ctx.task.id);
     write({ file: relative(root, ctx.task.file.filepath), test: fullTestName(ctx.task), signals: tally.drain(), status });
   });
 
-  afterAll(() => {
+  /** 靜態 skip 的測試(沒跑 afterEach 的 `mode === 'skip'`),一個檔案一次,從 File suite 往下走。 */
+  const writeStaticSkips = (suite: Readonly<Suite>): void => {
+    for (const t of suite.tasks) {
+      if (t.type === 'suite') {
+        writeStaticSkips(t);
+      } else if (t.type === 'test' && t.mode === 'skip' && !written.has(t.id)) {
+        written.add(t.id);
+        write({ file: relative(root, t.file.filepath), test: fullTestName(t), signals: {}, status: 'skipped' });
+      }
+    }
+  };
+
+  afterAll(({}, suite) => {
     flushOutside();
+    writeStaticSkips(suite);
   });
 }
