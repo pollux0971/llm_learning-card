@@ -14,26 +14,46 @@
  * 走完整條路(退出碼與訊息才是使用者看到的東西)。「實際觸發」那一半靠子行程餵捏造的 JSONL;
  * 對真實測試的反向驗證(把登記的測試 skip 掉 → 紅)是人跑 `-- <那個 .test.ts>` 做的,
  * 記在 commit 說明,不在這裡(要起整套 vitest)。
+ *
+ * 檔尾兩組是**量尺自己有沒有腐爛**(ADR-047;跟 ADR-044「報告模式,不執法」是同一個東西的兩層:
+ * 那條管「哪些測試走了退化分支」只報告,這裡執法的是量尺本身):
+ *
+ *   甲 · 訊號目錄與程式碼的呼叫點必須一一對上。「從未執行 0」與「未標記 152」完全建立在目錄是
+ *        完整的:目錄少一條 = 少一批可能未標記的測試,漂移會往「更好」的方向動。兩個方向都 FAIL:
+ *        程式碼有、目錄沒有 → 「訊號未登記」;目錄有、程式碼沒有 → 「訊號無呼叫點」。
+ *        目錄不容忍暫時的空:刪分支的人就是該改目錄的人,同一個 commit(跟棘輪鎖 2、登記過期同形)。
+ *   乙 · 「宣稱全套、實際沒跑完」也要擋。cmdline 是**宣稱**,`ran / collected` 是**驗證**;
+ *        基準只在 scope=full **而且** ran_all 量出來為真時才比。ran_all 三個條件全滿足:
+ *        退出碼 ∈ {0, 1}、vitest.json 存在可解析且數字一致、witness 的 test-end 紀錄數 ===
+ *        numTotalTests − pending − todo。不滿足就印「讀不到(全套未跑完:退出碼 X,收到 N/M)」,
+ *        **而且不印任何降基準的提示**——提示比 FAIL 危險,FAIL 擋住你,提示誘導你去改基準。
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DEGRADED_SIGNALS, type DegradedSignal } from '../packages/contracts/src/witness.js';
+import { DEGRADED_SIGNALS, OUTSIDE_ANY_TEST, type DegradedSignal } from '../packages/contracts/src/witness.js';
 import {
   DEFAULT_INTENDED_PATH,
+  VITEST_EXIT_JSON,
+  VITEST_JSON,
   aggregate,
+  assessRunCompleteness,
+  catalogDriftProblems,
   checkIntended,
   compareBaseline,
   describeEntryProblem,
   describeRegistryProblem,
+  findCallSites,
   isStale,
   loadIntended,
   parseArgs,
   UsageError,
+  type CallSite,
   type IntendedEntry,
   type IntendedRegistry,
+  type Summary,
   type TestRow,
 } from './degraded-report.js';
 
@@ -46,6 +66,13 @@ const SCRIPT = join(REPO_ROOT, 'scripts/degraded-report.ts');
  * 下一次「這批也是刻意的」就沒有機械理由擋。基準 152 出自 reports/degraded/959b039.md(ADR-044)。
  */
 const UNMARKED_CEILING = 152;
+
+/**
+ * 乙的兩個證據檔名。腳本 export 同名常數(VITEST_JSON / VITEST_EXIT_JSON),下面有一條測試釘住兩邊一樣;
+ * 這裡不直接用 import 的那兩個,是為了讓既有的子行程測試在乙還沒實作時仍然綠——它們只是多了兩個檔。
+ */
+const VITEST_JSON_FILE = 'vitest.json';
+const VITEST_EXIT_FILE = 'vitest-exit.json';
 
 const SIG_A: DegradedSignal = 'llm.gateway-router.spend-no-log-zero';
 const SIG_B: DegradedSignal = 'prompt-quality.fake.attempt-fallback-first';
@@ -288,15 +315,60 @@ describe('真實的 scripts/degraded-intended.json', () => {
 
 // ───────────────────────────────────────────────────────────────── 走完整條路:子行程
 
+/** vitest --reporter=json 的數字欄位(vitest 4 的形狀;testResults 這裡不需要)。 */
+interface VitestCounts {
+  total: number;
+  passed?: number;
+  failed?: number;
+  pending?: number;
+  todo?: number;
+}
+
+/**
+ * 乙:raw 目錄裡 vitest 自己的證據。`vitest.json` 是 `--reporter=json --outputFile` 寫的,
+ * `vitest-exit.json` 是 degraded-report 自己起 vitest 時記下的退出碼(`--in` 既有目錄時
+ * 沒有這兩個檔就是「不知道當初怎麼跑的」,宣稱 --full 也讀不到)。
+ */
+function evidence(dir: string, counts: VitestCounts, status: number | null = 0, over: Record<string, unknown> = {}): void {
+  const passed = counts.passed ?? 0;
+  const failed = counts.failed ?? 0;
+  const pending = counts.pending ?? 0;
+  const todo = counts.todo ?? 0;
+  const json = {
+    numTotalTestSuites: 1,
+    numPassedTestSuites: failed === 0 ? 1 : 0,
+    numFailedTestSuites: failed === 0 ? 0 : 1,
+    numPendingTestSuites: 0,
+    numTotalTests: counts.total,
+    numPassedTests: passed,
+    numFailedTests: failed,
+    numPendingTests: pending,
+    numTodoTests: todo,
+    startTime: 1_788_586_449_275,
+    success: failed === 0,
+    testResults: [],
+    ...over,
+  };
+  writeFileSync(join(dir, VITEST_JSON_FILE), JSON.stringify(json), 'utf8');
+  writeFileSync(join(dir, VITEST_EXIT_FILE), JSON.stringify({ status, signal: status === null ? 'SIGKILL' : null }), 'utf8');
+}
+
 describe('子行程:退出碼與訊息', () => {
   let scratch = '';
   const FILE = 'packages/core/src/llm/router-gateway.test.ts';
   const TEST = 'Suite > 刻意走分支的測試';
   const OTHER = 'Suite > 不小心走分支的測試';
 
+  /**
+   * 寫一份 raw 目錄:JSONL 加上 vitest 自己的證據(乙)。預設證據跟紀錄一致——每筆 test-end 一個
+   * passed、退出碼 0,也就是「跑完了」的形狀,所以既有的 --full 測試在乙上線後仍然是「跑完了」。
+   * 要製造「沒跑完」用下面的 evidence() 蓋掉。
+   */
   function jsonl(dir: string, records: Array<{ file: string; test: string; signals: Record<string, number> }>): string {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, '1.jsonl'), records.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+    const n = records.filter((r) => r.test !== OUTSIDE_ANY_TEST).length;
+    evidence(dir, { total: n, passed: n });
     return dir;
   }
 
@@ -420,5 +492,500 @@ describe('aggregate 仍然把同一個測試的多筆合併(登記表比對靠�
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.signals.get(SIG_A)).toBe(3);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────── 量尺 · 甲:訊號目錄漂了要紅
+
+const NO_CALL_SITE = (s: string): string => `訊號無呼叫點:${s},若該退化分支已刪除,請在同一個 commit 從目錄移除`;
+const UNREGISTERED = (s: string, file: string, line: number): string => `訊號未登記:${s} @ ${file}:${line}`;
+
+describe('量尺 · 甲 · catalogDriftProblems:目錄與呼叫點必須一一對上,漂了是 FAIL 不是 ⚠', () => {
+  const site = (file: string, line: number): CallSite => ({ file, line });
+  /** 目錄裡每一條訊號都恰好一個呼叫點:乾淨的形狀。 */
+  function cleanSites(): Map<string, CallSite[]> {
+    return new Map(Object.keys(DEGRADED_SIGNALS).map((s, i) => [s, [site('packages/core/src/x.ts', i + 1)]]));
+  }
+
+  it('乾淨:每條訊號都有呼叫點、沒有未登記的 → 沒有問題', () => {
+    expect(catalogDriftProblems({ sites: cleanSites(), unknown: [] })).toEqual([]);
+  });
+
+  it('程式碼有、目錄裡沒有(unknown)→ FAIL「訊號未登記:<名> @ <file:line>」;沒有正當理由,一定是打錯字或忘了登記', () => {
+    const problems = catalogDriftProblems({ sites: cleanSites(), unknown: [{ ...site('packages/core/src/llm/router.ts', 42), signal: 'llm.typo.nope' }] });
+    expect(problems).toEqual([UNREGISTERED('llm.typo.nope', 'packages/core/src/llm/router.ts', 42)]);
+  });
+
+  it('目錄有、程式碼找不到呼叫點 → FAIL「訊號無呼叫點:<名>,若該退化分支已刪除,請在同一個 commit 從目錄移除」', () => {
+    const sites = cleanSites();
+    sites.delete(SIG_B);
+    expect(catalogDriftProblems({ sites, unknown: [] })).toEqual([NO_CALL_SITE(SIG_B)]);
+  });
+
+  it('呼叫點清單是空陣列跟沒有 key 一樣算沒有呼叫點', () => {
+    const sites = cleanSites();
+    sites.set(SIG_A, []);
+    expect(catalogDriftProblems({ sites, unknown: [] })).toEqual([NO_CALL_SITE(SIG_A)]);
+  });
+
+  it('兩個方向同時漂 → 兩條都列,未登記的在前;每一條無呼叫點的訊號各一行', () => {
+    const sites = cleanSites();
+    sites.delete(SIG_C);
+    sites.delete(SIG_A);
+    const problems = catalogDriftProblems({ sites, unknown: [{ ...site('scripts/x.ts', 7), signal: 'x.y' }] });
+    expect(problems).toEqual([UNREGISTERED('x.y', 'scripts/x.ts', 7), NO_CALL_SITE(SIG_A), NO_CALL_SITE(SIG_C)]);
+  });
+
+  it('同一個未登記的名字出現兩處 → 兩行,各帶自己的檔案:行(要修的是每一處)', () => {
+    const problems = catalogDriftProblems({
+      sites: cleanSites(),
+      unknown: [
+        { ...site('packages/a.ts', 1), signal: 'x.y' },
+        { ...site('packages/b.ts', 9), signal: 'x.y' },
+      ],
+    });
+    expect(problems).toEqual([UNREGISTERED('x.y', 'packages/a.ts', 1), UNREGISTERED('x.y', 'packages/b.ts', 9)]);
+  });
+
+  it("findCallSites 掃一個只有 witness('假名') 的臨時 root → unknown 帶檔案:行;catalogDriftProblems 把它變成 FAIL", () => {
+    const root = mkdtempSync(join(tmpdir(), 'lc-drift-'));
+    try {
+      mkdirSync(join(root, 'packages/x/src'), { recursive: true });
+      writeFileSync(join(root, 'packages/x/src/a.ts'), "import { witness } from '@contracts/witness.js';\n\nexport function f(): void {\n  witness('假名');\n}\n", 'utf8');
+      const found = findCallSites(root);
+      expect(found.unknown).toEqual([{ file: 'packages/x/src/a.ts', line: 4, signal: '假名' }]);
+      const problems = catalogDriftProblems(found);
+      expect(problems[0]).toBe(UNREGISTERED('假名', 'packages/x/src/a.ts', 4));
+      // 那個 root 裡沒有任何目錄訊號的呼叫點,所以目錄的每一條都會被列成無呼叫點
+      expect(problems).toHaveLength(1 + Object.keys(DEGRADED_SIGNALS).length);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('現況:真實 repo 的目錄與呼叫點一一對上(30/30)。不綠就是發現——回報,不放寬', () => {
+    const found = findCallSites(REPO_ROOT);
+    expect(found.unknown).toEqual([]);
+    expect(catalogDriftProblems(found)).toEqual([]);
+    expect(Object.keys(DEGRADED_SIGNALS).every((s) => (found.sites.get(s) ?? []).length > 0)).toBe(true);
+  });
+});
+
+/**
+ * 甲走到底:起子行程,cwd 指到一個**假的 git repo**。`_root.ts` 以 cwd 找 git root,所以
+ * findCallSites 掃的是那個假 repo 的 packages/,訊號目錄仍然是真的(腳本相對自己 import)。
+ * 這樣不用改真 repo 的 witness.ts 就能讓「目錄有、程式碼沒有」與「程式碼有、目錄沒有」真的發生。
+ */
+describe('量尺 · 甲 · 子行程:目錄漂了 → 退出碼 1,兩個方向的訊息都在 stderr', () => {
+  let scratch = '';
+  const GIT_IDENTITY = { GIT_AUTHOR_NAME: 'zig', GIT_AUTHOR_EMAIL: 'zig@test', GIT_COMMITTER_NAME: 'zig', GIT_COMMITTER_EMAIL: 'zig@test' };
+  const ALL = Object.keys(DEGRADED_SIGNALS);
+
+  /** 一個假 repo:git init + 一個 commit、空的 owners 表、一份 raw 目錄、一張空登記表,packages/a.ts 內容由呼叫端給。 */
+  function fakeRepo(name: string, sourceTs: string): { root: string; args: string[] } {
+    const root = join(scratch, name);
+    mkdirSync(join(root, 'packages'), { recursive: true });
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    writeFileSync(join(root, 'scripts/boundaries.owners.json'), JSON.stringify({ owners: [] }), 'utf8');
+    writeFileSync(join(root, 'packages/a.ts'), sourceTs, 'utf8');
+    for (const args of [['init', '-q'], ['add', '-A'], ['commit', '-q', '-m', 'x']]) {
+      execFileSync('git', args, { cwd: root, stdio: 'ignore', env: { ...process.env, ...GIT_IDENTITY } });
+    }
+    const raw = join(root, 'raw');
+    mkdirSync(raw, { recursive: true });
+    writeFileSync(join(raw, '1.jsonl'), `${JSON.stringify({ file: 'packages/a.test.ts', test: 't', signals: {} })}\n`, 'utf8');
+    evidence(raw, { total: 1, passed: 1 });
+    const reg = join(root, 'intended.json');
+    writeFileSync(reg, JSON.stringify({ unmarkedBaseline: 0, entries: [] }), 'utf8');
+    return { root, args: ['--in', raw, '--full', '--intended', reg, '--out', join(root, 'r.md')] };
+  }
+
+  function run(repo: { root: string; args: string[] }): { status: number | null; stdout: string; stderr: string } {
+    const r = spawnSync(process.execPath, [TSX_CLI, SCRIPT, ...repo.args], { cwd: repo.root, encoding: 'utf8', timeout: 90_000 });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  }
+
+  /** 目錄裡每個訊號名各出現一次(查表形狀:`'name'`),就是「目錄與程式碼對上」。 */
+  const literals = (names: readonly string[]): string => `export const T = [\n${names.map((s) => `  '${s}',`).join('\n')}\n];\n`;
+
+  beforeAll(() => {
+    scratch = mkdtempSync(join(tmpdir(), 'lc-drift-e2e-'));
+  });
+  afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it('對上:每條訊號都在程式碼裡 → 退出碼 0,沒有任何漂移訊息', () => {
+    const r = run(fakeRepo('clean', literals(ALL)));
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(new RegExp(`訊號 目錄/呼叫點/觸發:${ALL.length}/${ALL.length}/0`));
+  });
+
+  it('目錄有、程式碼沒有:少一條 → 退出碼 1,stderr「訊號無呼叫點:<名>,…同一個 commit 從目錄移除」,而且指名是哪一條', () => {
+    const r = run(fakeRepo('missing-one', literals(ALL.filter((s) => s !== SIG_B))));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/✗ degraded-report:/);
+    expect(r.stderr).toContain(NO_CALL_SITE(SIG_B));
+    expect(r.stderr).not.toContain(NO_CALL_SITE(SIG_A));
+    expect(r.stderr).not.toMatch(/訊號未登記/);
+    expect(r.stdout).toMatch(new RegExp(`訊號 目錄/呼叫點/觸發:${ALL.length}/${ALL.length - 1}/0`));
+  });
+
+  it("程式碼有、目錄沒有:多一個 witness('假名') → 退出碼 1,stderr「訊號未登記:假名 @ packages/a.ts:<行>」", () => {
+    const src = `${literals(ALL)}\nexport function f(): void {\n  witness('假名');\n}\n`;
+    const line = src.split('\n').findIndex((l) => l.includes("witness('假名')")) + 1;
+    const r = run(fakeRepo('unregistered', src));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(UNREGISTERED('假名', 'packages/a.ts', line));
+    expect(r.stderr).not.toMatch(/訊號無呼叫點/);
+  });
+
+  it('兩個方向同時漂 → 一次列完,未登記的在前', () => {
+    const src = `${literals(ALL.filter((s) => s !== SIG_C))}\nwitnessed('x.y');\n`;
+    const r = run(fakeRepo('both', src));
+    expect(r.status).toBe(1);
+    const a = r.stderr.indexOf('訊號未登記:x.y @ packages/a.ts:');
+    const b = r.stderr.indexOf(NO_CALL_SITE(SIG_C));
+    expect(a).toBeGreaterThanOrEqual(0);
+    expect(b).toBeGreaterThan(a);
+  });
+
+  it('漂了報告照樣寫(FAIL 是報告寫完才判,跟登記過期同一個位置),§2 那一列仍標「沒有呼叫點」', () => {
+    const repo = fakeRepo('report-still-written', literals(ALL.filter((s) => s !== SIG_B)));
+    const r = run(repo);
+    expect(r.status).toBe(1);
+    const md = readFileSync(join(repo.root, 'r.md'), 'utf8');
+    expect(md).toMatch(/沒有呼叫點/);
+    expect(md).toContain(`\`${SIG_B}\``);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────── 量尺 · 乙:宣稱全套、實際沒跑完也要擋
+
+describe('量尺 · 乙 · assessRunCompleteness:ran_all 是量出來的,不是 cmdline 說的', () => {
+  let scratch = '';
+  let n = 0;
+  function dir(): string {
+    const d = join(scratch, `d${n++}`);
+    mkdirSync(d, { recursive: true });
+    return d;
+  }
+
+  beforeAll(() => {
+    scratch = mkdtempSync(join(tmpdir(), 'lc-ranall-'));
+  });
+  afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it(`證據檔名是 ${VITEST_JSON_FILE} 與 ${VITEST_EXIT_FILE}:腳本 export 的常數跟這裡的測試用同一個名字`, () => {
+    expect(VITEST_JSON).toBe(VITEST_JSON_FILE);
+    expect(VITEST_EXIT_JSON).toBe(VITEST_EXIT_FILE);
+  });
+
+  it('三個條件全滿足 → ranAll,reason 是 null,collected = numTotalTests − pending − todo', () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, 0);
+    expect(assessRunCompleteness(d, 3)).toEqual({ ranAll: true, reason: null, status: 0, ran: 3, collected: 3 });
+  });
+
+  it('退出碼 1(有測試紅,但套件跑完)→ 仍然 ranAll:紅綠是 vitest 的事', () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 2, failed: 1 }, 1);
+    expect(assessRunCompleteness(d, 3)).toMatchObject({ ranAll: true, reason: null, status: 1 });
+  });
+
+  it('skipped / todo 不算要跑的:total 5、pending 1、todo 1、紀錄 3 → ranAll,collected 3', () => {
+    const d = dir();
+    evidence(d, { total: 5, passed: 3, pending: 1, todo: 1 }, 0);
+    expect(assessRunCompleteness(d, 3)).toMatchObject({ ranAll: true, collected: 3, ran: 3 });
+  });
+
+  it('條件 1 · 退出碼不是 0 或 1(137 = 被 kill)→ 不算,reason 帶退出碼', () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, 137);
+    const r = assessRunCompleteness(d, 3);
+    expect(r.ranAll).toBe(false);
+    expect(r.status).toBe(137);
+    expect(r.reason).toMatch(/退出碼 137/);
+  });
+
+  it('條件 1 · 退出碼是 null(被訊號終止)→ 不算', () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, null);
+    const r = assessRunCompleteness(d, 3);
+    expect(r.ranAll).toBe(false);
+    expect(r.status).toBeNull();
+    expect(r.reason).toMatch(/退出碼/);
+  });
+
+  it(`條件 1 · 沒有 ${VITEST_EXIT_FILE}(--in 一份不是這支腳本跑出來的目錄)→ 不算,reason 指名那個檔`, () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, 0);
+    rmSync(join(d, VITEST_EXIT_FILE));
+    const r = assessRunCompleteness(d, 3);
+    expect(r.ranAll).toBe(false);
+    expect(r.status).toBeUndefined();
+    expect(r.reason).toContain(VITEST_EXIT_FILE);
+  });
+
+  it(`條件 2 · 沒有 ${VITEST_JSON_FILE}(vitest 沒寫完就死)→ 不算,collected 是 null,reason 指名那個檔`, () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, 0);
+    rmSync(join(d, VITEST_JSON_FILE));
+    const r = assessRunCompleteness(d, 3);
+    expect(r.ranAll).toBe(false);
+    expect(r.collected).toBeNull();
+    expect(r.reason).toContain(VITEST_JSON_FILE);
+  });
+
+  it(`條件 2 · ${VITEST_JSON_FILE} 不是合法 JSON(寫到一半)→ 不算`, () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, 0);
+    writeFileSync(join(d, VITEST_JSON_FILE), '{"numTotalTests": 3, "numPa', 'utf8');
+    const r = assessRunCompleteness(d, 3);
+    expect(r.ranAll).toBe(false);
+    expect(r.collected).toBeNull();
+    expect(r.reason).toMatch(/不是合法的 JSON/);
+  });
+
+  it(`條件 2 · ${VITEST_JSON_FILE} 沒有 success 欄位 → 不算`, () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, 0, { success: undefined });
+    const r = assessRunCompleteness(d, 3);
+    expect(r.ranAll).toBe(false);
+    expect(r.reason).toMatch(/success/);
+  });
+
+  it('條件 2 · 數字不一致:numTotalTests ≠ passed + failed + pending + todo → 不算,reason 把兩邊的數字都講出來', () => {
+    const d = dir();
+    evidence(d, { total: 5, passed: 3, failed: 1 }, 0);
+    const r = assessRunCompleteness(d, 4);
+    expect(r.ranAll).toBe(false);
+    expect(r.reason).toMatch(/5/);
+    expect(r.reason).toMatch(/4/);
+  });
+
+  it('條件 3 · 紀錄比 vitest 要跑的少(半路死掉)→ 不算,reason「收到 2/3」', () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, 0);
+    const r = assessRunCompleteness(d, 2);
+    expect(r.ranAll).toBe(false);
+    expect(r).toMatchObject({ ran: 2, collected: 3 });
+    expect(r.reason).toMatch(/收到 2\/3/);
+  });
+
+  it('條件 3 · 紀錄比 vitest 要跑的多(見證器重複寫)→ 一樣不算:ran == collected 是等號,不是 ≥', () => {
+    const d = dir();
+    evidence(d, { total: 3, passed: 3 }, 0);
+    const r = assessRunCompleteness(d, 4);
+    expect(r.ranAll).toBe(false);
+    expect(r.reason).toMatch(/收到 4\/3/);
+  });
+
+  it('條件 3 · 0 筆紀錄對 0 個要跑的(全部 skip)→ 等號成立,但那是 readRecords 那關先擋的事,這裡只管等號', () => {
+    const d = dir();
+    evidence(d, { total: 2, pending: 2 }, 0);
+    expect(assessRunCompleteness(d, 0)).toMatchObject({ ranAll: true, ran: 0, collected: 0 });
+  });
+});
+
+describe('量尺 · 乙 · 子行程:宣稱 --full 但 ran_all 量出來是假 → 讀不到、不比基準、不印降基準的提示、退出碼 1', () => {
+  let scratch = '';
+  const FILE = 'packages/core/src/llm/router-gateway.test.ts';
+  const REC = (test: string, signals: Record<string, number> = {}): { file: string; test: string; signals: Record<string, number> } => ({ file: FILE, test, signals });
+
+  function rawDir(name: string, records: Array<{ file: string; test: string; signals: Record<string, number> }>): string {
+    const d = join(scratch, name);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, '1.jsonl'), records.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+    return d;
+  }
+
+  function registry(name: string, unmarkedBaseline: number): string {
+    const p = join(scratch, `${name}.json`);
+    writeFileSync(p, JSON.stringify({ unmarkedBaseline, entries: [] }), 'utf8');
+    return p;
+  }
+
+  function run(args: string[]): { status: number | null; stdout: string; stderr: string; md: string; summary: Summary | null } {
+    const out = join(scratch, `r-${Math.random().toString(36).slice(2)}.md`);
+    const r = spawnSync(process.execPath, [TSX_CLI, SCRIPT, ...args, '--out', out], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 90_000 });
+    const jsonPath = out.replace(/\.md$/, '.json');
+    return {
+      status: r.status,
+      stdout: r.stdout,
+      stderr: r.stderr,
+      md: existsSync(out) ? readFileSync(out, 'utf8') : '',
+      summary: existsSync(jsonPath) ? (JSON.parse(readFileSync(jsonPath, 'utf8')) as Summary) : null,
+    };
+  }
+
+  /** 四筆紀錄、一筆未標記;基準 5,所以「跑完了」的話會印「可以降到 1」——那正是要被擋掉的提示。 */
+  const FOUR = [REC('t1', { [SIG_C]: 1 }), REC('t2'), REC('t3'), REC('t4')];
+  const HINT = /可以把 .* 降到/;
+  const UNREADABLE = /讀不到\(全套未跑完:退出碼 [^,]+,收到 \d+\/(\d+|\?)\)/;
+
+  beforeAll(() => {
+    scratch = mkdtempSync(join(tmpdir(), 'lc-ranall-e2e-'));
+  });
+  afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it('對照:跑完了(證據一致)→ 比基準,低於基準就印「可以降到 1」,退出碼 0,summary.ranAll = true', () => {
+    const d = rawDir('complete', FOUR);
+    evidence(d, { total: 4, passed: 4 }, 0);
+    const r = run(['--in', d, '--full', '--intended', registry('complete', 5)]);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(HINT);
+    expect(r.stdout).not.toMatch(UNREADABLE);
+    expect(r.summary).toMatchObject({ scope: 'full', ranAll: true });
+  });
+
+  it('顧問指定的反向驗證:手動截斷的 raw 目錄(刪掉一半 JSONL 行)+ --full → 讀不到,不比基準,沒有降基準提示,退出碼 1', () => {
+    const d = rawDir('truncated', FOUR);
+    evidence(d, { total: 4, passed: 4 }, 0);
+    // 刪掉一半:vitest 說跑了 4 個,見證器只收到 2 筆
+    writeFileSync(join(d, '1.jsonl'), FOUR.slice(0, 2).map((x) => JSON.stringify(x)).join('\n') + '\n', 'utf8');
+    const r = run(['--in', d, '--full', '--intended', registry('truncated', 5)]);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('讀不到(全套未跑完:退出碼 0,收到 2/4)');
+    expect(r.stdout).not.toMatch(HINT);
+    expect(r.stderr).toMatch(/✗ degraded-report:.*宣稱全套但沒跑完/);
+    expect(r.stderr).toMatch(/收到 2\/4/);
+    expect(r.stderr).not.toMatch(/超過基準/);
+    expect(r.stderr).not.toMatch(HINT);
+    // 報告照樣寫,但「未標記」那一列不能說「可以降」也不能說「等於基準」——它就是讀不到
+    expect(r.md).not.toMatch(/可以降|等於基準|超過基準,FAIL/);
+    expect(r.md).toMatch(/未跑完|沒跑完/);
+    expect(r.summary).toMatchObject({ scope: 'full', ranAll: false, testsUnmarked: 1 });
+  });
+
+  it('退出碼 137(vitest 被 kill),數字碰巧一致 → 仍然讀不到:三個條件是 AND', () => {
+    const d = rawDir('killed', FOUR);
+    evidence(d, { total: 4, passed: 4 }, 137);
+    const r = run(['--in', d, '--full', '--intended', registry('killed', 5)]);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('讀不到(全套未跑完:退出碼 137,收到 4/4)');
+    expect(r.stdout).not.toMatch(HINT);
+  });
+
+  it('退出碼 1(有測試紅但套件跑完),數字一致 → ranAll,照常比基準', () => {
+    const d = rawDir('red-but-complete', FOUR);
+    evidence(d, { total: 4, passed: 3, failed: 1 }, 1);
+    const r = run(['--in', d, '--full', '--intended', registry('red-but-complete', 1)]);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout).not.toMatch(UNREADABLE);
+    expect(r.md).toMatch(/等於基準/);
+  });
+
+  it(`--in 一份沒有 ${VITEST_JSON_FILE} / ${VITEST_EXIT_FILE} 的舊 raw 目錄 + --full → 讀不到(退出碼 ?,收到 4/?),退出碼 1`, () => {
+    const d = rawDir('legacy', FOUR);
+    const r = run(['--in', d, '--full', '--intended', registry('legacy', 5)]);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('讀不到(全套未跑完:退出碼 ?,收到 4/?)');
+    expect(r.stdout).not.toMatch(HINT);
+    expect(r.stderr).toMatch(/宣稱全套但沒跑完/);
+  });
+
+  it('沒有 --full 的 --in(部分跑,沒有宣稱)→ 截斷也不算問題:本來就不比基準、不印提示,退出碼 0', () => {
+    const d = rawDir('partial-truncated', FOUR);
+    evidence(d, { total: 4, passed: 4 }, 0);
+    writeFileSync(join(d, '1.jsonl'), FOUR.slice(0, 2).map((x) => JSON.stringify(x)).join('\n') + '\n', 'utf8');
+    const r = run(['--in', d, '--intended', registry('partial-truncated', 5)]);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/部分跑/);
+    expect(r.stdout).not.toMatch(HINT);
+    expect(r.stdout).not.toMatch(/宣稱全套/);
+    expect(r.summary).toMatchObject({ scope: 'partial', ranAll: false });
+  });
+
+  it('自己起 vitest 時:加 --reporter=json --outputFile(是加不是換,default reporter 還在),raw 目錄留下兩個證據檔,紀錄數 == 要跑的數', () => {
+    const r = run(['--', 'packages/core/src/weekly/iso-week.test.ts']);
+    expect(r.status).toBe(0);
+    // 指令列印出來的就是實際 spawn 的參數:default 與 json 兩個 reporter 都在
+    const cmd = r.stdout.match(/^▶ (.+)$/m)?.[1] ?? '';
+    expect(cmd).toMatch(/--reporter=default/);
+    expect(cmd).toMatch(/--reporter=json/);
+    expect(cmd).toMatch(new RegExp(`--outputFile=\\S*${VITEST_JSON_FILE.replace('.', '\\.')}`));
+    // default reporter 的輸出還在(沒被 json 換掉)
+    expect(r.stdout).toMatch(/Test Files\s+1 passed/);
+    const rawRel = cmd.match(/DEGRADED_WITNESS_DIR=(\S+)/)?.[1] ?? '';
+    const raw = join(REPO_ROOT, rawRel);
+    expect(existsSync(join(raw, VITEST_JSON_FILE)), `${raw} 裡沒有 ${VITEST_JSON_FILE}`).toBe(true);
+    expect(existsSync(join(raw, VITEST_EXIT_FILE)), `${raw} 裡沒有 ${VITEST_EXIT_FILE}`).toBe(true);
+    const json = JSON.parse(readFileSync(join(raw, VITEST_JSON_FILE), 'utf8')) as { numTotalTests: number; numPendingTests: number; numTodoTests: number; success: boolean };
+    expect(json.success).toBe(true);
+    expect(json.numTotalTests).toBe(5);
+    expect(JSON.parse(readFileSync(join(raw, VITEST_EXIT_FILE), 'utf8'))).toMatchObject({ status: 0 });
+    const testEnds = readdirSync(raw)
+      .filter((f) => f.endsWith('.jsonl'))
+      .flatMap((f) => readFileSync(join(raw, f), 'utf8').split('\n').filter((l) => l.trim() !== ''))
+      .filter((l) => (JSON.parse(l) as { test: string }).test !== OUTSIDE_ANY_TEST).length;
+    expect(testEnds).toBe(json.numTotalTests - json.numPendingTests - json.numTodoTests);
+    // 只跑一個檔是部分跑(沒有宣稱全套),但 ranAll 是量出來的:這次量出來為真
+    expect(r.summary).toMatchObject({ scope: 'partial', ranAll: true });
+    rmSync(raw, { recursive: true, force: true });
+  });
+});
+
+/**
+ * 乙的條件 3 靠見證器「每個**跑了的**測試恰好一列」。setup 檔頭寫「skipped 沒有 afterEach,不進分母」,
+ * 對 `it.skip` / `it.todo` 成立,對測試本體裡的 `ctx.skip()` **不成立**(vitest 4 照樣跑 afterEach),
+ * 見證器就多寫一列 `signals: {}`——2026-09-05 全套實測 2910 列對 vitest 的 2772 個要跑的,差的 138
+ * 全是 zero-input-guard 的 ctx.skip()。列數 ≠ 要跑的數,ran_all 在乾淨的全套上也會是假。
+ * 這裡用 `--dir` 指到一個臨時目錄跑一個小 probe(setupFiles 仍是 repo 的,136ms),釘住:
+ * runtime skip 的測試**不寫列**;它在 skip 之前觸發過的訊號**不丟**,沖到 outside(跟 beforeAll 同一個歸屬規則)。
+ */
+describe('量尺 · 乙 · 見證器:runtime ctx.skip() 的測試不寫列,列數才等於 vitest 要跑的數', () => {
+  it('probe:1 passed、1 ctx.skip()(skip 前觸發一個訊號)、1 it.skip、1 todo → 只有 passed 那一列 + 一列 outside 帶那個訊號', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'lc-skip-probe-'));
+    try {
+      const raw = join(scratch, 'raw');
+      mkdirSync(join(scratch, 'scripts'), { recursive: true });
+      mkdirSync(raw, { recursive: true });
+      const witnessTs = join(REPO_ROOT, 'packages/contracts/src/witness.ts');
+      writeFileSync(
+        join(scratch, 'scripts/probe.test.ts'),
+        [
+          "import { describe, expect, it } from 'vitest';",
+          `import { witness } from '${witnessTs}';`,
+          "describe('probe', () => {",
+          "  it('passes', () => { expect(1).toBe(1); });",
+          "  it('runtime skip after a signal', (ctx) => { witness('llm.fallback.cloud-failed'); ctx.skip(); });",
+          "  it.skip('static skip', () => { expect(1).toBe(2); });",
+          "  it.todo('todo');",
+          '});',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      const r = spawnSync('npx', ['vitest', 'run', '--dir', scratch, '--reporter=json', `--outputFile=${join(raw, VITEST_JSON_FILE)}`], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        timeout: 90_000,
+        env: { ...process.env, DEGRADED_WITNESS_DIR: raw },
+      });
+      const json = JSON.parse(readFileSync(join(raw, VITEST_JSON_FILE), 'utf8')) as { numTotalTests: number; numPendingTests: number; numTodoTests: number; numPassedTests: number };
+      expect(json, r.stderr).toMatchObject({ numTotalTests: 4, numPassedTests: 1, numPendingTests: 2, numTodoTests: 1 });
+      const rows = readdirSync(raw)
+        .filter((f) => f.endsWith('.jsonl'))
+        .flatMap((f) => readFileSync(join(raw, f), 'utf8').split('\n').filter((l) => l.trim() !== ''))
+        .map((l) => JSON.parse(l) as { file: string; test: string; signals: Record<string, number> });
+      const tests = rows.filter((x) => x.test !== OUTSIDE_ANY_TEST);
+      const outside = rows.filter((x) => x.test === OUTSIDE_ANY_TEST);
+      expect(tests.map((x) => x.test)).toEqual(['probe > passes']);
+      expect(tests).toHaveLength(json.numTotalTests - json.numPendingTests - json.numTodoTests);
+      // skip 前觸發的訊號不丟:歸到檔案層級的 outside,跟 beforeAll 的規則一樣
+      expect(outside).toHaveLength(1);
+      expect(outside[0]!.signals).toEqual({ 'llm.fallback.cloud-failed': 1 });
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
