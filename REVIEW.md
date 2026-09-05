@@ -1,4 +1,6 @@
-# 採用模板 v1.4.1 → v1.4.2 — 交接
+# 採用模板 v1.4.1 → v1.4.2 → v1.4.3 — 交接
+
+> **1.4.3 收尾見 §七(最新狀態在那裡;§一–§六 是 1.4.2 當時的交接,原文保留)。**
 
 分支 `pollux0971/template-141`,基底 `1e3b7a8`(main 之後只多一個 `c60173f`,只動 `scripts/degraded-report.ts`,不衝突)。
 模板來源:先 tag `template/v1.4.1` = `ff7f64b`,再依協調者的 B2 決定升到 `template/v1.4.2` = `1c1d403`(模板為本 repo 的 P-83 出的修補版)。
@@ -229,3 +231,109 @@ added (in branch, not in baseline): 239
 - 14 步裡 13 步綠;`test` 紅在且只在 §二.9 的 2 條探針,兩條都是同一個模板缺陷,等協調者決 (i) 回流 / (ii) 探針不填 mention。
 - 依協調者要求的三樣:20 個探針結果見 §二.7 / §二.9;`max` 66→48 的獨立 commit = `d8d4a5c`;
   重 sync 後對 `scripts/` grep 那句可照抄的 Stryker CLI 指令 = **0 命中(grep exit 1)**。
+
+## 七、升到 v1.4.3(629b609)收尾 — 2026-09-05
+
+起手:`llm-spend --today` 回 0(`今日 OpenAI 花費 $0.0000,0 次呼叫`);`git merge main`(4538114,不 rebase)乾淨合併 = `79d6a24`(main 多的是 autopilot SKILL.md、sprints/2026-W36.md、degraded-report.ts 9 行,無衝突)。
+
+### 7.1 重 sync 結果:只有 `scripts/` 變,設定全部沒動
+
+`sync-gates.sh … --lang ts --prune` → 20 支同步(v1.4.3 629b609),檔案清單跟 sync 前**完全一樣**(沒新增、沒 prune 掉東西)。逐項比對(`cmp` 對 sync 前的快照):
+
+| 檔 | 結果 |
+|---|---|
+| `scripts/gates.config.json`(chain 14 步含 `check:phase-status`) | **SAME** |
+| `scripts/boundaries.owners.json`(`coverageBaseline` managed 244 / scanned 244) | **SAME**;`boundaries` 實跑印 `涵蓋:納管 244 / 掃描 244 檔(100.0%)` |
+| `scripts/boundaries.allow.json` | **SAME** |
+| `package.json`(`test` / `check:gates` / `check:all` / `check:next-gates` / `check:phase-status` 那幾行) | **SAME** |
+| 三支 `check-X.local.test.ts` 在 `owners.json`(196/200/204 行)與 `vitest.scanner-*.config.ts` 的指向 | **沒動**,仍各自指到 `.local` |
+| `scripts/zero-input-guard.baseline.json` 的 `max` | sync 後仍 **48**;之後我自己收緊到 **47**(見 7.3,只減不增) |
+
+`_root.ts` 多了 `rootDirError` + `requireRootDir`(`grep -c requireRootDir` = 2);7 支守門呼叫它:`check-all`、`check-boundaries`、`check-doc-links`(用純函式版 `rootDirError`)、`check-doc-rot`、`check-next-gates`、`check-phase-status`、`check-standalone`。
+對 `scripts/` grep 那句可照抄的 Stryker CLI 指令(協調者要的那條 grep,字面不引在這裡,`mutate.test.ts` 會抓)→ **0 命中,grep exit 1**。
+
+注意一件事:模板自己的 `scripts/zero-input.gates.test.ts`(列舉每支 `check-*.ts` 的那支)**不在 sync 的複製集合裡**(sync 只複製 `_root.ts`、`check-*.ts`、`hooks/pre-commit`),所以本 repo 沒有它、也不需要它——本 repo 用自己的 `zero-input-guard.test.ts` + ROSTER。它守的是模板 repo 端,效果是「下一支新守門在模板端就被抓」,對我們是上游保證,不是本地檔。
+
+### 7.2 那 2 紅:自己消失了,沒開例外
+
+```
+zero-input-guard > check-next-gates   > [missing] --root 不存在:指名有問題的那條路徑   → 綠
+zero-input-guard > check-phase-status > [missing] --root 不存在:指名有問題的那條路徑   → 綠
+```
+兩支現在對不存在的 `--root` 印 `✗ --root 指到不存在的目錄:<絕對路徑>` + `gate=… result=FAIL scanned=0`、exit 1。
+
+### 7.3 1.4.3 連帶多修好一條基準:`max` 48 → 47(收緊,不是放寬)
+
+零輸入守門的鎖 2 直接把它抓出來:
+```
+FAIL zero-input-guard > check-doc-links > [missing] --root 不存在:指名有問題的那條路徑 〔基準 since 2026-09-05,預期仍紅〕
+AssertionError: 已修好,從基準移除:… 把它從 baseline.json 拿掉,並把 max 改小
+```
+`check-doc-links` 同樣吃到 P-84,所以那條「沒指名路徑」的洞也補了。照 ADR-045 的規矩:從 `entries` 拿掉那 1 條、`max` 48 → **47**,獨立 commit。**沒有任何新入口進基準**(Consequences 6)。
+
+### 7.4 五條斷言對照表(1.4.3 重看;形狀同 §五)
+
+**哪幾條變了**:只有 **#4**(boundaries · `--root` 不存在)。**#1 #2 #3 #5 沒變**。另外 1.4.3 讓 `check-doc-links.local.test.ts` 多出一條假紅,列為 **#6**(1.4.2 時它是綠的,不在原表)。
+
+| # | 檔 · 測試 | 舊字串(1.4.2) | 新字串(1.4.3) | 為什麼是措辭不是行為 | 哪些原斷言沒動 | 弄壞哪一行會紅 |
+|---|---|---|---|---|---|---|
+| 1 | `check-doc-links.local.test.ts` · 全綠 | `SKIP_LINE`(1.4.0 的 18 項清單) | **同 1.4.2,沒變** | — | 全部 | 同 §五 |
+| 2 | 同檔 · 有壞連結 | 同上 | **沒變** | — | 全部 | 同 §五 |
+| 3 | 同檔 · 0 條連結 | 同上 | **沒變** | — | 全部 | 同 §五 |
+| 4 | `check-boundaries.local.test.ts` · `--root` 指到不存在的目錄 | `toContain('設定檔未找到於')` | `toContain('✗ --root 指到不存在的目錄:')` **加** `toContain('lc-boundaries-absolutely-no-such-dir')` | 1.4.3 P-84:`--root` 明講時在任何設定檔查找**之前**先 `statSync` 目錄;不存在就指名路徑、FAIL、exit 1,不再往下走到 S14 的「設定檔未找到於」。紅的位置第三次搬家(0 個檔案 → 設定檔未找到 → 指名路徑),語意更嚴(多要求指名路徑),行為仍是「絕不綠燈」 | `code === 1`、`gate=boundaries result=FAIL scanned=0`、`not.toContain('✓ 無違規')` 三條都留著 | `check-boundaries.ts:74` 的 `requireRootDir(ROOT, ROOT_EXPLICIT, GATE_NAME);` 註解掉 → **1 failed**(就是這條:收到 `boundaries.owners.json: 設定:無,使用預設 … gate=boundaries result=FAIL scanned=0`,沒有指名路徑那句) |
+| 5 | 同檔 · root 存在但沒有 owners.json | `toContain('設定檔未找到於')` | **沒變** | root 存在 → `requireRootDir` 放行 → 仍走到 S14 的 `lookupConfig` hard-error,訊息不變 | 全部 | 同 §五 |
+| 6 | `check-doc-links.local.test.ts` · `--root` 指到不存在的目錄(**新列**) | `toContain(SCANNER_BROKEN)`(`這不是很乾淨,是掃描器壞了`) | `toContain('✗ --root 指到不存在的目錄:')`、`toContain('lc-doclinks-absolutely-no-such-dir')`、`toContain('gate=doc-links result=FAIL scanned=0')`、`not.toContain(SCANNER_BROKEN)`;測試名改成「不丟例外,而是指名那條路徑 → FAIL」 | 同 #4 的 P-84,只是這支 `main()` 是純函式,用 `rootDirError` 自組 `{ code: 1, output }`。「0 條連結 → 掃描器壞了」那句留給「目錄存在但沒東西」(§五 #3 仍守著) | `code === 1` | `check-doc-links.ts:518` 的 `if (rootArg !== undefined)` 改成 `&& false` → **1 failed**(就是這條:收到 `doc-links: 排除片段 […` 那條一般輸出) |
+
+破壞驗證做完都還原(第一次我誤用 `git checkout` 把 check-boundaries.ts 退回 1.4.2,重跑一次 sync 救回;之後改用 scratchpad 備份);`sync-gates.sh --check` → `✓ 守門內容自同步以來未被更動`。
+
+### 7.5 三條反向驗證的實際輸出(做完都還原,`check:gates` 重跑 exit 0)
+
+(1) `echo "// tamper" >> scripts/check-step-dup.ts` → `npm run check:gates`:
+```
+✗ check-step-dup.ts 內容被改過(sha256 不符;急修請在第 2 行加 HOTFIX 註解:<日期> <理由>)
+exit=1
+restored exit=0
+```
+
+(2) `chain` 開頭插 `no-such-script-xyz` → `npm run check:all -- --fail-fast`:
+```
+✗ no-such-script-xyz 不是 npm script(P-55)
+gate=all result=FAIL scanned=15
+exit=1
+```
+
+(3) `gates.config.json` 加未知鍵 `chian` → `check:next-gates` 與 `boundaries`:
+```
+✗ 設定檔有不認識的鍵:chian(打錯字?)已知鍵:cucumberCwd, phaseCoverage, docLinks, gherkinDup, sync, chain, unwired, nextGates, skipDirs, docRot, knownDefects, phaseStatus(…/scripts/gates.config.json)
+gate=next-gates result=FAIL scanned=0
+next-gates exit=1
+gate=boundaries result=FAIL scanned=0
+boundaries exit=1
+```
+(1.4.3 的已知鍵清單多了 `phaseStatus`。)還原後 `cmp` 對 sync 前快照相同。
+
+### 7.6 全鏈(`npm run check:all`,14 步,每步退出碼)
+
+```
+✓ boundaries          gate=boundaries result=PASS scanned=211(涵蓋 244/244)
+✓ typecheck
+✓ lint:docs           gate=doc-links result=PASS scanned=21
+✓ test                Test Files 105 passed (105);Tests 2772 passed | 138 skipped (2910)
+✓ accept:standalone
+✓ standalone          gate=standalone result=PASS scanned=14
+✓ accept:dry          0 ambiguous
+✓ check:steps         gate=step-dup result=PASS scanned=1943
+✓ check:gherkin-dup   gate=gherkin-dup result=PASS scanned=495
+✓ accept:coverage     gate=phase-coverage result=PASS scanned=38
+✓ check:gates         (○ pre-commit hook 未安裝,選用)
+✓ check:doc-rot       report:gate=doc-rot result=FAIL scanned=561(仍只有 CLAUDE.md:77,使用者的檔)
+✓ check:next-gates    enforce:gate=next-gates result=PASS scanned=12
+✓ check:phase-status  report:gate=phase-status result=PASS scanned=38
+gate=all result=PASS scanned=14
+check:all exit=0
+```
+14 步全綠(每步 exit 0;`check:all` 整體 exit 0)。對比 1.4.2:`test` 從 2 failed / 2770 passed → **0 failed / 2772 passed**,檔數 105 不變。`npm test` 自己取鎖,等待是預期行為。
+
+### 7.7 沒動的
+
+`CLAUDE.md` 那行「採用模板 v1.3.4」(sync 印的提醒說要記 v1.4.3)——使用者的檔,留給顧問去問。
