@@ -1,7 +1,7 @@
 /**
  * scripts/ingest.ts 的輸出格式測試。
  *
- * 守的是一件事:CLI 只印一個「建立了 N 張卡」。REVIEW.md §7.6 第 1 點記的缺陷是
+ * 守的是一件事:CLI 只印一個「建立了 N 張卡」。features/02-ingest-pipeline/REVIEW.md §7.6 第 1 點記的缺陷是
  * CLI 先自己算一個張數印表頭,下一行再印 result.message,兩個數字背靠背出現,
  * 操作者不知道到底建了幾張。修法是讓 message 自己就是唯一那個數字(見
  * runIngestPipeline()),CLI 不再另外算一個。

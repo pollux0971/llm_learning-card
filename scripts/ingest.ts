@@ -107,7 +107,7 @@ async function main(): Promise<void> {
 
   // 建立的卡 = level 0 卡 + 子卡。只印 level 0 的話,子卡就成了看不見的產物——
   // 這個總數現在就是 runIngestPipeline() 的 message 本人,CLI 不再另外算一個
-  // 表頭數字,免得兩個數字背靠背互相矛盾(REVIEW.md §7.6 第 1 點)。
+  // 表頭數字,免得兩個數字背靠背互相矛盾(features/02-ingest-pipeline/REVIEW.md §7.6 第 1 點)。
   console.log(result.message);
   for (const id of [...result.cardsCreated, ...result.childrenCreated]) console.log(`  ${id}`);
 
