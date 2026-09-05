@@ -175,12 +175,14 @@ describe('check-boundaries 掃得到檔案但一個都沒真的檢查', () => {
   it('--root 指到不存在的目錄:0 個檔案 → FAIL,不是當機也不是綠燈', () => {
     const { code, output } = runBoundaries(join(tmpdir(), 'lc-boundaries-absolutely-no-such-dir'));
 
-    // 模板 v1.4.1(S14,P-73)起,`--root` 明講時**不再**退回「腳本自己所在的目錄」讀本 repo 的
-    // boundaries.owners.json——只看 GATES_CONFIG_DIR 與 <root>/scripts/,找不到就大聲失敗
-    // 「設定檔未找到於 …」。這條守的是「絕對不可以是綠燈」,不是某一句特定的字——所以斷言的是
-    // 退出碼、找不到設定檔的訊息、FAIL 標記,以及沒有綠燈。(v1.3.2–1.3.4 時這裡紅在「掃描到 0 個檔案」。)
+    // 模板 v1.4.3(P-84)起,`--root` 明講時**搶在任何設定檔查找之前**先確認那個目錄存在;
+    // 不存在就直接印「✗ --root 指到不存在的目錄:<絕對路徑>」+ FAIL 標記、exit 1——把路徑指名出來,
+    // 不再走到 v1.4.1 S14 的「設定檔未找到於 …」(那句是給「目錄存在但沒設定檔」用的,見下一條)。
+    // 這條守的是「絕對不可以是綠燈」+「要指名那條路徑」——所以斷言的是退出碼、指名路徑的訊息、
+    // FAIL 標記,以及沒有綠燈。(v1.3.2–1.3.4 紅在「掃描到 0 個檔案」;v1.4.1–1.4.2 紅在「設定檔未找到於」。)
     expect(code).toBe(1);
-    expect(output).toContain('設定檔未找到於');
+    expect(output).toContain('✗ --root 指到不存在的目錄:');
+    expect(output).toContain('lc-boundaries-absolutely-no-such-dir');
     expect(output).toContain('gate=boundaries result=FAIL scanned=0');
     expect(output).not.toContain('✓ 無違規');
   }, SPAWN_TIMEOUT_MS);

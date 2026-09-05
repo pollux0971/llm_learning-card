@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=84fdbb28407ba9b5e3711965de7042a64cdb437f657fb76e3155cba94eca01ab — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=4fa7673937d82953cffbc8ec5b7d2907cf05a7f1e87d0ca184ddfb4a0c67700a — 勿手改;升版用 sync-gates.sh
 /**
  * 所有守門腳本共用的 repo 根解析。
  *
@@ -11,7 +11,7 @@
  * 不在 git repo 裡(或找不到 git 執行檔)就退回 process.cwd() 本身。
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function resolveRoot(): string {
@@ -29,6 +29,49 @@ export function resolveRoot(): string {
 }
 
 export const ROOT: string = resolveRoot();
+
+/**
+ * P-84(來源 專案 A 協調者,2026-09-05):`--root` 明講了一個不存在的目錄時,
+ * `check-next-gates.ts`、`check-phase-status.ts` 會照樣往下跑到「掃到 0 份 xxx」的
+ * 一般空目標訊息——那句訊息完全沒提到 `--root` 傳了什麼,也沒提到那個目錄根本不存在,
+ * 跟其餘會先摸設定檔的 gate(`check-boundaries.ts`、`check-doc-rot.ts` 那一類,經
+ * `lookupConfig` 的 S14 hard-error)比起來,少講了最關鍵的一句話。
+ *
+ * 修法:`--root` 明講時,搶在任何設定檔查找之前先確認那個目錄真的存在、真的是目錄——
+ * 不是的話直接印「✗ --root 指到不存在的目錄:<絕對路徑>」+ gate 標記(scanned=0)、
+ * exit 1,不繼續往下跑到「掃到 0 個東西」的一般訊息(那句話是給「目錄存在但沒東西」
+ * 這種情況用的,兩種原因不該共用同一句話)。
+ *
+ * `rootDirError` 只回傳訊息字串、不印、不 exit——`check-doc-links.ts` 的 `main()` 是
+ * 純函式(回傳 `{ code, output }`,自己不 `process.exit`,見該檔開頭說明),要用這個
+ * 版本自己組輸出;其餘直接呼叫 `process.exit` 的 gate 用下面的 `requireRootDir`。
+ */
+export function rootDirError(root: string): string | undefined {
+  let ok: boolean;
+  try {
+    ok = statSync(root).isDirectory();
+  } catch {
+    ok = false;
+  }
+  if (ok) return undefined;
+  return `✗ --root 指到不存在的目錄:${root}`;
+}
+
+/**
+ * `rootDirError` 的「印出來、印 gate 標記、exit 1」版本,給會自己 `process.exit` 的
+ * gate 用(多數 `check-*.ts` 都是這一類)。`rootExplicit` 是「這次呼叫有沒有給
+ * `--root`」——沒有明講就不檢查(模組層級從 git 推定出來的 `ROOT` 一定存在,不需要
+ * 也不應該在這裡擋)。呼叫端要在**任何設定檔查找之前**呼叫這個函式(S14 的
+ * hard-error 是下一關,不是這一關)。
+ */
+export function requireRootDir(root: string, rootExplicit: boolean, gateName: string): void {
+  if (!rootExplicit) return;
+  const message = rootDirError(root);
+  if (message === undefined) return;
+  console.error(message);
+  console.log(`gate=${gateName} result=FAIL scanned=0`);
+  process.exit(1);
+}
 
 /**
  * 設定檔位置解析(CHANGELOG 1.3.2 (A);env 優先權見 CHANGELOG 1.3.4 (3))。

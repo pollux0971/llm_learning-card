@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=404e40ada90d3d1077d940ddd202cc50e72a8706a7cdea62c01816080cd2959d — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=174187aef25bd2ad4770728e1e29cced5df31f73cb0e1828e9ac86bc59f6d91e — 勿手改;升版用 sync-gates.sh
 /**
  * Phase 狀態表漂移檢查(S15,來源:專案 A 協調者,2026-09-05;PITFALLS P-75)。
  *
@@ -100,6 +100,7 @@ import {
   loadGatesConfig,
   lookupConfig,
   requireConfigType,
+  requireRootDir,
   resolveSkipDirs,
 } from './_root.js';
 
@@ -113,6 +114,7 @@ function argValue(name: string): string | undefined {
 
 const ROOT_EXPLICIT = argValue('--root') !== undefined;
 const ROOT = resolve(argValue('--root') ?? GIT_ROOT);
+requireRootDir(ROOT, ROOT_EXPLICIT, GATE_NAME);
 
 function findConfigFile(name: string): { path: string | undefined; hardErrorMessage: string | undefined } {
   const result = lookupConfig(import.meta.dirname, name, { root: ROOT, rootExplicit: ROOT_EXPLICIT });

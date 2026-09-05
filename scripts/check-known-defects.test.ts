@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=b6eb91e46a1d347ab412b2f34d2cb9b442cab2196c2792452a160905e7ecc6d8 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=b6eb91e46a1d347ab412b2f34d2cb9b442cab2196c2792452a160905e7ecc6d8 — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-known-defects.ts 的單元測試(模板 1.4.0 S8)。
  *

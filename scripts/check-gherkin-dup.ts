@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=5465419fc2f0c3409cb43620b116aca305b9e770ff2faaad61505ea57d880de6 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=5465419fc2f0c3409cb43620b116aca305b9e770ff2faaad61505ea57d880de6 — 勿手改;升版用 sync-gates.sh
 /**
  * 場景重複檢查(見 docs/03-agile-workflow.md「契約先於平行、規格先於程式」)。
  *

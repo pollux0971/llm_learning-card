@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=886089a1ef7cbaf8c36139352042be9b6a9a613114c12bbf63d3c6ba20fdfcd4 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=52aed570a694979514242e9f8c64b48eab93ad7e7bda1c4e2e5500a3f3ed6fb2 — 勿手改;升版用 sync-gates.sh
 /**
  * 文件腐爛黑名單掃描(S7,來源 nightmare-assault;模板 1.4.1 S13 補上 report 模式、
  * 自我測試與事故記錄檔的預設排除,同樣來源 nightmare-assault:他們自己的第一版
@@ -96,6 +96,7 @@ import {
   readConfigJson,
   requireConfigType,
   requireKnownTopLevelKeys,
+  requireRootDir,
   splitSkipDirs,
 } from './_root.js';
 
@@ -120,6 +121,7 @@ function argValue(name: string): string | undefined {
 
 const ROOT_EXPLICIT = argValue('--root') !== undefined;
 const ROOT = resolve(argValue('--root') ?? GIT_ROOT);
+requireRootDir(ROOT, ROOT_EXPLICIT, GATE_NAME);
 const SELF_TEST = process.argv.includes('--self-test');
 
 /** 印一則設定錯誤、印 gate 標記(0 目標)、exit 1——跟其餘掃描器同一套(見

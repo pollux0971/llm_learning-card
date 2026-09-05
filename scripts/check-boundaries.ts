@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=3a5e18c688f7b1f28666cfa0ce13b321f0342ac7839dea8a59127c11cbbde5c7 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=9c1046de7ae6dc0dd5587fb3a19d0ac2639cced0b69bc7b966b36bbb942b4d81 — 勿手改;升版用 sync-gates.sh
 /**
  * 邊界檢查(見 docs/02-decision-map.md ADR-004 / ADR-014)。
  *
@@ -46,7 +46,15 @@
  */
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { ROOT as GIT_ROOT, loadGatesConfig, lookupConfig, readConfigJson, requireConfigType, resolveSkipDirs } from './_root.js';
+import {
+  ROOT as GIT_ROOT,
+  loadGatesConfig,
+  lookupConfig,
+  readConfigJson,
+  requireConfigType,
+  requireRootDir,
+  resolveSkipDirs,
+} from './_root.js';
 
 function argValue(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -62,6 +70,8 @@ const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
 
 /** 這支腳本在 gate 機器可讀標記(見 CHANGELOG 1.3.2 (C))裡的名字。 */
 const GATE_NAME = 'boundaries';
+
+requireRootDir(ROOT, ROOT_EXPLICIT, GATE_NAME);
 
 /**
  * 找一份設定檔(`boundaries.owners.json` / `boundaries.allow.json`)——委派給 `_root.ts`

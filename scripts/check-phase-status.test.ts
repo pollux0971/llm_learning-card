@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=d3439c86eba59381f49b3cd783f148256c3e212c678dd2f4ef100c86167b8865 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=d3439c86eba59381f49b3cd783f148256c3e212c678dd2f4ef100c86167b8865 — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-phase-status.ts 的單元測試(S15,模板 1.4.2)。
  *

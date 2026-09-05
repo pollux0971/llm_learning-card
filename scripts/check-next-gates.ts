@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=935b6721ee43748bd1273f691e68800b442df09366fe490419fd963e5c9f7e0b — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=f5446b515b1d7f0b652b3f19ff5f3e1ca0dbd9308a86df99f72d7b7ff1c722c9 — 勿手改;升版用 sync-gates.sh
 /**
  * NEXT.md 的 gate 引用檢查(來源 AI_KM)。
  *
@@ -53,7 +53,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { ROOT as GIT_ROOT, loadGatesConfig, lookupConfig } from './_root.js';
+import { ROOT as GIT_ROOT, loadGatesConfig, lookupConfig, requireRootDir } from './_root.js';
 
 /** 三支掃描器共用的那句話(這支也共用)。0 個目標的紅,方向永遠是「掃描器壞了」。 */
 const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
@@ -68,6 +68,7 @@ function argValue(name: string): string | undefined {
 
 const ROOT_EXPLICIT = argValue('--root') !== undefined;
 const ROOT = resolve(argValue('--root') ?? GIT_ROOT);
+requireRootDir(ROOT, ROOT_EXPLICIT, GATE_NAME);
 
 // ---------------------------------------------------------------------------
 // gates.config.json:nextGates.mode——委派給 `_root.ts` 的 `lookupConfig`(S14,

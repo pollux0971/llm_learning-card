@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=43e3e09f6bea3e69b1231d392c9580c793963cbafd6db45691433291a4075d60 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=9132ac6a734e05f275024a132df8d87fd3610ccad52c3b470f9c5b172b49e97a — 勿手改;升版用 sync-gates.sh
 /**
  * 已知缺陷登記表檢查(S8,來源 nightmare-assault)。
  *
@@ -82,6 +82,7 @@ import {
   lookupConfig,
   readConfigJson,
   requireConfigType,
+  requireRootDir,
 } from './_root.js';
 
 /** 這支腳本在 gate 機器可讀標記裡的名字。 */
@@ -97,6 +98,7 @@ function argValue(name: string): string | undefined {
 
 const ROOT_EXPLICIT = argValue('--root') !== undefined;
 const ROOT = resolve(argValue('--root') ?? GIT_ROOT);
+requireRootDir(ROOT, ROOT_EXPLICIT, GATE_NAME);
 
 function configError(msg: string): never {
   console.error(`✗ ${msg}`);

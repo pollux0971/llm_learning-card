@@ -766,11 +766,17 @@ describe('圍欄的判定只看行首', () => {
 });
 
 describe('--root 指到不存在的目錄', () => {
-  it('不丟例外,而是 0 條連結 → FAIL', () => {
+  it('不丟例外,而是指名那條路徑 → FAIL', () => {
     const { code, output } = main(['--root', join(tmpdir(), 'lc-doclinks-absolutely-no-such-dir')]);
 
+    // 模板 v1.4.3(P-84)起,`--root` 明講時先確認目錄存在;不存在就用 `rootDirError` 組
+    // 「✗ --root 指到不存在的目錄:<絕對路徑>」+ FAIL 標記回傳 code 1,不再往下掃到
+    // 「0 條連結 → 掃描器壞了」(那句是給「目錄存在但沒東西」用的,兩種原因不共用一句話)。
     expect(code).toBe(1);
-    expect(output).toContain(SCANNER_BROKEN);
+    expect(output).toContain('✗ --root 指到不存在的目錄:');
+    expect(output).toContain('lc-doclinks-absolutely-no-such-dir');
+    expect(output).toContain('gate=doc-links result=FAIL scanned=0');
+    expect(output).not.toContain(SCANNER_BROKEN);
   });
 });
 

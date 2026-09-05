@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=696be5cd7b939949d01054601f9bba1ea0c50d85a78681123b0151368829b68f — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=696be5cd7b939949d01054601f9bba1ea0c50d85a78681123b0151368829b68f — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-doc-links.ts 的單元測試(模板 1.4.0 S7:backtick 路徑參照 + S9 設定壞掉)。
  *

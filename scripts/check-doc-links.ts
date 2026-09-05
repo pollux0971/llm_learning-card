@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=a3738d6963fe9ea3902b31c7d197e6703d1bf26e2e22d0547056da207162ab08 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=bb0992d3ff1bffa2b8d8f312c7acba520a3268f4d7d1e3f8e36f50069a191c5d — 勿手改;升版用 sync-gates.sh
 /**
  * 文件連結檢查(見 docs/03-agile-workflow.md「文件漂移」維護項)。
  *
@@ -65,6 +65,7 @@ import {
   ROOT as GIT_ROOT,
   loadGatesConfig as loadSharedGatesConfig,
   requireConfigType,
+  rootDirError,
   splitSkipDirs,
 } from './_root.js';
 
@@ -508,6 +509,19 @@ export function main(argv: string[]): { code: number; output: string } {
   const i = argv.indexOf('--root');
   const rootArg = i >= 0 ? argv[i + 1] : undefined;
   const root = resolve(rootArg ?? GIT_ROOT);
+
+  // P-84:`--root` 明講時,搶在任何設定檔查找(`resolveSkipConfig` 底下的
+  // `resolveConfig`)之前先確認那個目錄真的存在。這支腳本的 `main()` 是純函式
+  // (不自己 `process.exit`,見檔頭說明),所以用 `rootDirError` 只拿訊息字串,
+  // 自己組 `{ code, output }`——跟其餘直接 `process.exit` 的 gate 用
+  // `requireRootDir` 不同,道理一樣。
+  if (rootArg !== undefined) {
+    const message = rootDirError(root);
+    if (message !== undefined) {
+      return { code: 1, output: `${message}\ngate=${GATE_NAME} result=FAIL scanned=0` };
+    }
+  }
+
   const skip = resolveSkipConfig(root);
 
   const { files, links, broken } = checkDocLinks(root, skip);

@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=c46a93f09e7b65d10ae5a587c96f4a021ebabcaf441ec7a3afd22eef3b0bb30b — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=a7146c4fb93c98273bd5ec94ecce764a2731f020f9d1d4633ee8f8f8d5599823 — 勿手改;升版用 sync-gates.sh
 /**
  * 單一入口:把「必跑鏈」(gates.config.json 的 `chain`)依序跑過一次。
  *
@@ -35,7 +35,14 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ROOT as GIT_ROOT, loadGatesConfig, lookupConfig, readConfigJson, requireConfigType } from './_root.js';
+import {
+  ROOT as GIT_ROOT,
+  loadGatesConfig,
+  lookupConfig,
+  readConfigJson,
+  requireConfigType,
+  requireRootDir,
+} from './_root.js';
 
 /** 所有掃描器共用的那句話。0 個目標的紅,方向永遠是「掃描器壞了」。 */
 const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
@@ -57,6 +64,7 @@ function argValue(name: string): string | undefined {
 
 const ROOT_EXPLICIT = argValue('--root') !== undefined;
 const ROOT = resolve(argValue('--root') ?? GIT_ROOT);
+requireRootDir(ROOT, ROOT_EXPLICIT, GATE_NAME);
 const MARKDOWN = process.argv.includes('--markdown');
 const FAIL_FAST = process.argv.includes('--fail-fast');
 

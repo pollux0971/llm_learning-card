@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=b9926cf9d38ae773956deb52018136d050f91dbff1bfc7956aeefdb321446a48 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=b9926cf9d38ae773956deb52018136d050f91dbff1bfc7956aeefdb321446a48 — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-doc-rot.ts 的單元測試(模板 1.4.0 S7)。
  *

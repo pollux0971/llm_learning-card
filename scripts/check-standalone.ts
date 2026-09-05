@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.2 (1c1d403) sha256=485eac66d0cfa5bdfb962502fd4f8214f946b936bcdd1f08436804de434dc15b — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.4.3 (629b609) sha256=8ba78de7719d31614323b68207f562f4829ffe6f1cd00e2ecc84e3890321c389 — 勿手改;升版用 sync-gates.sh
 /**
  * 單獨執行檢查(見 docs/02-decision-map.md ADR-005)。跑 standalone.json 裡每個非互動指令,
  * 要求退出碼符合預期且輸出含 expect 關鍵字。
@@ -48,7 +48,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { ROOT as GIT_ROOT, readConfigJson } from './_root.js';
+import { ROOT as GIT_ROOT, readConfigJson, requireRootDir } from './_root.js';
 
 /** 三支掃描器共用的那句話。0 個東西的紅,方向永遠是「掃描器壞了」。 */
 const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
@@ -74,7 +74,9 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+const ROOT_EXPLICIT = arg('--root') !== undefined;
 const ROOT = resolve(arg('--root') ?? GIT_ROOT);
+requireRootDir(ROOT, ROOT_EXPLICIT, GATE_NAME);
 const only = arg('--only');
 const timeout = Number(arg('--timeout') ?? 120_000);
 const listOnly = process.argv.includes('--list');
