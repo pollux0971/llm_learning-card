@@ -240,7 +240,16 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 - **新 worktree 有三樣東西 clone 完不會自動有,派工時要講**(2026-09-05,worker 自己撞到並自己解決,但下一個還會再撞):
   1. **`.env`** —— 沒有它 `npm test` 的全套跑不動。worker 要自己
      `export LLM_DAILY_CAP_USD=1 LLM_PRICE_IN_PER_M=2.5 LLM_PRICE_OUT_PER_M=10`,
-     或從主簽出連過去。**驗證方式:`npx tsx scripts/llm-spend.ts --today` 要回 0 或 1,回 2 就是沒設好。**
+     或從主簽出連過去。
+     ⚠️ **不要用 `npx tsx scripts/llm-spend.ts --today` 當驗證** —— 這裡曾經寫「要回 0 或 1,
+     回 2 就是沒設好」,**那是錯的**:新 worktree 沒有 `learning/`(它 gitignore),
+     所以**變數設對了也一樣回 2**(`算不出來:讀不到 log 檔 learning/state/log.jsonl`)。
+     2026-09-05 實測:`lock-orphan` worktree 有 export、無 `learning/` → **rc=2**。
+     **那條驗證會給假警報,而假警報跟真警報長得一樣。**
+     **要驗就直接驗那個檔**:`npx vitest run scripts/zero-input-guard.test.ts` 綠。
+     (同日實測:主簽出移走 `.env`、沒 export → **12 紅**;移走 `.env`、有 export → **579 綠**。
+      所以 **export 是有效的** —— 之前有人說「export 也傳不進探針」,那句重現不出來,別照抄。
+      真正的問題是「乾淨簽出沒人 export 就紅」,所以 `env-probe` 那張把值注入進測試檔。)
   2. **pre-commit hook**(`scripts/hooks/pre-commit` 要自己 `cp` 到 `.git/hooks/` 並 `chmod +x`)
   3. **`TEMPLATE_DIR`** —— `check:gates` 在 worktree 要設,不然找不到模板。
   這三樣的共同形狀是「**在版控外面**」,所以 `git clone` / `worktree add` 都不會帶。
