@@ -45,7 +45,7 @@
  * 見 describe('棘輪基準')。
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -302,6 +302,23 @@ function assertExcludedCount(count: number, max: number): void {
   ).toBeLessThanOrEqual(max);
 }
 
+/**
+ * `excluded` 的語意是「測在別的地方,而且指名」,不是「沒被測」。
+ * 因此每筆都必須有完整的 scope/reason/coveredBy 證明,且 coveredBy 必須真的落在磁碟上;
+ * 這讓排除不再是逃生口,也讓協調者能在證明成立時安全地推進棘輪。
+ */
+function assertExcludedEvidence(): void {
+  for (const [file, entry] of Object.entries(ROSTER)) {
+    if (entry.kind !== 'excluded') continue;
+    expect(entry.scope.trim().length, `${file} 的 excluded scope 是空的`).toBeGreaterThan(0);
+    expect(entry.reason.trim().length, `${file} 的 excluded reason 是空的`).toBeGreaterThan(10);
+    expect(entry.coveredBy.trim().length, `${file} 的 excluded coveredBy 是空的`).toBeGreaterThan(0);
+    const coveredPath = resolve(REPO_ROOT, entry.coveredBy);
+    expect(existsSync(coveredPath), `${file} 的 coveredBy 指到不存在的檔案: ${entry.coveredBy}`).toBe(true);
+    expect(statSync(coveredPath).isFile(), `${file} 的 coveredBy 不是檔案: ${entry.coveredBy}`).toBe(true);
+  }
+}
+
 beforeAll(async () => {
   const jobs: (() => Promise<void>)[] = [];
   for (const { file: entryFile, command } of entryCommands()) {
@@ -388,6 +405,10 @@ describe('清單完整性:磁碟上每一個入口都要在 ROSTER 裡', () => {
   it('excluded 筆數 ≤ excludedMax;「不適用」只能減不能增', () => {
     const excluded = Object.values(ROSTER).filter((entry) => entry.kind === 'excluded');
     assertExcludedCount(excluded.length, BASELINE.excludedMax);
+  });
+
+  it('excluded 每筆都有三欄證明,且 coveredBy 指到存在的檔案', () => {
+    assertExcludedEvidence();
   });
 
   it('反向驗證:故意多加一筆 excluded → 紅,訊息要求說明為什麼又多一個「不適用」', () => {
