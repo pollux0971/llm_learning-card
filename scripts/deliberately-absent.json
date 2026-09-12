@@ -1,0 +1,9 @@
+{
+  "absent": [
+    {
+      "path": ".git/hooks/pre-commit",
+      "reason": "本 repo 刻意不裝:它防的危害(就地改檔)在本 repo 不存在(13 個 Stryker 設定 inPlace 全部未設定),而裝了之後任何人跑變異測試時所有 worktree 包含 main 都不能 commit。改用測試守 inPlace。",
+      "adr": "ADR-048"
+    }
+  ]
+}

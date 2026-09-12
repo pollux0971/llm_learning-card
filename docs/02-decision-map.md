@@ -925,6 +925,55 @@ graph TD
   是交接附的陽性對照(真的在這個 worktree 跑一次、看主簽出的 `llm-spend --today`
   有沒有看到),不是自動測試。**
 
+## ADR-052 · 刻意缺席的可留痕決定用自帶登記表守住
+
+- **Status**: accepted · 2026-09-12(協調者裁決)
+- **Context**: 「要做」的決定有守門,做了才綠；「不做」的決定卻沒有對應的守門。
+  這個缺口今天實際發生了:13:28 決定本 repo 刻意不裝 `scripts/hooks/pre-commit`,
+  15:23 有人把它裝進 `.git/hooks/pre-commit`,19:44 協調者在 main 上 commit 時,
+  被它擋下「`.stryker.lock` 顯示變異測試正在跑(pid 3433515)」。沒有人不小心——
+  `check:gates` 的輸出每輪都教人安裝它,所以照著拿到綠勾正是合理的 worker 行為。
+  這支 hook 又在版控外、linked worktree 共用 `$GIT_COMMON_DIR/hooks`,直到有人跑變異
+  測試才發作；結果是「守門用一個綠勾獎勵違反我們自己的決定」。
+
+  目前版控外的三個東西與守門狀態已經是完整清單:
+
+  | 版控外的東西 | 我們的決定 | 現有守門 |
+  |---|---|---|
+  | `.env` | 必須存在 | `zero-input-guard` ✓ |
+  | `.git/hooks/pre-commit` | 不准存在 | `deliberately-absent` ✓ |
+  | `TEMPLATE_DIR` | 有預設值 | `check:gates` ✓ |
+
+- **Decision**: 新增 `scripts/deliberately-absent.json` 登記表與獨立的
+  `check-deliberately-absent` gate,直接接入 `check:all` chain。登記表每一筆都必須
+  有 `path`、`reason`、`adr`;缺少理由或 ADR 時,那一筆算設定壞掉、gate 必須 FAIL,
+  不能把沒有說明的豁免當成成立。這支 gate 只登記「違反之後會留下一個可指名的
+  痕跡」的否定決定:痕跡是一個檔案存在、一個設定值出現、一個目錄被建立；而痕跡
+  在版控外的那些最該登記,因為 `git status` 幫不上忙。
+
+  這支 gate **不管**「決定不用某種寫法」那類否定決定；那種違反通常不留下一個
+  可列舉的存在性痕跡,應由掃描器處理,不是由這張存在性登記表假裝涵蓋。
+
+  `path` 以 repo 根為基準,但 `.git/hooks/` 不直接拼成 `<repo>/.git/hooks`。
+  gate 執行 `git rev-parse --git-path hooks` 取得真正的 hooks 目錄,再解析登記的
+  `.git/hooks/pre-commit`;因此 linked worktree 會檢查主簽出共用的實際位置。
+
+  設定檔採「守門自帶設定檔」而不是擴充 `gates.config.json`,因為
+  `KNOWN_GATES_CONFIG_KEYS` 是模板檔的全域聯集,連 `$comment` 都不放行。把這張
+  專案自己的否定決定塞進模板設定會製造新的升版耦合與未知鍵風險；像
+  `doc-rot.blacklist.json`、`json-duplicate-keys.scope.json` 一樣,由 gate 自己
+  讀自己的設定，保持模板設定檔的契約不變。
+
+- **Consequences**:
+  1. 本 repo 現在只有一筆刻意缺席登記,就是 `.git/hooks/pre-commit`；它實際存在時
+     輸出 FAIL 並指名該 path 與 ADR-048,不存在時輸出 PASS。這是把版控外、全域且
+     延遲發作的事故變成每輪都會檢查的可見結果。
+  2. 清單不是所有「不做」決定的總表。只有有檔案、設定值或目錄這種可指名痕跡的
+     否定決定才進來；沒有留痕跡的語意選擇仍要靠專門掃描器、測試或人工審查。
+  3. `scripts/zero-input-guard.test.ts` 只加入這支 gate 的 ROSTER 條目,沒有新增
+     案例或放寬斷言；這讓新增守門本身也受名冊完整性保護,同時不把真實 git hooks
+     的全域狀態偽裝成便宜的合成 fixture。
+
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)

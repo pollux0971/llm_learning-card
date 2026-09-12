@@ -157,6 +157,10 @@
       "infra"
     ],
     [
+      "scripts/check-deliberately-absent.ts",
+      "infra"
+    ],
+    [
       "scripts/check-all.test.ts",
       "infra"
     ],

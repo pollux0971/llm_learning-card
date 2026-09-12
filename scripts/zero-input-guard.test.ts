@@ -489,6 +489,10 @@ const ROSTER: Record<string, Entry> = {
       },
     ],
   },
+  'scripts/check-deliberately-absent.ts': {
+    kind: 'excluded',
+    reason: '直接解析目前 git worktree 的實際 hooks 路徑並檢查版控外狀態；本輪依工單手動造假 hook 驗證 FAIL/PASS，不新增零輸入案例或放寬斷言。',
+  },
   'scripts/check-boundaries.ts': {
     kind: 'entry',
     commands: [
