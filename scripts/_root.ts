@@ -1,4 +1,5 @@
 // SOURCE: template v1.6.4 (4dc1513) sha256=14775b9592f6a7220166c7318663f05ebae41ed2ac28d375174bb248bc7a5b21 — 勿手改;升版用 sync-gates.sh
+// HOTFIX: 2026-09-12 json-duplicate-keys 需要登記 gates.config.json 的 jsonDuplicateKeys 範圍鍵。
 /**
  * 所有守門腳本共用的 repo 根解析。
  *
@@ -275,6 +276,7 @@ export function requireConfigType(value: unknown, key: string, kind: ConfigValue
  *   phaseStatus                 — check-phase-status.ts(S15)
  *   moduleCast                  — check-module-cast.ts(1.6.0,P-88)
  *   dryRun                      — check-dry-run.ts(1.6.0,P-86):tags
+ *   jsonDuplicateKeys           — check-json-duplicate-keys.ts:include glob 範圍
  */
 export const KNOWN_GATES_CONFIG_KEYS = [
   'cucumberCwd',
@@ -291,6 +293,7 @@ export const KNOWN_GATES_CONFIG_KEYS = [
   'phaseStatus',
   'moduleCast',
   'dryRun',
+  'jsonDuplicateKeys',
 ] as const;
 
 /** `obj` 的頂層鍵裡,有沒有不在 `knownKeys` 的——通常是打錯字(`"chian"` 之類)。

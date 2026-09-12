@@ -285,6 +285,14 @@
       "infra"
     ],
     [
+      "scripts/check-json-duplicate-keys.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-json-duplicate-keys.test.ts",
+      "infra"
+    ],
+    [
       "scripts/check-phase-coverage.ts",
       "infra"
     ],
@@ -354,7 +362,7 @@
   ],
   "contractsOwner": "contracts",
   "coverageBaseline": {
-    "managed": 251,
-    "scanned": 251
+    "managed": 253,
+    "scanned": 253
   }
 }
