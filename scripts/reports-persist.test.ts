@@ -5,7 +5,7 @@
  * 否則 ignore 規則或「局部跑」判定壞掉時斷言會一起被跳過。
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +16,26 @@ import { shouldUpdateTestcaseBaseline, testcaseNamesFromJunit } from './run-test
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 const RUN_TESTS = join(REPO_ROOT, 'scripts', 'run-tests.ts');
 const created: string[] = [];
+
+interface StoredMutationSummary {
+  score: number;
+  killed: number;
+  timeout: number;
+  survived: number;
+  noCoverage: number;
+}
+
+/**
+ * The committed summary must remain independently auditable: it is deliberately
+ * not imported from mutate.ts, so a future Stryker definition change makes this
+ * assertion fail until both the producer and this recorded interpretation agree.
+ * Stryker 10 defines the score as (Killed + Timeout) / valid, with Survived and
+ * NoCoverage also valid; the summary keeps ignored/invalid statuses separately.
+ */
+function scoreFromStoredMutationCounts(summary: StoredMutationSummary): number {
+  const valid = summary.killed + summary.timeout + summary.survived + summary.noCoverage;
+  return valid === 0 ? 0 : Number((((summary.killed + summary.timeout) / valid) * 100).toFixed(2));
+}
 
 function temp(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), `${prefix}-`));
@@ -115,6 +135,26 @@ describe('reports 的 gitignore 例外', () => {
 });
 
 describe('mutation 摘要', () => {
+  it('真實摘要可從檔內狀態計數自行驗算分數', () => {
+    const summaryDir = join(REPO_ROOT, 'reports', 'mutation');
+    const summaryNames = existsSync(summaryDir)
+      ? readdirSync(summaryDir).filter((name) => /^[0-9a-f]{7}-.+\.json$/.test(name)).sort()
+      : [];
+
+    // A fresh checkout can have no generated summaries; passing is allowed, but never silent.
+    if (summaryNames.length === 0) console.info('mutation summary self-check: 0 summaries found');
+
+    for (const name of summaryNames) {
+      const summary = JSON.parse(readFileSync(join(summaryDir, name), 'utf8')) as StoredMutationSummary;
+      const recomputed = scoreFromStoredMutationCounts(summary);
+      const difference = Math.abs(summary.score - recomputed);
+      expect(
+        difference,
+        `${name}: stored score ${summary.score.toFixed(2)} differs from recomputed ${recomputed.toFixed(2)} by ${difference.toFixed(2)}`,
+      ).toBeLessThanOrEqual(0.01);
+    }
+  });
+
   it('保留完整 Stryker 狀態計數和可重現命令；預設設定也必須明寫設定檔', () => {
     const summary = mutationSummaryFromReport(
       {
