@@ -2097,6 +2097,19 @@ scripts/mutate.test.ts > isMainModule > argv[1] 就是這個檔案時算主模�
 scripts/mutate.test.ts > isMainModule > 別的檔案不算主模組
 scripts/mutate.test.ts > isMainModule > 沒有 argv[1](-e / REPL)時不算主模組
 scripts/mutate.test.ts > isMainModule > 相對路徑跟絕對路徑指到同一個檔案也算
+scripts/mutate.test.ts > mutation report helper functions(同行程) > commitShortSha 在 git worktree 回 short SHA，在非 git 目錄回 null
+scripts/mutate.test.ts > mutation report helper functions(同行程) > raw 與 SHA 摘要路徑的命名固定，避免同設定的不同 commit 覆蓋彼此
+scripts/mutate.test.ts > mutation report helper functions(同行程) > strykerVersion 先讀 cwd 的安裝版本，無效本地版本則回退到本 repo 的已安裝版本
+scripts/mutate.test.ts > mutation report helper functions(同行程) > withReportEnforcement 在有 commit 的 worktree 寫 SHA 摘要，並刪除上一輪 raw
+scripts/mutate.test.ts > mutation report helper functions(同行程) > writeMutationSummary 會以完整狀態欄位寫出可自行驗分的 JSON
+scripts/mutate.test.ts > mutation report helper functions(同行程) > 命令完整保留唯一入口、設定檔、旗標與 shell quote
+scripts/mutate.test.ts > mutation report helper functions(同行程) > 有 raw 但摘要寫失敗時不能把 run 的 0 假裝成功
+scripts/mutate.test.ts > mutation report helper functions(同行程) > 無 commit 的沙盒仍回傳 run 的退出碼、不假造 SHA 摘要
+scripts/mutate.test.ts > mutation report helper functions(同行程) > 舊 raw 無法刪除時中止，不把別的檔案當成本輪報告
+scripts/mutate.test.ts > mutationSummaryFromReport(同行程) > Ignored 不進 Stryker 分母，且每一種原始報告狀態都留在摘要裡
+scripts/mutate.test.ts > mutationSummaryFromReport(同行程) > truthy primitive 的 files / file 也不能被當成可列舉的報告物件
+scripts/mutate.test.ts > mutationSummaryFromReport(同行程) > 壞形狀不捏造狀態計數，空的有效分母是 0 分
+scripts/mutate.test.ts > mutationSummaryFromReport(同行程) > 非物件 mutant 不計數，四個 valid status 是分母，其他狀態留在可稽核欄位
 scripts/mutate.test.ts > parseLock > 合法的鎖檔解得出來
 scripts/mutate.test.ts > parseLock > 壞掉的鎖檔(null)回 null
 scripts/mutate.test.ts > parseLock > 壞掉的鎖檔(pid 是 NaN 來源)回 null
@@ -2220,8 +2233,9 @@ scripts/mutate.test.ts > 鎖的位置不看測試套件自己在哪裡跑 > 從 
 scripts/reports-persist.test.ts > JUnit testcase 名稱基準 > 以 classname + name 當完整名，並保留重複名稱作為 multiset
 scripts/reports-persist.test.ts > JUnit testcase 名稱基準 > 只有明確維護開關才允許成功全套覆寫基準
 scripts/reports-persist.test.ts > JUnit testcase 名稱基準 > 局部執行真實 run-tests CLI 時，既有的全套基準位元組不變
-scripts/reports-persist.test.ts > mutation 摘要 > 保留四類計數和可重現命令；預設設定也必須明寫設定檔
+scripts/reports-persist.test.ts > mutation 摘要 > 保留完整 Stryker 狀態計數和可重現命令；預設設定也必須明寫設定檔
 scripts/reports-persist.test.ts > mutation 摘要 > 在有 commit 的 worktree 將 raw 報告轉成 <sha>-<設定名>.json，而不是留下 raw 報告
+scripts/reports-persist.test.ts > mutation 摘要 > 真實摘要可從檔內狀態計數自行驗算分數
 scripts/reports-persist.test.ts > reports 的 gitignore 例外 > 只放行 SHA mutation 摘要與 junit 基準，raw/effective 產物仍被 git 擋下
 scripts/review.test.ts > review.ts --dry-run 印出基數 > 到期清單本身不變:該列的卡片 id、stage、逾期天數還在(既有行為的護欄)
 scripts/review.test.ts > review.ts --dry-run 印出基數 > 基數是真的數出來的:刪掉一張卡,「幾張卡」要跟著變
@@ -2514,6 +2528,23 @@ scripts/zero-input-guard.test.ts > packages/core/src/schema/cli.ts · validate-s
 scripts/zero-input-guard.test.ts > packages/core/src/schema/cli.ts · validate-settings > [wrong-type] 頂層是陣列:輸出跟基線 healthy 不可以長一樣
 scripts/zero-input-guard.test.ts > packages/core/src/schema/cli.ts · validate-settings > [wrong-type] 頂層是陣列:退出碼非 0
 scripts/zero-input-guard.test.ts > packages/core/src/schema/cli.ts · validate-settings > 基線 healthy:exit 0、沒有裸錯誤(基線本身壞了,底下的比較就沒有意義)
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [empty] include 是空陣列:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [empty] include 是空陣列:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [empty] include 是空陣列:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [empty] include 是空陣列:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [malformed] adr-numbers.scope.json 是壞 JSON:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [malformed] adr-numbers.scope.json 是壞 JSON:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [malformed] adr-numbers.scope.json 是壞 JSON:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [malformed] adr-numbers.scope.json 是壞 JSON:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [missing] adr-numbers.scope.json 不存在:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [missing] adr-numbers.scope.json 不存在:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [missing] adr-numbers.scope.json 不存在:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [missing] adr-numbers.scope.json 不存在:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [wrong-type] include 是字串:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [wrong-type] include 是字串:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [wrong-type] include 是字串:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > [wrong-type] include 是字串:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-adr-numbers.ts · check-adr-numbers > 基線 healthy:exit 0、沒有裸錯誤(基線本身壞了,底下的比較就沒有意義)
 scripts/zero-input-guard.test.ts > scripts/check-all.ts · check-all > [empty] chain 是空陣列:不噴裸 stack trace、不吐裸引擎訊息
 scripts/zero-input-guard.test.ts > scripts/check-all.ts · check-all > [empty] chain 是空陣列:指名有問題的那條路徑
 scripts/zero-input-guard.test.ts > scripts/check-all.ts · check-all > [empty] chain 是空陣列:輸出跟基線 healthy 不可以長一樣
@@ -2552,6 +2583,31 @@ scripts/zero-input-guard.test.ts > scripts/check-boundaries.ts · check-boundari
 scripts/zero-input-guard.test.ts > scripts/check-boundaries.ts · check-boundaries > [wrong-type] owners.json 是陣列:輸出跟基線 healthy 不可以長一樣
 scripts/zero-input-guard.test.ts > scripts/check-boundaries.ts · check-boundaries > [wrong-type] owners.json 是陣列:退出碼非 0
 scripts/zero-input-guard.test.ts > scripts/check-boundaries.ts · check-boundaries > 基線 healthy:exit 0、沒有裸錯誤(基線本身壞了,底下的比較就沒有意義)
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [empty] absent 是空陣列:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [empty] absent 是空陣列:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [empty] absent 是空陣列:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [empty] absent 是空陣列:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [malformed] deliberately-absent.json 是壞 JSON:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [malformed] deliberately-absent.json 是壞 JSON:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [malformed] deliberately-absent.json 是壞 JSON:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [malformed] deliberately-absent.json 是壞 JSON:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [missing] deliberately-absent.json 不存在:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [missing] deliberately-absent.json 不存在:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [missing] deliberately-absent.json 不存在:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [missing] deliberately-absent.json 不存在:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] absent 是物件:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] absent 是物件:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] absent 是物件:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] absent 是物件:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] 第一筆缺少 adr:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] 第一筆缺少 adr:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] 第一筆缺少 adr:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] 第一筆缺少 adr:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] 第一筆缺少 reason:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] 第一筆缺少 reason:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] 第一筆缺少 reason:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > [wrong-type] 第一筆缺少 reason:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-deliberately-absent.ts · check-deliberately-absent > 基線 healthy:exit 0、沒有裸錯誤(基線本身壞了,底下的比較就沒有意義)
 scripts/zero-input-guard.test.ts > scripts/check-doc-links.ts · check-doc-links > [empty] --root 是空目錄:不噴裸 stack trace、不吐裸引擎訊息
 scripts/zero-input-guard.test.ts > scripts/check-doc-links.ts · check-doc-links > [empty] --root 是空目錄:指名有問題的那條路徑
 scripts/zero-input-guard.test.ts > scripts/check-doc-links.ts · check-doc-links > [empty] --root 是空目錄:輸出跟基線 healthy 不可以長一樣
@@ -2789,6 +2845,23 @@ scripts/zero-input-guard.test.ts > scripts/check-step-dup.ts · check-step-dup >
 scripts/zero-input-guard.test.ts > scripts/check-step-dup.ts · check-step-dup > [missing] 沒有 features/steps/:輸出跟基線 healthy 不可以長一樣
 scripts/zero-input-guard.test.ts > scripts/check-step-dup.ts · check-step-dup > [missing] 沒有 features/steps/:退出碼非 0
 scripts/zero-input-guard.test.ts > scripts/check-step-dup.ts · check-step-dup > 基線 healthy:exit 0、沒有裸錯誤(基線本身壞了,底下的比較就沒有意義)
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [empty] $TEMPLATE_DIR/VERSION 是空檔:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [empty] $TEMPLATE_DIR/VERSION 是空檔:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [empty] $TEMPLATE_DIR/VERSION 是空檔:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [empty] $TEMPLATE_DIR/VERSION 是空檔:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [malformed] VERSION 不是三段版本:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [malformed] VERSION 不是三段版本:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [malformed] VERSION 不是三段版本:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [malformed] VERSION 不是三段版本:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [missing] 沒有 $TEMPLATE_DIR:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [missing] 沒有 $TEMPLATE_DIR:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [missing] 沒有 $TEMPLATE_DIR:正當的 exit 0(CI 沒有模板路徑時只能回報無法判斷;這不是同版也不是錯誤,見 ADR-055。)
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [missing] 沒有 $TEMPLATE_DIR:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [wrong-type] $TEMPLATE_DIR 指到檔案:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [wrong-type] $TEMPLATE_DIR 指到檔案:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [wrong-type] $TEMPLATE_DIR 指到檔案:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > [wrong-type] $TEMPLATE_DIR 指到檔案:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-template-freshness.ts · check-template-freshness > 基線 healthy:exit 0、沒有裸錯誤(基線本身壞了,底下的比較就沒有意義)
 scripts/zero-input-guard.test.ts > scripts/degraded-report.ts · degraded-report > [empty] --in 是空目錄:不噴裸 stack trace、不吐裸引擎訊息
 scripts/zero-input-guard.test.ts > scripts/degraded-report.ts · degraded-report > [empty] --in 是空目錄:指名有問題的那條路徑
 scripts/zero-input-guard.test.ts > scripts/degraded-report.ts · degraded-report > [empty] --in 是空目錄:輸出跟基線 healthy 不可以長一樣
@@ -3141,8 +3214,10 @@ scripts/zero-input-guard.test.ts > 棘輪基準(ADR-045):三道鎖 > 每一條�
 scripts/zero-input-guard.test.ts > 棘輪基準(ADR-045):三道鎖 > 每一條都被某個檢查用到(同一個檔案裡的探針測試跑在這條之前)
 scripts/zero-input-guard.test.ts > 棘輪基準(ADR-045):三道鎖 > 沒有重複條目
 scripts/zero-input-guard.test.ts > 棘輪基準(ADR-045):三道鎖 > 鎖 3:條數 ≤ max;基準只准減不准增,任何新增條目都紅
+scripts/zero-input-guard.test.ts > 清單完整性:磁碟上每一個入口都要在 ROSTER 裡 > excluded 筆數 ≤ excludedMax;「不適用」只能減不能增
 scripts/zero-input-guard.test.ts > 清單完整性:磁碟上每一個入口都要在 ROSTER 裡 > 不是入口的檔案要有理由;library 的 via 要指到清單裡的一個入口
 scripts/zero-input-guard.test.ts > 清單完整性:磁碟上每一個入口都要在 ROSTER 裡 > 反向驗證(純函式):多一個 scripts/_probe.ts 就會被抓出來
+scripts/zero-input-guard.test.ts > 清單完整性:磁碟上每一個入口都要在 ROSTER 裡 > 反向驗證:故意多加一筆 excluded → 紅,訊息要求說明為什麼又多一個「不適用」
 scripts/zero-input-guard.test.ts > 清單完整性:磁碟上每一個入口都要在 ROSTER 裡 > 掃描器本身要掃得到東西(0 個入口就是掃描器壞了,不是很乾淨)
 scripts/zero-input-guard.test.ts > 清單完整性:磁碟上每一個入口都要在 ROSTER 裡 > 新增一個 scripts/*.ts 或 packages/core/src/**/cli.ts 卻沒進清單 → 紅
 scripts/zero-input-guard.test.ts > 清單完整性:磁碟上每一個入口都要在 ROSTER 裡 > 每個命令四種輸入形狀都要有探針,略過的要寫理由;legitZero 要有理由
