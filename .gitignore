@@ -35,3 +35,21 @@ packages/core/src/prompt-quality/golden-fake/
 # lint 對 fixture 跑「單獨執行」驗證時會在那裡寫報告檔,不要進版本控制
 contracts/fixtures/**/state/lint-report-*.md
 .orca-brief/
+# ── agent / 工具自建的目錄 ──────────────────────────────────────────────
+# 這一段收「agent 或工具在工作區自己建、不屬於這個專案」的東西。
+# ⚠️ 擴充規則:第二次在不同簽出看到同一個名字就加進來。一次不算名冊。
+# 兩個成本(2026-09-12 都實測過):
+#   1. worker 用 `git add -A` 會把它們帶進版控,而 .gitignore 對已追蹤的檔無效
+#      (要 git rm --cached 才回得去)。
+#   2. 它們會擋住 `git worktree remove`,逼人用 --force——而 --force 危險的
+#      不是這一次,是它訓練你在「git 說有未追蹤檔案」的時候不看內容。
+.codegraph/
+.cursor/
+.pytest_cache/
+
+# ⚠️ repo 裡的巢狀簽出。原本只寫在 .git/info/exclude,而那個檔不在版控裡——
+# 新 clone、新機器一律沒有。移進來讓它活得下去(「活得下去的判準是進了版控,
+# 不是換了目錄」)。⚠️ 只忽略 worktrees/,不要忽略整個 .claude/——
+# .claude/skills/*.md 是版控內容。
+.claude/worktrees/
+
