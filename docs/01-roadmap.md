@@ -10,9 +10,10 @@
 | 欄位 | 值 |
 |---|---|
 | 目前階段 | **I1 · 內容管線 —— 通過**(2026-09-04,tag `I1`)。第四次真呼叫 `@e2e @llm` 全綠,兩條人工確認由技術顧問判定 PASS。下一步:12-prompt-quality/phase-2 的 gate 解除,之後 `/integrate I2` |
-| 目前 sprint | 2026-W36 — 04/phase-2+3、05/phase-2、11/phase-1、**01/phase-4**(ADR-042 learning repo + snapshot)完成;I1 通過;03/phase-4 的自動場景已合併,留一條 `@manual` 等閘道機器起來 |
+| 目前 sprint | **2026-W37** — **沒有 feature phase 推進**,整週在基礎設施與量尺(見 `docs/sprints/2026-W37.md`)。⚠️ 09-12 發現**花錢的煞車在 `--live` 這條路上沒有接**:真呼叫不進 `learning/state/log.jsonl`,`llm-spend --today` 回報「確信的零」,每日上限一次都不會觸發。**修好之前不跑任何 `--live`。** |
+| 下一個 gate 已解除但沒人排的 | **`12-prompt-quality/phase-2`** —— gate 自 2026-09-04 解除,備註「由協調者安排」,**8 天沒被排**。2026-09-12 去排時撞出上面那三個洞。 |
 | 契約版本 | 1.1.0(凍結) |
-| 最後更新 | 2026-09-05 |
+| 最後更新 | 2026-09-12 |
 
 ## 全貌
 
