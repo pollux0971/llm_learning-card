@@ -198,7 +198,11 @@ When('the standalone probe command is run', function (this: LearningWorld) {
 
 // @manual
 When('a short prompt is sent', async function (this: LearningWorld) {
-  const router = new CloudLlmRouter();
+  // ADR-050:這是真的花錢的呼叫(.env 的真憑證),記帳不能是選擇性的——
+  // 用跟 buildRouter() 一樣的 state.logDir/logPath 慣例,不要悄悄不寫。
+  if (!state.logDir) state.logDir = mkdtempSync(join(tmpdir(), 'llm-router-steps-'));
+  state.logPath = join(state.logDir, 'log.jsonl');
+  const router = new CloudLlmRouter({ logPath: state.logPath });
   try {
     this.lastResult = await router.call('deepen', '用一句話說明什麼是 TCP。');
   } catch (err) {

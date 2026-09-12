@@ -7,6 +7,7 @@ import {
   LlmTimeoutError,
   MissingCredentialError,
   OutputTruncatedError,
+  UnaccountableLlmCallError,
   UnknownTaskError,
   UnsupportedProviderError,
 } from './errors.js';
@@ -39,6 +40,7 @@ describe('CloudLlmRouter.call', () => {
   it('rejects a task name that is not in the LlmTask contract, without touching any adapter', async () => {
     const adapter = fakeAdapter();
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
       adapters: { openai: adapter },
     });
@@ -49,6 +51,7 @@ describe('CloudLlmRouter.call', () => {
 
   it('returns the same shape for every task: text, provider, model, latency, provisional', async () => {
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'anthropic', LLM_CLOUD_MODEL: 'm', ANTHROPIC_API_KEY: 'k' },
       adapters: { anthropic: fakeAdapter({ provider: 'anthropic' }) },
     });
@@ -63,6 +66,7 @@ describe('CloudLlmRouter.call', () => {
     const adapter = fakeAdapter({ provider });
     const other = fakeAdapter();
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: provider, LLM_CLOUD_MODEL: 'm', ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' },
       adapters: { [provider]: adapter, [provider === 'anthropic' ? 'openai' : 'anthropic']: other },
     });
@@ -75,6 +79,7 @@ describe('CloudLlmRouter.call', () => {
   it('rejects an unsupported provider immediately, without attempting a network call', async () => {
     const adapter = fakeAdapter();
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'not-a-real-provider', LLM_CLOUD_MODEL: 'm' },
       adapters: { openai: adapter, anthropic: adapter },
     });
@@ -86,6 +91,7 @@ describe('CloudLlmRouter.call', () => {
   it('reports a missing credential plainly and does not fall back to anything else', async () => {
     const adapter = fakeAdapter();
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'anthropic', LLM_CLOUD_MODEL: 'm' },
       adapters: { anthropic: adapter },
     });
@@ -99,6 +105,7 @@ describe('CloudLlmRouter.call', () => {
   it('lets the environment override the model named in settings', async () => {
     const adapter = fakeAdapter();
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'from-env', OPENAI_API_KEY: 'k' },
       settings: { cloud_provider: 'openai', cloud_model: 'from-settings' },
       adapters: { openai: adapter },
@@ -168,6 +175,7 @@ describe('CloudLlmRouter.call', () => {
       }),
     };
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
       adapters: { openai: adapter },
       defaultTimeoutMs: 20,
@@ -207,6 +215,7 @@ describe('CloudLlmRouter.call', () => {
   it('clears the timeout timer once a call settles successfully', async () => {
     const clearSpy = vi.spyOn(global, 'clearTimeout');
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
       adapters: { openai: fakeAdapter() },
     });
@@ -218,6 +227,7 @@ describe('CloudLlmRouter.call', () => {
 
   it('rejects with a message naming the missing model when none is configured', async () => {
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'k' },
       adapters: { openai: fakeAdapter() },
     });
@@ -228,6 +238,7 @@ describe('CloudLlmRouter.call', () => {
   it('rejects with the empty provider name when neither env nor settings name one', async () => {
     const adapter = fakeAdapter();
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: {},
       settings: {},
       adapters: { openai: adapter, anthropic: adapter },
@@ -240,6 +251,7 @@ describe('CloudLlmRouter.call', () => {
 
   it('lets a call override the timeout to a shorter deadline', async () => {
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
       adapters: { openai: hangingAdapter() },
       defaultTimeoutMs: 5_000,
@@ -252,10 +264,12 @@ describe('CloudLlmRouter.call', () => {
 
   it('produces the identical set of fields from both adapters for the same prompt', async () => {
     const routerA = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'anthropic', LLM_CLOUD_MODEL: 'm', ANTHROPIC_API_KEY: 'k' },
       adapters: { anthropic: fakeAdapter({ provider: 'anthropic' }) },
     });
     const routerB = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
       adapters: { openai: fakeAdapter({ provider: 'openai' }) },
     });
@@ -269,6 +283,7 @@ describe('CloudLlmRouter.call — truncation (真的洞:寫死的 token 上限�
   it('throws OutputTruncatedError — not a half-cut LlmResult — when the adapter reports truncated output (openai finish_reason==="length" or anthropic stop_reason==="max_tokens", surfaced via CloudAdapterResult.truncated)', async () => {
     const adapter = fakeAdapter({ truncated: true, tokens_out: 512 });
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
       adapters: { openai: adapter },
     });
@@ -284,6 +299,7 @@ describe('CloudLlmRouter.call — truncation (真的洞:寫死的 token 上限�
   it('does not resolve with a text value when the adapter reports truncated output', async () => {
     const adapter = fakeAdapter({ truncated: true, text: 'half a sent' });
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
       adapters: { openai: adapter },
     });
@@ -332,6 +348,7 @@ describe('CloudLlmRouter.call — per-task max tokens (契約 §7 開放問題:�
     async (task) => {
       const adapter = fakeAdapter();
       const router = new CloudLlmRouter({
+        logAppender: () => {},
         env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
         adapters: { openai: adapter },
       });
@@ -344,6 +361,7 @@ describe('CloudLlmRouter.call — per-task max tokens (契約 §7 開放問題:�
   it('lets opts.maxTokens override the table value — the adapter receives the opts value, not the table one', async () => {
     const adapter = fakeAdapter();
     const router = new CloudLlmRouter({
+      logAppender: () => {},
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
       adapters: { openai: adapter },
     });
@@ -465,5 +483,49 @@ describe('CloudLlmRouter.probeOnline / probeLocal', () => {
   it('probeLocal reports unavailable in phase-1 (no local adapter yet)', async () => {
     const router = new CloudLlmRouter({ env: {} });
     await expect(router.probeLocal()).resolves.toEqual({ available: false, models: [] });
+  });
+});
+
+/**
+ * ADR-050 反向驗證:2026-09-12 實測一次真的 `--live` golden run 打了 3 次真的
+ * OpenAI,`learning/state/log.jsonl` 一筆都沒記——根因就是 `createFileLogAppender`
+ * 沒給 path 就悄悄回一個什麼都不做的函式。這裡直接鎖住「拔掉硬錯就會紅」:
+ * 把 `call()` 開頭那段檢查拿掉(或把 `createFileLogAppender` 改回接受
+ * `path: string | undefined`),下面第一條測試就會從紅變綠——證明它真的在把關,
+ * 不是裝飾用的註解。
+ */
+describe('CloudLlmRouter.call — ADR-050:記帳不能是選擇性的', () => {
+  it('沒有 logPath 也沒有 logAppender 時,call() 在打真的 adapter 之前就丟 UnaccountableLlmCallError', async () => {
+    const adapter = fakeAdapter();
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: adapter },
+    });
+
+    await expect(router.call('deepen', 'hi')).rejects.toThrow(UnaccountableLlmCallError);
+    expect(adapter.call).not.toHaveBeenCalled();
+  });
+
+  it('明確注入 no-op logAppender 時,call() 正常進行——明示的丟棄不是錯', async () => {
+    const adapter = fakeAdapter();
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: adapter },
+      logAppender: () => {},
+    });
+
+    await expect(router.call('deepen', 'hi')).resolves.toMatchObject({ text: 'ok' });
+  });
+
+  it('只給 logPath(不給 logAppender)一樣算有接上記帳,不丟錯', async () => {
+    const logPath = tmpLogPath();
+    const router = new CloudLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'm', OPENAI_API_KEY: 'k' },
+      adapters: { openai: fakeAdapter() },
+      logPath,
+    });
+
+    await expect(router.call('deepen', 'hi')).resolves.toMatchObject({ text: 'ok' });
+    expect(existsSync(logPath)).toBe(true);
   });
 });

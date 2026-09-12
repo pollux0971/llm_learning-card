@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { LlmRouterImpl } from '@core/llm/index.js';
+import { LlmRouterImpl, UnaccountableLlmCallError } from '@core/llm/index.js';
 import type { LogEvent } from '@contracts/index.js';
 import {
   DEFAULT_GOLDEN_BASE_DIR,
@@ -19,6 +19,7 @@ import {
   ROOT,
   LiveRunOfflineError,
   MissingGoldenSetError,
+  createDefaultLiveRouter,
   defaultGoldenBaseDir,
   estimateCostUsd,
   runGolden,
@@ -101,10 +102,15 @@ afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
 });
 
+/**
+ * `logAppender` 一律明示注入——沒有 `log` 陣列時給明確的 no-op,而不是讓
+ * `LlmRouterImpl` 落回沒人接的預設值(ADR-050:call() 現在對「沒有辦法記帳」
+ * 這件事是硬錯,呼叫端必須自己決定要不要丟棄)。
+ */
 function makeRouter(log?: LogEvent[]): LlmRouter {
   return new LlmRouterImpl({
     env: liveEnv(),
-    ...(log ? { logAppender: (e: LogEvent) => log.push(e) } : {}),
+    logAppender: log ? (e: LogEvent) => log.push(e) : () => {},
   });
 }
 
@@ -367,5 +373,67 @@ describe('estimateCostUsd', () => {
 
   it('預設價目表是空的,所以預設不估', () => {
     expect(estimateCostUsd(MODEL, 1000, 1000)).toBeUndefined();
+  });
+});
+
+/**
+ * ADR-050 反向驗證(工單「LLM 呼叫必須可記帳」):golden-run 的實際 bug 是
+ * `createDefaultLiveRouter()` 沒給 `settings` 也沒給 `logPath`,`--live` 真的打了
+ * 錢卻一筆都沒記進 `learning/state/log.jsonl`。這裡直接測 `createDefaultLiveRouter()`
+ * 本人(不透過 `runGolden` 的 `createRouter` 注入縫),把它退回舊行為(拿掉
+ * `logPath`)這裡就要紅——證明「call() 硬錯」與「golden-run 預設有接上 logPath」
+ * 兩件事都真的被鎖住,不是只鎖住其中一個。
+ */
+describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能悄悄不寫', () => {
+  const learningDirs: string[] = [];
+  let realEnv: NodeJS.ProcessEnv;
+  function tmpLearningDir(): string {
+    const d = mkdtempSync(join(tmpdir(), 'pq-live-learning-'));
+    learningDirs.push(d);
+    return d;
+  }
+
+  beforeEach(() => {
+    realEnv = { ...process.env };
+  });
+
+  afterEach(() => {
+    process.env = realEnv;
+    while (learningDirs.length) rmSync(learningDirs.pop()!, { recursive: true, force: true });
+  });
+
+  it('真的把這次呼叫寫進 <learningDir>/state/log.jsonl,不是靜默的 no-op', async () => {
+    installFakeCloud(true);
+    process.env.LLM_CLOUD_PROVIDER = 'anthropic';
+    process.env.LLM_CLOUD_MODEL = MODEL;
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    const learningDir = tmpLearningDir();
+
+    const router = createDefaultLiveRouter(learningDir);
+    const result = await router.call('grade.apply', '同源政策是什麼?');
+
+    expect(result.text).toBe(REPLY_TEXT);
+    const logPath = join(learningDir, 'state/log.jsonl');
+    expect(existsSync(logPath)).toBe(true);
+    // 不借 @core/schema/log.js 的 parseLogLines()——那是 01-data-layer,12 跨資料夾
+    // import 它只為了這一行測試斷言不值得(Wave 0 邊界規則),直接手拆 JSONL。
+    const events = readFileSync(logPath, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'llm_call', task: 'grade.apply' });
+  });
+
+  it('對照:直接用 LlmRouterImpl({}) 重現舊 bug(不給 logPath/logAppender)——call() 現在硬錯,不再是悄悄不寫', async () => {
+    installFakeCloud(true);
+    const router = new LlmRouterImpl({
+      env: { LLM_CLOUD_PROVIDER: 'anthropic', LLM_CLOUD_MODEL: MODEL, ANTHROPIC_API_KEY: 'test-key' },
+    });
+    await expect(router.call('grade.apply', '同源政策是什麼?')).rejects.toThrow(UnaccountableLlmCallError);
+    // 硬錯要在打真的 adapter 之前就發生,不是打完才報——不然「記不到帳」跟
+    // 「已經花了錢」還是會同時發生。
+    expect(requests.filter((u) => u.includes('/v1/messages'))).toHaveLength(0);
   });
 });

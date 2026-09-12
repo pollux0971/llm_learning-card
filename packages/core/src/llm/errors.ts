@@ -1,3 +1,16 @@
+/**
+ * ADR-050:呼叫端沒有給 `logPath` 也沒有給 `logAppender`——沒有辦法把這次呼叫記進
+ * 契約 §10 的 `llm_call` 事件。這不是「這次剛好沒有 log」,是「這個 router 建構時
+ * 完全沒接上任何記帳機制」,`call()` 在打真的 adapter 之前就要擋下來:明示的丟棄
+ * (`logAppender: () => {}`)可以,預設的丟棄不行。
+ */
+export class UnaccountableLlmCallError extends Error {
+  constructor() {
+    super('LLM 呼叫必須可記帳:請提供 `logPath`,或明確注入 `logAppender`');
+    this.name = 'UnaccountableLlmCallError';
+  }
+}
+
 export class UnsupportedProviderError extends Error {
   readonly provider: string;
   constructor(provider: string) {

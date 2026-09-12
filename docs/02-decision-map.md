@@ -781,6 +781,79 @@ graph TD
   跑,跑完(含拋例外)用 `finally` 切回去——`withReportEnforcement` 認的是真的
   `process.cwd()`,沒有另外開一個 cwd 注入點,不值得為了測試改函式簽章。
 
+## ADR-050 · 記不記帳不是呼叫端可以選擇性提供的東西——`call()` 沒有 log 就硬錯
+
+- **Status**: accepted · 2026-09-12(協調者插隊工單,技術顧問裁決)
+- **Context**: 2026-09-12 實測:一次真的 `--live` golden run 打了 3 次真的 OpenAI(`ingest.cards`,
+  進 1702、出 2662 token),打完立刻 `npx tsx scripts/llm-spend.ts --today` 卻回報「今日花費
+  $0.0000,0 次呼叫」,`learning/state/log.jsonl` 最後一筆停在 2026-09-04。**3 次真的呼叫,
+  一筆都沒記。** 這條路完全沒接上每日預算煞車(`LLM_DAILY_CAP_USD`)——`--live` 可以無限跑,
+  上限一次都不會觸發,而且回報的是「確信的零」,不是「算不出來」。
+
+  根因是兩行舊程式碼(`packages/core/src/llm/router.ts` 的 `createFileLogAppender`):
+
+  ```ts
+  function createFileLogAppender(path: string | undefined): LogAppender {
+    if (!path) return () => {};   // 靜默丟棄,不警告
+  ```
+
+  加上 `packages/core/src/prompt-quality/golden-run.ts` 的 `createDefaultLiveRouter()`
+  沒給 `logPath` 也沒給 `settings`——那行舊註解寫「provider / model / 金鑰全部由 03
+  依契約 §11 從 env 與 settings 解析」,但 **logging 從來不是「解析」得出來的東西**,
+  `settings` 也不是(它要呼叫端主動讀檔案再傳進去,`scripts/ingest.ts` 一直都這樣做)。
+  用名冊查法(不是 grep 一個字串)列出所有建 router 的地方,另外兩個正式入口
+  (`scripts/llm.ts`、`scripts/ingest.ts`)都做對了,只有 golden-run 這一條漏接。
+
+  `packages/core/src/llm/router-gateway.ts` 有一份一模一樣的重複邏輯(`GatewayLlmRouter`
+  自己那半 log,不是委派給底層 `LlmRouterImpl` 的那份)——同一個「沒 path 就悄悄回
+  no-op」的形狀,同一個洞。
+- **Decision**:
+  1. **明示的丟棄可以,預設的丟棄不行。** `createFileLogAppender` 不再接受
+     `path: string | undefined`——沒有 path 就不建這個 appender。`CloudLlmRouter.call()`
+     與 `GatewayLlmRouter.callGateway()` 在打真的 adapter / 閘道**之前**檢查:
+     `logAppender` 與 `logPath` 兩個都沒給,直接丟 `UnaccountableLlmCallError`
+     (「LLM 呼叫必須可記帳:請提供 `logPath`,或明確注入 `logAppender`」)。
+     純單元測試不想寫檔案,自己明講 `logAppender: () => {}`——那是一個決定,
+     不是隨便漏接的後果。這條規則同時套用在兩個 router,因為它們各自維護一份
+     log 寫入,漏改任何一個都是留著同一個洞。
+  2. **能不能記帳不該由呼叫方選擇性提供。** 呼叫端沒有「不小心忘記接 log」這個選項
+     ——要嘛給真的路徑,要嘛自己承認「這次不記」。這條規則跟 ADR-044 的
+     `llm.gateway-router.spend-no-log-zero`(沒有 logPath 時花費算 0,預算分支永遠
+     走不到)不衝突,是互補:那條 ADR 管的是「沒有 log 時預算怎麼算」,這條 ADR
+     管的是「有沒有 log 這件事本身能不能被悄悄跳過」——後者現在必須是明講的。
+  3. `createDefaultLiveRouter()` 補上 `settings`(讀 `learning/config/settings.yaml`
+     的 `llm` 區塊,跟 `scripts/ingest.ts` 的 `readLlmSettings()` 同一套讀法)與
+     `logPath`(`learning/state/log.jsonl`),並修正那行寫錯的舊註解。`learning/`
+     不給就是 `<repo root>/learning/`(gitignored,這台機器上真的那一份);
+     `RunGoldenOptions` 新增 `learningDir` 讓測試(以及 CLI 的 `--out`)可以覆寫,
+     不然每跑一次測試就真的往 repo 的 `learning/state/log.jsonl` 加一行
+     (ADR-032 的「測試一律要傳暫存目錄」)。
+  4. **兩套算錢機制是互相獨立的,不要用一個的訊息推斷另一個的行為。**
+     `spend.ts` 的 `computeDailySpend()`(真正的預算煞車)讀 `.env` 的
+     `LLM_PRICE_IN_PER_M` / `OUT` 一組固定費率,完全不看 model 名字;
+     `golden-run.ts` 的 `estimateCostUsd()`(golden run 的顯示行,不是計費依據)
+     用的是 per-model 價目表,不在表上回 `undefined`。這輪把 `gpt-5.6-luna`
+     (目前 `.env` 設定的雲端模型)加進 `DEFAULT_MODEL_PRICES`(借用
+     `spend.ts` 的 `DEFAULT_SPEND_PRICES` 同一組數字當估計,不是真的官方報價,
+     為了顯示誠實);CLI 那句「model 不在價目表上,不估」改成
+     「此模型未定價,上面的估計不可用;每日上限走 .env 費率,仍然有效」——
+     舊訊息正是害人誤判「顯示不估 = 煞車也沒接上」的那句話。
+- **Consequences**: 這會打到所有沒給 appender 就呼叫 `.call()` 的既有測試——那些紅是對的,
+  不是代價,逐一改成明示注入(`router.test.ts` 17 處、`i1-content-pipeline.steps.ts` /
+  `ingest-pipeline.steps.ts` 各 1 處、`live-run.test.ts` 的 `makeRouter()`、
+  `router-gateway.test.ts` 的 ADR-044 spend-no-log-zero 那組)。`llm-router.steps.ts`
+  的 `@manual`「a short prompt is sent」場景(真的花錢的手動場景)原本也沒接 log,
+  一併補上跟 `buildRouter()` 一樣的 `state.logDir`/`logPath`。
+
+  驗收那組真的 `--live`(`npx tsx scripts/prompt-check.ts --golden --set ingest.cards --live`)
+  一開始被另一個獨立的洞擋住:`scripts/prompt-check.ts` 漏了 `import './_env.js'`
+  (ADR-034 的既有慣例,`scripts/ingest.ts` / `llm-spend.ts` / `review.ts` 都有),
+  導致 `.env` 從沒被載入,`--live` 落回 `config/settings.yaml` 的 anthropic 舊設定,
+  丟 `MissingCredentialError`(沒有打到任何 adapter,沒有花錢)。補上這行、在
+  `scripts/boundaries.allow.json` 加一條 `12-prompt-quality → infra` 的例外
+  (跟另外三支腳本同一個模式)後,`--live` 才真的跑得起來。這條算是這輪工單
+  順手發現、順手修的第二個獨立缺口,不是本來要修的那兩行。
+
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)

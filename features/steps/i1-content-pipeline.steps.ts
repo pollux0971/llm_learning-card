@@ -149,6 +149,7 @@ function buildReachableCloudRouter(world: LearningWorld): LlmRouter {
   const cloudRouter = new CloudLlmRouter({
     env: { LLM_CLOUD_PROVIDER: 'anthropic', LLM_CLOUD_MODEL: 'test-model', ANTHROPIC_API_KEY: 'test-anthropic-key' },
     adapters: { anthropic: adapter },
+    logAppender: () => {},
   });
   return {
     async call(task, prompt, opts) {

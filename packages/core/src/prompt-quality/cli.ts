@@ -128,12 +128,22 @@ async function runGoldenCommand(argv: string[], log: (s: string) => void, lines:
 
   for (const set of sets) {
     try {
-      const result = await runGolden({ set, mode, ...(outDir ? { baseDir: outDir } : {}) });
+      // --out 給的話,live 模式這次呼叫的 settings/log 也記到同一個目錄底下
+      // (呼應 scripts/ingest.ts 的 outDir 慣例),不要預設一律落到 repo 的
+      // learning/(ADR-032:測試傳的暫存 --out 不該漏寫真的 log 到 repo 裡)。
+      const result = await runGolden({ set, mode, ...(outDir ? { baseDir: outDir, learningDir: outDir } : {}) });
       totalInputs += result.outputs.length;
       log(`✓ golden run ${set} → ${result.dir}(${result.outputs.length} 個輸入)`);
       if (mode === 'live') {
         const { tokens_in = 0, tokens_out = 0, estimated_cost_usd, model, provider } = result.meta;
-        const cost = estimated_cost_usd == null ? '(model 不在價目表上,不估)' : `約 US$${estimated_cost_usd.toFixed(4)}`;
+        // ADR-050:這行只是估計(golden-run.ts 的 ModelPriceTable),跟 llm-spend.ts
+        // 那條真的預算煞車(讀 .env 的 LLM_PRICE_IN_PER_M / OUT,不看 model 名字)
+        // 是兩個互相獨立的機制。這裡不估,不代表煞車也沒接上——訊息要講清楚,
+        // 不然「不估」很容易被誤讀成「上限也不會動」。
+        const cost =
+          estimated_cost_usd == null
+            ? '(此模型未定價,上面的估計不可用;每日上限走 .env 費率,仍然有效)'
+            : `約 US$${estimated_cost_usd.toFixed(4)}`;
         log(`  模型 ${provider}/${model},token 進 ${tokens_in} 出 ${tokens_out},花費 ${cost}`);
       }
       for (const o of result.outputs) {
