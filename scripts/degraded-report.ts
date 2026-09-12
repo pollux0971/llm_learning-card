@@ -1002,7 +1002,10 @@ function main(): void {
     inDir = join(root, 'reports/degraded/.raw', timestamp());
     mkdirSync(inDir, { recursive: true });
     // 乙的證據:json reporter 是**加**不是換(default 的輸出還要給人看),寫進 raw 目錄跟 JSONL 放一起。
-    const vitestArgs = ['vitest', 'run', '--reporter=default', '--reporter=json', `--outputFile=${toPosix(relative(root, join(inDir, VITEST_JSON)))}`, ...args.vitestArgs];
+    // `npx` may resolve Vitest from a parent worktree (notably from Stryker's sandbox).
+    // Vitest resolves a relative outputFile against its own project root, which can then differ
+    // from this child process's cwd; use the already-absolute evidence path so both agree.
+    const vitestArgs = ['vitest', 'run', '--reporter=default', '--reporter=json', `--outputFile=${join(inDir, VITEST_JSON)}`, ...args.vitestArgs];
     command = `DEGRADED_WITNESS_DIR=${relative(root, inDir)} npx ${vitestArgs.join(' ')}`;
     console.log(`▶ ${command}`);
     const r = spawnSync('npx', vitestArgs, {

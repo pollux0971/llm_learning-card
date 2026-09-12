@@ -1,0 +1,15 @@
+{
+  "score": 82.82,
+  "killed": 2934,
+  "timeout": 25,
+  "survived": 393,
+  "noCoverage": 221,
+  "ignored": 98,
+  "runtimeError": 0,
+  "compileError": 1657,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.config.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.config.json",
+  "commit": "0ab9651"
+}
