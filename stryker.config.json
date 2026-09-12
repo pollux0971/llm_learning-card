@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "concurrency": 4,
   "packageManager": "npm",
   "testRunner": "vitest",
   "checkers": ["typescript"],

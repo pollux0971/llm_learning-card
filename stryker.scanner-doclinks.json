@@ -1,5 +1,6 @@
 {
   "packageManager": "npm",
+  "concurrency": 4,
   "testRunner": "vitest",
   "reporters": ["clear-text", "progress-append-only"],
   "coverageAnalysis": "off",
