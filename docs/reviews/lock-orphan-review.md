@@ -1,3 +1,9 @@
+> **落點註記(2026-09-12,協調者)**:這份是 `lock-orphan` 覆核輪的交接,worker 寫在
+> repo 根目錄的 `REVIEW.md`。**同一個位置上一輪已經被 template-141 佔用過**,
+> 兩份在 `git merge main` 時直接撞成衝突(git 認出 main 那邊的改名,把兩份不相干的交接
+> 當成同一個檔的兩個版本)。**這就是 P-78「根目錄 REVIEW.md」第三次該改結構的具體代價。**
+> 解法:各自進 `docs/reviews/`,一份一個檔名。內文原封不動,只加這段。
+
 # allsuite-lock 另一半:覆核輪(spawnStryker group kill + 超集層)
 
 分支 `pollux0971/lock-orphan`,實作 commit `af4d9c8`,`git merge main` 時已是最新(Already up to date)。
