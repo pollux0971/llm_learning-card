@@ -31,7 +31,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEGRADED_SIGNALS, OUTSIDE_ANY_TEST, type DegradedSignal } from '../packages/contracts/src/witness.js';
 import {
@@ -950,8 +950,13 @@ describe('量尺 · 乙 · 子行程:宣稱 --full 但 ran_all 量出來是假 �
     expect(cmd).toMatch(new RegExp(`--outputFile=\\S*${VITEST_JSON_FILE.replace('.', '\\.')}`));
     // default reporter 的輸出還在(沒被 json 換掉)
     expect(r.stdout).toMatch(/Test Files\s+1 passed/);
-    const rawRel = cmd.match(/DEGRADED_WITNESS_DIR=(\S+)/)?.[1] ?? '';
-    const raw = join(REPO_ROOT, rawRel);
+    // The child may resolve Vitest from a parent worktree, whose project root is not this cwd.
+    // Read the evidence at the path that the child actually supplied, rather than reconstructing
+    // it from this test runner's root (which Stryker is allowed to make different).
+    const outputFile = cmd.match(/(?:^|\s)--outputFile=(\S+)/)?.[1] ?? '';
+    expect(outputFile).toBe(resolve(outputFile));
+    expect(outputFile).toMatch(new RegExp(`${VITEST_JSON_FILE.replace('.', '\\.')}$`));
+    const raw = dirname(outputFile);
     expect(existsSync(join(raw, VITEST_JSON_FILE)), `${raw} 裡沒有 ${VITEST_JSON_FILE}`).toBe(true);
     expect(existsSync(join(raw, VITEST_EXIT_FILE)), `${raw} 裡沒有 ${VITEST_EXIT_FILE}`).toBe(true);
     const json = JSON.parse(readFileSync(join(raw, VITEST_JSON_FILE), 'utf8')) as { numTotalTests: number; numPendingTests: number; numTodoTests: number; success: boolean };
