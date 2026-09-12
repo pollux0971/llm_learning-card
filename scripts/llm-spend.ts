@@ -41,7 +41,9 @@
  */
 import './_env.js';
 import { readFileSync } from 'node:fs';
-import { computeDailySpend, dayOf, isBudgetExhausted } from '../packages/core/src/llm/index.js';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { computeDailySpend, dayOf, isBudgetExhausted, resolveVaultLearningDir } from '../packages/core/src/llm/index.js';
 import type { SpendPrices } from '../packages/core/src/llm/index.js';
 
 /**
@@ -64,7 +66,12 @@ export const EXIT_CANNOT_COMPUTE = 2;
 /** @deprecated 舊名,保留給既有呼叫端;新程式用 EXIT_CANNOT_COMPUTE。 */
 export const EXIT_USAGE_ERROR = EXIT_CANNOT_COMPUTE;
 
-/** 跟 scripts/llm.ts 用同一個預設路徑。 */
+/**
+ * 跟 scripts/llm.ts 用同一個預設路徑字面值。這是 parseSpendArgs()（純函式,
+ * 不碰 git/檔案系統)的 sentinel——main() 看到 logPath 還是這個值,才知道使用者
+ * 沒有明講 --log,要在真的做 I/O 之前把它解析成 resolveVaultLearningDir()
+ * 的絕對路徑(ADR-051)。這個常數本身不是「最後會用到的路徑」。
+ */
 export const DEFAULT_LOG_PATH = 'learning/state/log.jsonl';
 
 export interface SpendCliArgs {
@@ -106,6 +113,16 @@ export function parseSpendArgs(argv: string[]): SpendCliArgs {
   }
 
   return args;
+}
+
+/**
+ * ADR-051:`args.logPath` 還是 `parseSpendArgs()` 填的 sentinel(使用者沒有明講
+ * `--log`)時,解析成主簽出 `learning/` 底下的絕對路徑;使用者明講了就原樣用,
+ * 不蓋過去。`vaultLearningDir` 可注入——測試不必真的 shell 出去、真的在 git repo
+ * 裡跑,傳一個假的回傳值就測得到「有沒有解析、解析了什麼」。
+ */
+export function resolveLogPath(args: SpendCliArgs, vaultLearningDir: () => string = resolveVaultLearningDir): string {
+  return args.logPath === DEFAULT_LOG_PATH ? join(vaultLearningDir(), 'state/log.jsonl') : args.logPath;
 }
 
 /**
@@ -294,7 +311,7 @@ export function exitCodeFor(report: SpendReport): number {
 async function main(): Promise<void> {
   const args = parseSpendArgs(process.argv.slice(2));
   const day = args.day ?? dayOf(new Date().toISOString());
-  const report = buildSpendReport(process.env, args.logPath, day);
+  const report = buildSpendReport(process.env, resolveLogPath(args), day);
 
   if (args.json) {
     // 算不出來時**不吐 usd / cap_usd**:下游拿 `.usd` 要拿到 `undefined`,不是 0。
@@ -324,9 +341,21 @@ async function main(): Promise<void> {
   process.exitCode = exitCodeFor(report);
 }
 
-main().catch((err: unknown) => {
-  // 參數錯誤也是「算不出來」——對呼叫的人來說跟讀不到 log 是同一件事:
-  // 這次沒有得到一個可以拿來當花錢依據的數字。
-  console.error(`算不出來:${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = EXIT_CANNOT_COMPUTE;
-});
+/**
+ * ADR-051 實測到的附帶問題:這支檔案是唯一一支**既是 CLI 入口、又被自己的測試檔
+ * 直接 import 純函式**(buildSpendReport / parseSpendArgs / DEFAULT_LOG_PATH 等)
+ * 的 scripts/*.ts。`main()` 原本沒有這個 guard 就無條件執行,之前因為預設 log
+ * 路徑只是一個相對字串,對 llm-spend.test.ts 來說撞不到什麼(讀不到檔案就悄悄
+ * 算不出來);現在預設路徑會真的 shell 出去解析主簽出的 learning/,如果每次
+ * `import { buildSpendReport } from './llm-spend.js'` 都真的執行一次 main(),
+ * 等於**每次跑這個檔案的測試都真的去讀使用者的花費帳本**——只是讀,不會寫壞,
+ * 但完全不必要,而且會把真的資料印進測試輸出。只在真的被當 CLI 執行時才跑。
+ */
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  main().catch((err: unknown) => {
+    // 參數錯誤也是「算不出來」——對呼叫的人來說跟讀不到 log 是同一件事:
+    // 這次沒有得到一個可以拿來當花錢依據的數字。
+    console.error(`算不出來:${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = EXIT_CANNOT_COMPUTE;
+  });
+}

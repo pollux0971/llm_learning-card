@@ -12,6 +12,7 @@ import {
   LlmTimeoutError,
   MissingCredentialError,
   OutputTruncatedError,
+  UnaccountableLlmCallError,
   UnknownTaskError,
   UnsupportedProviderError,
 } from './errors.js';
@@ -25,9 +26,10 @@ import { witness } from '@contracts/witness.js';
 /** 寫一筆 log 事件。契約 §10/§11b 的正式實作見 01-data-layer 的 recordEvent()。 */
 export type LogAppender = (event: LogEvent) => void;
 
-/** 沒給 path 就不寫(例如純單元測試);給了就用 01 的 recordEvent() 原子寫入。 */
-function createFileLogAppender(path: string | undefined): LogAppender {
-  if (!path) return () => {};
+/** 用 01 的 recordEvent() 原子寫入。ADR-050:沒有 path 就不建這個 appender——
+ * 呼叫端不給 logPath 也不給 logAppender 是「沒有接上記帳」,call() 要硬錯,
+ * 不能在這裡悄悄退回一個什麼都不做的函式。 */
+function createFileLogAppender(path: string): LogAppender {
   return (event) => recordEvent(path, event);
 }
 
@@ -58,7 +60,8 @@ export interface CloudLlmRouterOptions {
   /** 依 provider 替換 adapter,測試用假的取代真的 SDK 呼叫 */
   adapters?: Partial<Record<CloudProvider, CloudAdapter>>;
   defaultTimeoutMs?: number;
-  /** log.jsonl 的路徑;不給就不寫(例如純單元測試) */
+  /** log.jsonl 的路徑。ADR-050:兩個都不給,call() 會硬錯——純單元測試想不寫檔案,
+   * 明確注入 `logAppender: () => {}`,不要靠這裡悄悄退回不寫。 */
   logPath?: string;
   /** 直接注入 appender,優先於 logPath */
   logAppender?: LogAppender;
@@ -73,7 +76,8 @@ export class CloudLlmRouter implements LlmRouter {
   private readonly settings: CloudSettings;
   private readonly adapters: Record<CloudProvider, CloudAdapter>;
   private readonly defaultTimeoutMs: number;
-  private readonly log: LogAppender;
+  /** undefined = 呼叫端既沒給 logPath 也沒給 logAppender,call() 要硬錯(ADR-050)。 */
+  private readonly log: LogAppender | undefined;
 
   constructor(opts: CloudLlmRouterOptions = {}) {
     this.env = opts.env ?? process.env;
@@ -83,13 +87,19 @@ export class CloudLlmRouter implements LlmRouter {
       openai: opts.adapters?.openai ?? openaiAdapter,
     };
     this.defaultTimeoutMs = opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.log = opts.logAppender ?? createFileLogAppender(opts.logPath);
+    this.log = opts.logAppender ?? (opts.logPath === undefined ? undefined : createFileLogAppender(opts.logPath));
   }
 
   async call(task: LlmTask, prompt: string, opts: { timeoutMs?: number; maxTokens?: number } = {}): Promise<LlmResult> {
     if (!isLlmTask(task)) {
       throw new UnknownTaskError(task);
     }
+
+    // ADR-050:能不能記帳不該由呼叫方選擇性提供。沒有明示注入 logAppender、
+    // 也沒給 logPath,就在打真的 adapter 之前擋下來——省得先花錢才發現這次
+    // 呼叫沒有留下任何可稽核的記錄。要不記帳,呼叫端要自己明講(`logAppender: () => {}`)。
+    const log = this.log;
+    if (!log) throw new UnaccountableLlmCallError();
 
     const providerName = this.resolveProviderName();
     if (!isCloudProvider(providerName)) {
@@ -124,7 +134,7 @@ export class CloudLlmRouter implements LlmRouter {
       }
 
       const llmResult: LlmResult = { ...result, provisional: false };
-      this.log({
+      log({
         ts: new Date().toISOString(),
         type: 'llm_call',
         task,
@@ -137,7 +147,7 @@ export class CloudLlmRouter implements LlmRouter {
       return llmResult;
     } catch (err) {
       if (err instanceof LlmTimeoutError) {
-        this.log({
+        log({
           ts: new Date().toISOString(),
           type: 'llm_call',
           task,
@@ -147,7 +157,7 @@ export class CloudLlmRouter implements LlmRouter {
           timeout_ms: timeoutMs,
         });
       } else if (err instanceof OutputTruncatedError) {
-        this.log({
+        log({
           ts: new Date().toISOString(),
           type: 'llm_call',
           task,

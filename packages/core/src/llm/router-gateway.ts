@@ -63,7 +63,7 @@ import type { LogEvent } from '@contracts/index.js';
 import { recordEvent } from '@core/schema/log.js';
 import { LlmRouterImpl, type LlmRouterImplOptions } from './router-impl.js';
 import { GatewayClient, createGatewayClient } from './adapters/gateway.js';
-import { GatewayCallError, NoModelError } from './errors.js';
+import { GatewayCallError, NoModelError, UnaccountableLlmCallError } from './errors.js';
 import { FALLBACK_TABLE, decideFallback, type CloudStatus, type FallbackDecision, type FallbackGroup, type FallbackReason } from './fallback.js';
 import { witness, witnessed, type DegradedSignal } from '@contracts/witness.js';
 import {
@@ -119,9 +119,10 @@ export interface GatewayLlmRouterOptions extends LlmRouterImplOptions {
   today?: () => string;
 }
 
-/** 沒給 path 就不寫(例如純單元測試);給了就用 01 的 recordEvent() 原子寫入。 */
-function createFileLogAppender(path: string | undefined): LogAppender {
-  if (!path) return () => {};
+/** 用 01 的 recordEvent() 原子寫入。ADR-050:沒有 path 就不建這個 appender——
+ * 理由同 router.ts 的同名函式,這裡是 GatewayLlmRouter 自己那半(閘道/備援)的
+ * log 寫入,不是委派給底層 LlmRouterImpl 的那份。 */
+function createFileLogAppender(path: string): LogAppender {
   return (event) => recordEvent(path, event);
 }
 
@@ -130,7 +131,8 @@ export class GatewayLlmRouter implements LlmRouter {
   private readonly inner: LlmRouterImpl;
   private readonly fallbackTable: Readonly<Record<LlmTask, FallbackGroup>>;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly log: LogAppender;
+  /** undefined = 沒給 logPath 也沒給 logAppender,callGateway() 要硬錯(ADR-050)。 */
+  private readonly log: LogAppender | undefined;
   private readonly capUsd: number;
   private readonly prices: SpendPrices;
   private readonly spendReader: (day: string) => DailySpend;
@@ -143,7 +145,7 @@ export class GatewayLlmRouter implements LlmRouter {
     this.inner = new LlmRouterImpl(opts);
     this.fallbackTable = opts.fallbackTable ?? FALLBACK_TABLE;
     this.env = opts.env ?? process.env;
-    this.log = opts.logAppender ?? createFileLogAppender(opts.logPath);
+    this.log = opts.logAppender ?? (opts.logPath === undefined ? undefined : createFileLogAppender(opts.logPath));
     this.capUsd = opts.dailyCapUsd ?? readDailyCapUsd(this.env);
     this.prices = opts.prices ?? readSpendPrices(this.env);
     this.today = opts.today ?? (() => dayOf(new Date().toISOString()));
@@ -236,6 +238,11 @@ export class GatewayLlmRouter implements LlmRouter {
     opts: { timeoutMs?: number; maxTokens?: number },
     cause?: unknown,
   ): Promise<LlmResult> {
+    // ADR-050:跟 CloudLlmRouter.call() 同一個規矩,在打真的閘道之前先確認
+    // 有地方記帳,不要先打了才發現這次呼叫沒有留下任何可稽核的記錄。
+    const log = this.log;
+    if (!log) throw new UnaccountableLlmCallError();
+
     // 進到備援分支就記(不等閘道成功):報告要的是「這個測試走了哪條路」。
     // Stryker disable next-line all: ADR-044 的觀測點,對測試不可觀測是設計,不是漏測。
     if (decision.reason !== undefined) witness(FALLBACK_SIGNAL[decision.reason]);
@@ -286,7 +293,7 @@ export class GatewayLlmRouter implements LlmRouter {
         event.error = cause instanceof Error ? cause.message : String(cause);
       }
     }
-    this.log(event as unknown as LogEvent);
+    log(event as unknown as LogEvent);
 
     return { ...result, provisional: decision.provisional };
   }

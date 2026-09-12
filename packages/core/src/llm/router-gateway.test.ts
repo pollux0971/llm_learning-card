@@ -25,6 +25,7 @@ import {
   MissingCredentialError,
   NoModelError,
   OutputTruncatedError,
+  UnaccountableLlmCallError,
   UnknownTaskError,
   UnsupportedProviderError,
 } from './errors.js';
@@ -845,8 +846,10 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
       throw new Error(`沒有預期到的請求:${url}`);
     }) as typeof fetch;
 
-    // 刻意**不給** spendReader;logPath 有沒有由 opts 決定。沒 logPath 時也不給
-    // logAppender——那正是「純單元測試沒接 log」的建構方式,退化分支就是為它而存在。
+    // 刻意**不給** spendReader;logPath 有沒有由 opts 決定。沒 logPath 時明示注入
+    // 一個 no-op logAppender(ADR-050:call() 現在對「沒接記帳」是硬錯,這裡要測的
+    // 是「沒有 logPath 時花費永遠算 0」那個退化分支,不是「忘了接記帳」那個錯——
+    // 兩件事要分得開,所以不能再靠 createFileLogAppender 的舊預設值兩者都蓋過去)。
     h.router = new GatewayLlmRouter({
       env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'gpt-5.6-luna', OPENAI_API_KEY: 'k', LLM_LOCAL_MODEL: LOCAL_MODEL },
       adapters: { openai: cloudAdapter },
@@ -858,7 +861,7 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
       gateway: new GatewayClient({ config: { baseUrl: BASE, apiKey: 'gk', model: LOCAL_MODEL }, fetchImpl }),
       dailyCapUsd: CAP,
       prices: PRICES,
-      ...(opts.logPath === undefined ? {} : { logPath: opts.logPath }),
+      ...(opts.logPath === undefined ? { logAppender: () => {} } : { logPath: opts.logPath }),
     });
     return h;
   }
@@ -925,5 +928,59 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
     const h = spendHarness();
     for (let i = 0; i < 10; i++) await h.router.call('ingest.questions', `第 ${i + 1} 次`);
     expect(h.cloudCalls).toBe(10);
+  });
+});
+
+/**
+ * ADR-050 反向驗證,router-gateway.ts 自己那半。`GatewayLlmRouter` 維護一份
+ * 獨立於底層 `LlmRouterImpl` 的 log(`callGateway()` 寫的那筆,含 fallback 資訊),
+ * 跟 router.ts 的 `CloudLlmRouter.call()` 是**兩份不同的檢查**——拿掉任一份的
+ * 硬錯,對應的測試就要紅,不能靠改另一份矇混過去。
+ */
+describe('GatewayLlmRouter.callGateway — ADR-050:記帳不能是選擇性的', () => {
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const json = (body: unknown, status = 200): Response =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    if (url.includes('/auth/token/exchange')) return json({ access_token: 'jwt-1', expires_in: 3600 });
+    if (url.includes('/gateway/chat')) {
+      return json({ content: '閘道回覆。', provider: 'ollama', model: LOCAL_MODEL, tokens_used: { prompt: 3, completion: 4 } });
+    }
+    throw new Error(`沒有預期到的請求:${url}`);
+  }) as typeof fetch;
+
+  it('grade.fill.llm 直接走閘道,沒有 logPath 也沒有 logAppender 時,在真的打閘道之前就丟 UnaccountableLlmCallError', async () => {
+    let gatewayChats = 0;
+    const countingFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('/gateway/chat')) gatewayChats += 1;
+      return fetchImpl(input, init);
+    }) as typeof fetch;
+
+    const router = new GatewayLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'gpt-5.6-luna', OPENAI_API_KEY: 'k', LLM_LOCAL_MODEL: LOCAL_MODEL },
+      onlineProber: async () => true,
+      gateway: new GatewayClient({ config: { baseUrl: BASE, apiKey: 'gk', model: LOCAL_MODEL }, fetchImpl: countingFetch }),
+      dailyCapUsd: CAP,
+      prices: PRICES,
+      spendReader: () => ({ usd: 0, calls: 0 }),
+    });
+
+    await expect(router.call('grade.fill.llm', '填空題')).rejects.toThrow(UnaccountableLlmCallError);
+    expect(gatewayChats).toBe(0);
+  });
+
+  it('明確注入 no-op logAppender 時,grade.fill.llm 正常走閘道——明示的丟棄不是錯', async () => {
+    const router = new GatewayLlmRouter({
+      env: { LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'gpt-5.6-luna', OPENAI_API_KEY: 'k', LLM_LOCAL_MODEL: LOCAL_MODEL },
+      onlineProber: async () => true,
+      logAppender: () => {},
+      gateway: new GatewayClient({ config: { baseUrl: BASE, apiKey: 'gk', model: LOCAL_MODEL }, fetchImpl }),
+      dailyCapUsd: CAP,
+      prices: PRICES,
+      spendReader: () => ({ usd: 0, calls: 0 }),
+    });
+
+    await expect(router.call('grade.fill.llm', '填空題')).resolves.toMatchObject({ provider: 'ollama' });
   });
 });

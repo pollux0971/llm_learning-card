@@ -84,13 +84,15 @@ describe('cli main --live', () => {
     process.env = realEnv;
   });
 
-  it('印出模型、token 進出,以及「不在價目表上就不估」的花費', async () => {
+  it('印出模型、token 進出,以及「未定價就不估,但每日上限仍然有效」的花費', async () => {
     installFakeCloud();
     const out = tmpOutDir();
     const result = await main(['--golden', '--set', 'selftest', '--live', '--out', out]);
     expect(result.code).toBe(0);
     const line = result.output.split('\n').find((l) => l.includes('模型'))!;
-    expect(line).toBe('  模型 anthropic/claude-sonnet-5,token 進 300 出 120,花費 (model 不在價目表上,不估)');
+    expect(line).toBe(
+      '  模型 anthropic/claude-sonnet-5,token 進 300 出 120,花費 (此模型未定價,上面的估計不可用;每日上限走 .env 費率,仍然有效)',
+    );
     expect(result.output.split('\n').filter((l) => l.startsWith('  ⚠ '))).toEqual([]);
   });
 
