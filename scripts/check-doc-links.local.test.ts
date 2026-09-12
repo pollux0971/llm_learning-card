@@ -13,7 +13,14 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { findRelativeLinks, main, SCANNER_BROKEN, stripCode } from './check-doc-links.js';
+import {
+  findBacktickPathRefs,
+  findRelativeLinks,
+  main,
+  resolveSkipConfig,
+  SCANNER_BROKEN,
+  stripCode,
+} from './check-doc-links.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 
@@ -37,6 +44,39 @@ function run(files: Record<string, string>): { code: number; output: string } {
   return main(['--root', fixtureRoot(files)]);
 }
 
+function runWithConfig(
+  files: Record<string, string>,
+  config: Record<string, unknown>,
+): { code: number; output: string } {
+  const root = fixtureRoot(files);
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  writeFileSync(join(root, 'scripts', 'gates.config.json'), JSON.stringify(config), 'utf8');
+  const previous = process.env.GATES_CONFIG_DIR;
+  process.env.GATES_CONFIG_DIR = join(root, 'scripts');
+  try {
+    return main(['--root', root]);
+  } finally {
+    if (previous === undefined) delete process.env.GATES_CONFIG_DIR;
+    else process.env.GATES_CONFIG_DIR = previous;
+  }
+}
+
+function runSpawnedWithConfig(
+  files: Record<string, string>,
+  config: Record<string, unknown>,
+): { code: number; output: string } {
+  const root = fixtureRoot(files);
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  writeFileSync(join(root, 'scripts', 'gates.config.json'), JSON.stringify(config), 'utf8');
+  const r = spawnSync('npx', ['tsx', 'scripts/check-doc-links.ts', '--root', root], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    timeout: SPAWN_TIMEOUT_MS,
+    env: { ...process.env, GATES_CONFIG_DIR: join(root, 'scripts') },
+  });
+  return { code: r.status ?? -1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+}
+
 /** 從 `doc-links: 掃描 N 個 markdown 檔,M 條相對連結` 取出 M。 */
 function linkCount(output: string): number {
   const m = /(-?\d+) 條相對連結/.exec(output);
@@ -46,6 +86,170 @@ function linkCount(output: string): number {
 
 afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
+});
+
+describe('設定與掃描邊界', () => {
+  it('GATES_CONFIG_DIR 的 skipPrefixes 會排除巢狀路徑與剛好命中的檔案', () => {
+    const { code, output } = runWithConfig(
+      {
+        'docs/a.md': '[b](./b.md)\n',
+        'docs/b.md': '# b\n',
+        'docs/generated/broken.md': '[x](./missing-generated.md)\n',
+        'docs/exact.md': '[x](./missing-exact.md)\n',
+      },
+      { docLinks: { skipPrefixes: ['docs/generated', 'docs/exact.md'] } },
+    );
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+    expect(output).not.toContain('missing-generated.md');
+    expect(output).not.toContain('missing-exact.md');
+  });
+
+  it('沒有填 skipDirs 時不會憑空增加排除片段', () => {
+    const { code, output } = runWithConfig(
+      { 'docs/a.md': '[b](./b.md)\n', 'docs/b.md': '# b\n' },
+      {},
+    );
+
+    expect(code).toBe(0);
+    expect(output).not.toContain('Stryker was here');
+  });
+
+  it('docLinks 的非陣列欄位會忽略,不會讓掃描器崩潰', () => {
+    const root = fixtureRoot({
+      'docs/a.md': '[b](./b.md)\n',
+      'docs/b.md': '# b\n',
+      'scripts/gates.config.json': JSON.stringify({ docLinks: { skipSegments: 'bad', skipPrefixes: 'bad' } }),
+    });
+    const previous = process.env.GATES_CONFIG_DIR;
+    process.env.GATES_CONFIG_DIR = join(root, 'scripts');
+    try {
+      expect(() => resolveSkipConfig(root)).not.toThrow();
+      const { code, output } = main(['--root', root]);
+      expect(code).toBe(0);
+      expect(linkCount(output)).toBe(1);
+    } finally {
+      if (previous === undefined) delete process.env.GATES_CONFIG_DIR;
+      else process.env.GATES_CONFIG_DIR = previous;
+    }
+  });
+
+  it('docLinks 陣列中的非字串項目會忽略', () => {
+    const root = fixtureRoot({
+      'docs/a.md': '[b](./b.md)\n',
+      'docs/b.md': '# b\n',
+      'scripts/gates.config.json': JSON.stringify({ docLinks: { skipSegments: [123], skipPrefixes: [false] } }),
+    });
+    const previous = process.env.GATES_CONFIG_DIR;
+    process.env.GATES_CONFIG_DIR = join(root, 'scripts');
+    try {
+      const skip = resolveSkipConfig(root);
+      expect(skip.skipSegments).not.toContain(123);
+      expect(skip.skipPrefixes).not.toContain(false);
+    } finally {
+      if (previous === undefined) delete process.env.GATES_CONFIG_DIR;
+      else process.env.GATES_CONFIG_DIR = previous;
+    }
+  });
+
+  it('skipDirs 型別錯時要明講設定錯,不能靜默掃描', () => {
+    const { code, output } = runSpawnedWithConfig(
+      { 'docs/a.md': '[b](./b.md)\n', 'docs/b.md': '# b\n' },
+      { skipDirs: 'not-an-array' },
+    );
+
+    expect(code).toBe(1);
+    expect(output).toContain('設定檔鍵型別錯:skipDirs');
+    expect(output).toContain('gate=doc-links result=FAIL scanned=0');
+  });
+
+  it('docLinks 型別錯時要明講設定錯,不能靜默採用預設', () => {
+    const { code, output } = runSpawnedWithConfig(
+      { 'docs/a.md': '[b](./b.md)\n', 'docs/b.md': '# b\n' },
+      { docLinks: 'not-an-object' },
+    );
+
+    expect(code).toBe(1);
+    expect(output).toContain('設定檔鍵型別錯:docLinks');
+    expect(output).toContain('gate=doc-links result=FAIL scanned=0');
+  });
+});
+
+describe('連結語法的邊界', () => {
+  it('title 前有多個空白時仍算相對連結', () => {
+    const { code, output } = run({
+      'docs/a.md': '[b](./b.md  "說明")\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+  });
+
+  it('單邊角括號不應被當成合法包裹而漏報或誤改路徑', () => {
+    const { code, output } = run({
+      'docs/a.md': '[右括號](./target.md>)\n[左括號](<./target.md)\n',
+      'docs/target.md': '# target\n',
+    });
+
+    expect(code).toBe(1);
+    expect(output).toContain('./target.md>');
+    expect(output).toContain('<./target.md');
+  });
+
+  it('backtick 路徑參照必須有副檔名,否則不能增加統計或報壞連結', () => {
+    const { code, output } = run({
+      'docs/a.md': '[b](./b.md)\n提及 `dir.v1/no-extension:7`\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+    expect(output).not.toContain('no-extension');
+  });
+
+  it('目錄名含點但檔名無副檔名時仍不是路徑參照', () => {
+    expect(findBacktickPathRefs('提及 `dir./no-extension:7`')).toEqual([]);
+  });
+
+  it('backtick 路徑參照不能從含冒號的前綴中截取假路徑', () => {
+    expect(findBacktickPathRefs('提及 `prefix:../NOPE.md:7`')).toEqual([]);
+  });
+
+  it('backtick 路徑參照要計入掃描統計', () => {
+    const { code, output } = run({
+      'README.md': '# readme\n',
+      'docs/a.md': '[b](./b.md)\n有效 `../README.md:1` 與壞的 `../NOPE.md:2`\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(1);
+    expect(output).toContain('gate=doc-links result=FAIL scanned=3');
+  });
+
+  it('不同長度的反引號不能提早結束 code span 而製造假參照', () => {
+    const { code, output } = run({
+      'docs/a.md': '[b](./b.md)\n這不是參照 `../NOPE.md``\n',
+      'docs/b.md': '# b\n',
+    });
+
+    expect(code).toBe(0);
+    expect(linkCount(output)).toBe(1);
+    expect(output).not.toContain('NOPE.md');
+  });
+
+  it('沒有配對的單反引號不能因遇到雙反引號而產生 span', () => {
+    expect(findBacktickPathRefs('提及 `../NOPE.md``')).toEqual([]);
+  });
+
+  it('報錯檔名會把反斜線正規化成斜線', () => {
+    const { code, output } = run({ 'docs/foo\\bar.md': '[x](./missing.md)\n' });
+
+    expect(code).toBe(1);
+    expect(output).toContain('docs/foo/bar.md');
+    expect(output).not.toContain('docs/foobar.md');
+  });
 });
 
 describe('壞連結', () => {
