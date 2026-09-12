@@ -293,6 +293,10 @@
       "infra"
     ],
     [
+      "scripts/check-adr-numbers.ts",
+      "infra"
+    ],
+    [
       "scripts/check-phase-coverage.ts",
       "infra"
     ],

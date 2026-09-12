@@ -16,7 +16,7 @@ git status --short --untracked-files=no | head          # 根目錄不該有「�
 npx tsx scripts/llm-spend.ts --today                   # 今日 OpenAI 花費;退出碼 0 未達 / 1 已達上限(≥ 就算)/ **2 算不出來**
                                                        # 2(log 缺、上限變數缺、有壞行)→ 停所有 @llm 工作 + 開工單 + 通知技術顧問;「不知道」不是「零」
                                                        # 檔案還不存在(03/phase-4 未合併)→ 跳過這步,不當煞車
-grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最大 ADR 號;派工說明裡寫「ADR-下一號 = 這個+1」,worker 不自己猜
+grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n | tail -1   # 把這條指令原樣寫進工單,worker 在寫入當下取號
 ```
 讀 `docs/01-roadmap.md` 現況表、所有 `features/*/NEXT.md`、`docs/sprints/<本週>.md`。
 
@@ -37,21 +37,24 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 
 1. **收割**:哪些 worktree 的審核回來了 → PASS 的合併(一次一個,`git checkout main && git merge --no-ff <branch>`,**不 rebase**,每個 phase 三輪 commit 的軌跡是刻意留的),合併後跑完整檢查:
    ```bash
-   npm run check:all         # 這一行就是全部。最後印 `gate=all result=PASS scanned=14`。
+   npm run check:all         # 這一行就是全部。最後印 `gate=all result=PASS scanned=<實際>`。
    ```
 
    ⚠️ **不要再手打那份清單。** 這裡原本列了 11 條手打指令,**少三個 gate**
    (`doc-rot`、`next-gates`、`phase-status`)。2026-09-12 協調者照那份跑完回報「全鏈綠」,
-   技術顧問用 `check:all` 一跑是 14 步 —— 結論剛好一樣,但**那是運氣,不是驗證**。
+   技術顧問用 `check:all` 一跑是當時設定的完整步數 —— 結論剛好一樣,但**那是運氣,不是驗證**。
    **手打的清單一定會跟 `package.json` 漂開**,而漂開的方向永遠是「少跑」。
-   `scanned=14` 那個數字自己會長,清單不會。
+   `scanned=<實際>` 那個數字自己會長,清單不會。
+
+   目前 `scanned=N` 是 chain 長度,不是這次真的跑了幾步；`ran=` 已提案上游,尚未生效。
+   排序原則見 `scripts/gates.chain-order.md`。
 
    ⚠️ **這條在 2026-09-05 之前只是 SKILL.md 裡一行手打指令,沒有進 `package.json`** ——
    也就是「清單上寫著、實際沒人跑」。技術顧問抓到後才補成 `npm run check:gates`。
    **清單裡的每一條都要是 npm script**,否則它就只是一句話。
    **下一階更難看見:清單上寫著、跑了、但它不會紅。**
    實例(2026-09-12,顧問實測):`accept:dry` 印得出 `16 ambiguous` 卻**回 exit 0**,
-   加 `--strict` 也一樣;於是 `check:all` 14 步全綠、同時可以有 16 個場景是 ambiguous 的。
+   加 `--strict` 也一樣;於是 `check:all` 當時的鏈全綠、同時可以有 16 個場景是 ambiguous 的。
    「必看 0 ambiguous」這句在**人讀輸出**的年代有效,進了自動鏈之後**沒有人讀那一行**。
    **規則:任何守門接進鏈之前,先故意弄壞輸入讓它紅一次;沒紅過的守門不算接上。**
    **合併後留一份 junit,下次比「名稱集合」不比「總數」**:
@@ -62,22 +65,28 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
    別的專案抓到過「總數相等但組成不同」(branch 8044 = 8036+4+4、main 8044 = 8036+8):
    **數字對得上,內容少了四條。**
 
-   ⚠️ **比的時候要用 multiset 或完整限定名(檔案 + suite + name),不要用 `set(names)`** ——
-   本 repo **一直都有同名 testcase**,用集合比會憑空少掉那幾筆,那本身就是一個「看起來乾淨」的假象。
+   ⚠️ **比的時候要用 multiset 或完整限定名(檔案 + suite + name),不要用 `set(names)`**。
+   用完整限定名(`classname` + `name`)比,同名那件事就不存在了(實測 3143 筆全部唯一；只用
+   `name` 的量法得到的 9 組同名,正是限定名修正後消失的產物)。
+   仍然用 multiset 而不是 set,是為了抓**改名偽裝成刪除**:一條測試被改名,set 比對會
+   同時看到「少一個舊名、多一個新名」而算平手,multiset 才看得出組成變了。
+   **理由過期比狀態過期更難察覺,因為沒有人會去重驗一個理由。**
 
-   **不要記那個數字,它會腐爛** —— 這裡曾經寫死「1691 個 testcase / 1683 個不重複 / 8 個同名」,
-   2026-09-05 實測已經是 **2689 / 2680 / 9**(worker 回報 9,我自己量過才改)。**要用就當場量:**
+   **不要記那個數字,它會腐爛** —— 要用就當場量。輸出同時列出只用 `name` 的同名組數、
+   以及用完整限定名的同名組數,下一個人一跑就看得到差別:
    ```bash
    python3 -c "
    import sys,xml.etree.ElementTree as ET; from collections import Counter
-   c=Counter()
-   for tc in ET.parse(sys.argv[1]).getroot().iter('testcase'): c[tc.get('name','')]+=1
-   print('總數',sum(c.values()),'不重複',len(c),'差',sum(c.values())-len(c))
-   for k,v in c.items():
+   by_name=Counter(); by_full=Counter()
+   for tc in ET.parse(sys.argv[1]).getroot().iter('testcase'):
+       name=tc.get('name',''); by_name[name]+=1
+       by_full[f\"{tc.get('classname','')}::{name}\"]+=1
+   print('只用 name 的同名組數',sum(v>1 for v in by_name.values()))
+   print('完整限定名的同名組數',sum(v>1 for v in by_full.values()))
+   for k,v in by_full.items():
        if v>1: print(f'   x{v}  {k[:70]}')
    " reports/junit/<sha>.xml
    ```
-   (現在那 9 個:`countBodyWords` 的 8 條參數化案例 + `SIGTERM 之後鎖不留` 1 條。)
 
    **合併後跑的是 main 現在的完整檢查清單,不是分支開工時的那份。** 分支 base 比 main 舊的時候,
    main 上可能已經多了新的守門 —— 那些**在分支上根本不存在**,所以「分支全綠」不等於「合併後全綠」,
@@ -101,7 +110,7 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 
    FAIL 的照 test→dev→review 循環派 debug session。
 2. **算 ready**:照 sprint-planning 的規則讀所有 NEXT.md。三種 gate 全滿足 → ready。
-3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。滿載時不派新工,回到 1 收割;收割不到東西就做維護清單(§3)等下一輪。~~同時處於審核輪的 worktree ≤ 1~~ **已放寬回 3**(2026-09-04):`scripts/mutate.ts` 的跨 worktree 檔案鎖合併後,變異測試會自己排隊,不再需要靠派工節流(P-34)。**`npm run mutate` 是唯一入口**,審核與開發都只准用它 —— 直接叫 Stryker CLI 會繞過鎖(`scripts/mutate.test.ts` §13 掃 repo 裡**所有文字檔**守著,程式碼註解也掃;2026-09-05 起,因為第一版只掃 md / json / sh 漏過 `vitest.mutate.config.ts` 裡一條可照抄的指令)。**分數要附完整指令**(設定檔、範圍、旗標),不附指令的分數不算數。每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
+3. **派工**:ready 的全部派出去,直到同時進行的 worktree 達上限(**3**)。滿載時不派新工,回到 1 收割;收割不到東西就做維護清單(§3)等下一輪。~~同時處於審核輪的 worktree ≤ 1~~ **已放寬回 3**(2026-09-04):`scripts/mutate.ts` 的跨 worktree 檔案鎖合併後,變異測試會自己排隊,不再需要靠派工節流(P-34)。**`npm run mutate` 是唯一入口**,審核與開發都只准用它 —— 直接叫 Stryker CLI 會繞過鎖(`scripts/mutate.test.ts` §13 掃 repo 裡**所有文字檔**守著,程式碼註解也掃;2026-09-05 起,因為第一版只掃 md / json / sh 漏過 `vitest.mutate.config.ts` 裡一條可照抄的指令)。**分數要附完整指令**(設定檔、範圍、旗標),不附指令的分數不算數。**正確的輸出從來不會被稽核**：一個對的答案被錯的方法算出來時,沒有任何訊號會響；而指令是唯一還會露餡的東西。**每張照角色規則:測試 agent 先寫紅 commit → 開發 agent 做綠 → 審核 agent(REVIEW.md 交接)。
 4. **整合點**:某個 IN 需要的 phase 全 done → **先開「整合工作」工單**(P-20:roadmap 該段的整合工作欄 + 各 FEATURE.md「Wave 0 的重複」表),合併後 `/integrate IN`;`@e2e @llm` 在預算內自動跑,結果貼進 `docs/integration/IN-REVIEW.md`;`@manual` 進「等老闆」清單。IN 的人工確認未完成前,gate 是「IN 通過」的 phase 維持 todo——這是刻意的,不要繞。
 5. **沒有 ready 的 phase** → 做維護清單(§3),做完一項就回到 2。
 6. **回報**(§5 格式),睡。
@@ -134,6 +143,10 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 ## 4a. 什麼**不是**停止條件(容易誤判成停止的狀況)
 
 煞車(§4)是「停下某一項」,下面這些**看起來像壞掉,但不是**:
+
+**可執行版本:**新規則落地的那個 commit / 工單,寫完之後把自己剛寫的東西當成別人的產出讀一遍,
+只問一個問題——「這份東西違反了它自己剛立的規則嗎？」一條規則寫下來的當下,寫的人是最不
+容易套用它的人,因為他正在**描述**它,不是在**用**它。
 
 - **Orca runtime 掛掉 / `runtime_unavailable` / `runtime_timeout`**
   → **不是**。worktree 與 commit 都在磁碟上,agent 程序也還活著(`pgrep -af claude` 看得到)。
@@ -199,6 +212,33 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
   於是漏掉了 `check-doc-rot.ts`(它自己複製了一份 `resolveSkipDirs`)。
   正確形狀跟零輸入守門一樣:**列舉 `scripts/check-*.ts`,斷言每一支都真的呼叫共用函式;
   沒呼叫的要明講在豁免清單並附理由,兩邊都沒有就紅。**
+
+  **語句沒有 import,你沒辦法 grep「所有假設了 X 的東西」。**但那句舊話通常在講一個具名
+  的產物,而產物名 grep 得到。**改變一個「會被印出來、會被別人引用」的輸出的行為時,
+  拿那個輸出的字面(`scanned=`、`gate=`、`result=`)去 grep 全部文件與 skill。命中的每一處
+  都要問:這句話在新行為下還成立嗎?**語句沒有 import,但它引用的產物有名字——用名字當
+  import 表。三個對象要分清楚:
+
+  | 你在找什麼 | 用什麼 | 原因 |
+  |---|---|---|
+  | **還有誰也這樣做**(違規) | **名冊** | grep 只找得到你想得到的那幾個字 |
+  | **還有誰提到這個名字**(引用) | **字面** | 你要找的東西本來就是那個字面 |
+  | **我自己剛剛說錯了什麼** | **字面掃自己的 outbox** | 你剛學到的事最可能打翻的是你自己十分鐘前講的 |
+
+  第三條的完整做法是:**讀完一份程式碼或資料之後,拿它的名字(檔名、輸出字面、旗標名)去掃
+  自己最近說過的話。不是掃別人的文件,是掃自己的 outbox。**觸發點是「我剛剛第一次讀懂了
+  關於 X 的某件事」；範圍限定最近，是因為閱讀與斷言連著發生，成本接近零。這跟「找違規用名冊」
+  不衝突：差別在你找的是「還有誰也這樣做」還是「還有誰提到這個名字」。
+  兩個真實例子：協調者讀 `packages/core/src/llm/spend.ts` 確認價格表時，沒有回頭檢查自己
+  十分鐘前說的「上限會壞掉」是否仍成立；技術顧問讀 `scripts/check-all.ts` 確認 `--fail-fast`
+  是選用時，也沒有把同檔 `scanned=` 的註解與自己剛提的建議連起來。這條規則本身也剛被用過：
+  讀完 `check-all.ts` 後掃 outbox，發現工單寫死「18 步、scanned=18」，但本輪正把 chain 變成
+  19 步，已發更正。前兩則都是事後才被別人抓到、各付出一次往返；第三則只花**一個 grep、
+  兩個檔、三十秒**。
+
+  **稽核方法不能用結果觸發。**「答案錯了沒有」問不出來。要問的是：「這個方法有可能給我錯的
+  答案嗎?」——不是「它這次錯了嗎」,是「它**有沒有能力**錯」。有能力錯而這次剛好沒錯,方法
+  就不能留。
 
 - **`git merge` 沒報衝突,不代表合併對了**
   → **合併完真的去讀那個檔。** 實例(2026-09-12):main 與分支各自在 `gates.config.json`
@@ -298,6 +338,12 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
   3. **`TEMPLATE_DIR`** —— `check:gates` 在 worktree 要設,不然找不到模板。
   這三樣的共同形狀是「**在版控外面**」,所以 `git clone` / `worktree add` 都不會帶。
   模板 1.4.2 會把它做成 `TASK.md.template` 的第 0 步與 CHECKLIST 的一節;**在那之前由派工說明帶。**
+
+  **派工說明的通則:**不要給平行行動者「答案」,給它「取數的方法」。任何你在派工當下算出來、
+  而 worker 執行時可能已經變了的數字都適用:chain 長度、基準值、`scanned=N`、下一個 phase
+  編號、下一個 ADR 號。每個 worker 的資訊都是正確的,而正確的資訊互相矛盾；這是「把共享
+  狀態的衍生值發給平行行動者」的簽名。派工時應把取數指令本身寫進工單，讓 worker 在寫入
+  或量測的當下重新取得數值。
 
 - **續用舊 worktree 之前先 `git merge main`(不 rebase)。** P-18 只管「開的時候」,但一個 worktree
   活好幾輪之後,main 早就往前跑了 —— 實例:`a93e59b` 的 base 落後 origin/main 約 6 條。
