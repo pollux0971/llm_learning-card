@@ -993,6 +993,15 @@ graph TD
 > **各自在合併前取號,誰也看不到誰的未提交文件** —— 那正是 ADR-052 那支守門要防的形狀。
 > 合併時由 git 報衝突而發現,協調者改成 053。**`check:adr-numbers` 在鏈上,合併後會再驗一次。**
 
+## ADR-054 · 模板新鮮度另做收割窗口報告,不接必跑鏈
+
+- **Status**: accepted · 2026-09-12
+- **Context**: `check:gates --check` 的雜湊只回答「同步後檔案有沒有被手改」,不回答「上游模板後來有沒有出新版本」。兩種狀態在剛同步完成時相同,之後才分開；因此 `check:gates` 綠不能證明本 repo 已跟上模板。版本必須分別讀本 repo 的 `scripts/_root.ts` 檔頭與 `$TEMPLATE_DIR/VERSION`,不能把任一版本寫死。
+- **Decision**: 新增 `check:template-freshness` npm script,回報同版、上游較新、或無法判斷三態；無 `$TEMPLATE_DIR` 時 rc=0 但明確印「無法判斷」,不印成同版。另列出兩邊同步檔去掉檔頭後的內容差異,供升版前預估影響範圍。
+- **Alternatives**: 不接入 `gates.config.json` 的 `chain`,因為它只在收割窗口跑；CI 沒有模板路徑,接入必跑鏈會逼人關掉這個檢查。改以 `unwired` 登記並寫明「只在收割窗口跑;CI 沒有模板路徑,進鏈會逼人關掉它」,讓刻意不接線成為可見決定而非遺漏。
+- **Consequences**: 收割窗口可用一個固定 npm script 先量出版本與預期變更檔,再決定是否執行升版；CI 仍只依賴自包含的 `check:gates --check`。上游版本格式或本地檔頭損壞時回報無法判斷,避免錯誤宣稱同版。
+- **Related**: ADR-053, scripts/check-template-freshness.ts, scripts/gates.config.json
+
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)

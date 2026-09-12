@@ -36,6 +36,10 @@
     {
       "file": "check-known-defects.ts",
       "reason": "尚未使用 @known-defect tag"
+    },
+    {
+      "file": "check-template-freshness.ts",
+      "reason": "只在收割窗口跑;CI 沒有模板路徑,進鏈會逼人關掉它"
     }
   ],
   "phaseStatus": {
