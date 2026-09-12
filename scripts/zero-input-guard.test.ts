@@ -319,6 +319,20 @@ function llmCallLine(day: string, provider = 'openai'): string {
 
 const SPEND_DAY = '2026-09-01';
 
+/**
+ * llm-spend 探針的固定環境(測試 fixture,跟 `GIT_IDENTITY` 同型)。
+ *
+ * 為什麼寫死在這裡、不讀 `process.env`:llm-spend.ts 走 `_env.ts` 載 gitignored 的 `.env`,
+ * 三個變數缺一個就 exit 2「LLM_DAILY_CAP_USD 沒有設定」——那是它正確的行為,但拿來當**基線**
+ * 就等於基線壞掉,底下 11 條比較連鎖假紅(乾淨簽出沒有 `.env` 時必現,2026-09-05 兩次誤判)。
+ * 從 `process.env` 讀只是把「依賴外部環境」換個地方藏。這裡只注入這支需要的三個,
+ * 不整包 `...process.env` 蓋過去,乾淨簽出才驗得出來。
+ *
+ * 決定性:`process.loadEnvFile` **不會**覆蓋已存在的變數(含空字串),所以就算使用者的 `.env`
+ * 填了別的值(例如 cap=0),探針看到的仍是這三個。
+ */
+const SPEND_ENV: Record<string, string> = { LLM_DAILY_CAP_USD: '1', LLM_PRICE_IN_PER_M: '2.5', LLM_PRICE_OUT_PER_M: '10' };
+
 /** 用 --golden --fake 產一份 run,回傳 ingest.cards 那一組的 run 目錄。 */
 function goldenRun(scratch: string, rel: string): string {
   const out = join(scratch, rel);
@@ -726,25 +740,39 @@ const ROSTER: Record<string, Entry> = {
     commands: [
       {
         label: 'llm-spend',
+        // 每一次 spawn 都帶 SPEND_ENV(見該常數的註解):基線與探針都不靠 .env 或 shell。
         baselines: {
-          healthy: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `${llmCallLine(SPEND_DAY)}\n${llmCallLine(SPEND_DAY)}\n`)] }),
-          quiet: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `${llmCallLine('2026-08-01')}\n`)] }),
+          healthy: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `${llmCallLine(SPEND_DAY)}\n${llmCallLine(SPEND_DAY)}\n`)], env: SPEND_ENV }),
+          quiet: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `${llmCallLine('2026-08-01')}\n`)], env: SPEND_ENV }),
         },
         probes: [
           {
             kind: 'empty',
             name: 'log.jsonl 是空檔',
-            build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '')] }),
+            build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '')], env: SPEND_ENV }),
             legitZero: '剛 init 的 vault 就是空的 log,還沒花過錢是事實。訊息帶「0 次呼叫」,跟有花費的那天分得出來',
           },
           {
             kind: 'missing',
             name: '--log 不存在',
-            build: (s) => { const p = missingPath(s, 'log.jsonl'); return { args: ['--day', SPEND_DAY, '--log', p], mention: p }; },
+            build: (s) => { const p = missingPath(s, 'log.jsonl'); return { args: ['--day', SPEND_DAY, '--log', p], env: SPEND_ENV, mention: p }; },
           },
-          { kind: 'malformed', name: 'log.jsonl 每一行都是壞 JSON', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '{ "ts": \n{{{\n')] }), against: ['healthy', 'quiet'] },
-          { kind: 'wrong-type', name: 'log.jsonl 每一行都是數字', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '5\n6\n')] }), against: ['healthy', 'quiet'] },
-          { kind: 'wrong-type', name: 'log.jsonl 是一個 JSON 陣列', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `[${llmCallLine(SPEND_DAY)}]\n`)] }), against: ['healthy', 'quiet'] },
+          {
+            // 缺的不是檔案是環境變數:log 健康、cap 是**空字串**(不是 unset)。
+            // 為什麼是空字串:探針的 env 疊在 process.env 上,真的把 key 拿掉(`undefined`)在有 `.env`
+            // 的機器上會被 `_env.ts` 的 loadEnvFile 補回一個值 → exit 0 → 探針紅;loadEnvFile 不會蓋掉
+            // 已存在的變數(含空字串),所以空字串是唯一不受 `.env` 影響、又必定 exit 2 的形狀。
+            // 代價:這條踩的是 strictNumberEnv 的「是空的」分支,不是「沒有設定」分支——審核輪破壞驗證
+            // 過:把「沒有設定」改回 0 這條仍綠,把「是空的」改回 0 這條才紅。真正 unset 的分支由
+            // scripts/llm-spend.test.ts 的「LLM_DAILY_CAP_USD 沒設」守(純函式,env 用參數傳,不碰 .env)。
+            // 要 exit 2 而且點名是哪個變數——就是乾淨簽出時基線壞掉的那條訊息,現在當探針守著。
+            kind: 'missing',
+            name: 'LLM_DAILY_CAP_USD 是空字串(unset 由 llm-spend.test.ts 守)',
+            build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `${llmCallLine(SPEND_DAY)}\n`)], env: { ...SPEND_ENV, LLM_DAILY_CAP_USD: '' }, mention: 'LLM_DAILY_CAP_USD' }),
+          },
+          { kind: 'malformed', name: 'log.jsonl 每一行都是壞 JSON', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '{ "ts": \n{{{\n')], env: SPEND_ENV }), against: ['healthy', 'quiet'] },
+          { kind: 'wrong-type', name: 'log.jsonl 每一行都是數字', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '5\n6\n')], env: SPEND_ENV }), against: ['healthy', 'quiet'] },
+          { kind: 'wrong-type', name: 'log.jsonl 是一個 JSON 陣列', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `[${llmCallLine(SPEND_DAY)}]\n`)], env: SPEND_ENV }), against: ['healthy', 'quiet'] },
         ],
       },
     ],

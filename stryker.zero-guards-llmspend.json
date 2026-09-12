@@ -2,7 +2,7 @@
   "packageManager": "npm",
   "testRunner": "command",
   "commandRunner": {
-    "command": "MUTATE_TEST_GLOB='scripts/llm-spend.test.ts' npx vitest run --bail=1 --config vitest.mutate.config.ts -t '^(?!.*整份)'"
+    "command": "MUTATE_TEST_GLOB='scripts/llm-spend.test.ts' npx vitest run --bail=1 --config vitest.mutate.config.ts"
   },
   "reporters": ["clear-text", "progress-append-only"],
   "coverageAnalysis": "off",
