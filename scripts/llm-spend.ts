@@ -238,6 +238,8 @@ export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: s
   // 字 / 怎麼修)。以前 `"hello"` 這種行會被 push 進 events,然後被 computeDailySpend
   // 與今日條目的 filter 靜靜略過,結果是 exit 0 加一句「有 log 但沒花」;`null` 則是
   // 在 filter 裡讀 `.ts` 炸掉,exit 2 但訊息是一個 TypeError,沒有行號、沒有怎麼修。
+  // Stryker disable next-line ArrayDeclaration: 初值塞一個字串是真等價——computeDailySpend 與底下
+  // entriesToday 的 filter 都要 `typeof e.ts === 'string'`,字串沒有 ts,兩邊都靜靜略過,結果不變。
   const events: SpendEvents = [];
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
@@ -263,6 +265,9 @@ export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: s
   // 今日條目 = 今天**所有**的 log 行,不分 type / provider。跟 calls 是兩個數字,
   // 而兩個數字不一樣正是重點:`calls = 0` 但 `entriesToday > 0` 的意思是
   // 「log 活著,只是今天沒打 OpenAI」——那才是「$0.00」該有的證據。
+  // Stryker disable next-line ConditionalExpression: 把 `typeof e.ts === 'string'` 換成 `true` 是真等價——
+  // isLogEvent 已保證 ts 只會是 undefined 或字串,而 dayOf(undefined) 是 'NaN-NaN-NaN',永遠不等於 day。
+  // 守著這個 typeof 是給型別(dayOf 收 string),不是給行為。
   const entriesToday = events.filter((e) => typeof e.ts === 'string' && dayOf(e.ts) === day).length;
 
   return { kind: 'computed', usd, calls, entriesToday, capUsd, logPath };

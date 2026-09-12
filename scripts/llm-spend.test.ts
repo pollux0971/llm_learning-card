@@ -348,6 +348,9 @@ describe('buildSpendReport:壞行 = 算不出來(P-22 的反轉)', () => {
     // 3. 一句怎麼修,而且要講明白「不會自動跳過」
     expect(report.reason).toMatch(/重跑|移除|修好/);
     expect(report.reason).toContain('不會自動跳過');
+    // 4. 壞在哪:連 JSON 都不是。這句拿掉的話,「不是 JSON」跟「是 JSON 但不是事件」兩種壞法
+    //    會印成同一句,人看不出該修格式還是修內容(審核輪 Stryker:NOT_JSON 改成空字串曾存活)。
+    expect(report.reason).toContain('不是合法的 JSON');
   });
 });
 
@@ -356,16 +359,21 @@ describe('buildSpendReport:整份檔都不是 JSONL,也是算不出來', () => {
   // 而且「壞」不只 JSON.parse 丟例外:`"hello"`、`42`、`[]`、`null` 每一行都是合法 JSON,
   // 但沒有一個是契約 §10 的 log 事件(物件 + ts)。把它們當事件算,結果是「今日條目 0 筆、
   // $0.0000、exit 0」——一個被寫壞的 log 變成「有 log 但沒花」。
-  const cases: [string, string][] = [
-    ['整份是一個字串 "hello"', '"hello"'],
-    ['整份是一個數字 42', '42\n'],
-    ['整份是一個陣列 []', '[]\n'],
-    ['整份是 null', 'null\n'],
-    ['整份是一段 HTML', '<html><body>login</body></html>\n<p>please sign in</p>\n'],
+  // 第三欄:訊息要講出是哪一種壞——合法 JSON 但不是事件,還是連 JSON 都不是。兩種修法不同
+  // (改內容 vs 改格式),印成同一句人分不出來(審核輪 Stryker:NOT_EVENT / NOT_JSON 改成空字串曾存活)。
+  const cases: [string, string, string][] = [
+    ['整份是一個字串 "hello"', '"hello"', '不是 log 事件'],
+    ['整份是一個數字 42', '42\n', '不是 log 事件'],
+    ['整份是一個陣列 []', '[]\n', '不是 log 事件'],
+    ['整份是 null', 'null\n', '不是 log 事件'],
+    ['整份是一段 HTML', '<html><body>login</body></html>\n<p>please sign in</p>\n', '不是合法的 JSON'],
+    // ts 存在卻是數字(不是字串也不是 undefined):isLogEvent 最後一行專門擋這種,漏接會
+    // 讓這行悄悄混進 events,變成低估花費(審核輪 Stryker:isLogEvent 的型別檢查改成 `return true` 曾存活)。
+    ['整份是一個物件,但 ts 是數字不是字串', '{"ts":20260901}\n', '不是 log 事件'],
   ];
 
-  for (const [name, content] of cases) {
-    it(`${name} → unknown,原因帶行號 / 前 80 字 / 怎麼修`, () => {
+  for (const [name, content, what] of cases) {
+    it(`${name} → unknown,原因帶行號 / 前 80 字 / 怎麼修 / 哪一種壞`, () => {
       const path = join(tmpDir(), 'log.jsonl');
       writeFileSync(path, content, 'utf8');
 
@@ -377,6 +385,7 @@ describe('buildSpendReport:整份檔都不是 JSONL,也是算不出來', () => {
       expect(report.reason).toMatch(/第\s*1\s*行/);
       expect(report.reason).toContain(firstLine.slice(0, 80));
       expect(report.reason).toContain('不會自動跳過');
+      expect(report.reason).toContain(what);
     });
   }
 });
