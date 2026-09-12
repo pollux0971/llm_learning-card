@@ -25,9 +25,10 @@
   | `ingest.cards` / `ingest.questions` / `ingest.deps` | OpenAI | **沒有備援**:失敗 → `CLOUD_REQUIRED`;預算用完 → `BUDGET_EXCEEDED`(拒絕開始) |
 
   `ingest.*` 沒有備援是使用者明確選的:卡片品質還沒用本機模型驗過,不讓它產卡。
-- **當日預算(phase-4,ADR-039)**:`LLM_DAILY_CAP_USD`(預設 1 美元)。花費從
-  `state/log.jsonl` 的 `llm_call` 事件算(只算 `provider === 'openai'` 且當日的,
-  `tokens_in`/`tokens_out` × `LLM_PRICE_IN_PER_M`/`LLM_PRICE_OUT_PER_M`)。
+- **當日預算(phase-4,ADR-039、ADR-056)**:`LLM_DAILY_CAP_USD`(預設 1 美元)。花費從
+  `state/log.jsonl` 的 `llm_call` 事件算(排除明確免費的 `provider === 'ollama'`,其餘
+  provider 都算當日的 `tokens_in`/`tokens_out` ×
+  `LLM_PRICE_IN_PER_M`/`LLM_PRICE_OUT_PER_M`)。
   **`spent >= cap` 就算達到上限**(ADR-039 的邊界決定)。閘道免費,不計入。
 - 每次呼叫寫 log
 
@@ -43,7 +44,7 @@
 LLM_CLOUD_PROVIDER=openai OPENAI_API_KEY=... LLM_CLOUD_MODEL=gpt-5.6-luna \
   npx tsx scripts/llm.ts --task deepen --prompt "用 50 字解釋同源政策"
 npx tsx scripts/llm.ts --probe        # 印出線上與本機狀態,不呼叫模型
-npx tsx scripts/llm-spend.ts --today  # 今日 OpenAI 花費;退出碼 1 = 已達上限
+npx tsx scripts/llm-spend.ts --today  # 今日 LLM 花費(排除 ollama);退出碼 1 = 已達上限
 ```
 
 預期輸出:第一個印出 `LlmResult` 的 JSON;第二個印出 online / local 與可用模型清單;

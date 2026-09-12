@@ -1,0 +1,15 @@
+{
+  "score": 98.41,
+  "killed": 62,
+  "timeout": 0,
+  "survived": 1,
+  "noCoverage": 0,
+  "ignored": 4,
+  "runtimeError": 0,
+  "compileError": 33,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.config.json --mutate packages/core/src/llm/spend.ts",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.config.json",
+  "commit": "73ec1bd"
+}

@@ -1030,6 +1030,29 @@ graph TD
 - **Consequences**: 收割窗口可用一個固定 npm script 先量出版本與預期變更檔,再決定是否執行升版；CI 仍只依賴自包含的 `check:gates --check`。上游版本格式或本地檔頭損壞時回報無法判斷,避免錯誤宣稱同版。
 - **Related**: ADR-053, ADR-054, scripts/check-template-freshness.ts, scripts/gates.config.json
 
+## ADR-056 · 花費計算排除免費本機 provider,其他 provider 預設計費
+
+- **Status**: accepted · 2026-09-12
+- **Context**: 目前 `isLlmCallEvent` 只把 `provider === 'openai'` 算進花費,並用 `ollama`
+  免費來解釋這個 OpenAI 白名單。先前有人推論「缺 `.env` 時 provider 落回
+  `anthropic`,但 anthropic 不計費,所以會偷偷花錢」；實際上 provider 與金鑰目前剛好
+  同住一個檔案,缺檔會同時使 anthropic 金鑰不存在,那條呼叫會失敗,不是成功但漏算。
+  兩個條件互斥是佈局的副產物,不是設計保證:只要有人把 `ANTHROPIC_API_KEY` 設進
+  shell、CI secret 或 agent 環境,路徑就會通而煞車看不到。花費煞車的正確性不應依賴
+  金鑰和 provider 恰好在同一個檔案,因此要拿掉這個依賴巧合的前提。
+- **Decision**: `isLlmCallEvent` 維持 `type === 'llm_call'` 的條件,但只排除明確免費的
+  本機 provider `ollama`;只要是其他 provider(包括 `openai`、`anthropic` 及未知值)就
+  視為可計費。`computeDailySpend` 沿用既有日期與 token 計算,不改 provider 型別契約,
+  也不改 ADR-034 的 provider 選擇。
+- **Alternatives**: 維持或擴充 `CLOUD_PROVIDERS` 白名單(清單會增長,漏列新 provider
+  就會被錯當免費);改採免費 provider 排除法(免費清單目前只有本機閘道,不會隨雲端
+  provider 增長)。排除法若未來漏列一個免費 provider,錯誤方向是早煞車、少花錢;
+  白名單若漏列一個可計費 provider,錯誤方向是漏算、繼續花錢,前者較安全。
+- **Consequences**: provider 與金鑰可分別從環境、CI 或 agent 注入時,花費煞車仍會把
+  非免費事件算進來。未來新增 provider 不需先更新計費白名單,但若新增免費本機閘道,
+  必須明確加入免費排除規則與測試,避免把它誤算進預算。
+- **Related**: ADR-034, ADR-039
+
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)
