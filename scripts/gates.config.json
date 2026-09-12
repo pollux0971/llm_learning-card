@@ -2,6 +2,7 @@
   "cucumberCwd": ".",
   "chain": [
     "boundaries",
+    "check:env-keys",
     "typecheck",
     "lint:docs",
     "test",
