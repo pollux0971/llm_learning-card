@@ -571,14 +571,22 @@ export function strykerArgs(argv: string[]): string[] {
  * `strykerArgs(argv)` 的輸出裡,設定檔只可能是緊接在 `run` 子指令後面的那個位置參數
  * (Stryker CLI 只認這個形狀:子指令、選填的設定檔、其餘旗標)。找不到位置參數(全是旗標,
  * 或根本沒有任何參數)回 null,呼叫端退回預設的 `stryker.config.json`。
+ *
+ * 匯出僅供測試:同行程覆蓋 Stryker 看不見的部分(ADR-049,工單 2026-09-12 第三輪審核輪)。
+ * 退場條件:哪天測這支函式有不必擴大公開介面的接縫,這個 export 就該收回。
  */
-function configPositionalIndex(args: string[]): number | null {
+export function configPositionalIndex(args: string[]): number | null {
   if (args.length >= 2 && !args[1]!.startsWith('-')) return 1;
   return null;
 }
 
-/** 設定檔名去掉開頭的 `stryker.` 與結尾的 `.json`,算出報告落點的名字(預設檔算出來是 `config`)。 */
-function reportBaseName(configFileArg: string): string {
+/**
+ * 設定檔名去掉開頭的 `stryker.` 與結尾的 `.json`,算出報告落點的名字(預設檔算出來是 `config`)。
+ *
+ * 匯出僅供測試:同行程覆蓋 Stryker 看不見的部分(ADR-049,工單 2026-09-12 第三輪審核輪)。
+ * 退場條件:哪天測這支函式有不必擴大公開介面的接縫,這個 export 就該收回。
+ */
+export function reportBaseName(configFileArg: string): string {
   return basename(configFileArg).replace(/^stryker\./, '').replace(/\.json$/, '');
 }
 
@@ -590,8 +598,12 @@ function reportBaseName(configFileArg: string): string {
  * §「鎖的位置不看測試套件自己在哪裡跑」那個沙盒就是這樣)時**跳過強制**,原樣把 args 交給
  * Stryker——這不是我們要擋的錯誤形狀,擋下來只會讓「沒指定設定檔也沒有預設檔」這種邊角案例
  * 連 Stryker 都叫不起來,比什麼都不做更糟。
+ *
+ * 匯出僅供測試:同行程覆蓋 Stryker 看不見的部分(ADR-049,工單 2026-09-12 第三輪審核輪)——
+ * §15 的黑盒子行程沙盒測試真的測到這支,但 Stryker 的覆蓋率插樁跨不過行程邊界,看不見。
+ * 退場條件:哪天測這支函式有不必擴大公開介面的接縫,這個 export 就該收回。
  */
-function withReportEnforcement(
+export function withReportEnforcement(
   run: (args: string[]) => Promise<number>,
   log: (msg: string) => void,
 ): (args: string[]) => Promise<number> {
