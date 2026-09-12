@@ -278,10 +278,11 @@ function spawnVitest(args: string[], recordNames: boolean, log: (msg: string) =>
       if (tempDir) rmSync(tempDir, { recursive: true, force: true });
       done(1);
     });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       unforward();
       let result = code ?? 1;
-      if (junitFile && tempDir) {
+      // 被 signal 中斷時 JUnit 可能只是半截 XML,不可以拿半截名稱覆寫上一個完整基準。
+      if (junitFile && tempDir && signal === null) {
         try {
           writeTestcaseNames(readFileSync(junitFile, 'utf8'));
         } catch (err) {

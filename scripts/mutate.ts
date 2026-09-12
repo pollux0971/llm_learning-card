@@ -745,6 +745,12 @@ export function withReportEnforcement(
 
     try {
       mkdirSync(dirname(effectiveAbs), { recursive: true });
+      // 不可把上一輪的完整報告誤認成這一輪的產出;先刪掉舊 raw,再由 Stryker 重新交付。
+      try {
+        unlinkSync(reportAbs);
+      } catch (err) {
+        if (errnoCode(err) !== 'ENOENT') throw err;
+      }
       writeFileSync(effectiveAbs, JSON.stringify(effective));
     } catch (err) {
       log(`建不起來報告輸出目錄(${dirname(reportRel)}),沒辦法跑 Stryker:${String(err)}`);
