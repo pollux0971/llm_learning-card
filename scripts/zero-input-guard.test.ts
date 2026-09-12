@@ -586,6 +586,27 @@ const ROSTER: Record<string, Entry> = {
       },
     ],
   },
+  'scripts/check-json-duplicate-keys.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-json-duplicate-keys',
+        baselines: {
+          healthy: (s) => {
+            const root = emptyDir(s, 'consumer');
+            file(root, 'scripts/json-duplicate-keys.scope.json', JSON.stringify({ include: ['scripts/*.json'] }));
+            return { args: ['--root', root] };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: 'include 是空陣列', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/json-duplicate-keys.scope.json', JSON.stringify({ include: [] })); return { args: ['--root', root] }; } },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+          { kind: 'malformed', name: 'json-duplicate-keys.scope.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/json-duplicate-keys.scope.json', '{ "include": '); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: 'include 是字串', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/json-duplicate-keys.scope.json', JSON.stringify({ include: 'scripts/*.json' })); return { args: ['--root', root] }; } },
+        ],
+      },
+    ],
+  },
   'scripts/check-known-defects.ts': {
     kind: 'entry',
     commands: [

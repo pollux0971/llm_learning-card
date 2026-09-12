@@ -1,0 +1,8 @@
+{
+  "include": [
+    "scripts/*.json",
+    "stryker*.json",
+    "package.json",
+    "tsconfig*.json"
+  ]
+}
