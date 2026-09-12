@@ -810,7 +810,7 @@ describe('輸出的完整格式(訊息本身就是這張工單的產出)', () =>
   // 註解,那樣會變成用被測的東西驗自己。
   const SKIP_LINE =
     'doc-links: 排除片段 [node_modules, .git, .next, .nuxt, .svelte-kit, dist, build, out, coverage, ' +
-    '.turbo, .cache, target, .stryker-tmp, __pycache__, .venv, venv, reports, archive, tmp-learning]、' +
+    '.turbo, .cache, target, .stryker-tmp, __pycache__, .venv, venv, reports, archive, tmp-learning, learning]、' +
     '排除前綴 [.claude/worktrees, contracts/fixtures]';
 
   it('全綠:排除清單、統計、✓,沒有多餘的東西', () => {
