@@ -277,6 +277,14 @@
       "infra"
     ],
     [
+      "scripts/check-env-keys.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-env-keys.test.ts",
+      "infra"
+    ],
+    [
       "scripts/check-phase-coverage.ts",
       "infra"
     ],
@@ -346,7 +354,7 @@
   ],
   "contractsOwner": "contracts",
   "coverageBaseline": {
-    "managed": 249,
-    "scanned": 249
+    "managed": 251,
+    "scanned": 251
   }
 }
