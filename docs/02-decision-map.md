@@ -781,6 +781,150 @@ graph TD
   跑,跑完(含拋例外)用 `finally` 切回去——`withReportEnforcement` 認的是真的
   `process.cwd()`,沒有另外開一個 cwd 注入點,不值得為了測試改函式簽章。
 
+## ADR-050 · 記不記帳不是呼叫端可以選擇性提供的東西——`call()` 沒有 log 就硬錯
+
+- **Status**: accepted · 2026-09-12(協調者插隊工單,技術顧問裁決)
+- **Context**: 2026-09-12 實測:一次真的 `--live` golden run 打了 3 次真的 OpenAI(`ingest.cards`,
+  進 1702、出 2662 token),打完立刻 `npx tsx scripts/llm-spend.ts --today` 卻回報「今日花費
+  $0.0000,0 次呼叫」,`learning/state/log.jsonl` 最後一筆停在 2026-09-04。**3 次真的呼叫,
+  一筆都沒記。** 這條路完全沒接上每日預算煞車(`LLM_DAILY_CAP_USD`)——`--live` 可以無限跑,
+  上限一次都不會觸發,而且回報的是「確信的零」,不是「算不出來」。
+
+  根因是兩行舊程式碼(`packages/core/src/llm/router.ts` 的 `createFileLogAppender`):
+
+  ```ts
+  function createFileLogAppender(path: string | undefined): LogAppender {
+    if (!path) return () => {};   // 靜默丟棄,不警告
+  ```
+
+  加上 `packages/core/src/prompt-quality/golden-run.ts` 的 `createDefaultLiveRouter()`
+  沒給 `logPath` 也沒給 `settings`——那行舊註解寫「provider / model / 金鑰全部由 03
+  依契約 §11 從 env 與 settings 解析」,但 **logging 從來不是「解析」得出來的東西**,
+  `settings` 也不是(它要呼叫端主動讀檔案再傳進去,`scripts/ingest.ts` 一直都這樣做)。
+  用名冊查法(不是 grep 一個字串)列出所有建 router 的地方,另外兩個正式入口
+  (`scripts/llm.ts`、`scripts/ingest.ts`)都做對了,只有 golden-run 這一條漏接。
+
+  `packages/core/src/llm/router-gateway.ts` 有一份一模一樣的重複邏輯(`GatewayLlmRouter`
+  自己那半 log,不是委派給底層 `LlmRouterImpl` 的那份)——同一個「沒 path 就悄悄回
+  no-op」的形狀,同一個洞。
+- **Decision**:
+  1. **明示的丟棄可以,預設的丟棄不行。** `createFileLogAppender` 不再接受
+     `path: string | undefined`——沒有 path 就不建這個 appender。`CloudLlmRouter.call()`
+     與 `GatewayLlmRouter.callGateway()` 在打真的 adapter / 閘道**之前**檢查:
+     `logAppender` 與 `logPath` 兩個都沒給,直接丟 `UnaccountableLlmCallError`
+     (「LLM 呼叫必須可記帳:請提供 `logPath`,或明確注入 `logAppender`」)。
+     純單元測試不想寫檔案,自己明講 `logAppender: () => {}`——那是一個決定,
+     不是隨便漏接的後果。這條規則同時套用在兩個 router,因為它們各自維護一份
+     log 寫入,漏改任何一個都是留著同一個洞。
+  2. **能不能記帳不該由呼叫方選擇性提供。** 呼叫端沒有「不小心忘記接 log」這個選項
+     ——要嘛給真的路徑,要嘛自己承認「這次不記」。這條規則跟 ADR-044 的
+     `llm.gateway-router.spend-no-log-zero`(沒有 logPath 時花費算 0,預算分支永遠
+     走不到)不衝突,是互補:那條 ADR 管的是「沒有 log 時預算怎麼算」,這條 ADR
+     管的是「有沒有 log 這件事本身能不能被悄悄跳過」——後者現在必須是明講的。
+  3. `createDefaultLiveRouter()` 補上 `settings`(讀 `learning/config/settings.yaml`
+     的 `llm` 區塊,跟 `scripts/ingest.ts` 的 `readLlmSettings()` 同一套讀法)與
+     `logPath`(`learning/state/log.jsonl`),並修正那行寫錯的舊註解。`learning/`
+     不給就是 `<repo root>/learning/`(gitignored,這台機器上真的那一份);
+     `RunGoldenOptions` 新增 `learningDir` 讓測試(以及 CLI 的 `--out`)可以覆寫,
+     不然每跑一次測試就真的往 repo 的 `learning/state/log.jsonl` 加一行
+     (ADR-032 的「測試一律要傳暫存目錄」)。
+  4. **兩套算錢機制是互相獨立的,不要用一個的訊息推斷另一個的行為。**
+     `spend.ts` 的 `computeDailySpend()`(真正的預算煞車)讀 `.env` 的
+     `LLM_PRICE_IN_PER_M` / `OUT` 一組固定費率,完全不看 model 名字;
+     `golden-run.ts` 的 `estimateCostUsd()`(golden run 的顯示行,不是計費依據)
+     用的是 per-model 價目表,不在表上回 `undefined`。這輪把 `gpt-5.6-luna`
+     (目前 `.env` 設定的雲端模型)加進 `DEFAULT_MODEL_PRICES`(借用
+     `spend.ts` 的 `DEFAULT_SPEND_PRICES` 同一組數字當估計,不是真的官方報價,
+     為了顯示誠實);CLI 那句「model 不在價目表上,不估」改成
+     「此模型未定價,上面的估計不可用;每日上限走 .env 費率,仍然有效」——
+     舊訊息正是害人誤判「顯示不估 = 煞車也沒接上」的那句話。
+- **Consequences**: 這會打到所有沒給 appender 就呼叫 `.call()` 的既有測試——那些紅是對的,
+  不是代價,逐一改成明示注入(`router.test.ts` 17 處、`i1-content-pipeline.steps.ts` /
+  `ingest-pipeline.steps.ts` 各 1 處、`live-run.test.ts` 的 `makeRouter()`、
+  `router-gateway.test.ts` 的 ADR-044 spend-no-log-zero 那組)。`llm-router.steps.ts`
+  的 `@manual`「a short prompt is sent」場景(真的花錢的手動場景)原本也沒接 log,
+  一併補上跟 `buildRouter()` 一樣的 `state.logDir`/`logPath`。
+
+  驗收那組真的 `--live`(`npx tsx scripts/prompt-check.ts --golden --set ingest.cards --live`)
+  一開始被另一個獨立的洞擋住:`scripts/prompt-check.ts` 漏了 `import './_env.js'`
+  (ADR-034 的既有慣例,`scripts/ingest.ts` / `llm-spend.ts` / `review.ts` 都有),
+  導致 `.env` 從沒被載入,`--live` 落回 `config/settings.yaml` 的 anthropic 舊設定,
+  丟 `MissingCredentialError`(沒有打到任何 adapter,沒有花錢)。補上這行、在
+  `scripts/boundaries.allow.json` 加一條 `12-prompt-quality → infra` 的例外
+  (跟另外三支腳本同一個模式)後,`--live` 才真的跑得起來。這條算是這輪工單
+  順手發現、順手修的第二個獨立缺口,不是本來要修的那兩行。
+
+## ADR-051 · `learning/` 是主簽出跨 git worktree 共用的帳本,不是「每個簽出各自一份」
+
+- **Status**: accepted · 2026-09-12(協調者 + 技術顧問裁決)
+- **Context**: ADR-050 交出去之後,協調者實測到 `learning/state/log.jsonl` 其實是
+  **每個 git worktree 各自一份**:主簽出 36 筆(今日 0 筆),`llm-accountable` 這個
+  worktree 39 筆(= 36 + ADR-050 那次驗收的 3 筆)。ADR-050 的 `createDefaultLiveRouter()`
+  用 `ROOT`(這個 worktree 自己在磁碟上的位置)當 `learningDir` 的預設值,而 `ROOT`
+  在每個 worktree 都不一樣——**修完 ADR-050 之後,煞車接上了,但接的是「這個簽出
+  自己的帳本」,不是使用者唯一的那一份。**
+
+  兩個後果:
+  1. **每日上限的作用點錯了。** `LLM_DAILY_CAP_USD` 原本要擋的是「使用者今天花了多少」,
+     現在變成「這個簽出今天花了多少」——N 個 worktree 就能實際花到 N 倍的錢,
+     而每一個 worktree 都會誠實回報「未達上限」,因為它只看得到自己那份 log。
+     **沒有任何一個在說謊,但加起來超過。**
+  2. **worktree 會被清掉。** 那次驗收的 3 筆花費紀錄只存在於 `llm-accountable` 這個
+     worktree 的複本裡,而且沒有 commit——協調者收割、清掉 worktree 的那一刻,
+     那 3 筆就會永久消失、沒有任何痕跡,`llm-spend` 會回到誠實地說 `$0.0000`。
+     **帳本必須活得比 worktree 久,這不是「列舉不完整」的風險,是「正常的清理
+     流程會定期抹掉帳」。**
+
+  技術顧問否決了「讀取時加總所有現存 worktree 的 log」這個選項:加總的是「現在
+  存在的簽出」,一個簽出被清掉,它花掉的錢就從總數裡永久消失、沒有任何跡象——
+  跟選項 2 是同一個問題,只是從「憑證消失」換成「總數悄悄變小」。
+- **Decision**: 選 **單一帳本**,不是加總。`learning/` 一律解析到**主簽出**
+  (`git rev-parse --git-common-dir` 的上一層),不管呼叫的人現在站在哪個 worktree
+  ——跟 `scripts/mutate.ts` 的 `.stryker.lock`(`strykerLockPath()`)同一個問題、
+  同一招。新增 `packages/core/src/llm/vault.ts`(`resolveVaultRoot()` /
+  `resolveVaultLearningDir()`),**不重用** `strykerLockPath()` 本人——那是
+  `infra` owner,`03-llm-router` 依賴 `infra` 的下一步會是 library 依賴一支
+  script,方向反了;這幾行本身夠小、夠穩,照抄一份比跨層 import 乾淨(跟
+  `router-gateway.ts` 重複 `createFileLogAppender` 而不是跨檔案共用私有函式
+  同一個判斷)。
+
+  三個呼叫端跟著改:
+  1. `golden-run.ts` 的 `createDefaultLiveRouter()`:`learningDir` 不給時退回
+     `resolveVaultLearningDir(ROOT)`,不是 `join(ROOT, 'learning')`。決策本身拆成
+     `resolveLiveLearningDir(learningDir?)` 這個純函式——跟 ADR-050 對 `logAppender`
+     的態度一致,「沒給的話退回哪裡」要能不碰真的檔案系統就測到。
+  2. `scripts/llm-spend.ts`:`DEFAULT_LOG_PATH` 這個字面值常數保留(`parseSpendArgs()`
+     是純函式,不碰 git/檔案系統,測試不必真的在 git repo 裡跑),但 `main()`
+     看到這個 sentinel 時,在真的要做 I/O 之前,用新拆出來的 `resolveLogPath()`
+     解析成 `resolveVaultLearningDir()` 的絕對路徑。
+  3. `scripts/llm.ts`:同樣的預設值改法(`args.log` 沒給時用
+     `join(resolveVaultLearningDir(), 'state/log.jsonl')`)。
+
+  `scripts/ingest.ts` **不在這次修改範圍**:它的 `--out` 是使用者每次都要明講的
+  必要參數,不是「沒講就悄悄退回某個預設值」——使用者自己決定要把資料放哪裡,
+  跟這裡「預設值不該悄悄指錯地方」是不同的問題。
+
+  **附帶抓到一個問題**(不是這條修的目標,是修的過程中量到的):`scripts/llm-spend.ts`
+  的 `main()` 呼叫在檔案頂層無條件執行(`main().catch(...)`,沒有
+  `import.meta.url === pathToFileURL(process.argv[1]).href` 這種入口守衛)。
+  這支是這批腳本裡**唯一一支既是 CLI 入口、又被自己的測試檔直接 `import` 純函式**
+  的——`llm-spend.test.ts` 每次 `import { buildSpendReport, ... } from './llm-spend.js'`
+  就會真的執行一次 `main()`。改之前這件事無害(預設路徑只是一個相對字串,測試
+  cwd 底下通常讀不到东西);改完之後,每次 import 都會真的 shell 出去解析主簽出、
+  真的讀使用者的花費帳本、把真的資料印進測試輸出——只是讀,不會寫壞,但完全
+  不必要。補上入口守衛,`main()` 只在真的被當 CLI 執行時才跑。
+- **Consequences**: `RunGoldenOptions.learningDir`(ADR-050 加的那個測試/CLI `--out`
+  覆寫欄位)不受影響,行為不變。新增 `packages/core/src/llm/vault.test.ts`(照
+  `scripts/mutate.test.ts` 的 `describe('strykerLockPath')` 手法,合成的臨時
+  git repo + worktree,零真實資料風險)驗 `resolveVaultRoot` / `resolveVaultLearningDir`
+  本身;`scripts/llm-spend.test.ts` 與 `packages/core/src/prompt-quality/live-run.test.ts`
+  各補上 `resolveLogPath()` / `resolveLiveLearningDir()` 的純函式測試——這兩個都
+  刻意不用真的呼叫 `main()` / `createDefaultLiveRouter()` 零參數版本再斷言檔案
+  內容,那樣做在自動測試裡就是又造出一次「悄悄寫進使用者真的帳本」,跟這條 ADR
+  要堵的洞是同一種形狀,不能為了測試方便就犯規。**真的跨 worktree 端對端證據
+  是交接附的陽性對照(真的在這個 worktree 跑一次、看主簽出的 `llm-spend --today`
+  有沒有看到),不是自動測試。**
+
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)

@@ -71,7 +71,8 @@ export interface LlmRouterImplOptions {
   /** 依 provider 替換雲端 adapter,轉給底層 CloudLlmRouter */
   adapters?: Partial<Record<CloudProvider, CloudAdapter>>;
   defaultTimeoutMs?: number;
-  /** log.jsonl 的路徑;不給就不寫 */
+  /** log.jsonl 的路徑。ADR-050:底層 CloudLlmRouter.call() 兩個都不給會硬錯,
+   * 見 router.ts 的 CloudLlmRouterOptions.logPath。 */
   logPath?: string;
   /** 直接注入 appender,優先於 logPath */
   logAppender?: LogAppender;

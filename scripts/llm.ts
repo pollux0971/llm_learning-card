@@ -7,7 +7,8 @@
  * ADR-034:.env 只在 CLI 入口用 Node 內建的 process.loadEnvFile 載入,檔案不存在時吞掉錯誤;
  * library 程式碼(router.ts 等)只讀 process.env,不碰檔案。
  */
-import { GatewayLlmRouter, isLlmTask, type LlmTask } from '../packages/core/src/llm/index.js';
+import { join } from 'node:path';
+import { GatewayLlmRouter, isLlmTask, resolveVaultLearningDir, type LlmTask } from '../packages/core/src/llm/index.js';
 
 try {
   process.loadEnvFile(new URL('../.env', import.meta.url));
@@ -34,7 +35,9 @@ function parseArgs(argv: string[]): Record<string, string | boolean> {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const logPath = typeof args.log === 'string' ? args.log : 'learning/state/log.jsonl';
+  // ADR-051:沒有明講 --log 時指回主簽出的 learning/,不是這個 git worktree 自己
+  // 的複本——理由見 packages/core/src/llm/vault.ts。
+  const logPath = typeof args.log === 'string' ? args.log : join(resolveVaultLearningDir(), 'state/log.jsonl');
   // phase-4(ADR-039):走 GatewayLlmRouter,--probe 才會真的去問閘道有哪些模型,
   // call 才會有預算備援。閘道沒設定時 probeLocal() 一樣回 unavailable,不會爆炸。
   const router = new GatewayLlmRouter({ logPath });
