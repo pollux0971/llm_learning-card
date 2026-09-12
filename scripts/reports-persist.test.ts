@@ -135,6 +135,16 @@ describe('reports 的 gitignore 例外', () => {
 });
 
 describe('mutation 摘要', () => {
+  /*
+   * 真實案例（2026-09-12）：這條斷言合併進 main 後第一次跑就抓到
+   * `60a2cf0-scanner-mutatelock.json`：stored score 62.18 與由檔內計數重算的
+   * 69.78 相差 7.60。那是協調者下午用尚未修好的 mutate.ts 在 main 留下的摘要：
+   * 舊寫法把 68 個 Ignored 也算進分母，得到 388/624 = 62.18；Stryker 的正確分數是
+   * 388/556 = 69.78。這正是此斷言存在的原因。
+   *
+   * 陽性對照能證明「它會紅」。這一次證明的是「它紅在對的東西上」。
+   * 那是兩件事，而後者沒有別的方法可以證明 —— 只能等它真的抓到一次。
+   */
   it('真實摘要可從檔內狀態計數自行驗算分數', () => {
     const summaryDir = join(REPO_ROOT, 'reports', 'mutation');
     const summaryNames = existsSync(summaryDir)
