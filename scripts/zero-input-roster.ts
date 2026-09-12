@@ -77,14 +77,36 @@ export interface Command {
   omit?: Partial<Record<Kind, string>>;
 }
 
-export type Entry =
-  | { kind: 'entry'; commands: Command[] }
-  /** side-effect / 共用模組,不是可以執行的入口。 */
-  | { kind: 'helper'; reason: string }
-  /** 邏輯本體,由另一個入口包起來執行;探針打那個入口。 */
-  | { kind: 'library'; via: string; reason: string }
-  /** 真的沒辦法便宜地探。理由要說清楚為什麼,以及參數處理在哪裡有測。 */
-  | { kind: 'excluded'; reason: string };
+interface EntryCommand {
+  kind: 'entry';
+  commands: Command[];
+}
+
+interface HelperEntry {
+  kind: 'helper';
+  reason: string;
+}
+
+interface LibraryEntry {
+  kind: 'library';
+  via: string;
+  reason: string;
+}
+
+const EXCLUDED_KIND = 'excluded' as const;
+
+/**
+ * 刻意排除仍須自帶證明:它不是「沒被測」,而是「測在別的地方,而且指名」。
+ * `coveredBy` 由 zero-input-guard.test.ts 斷言為磁碟上的檔案,所以 excluded 不再是逃生口。
+ */
+interface ExcludedEntry {
+  kind: typeof EXCLUDED_KIND;
+  scope: string;
+  reason: string;
+  coveredBy: string;
+}
+
+export type Entry = EntryCommand | HelperEntry | LibraryEntry | ExcludedEntry;
 
 // ───────────────────────────────────────────────────────────────── fixture 小工具
 
@@ -283,17 +305,20 @@ export const ROSTER: Record<string, Entry> = {
 
   // ── 跨 worktree 鎖的兩個入口 ──
   'scripts/mutate.ts': {
-    kind: 'excluded',
+    kind: EXCLUDED_KIND,
+    scope: 'cross-worktree lock',
     reason:
       '真正不適用:runMutate 在解析任何 Stryker 參數前就取得跨 worktree 鎖，且有效/錯誤設定都會交給 Stryker 啟動；外部 CLI probe 不能同時便宜、隔離且不干擾別人的 mutate。' +
       'argv 轉換、鎖、finally/signal 釋放都在 scripts/mutate.test.ts 以注入 runStryker 與假鎖完整測。',
+    coveredBy: 'scripts/mutate.test.ts',
   },
   'scripts/run-tests.ts': {
-    kind: 'excluded',
+    kind: EXCLUDED_KIND,
+    scope: 'CLI 參數錯誤',
     reason:
-      '全套 vitest 的包裝(跟 Stryker 共用 .stryker.lock 排隊):沒有參數就拿鎖、真的起整套 vitest,' +
-      '在 vitest 裡再起一個 vitest 是遞迴。參數轉換(vitestArgs / isPartialRun)與鎖的行為在 ' +
-      'scripts/run-tests.test.ts 用注入的假 runVitest 測。' +
+      '只排除 CLI 參數錯誤這一類:這支是全套 vitest 的純轉發(跟 Stryker 共用 .stryker.lock 排隊),' +
+      '錯誤輸出屬於 vitest CLI；外部 zero-input probe 會變成在測 vitest 的 CLI。' +
+      '參數轉換(vitestArgs / isPartialRun)與鎖的行為在 scripts/run-tests.test.ts 用注入的假 runVitest 測。' +
       // 2026-09-12:roster-location 那張試著把它改成 entry(用 `-- --help` 繞開「會真的起全套」),
       // 四條探針全紅,而紅的內容全是 **vitest 自己的** 輸出:`--help` 的 usage、CACError 的
       // stack、rolldown 的 UNRESOLVED_ENTRY。要讓它們變綠,run-tests.ts 得攔截並改寫 vitest 的
@@ -301,6 +326,7 @@ export const ROSTER: Record<string, Entry> = {
       // **那次嘗試不是白費:它把「為什麼排除」從『會遞迴』推進到『這支是純轉發,探它的 CLI 等於
       // 探 vitest 的 CLI』** —— 後者才是不能收進來的真正理由,前者只是表象。
       '這一條被實測過一次(見上),不是沒試過就寫排除。',
+    coveredBy: 'scripts/run-tests.test.ts',
   },
 
   // ── 守門腳本(模板 v1.3.4,勿手改;這裡的紅燈走模板升版,不直接改檔) ──
@@ -515,7 +541,8 @@ export const ROSTER: Record<string, Entry> = {
     ],
   },
   'scripts/check-ledger-pollution.ts': {
-    kind: 'excluded',
+    kind: EXCLUDED_KIND,
+    scope: 'cli',
     reason:
       // 這是**類別判斷**,不是「這輪還沒做」——跟 mutate.ts / run-tests.ts 同一類,
       // 但各自的類別理由不同,見下。
@@ -525,6 +552,7 @@ export const ROSTER: Record<string, Entry> = {
       '是純函式、runTests 可注入,四種零輸入情況(帳本不存在 → UNKNOWN、測試後不存在、' +
       '行數改變、測試自己紅)都在 scripts/check-ledger-pollution.test.ts 裡以注入方式測到,' +
       '包含故意追加一行讓它紅的陽性對照。',
+    coveredBy: 'scripts/check-ledger-pollution.test.ts',
   },
   'scripts/check-template-freshness.ts': {
     kind: 'entry',
