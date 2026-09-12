@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.4 (4dc1513) sha256=80c7f078388c8042ac5c90d81bccd5cbedd5c2760b7230536829d127b0ae0bb0 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.8 (88a3e11) sha256=80c7f078388c8042ac5c90d81bccd5cbedd5c2760b7230536829d127b0ae0bb0 — 勿手改;升版用 sync-gates.sh
 /**
  * Phase 涵蓋率檢查(P-32,見 docs/03-agile-workflow.md 合併檢查段落)。
  *

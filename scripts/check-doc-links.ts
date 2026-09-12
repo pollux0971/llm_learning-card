@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.4 (4dc1513) sha256=f0c996086ebbe7652e6f8b6d5019029fc9d0a44c053c2f3956a7ae4e7e7d1f95 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.8 (88a3e11) sha256=4a28c53f2f7a7a8e200eabdf95e9bf2136ea87d3fbed74cfdccf39fce82291ab — 勿手改;升版用 sync-gates.sh
 /**
  * 文件連結檢查(見 docs/03-agile-workflow.md「文件漂移」維護項)。
  *
@@ -62,6 +62,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   DEFAULT_SKIP_DIRS,
+  resolveSkipDirs,
   ROOT as GIT_ROOT,
   loadGatesConfig as loadSharedGatesConfig,
   requireConfigType,
@@ -150,7 +151,9 @@ export function resolveSkipConfig(root: string): SkipConfig {
 
   let sharedExtra: string[] = [];
   if (config.skipDirs !== undefined) {
-    requireConfigType(config.skipDirs, 'skipDirs', 'array', GATE_NAME);
+    // 1.6.5(P-91 第三個實例):型別檢查與 glob 硬錯統一交給 `_root.ts` 的 `resolveSkipDirs()`,
+    // 這裡不再自己重寫一份——否則共用層新加的檢查對這支不生效(1.6.3 修 doc-rot 時同一個病)。
+    resolveSkipDirs(config as Record<string, unknown>, GATE_NAME);
     sharedExtra = stringArray(config.skipDirs);
   }
   const shared = splitSkipDirs(new Set(sharedExtra));

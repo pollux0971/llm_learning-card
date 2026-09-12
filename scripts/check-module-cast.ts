@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.4 (4dc1513) sha256=3ef1cdf2b2dcf3ad79a11f03219f2a359bc30c07ee2d6e761318d0d1148283e9 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.8 (88a3e11) sha256=3ef1cdf2b2dcf3ad79a11f03219f2a359bc30c07ee2d6e761318d0d1148283e9 — 勿手改;升版用 sync-gates.sh
 /**
  * 模組命名空間轉型守門(P-88,來源 AI_KM 顧問 2026-09-08)。
  *

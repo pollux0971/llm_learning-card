@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.4 (4dc1513) sha256=02a4dfa0b5fdf8fe0833b540ce9d04852c5836ae4ea4ad3e5e8223fee461d093 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.8 (88a3e11) sha256=02a4dfa0b5fdf8fe0833b540ce9d04852c5836ae4ea4ad3e5e8223fee461d093 — 勿手改;升版用 sync-gates.sh
 /**
  * cucumber dry-run 守門:讀摘要行,不信退出碼(P-86,來源 AI_KM 顧問 2026-09-08)。
  *

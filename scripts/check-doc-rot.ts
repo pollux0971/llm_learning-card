@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.4 (4dc1513) sha256=871c48f3efca027e767c63fdafdefd85c3cf3d1b3a37ad14352d8d6de9b89c0c — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.8 (88a3e11) sha256=871c48f3efca027e767c63fdafdefd85c3cf3d1b3a37ad14352d8d6de9b89c0c — 勿手改;升版用 sync-gates.sh
 /**
  * 文件腐爛黑名單掃描(S7,來源 nightmare-assault;模板 1.4.1 S13 補上 report 模式、
  * 自我測試與事故記錄檔的預設排除,同樣來源 nightmare-assault:他們自己的第一版

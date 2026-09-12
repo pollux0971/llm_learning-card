@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.4 (4dc1513) sha256=82c029d7f27f112dfc6ef454d96ba86a983ea9da4647d2f3ed7815f7dae560af — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.8 (88a3e11) sha256=82c029d7f27f112dfc6ef454d96ba86a983ea9da4647d2f3ed7815f7dae560af — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-module-cast.ts 的測試(模板 1.6.0,P-88)。
  *
