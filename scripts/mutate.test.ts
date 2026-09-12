@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
@@ -40,18 +40,21 @@ import {
   STALE_AFTER_MS,
   acquireLock,
   classifyLock,
+  configPositionalIndex,
   installCleanup,
   isMainModule,
   parseLock,
   pidIsAlive,
   readLock,
   releaseLock,
+  reportBaseName,
   runMutate,
   selfLockInfo,
   strykerArgs,
   strykerLockPath,
   tryAcquire,
   waitingMessage,
+  withReportEnforcement,
   type HeldLock,
   type LockInfo,
   type LockVerdict,
@@ -2378,5 +2381,467 @@ describe('審核輪(2026-09-05)補殺的變異:守衛與資源', () => {
       chmodSync(dir, 0o755);
     }
     expect(existsSync(p)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 15. 變異分數留檔(工單 2026-09-12,測試輪,預期全紅)
+//
+// 現況量測(2026-09-12,main = 634be7f):13 個 stryker*.json 沒有一個帶 json reporter,
+// jsonReporter 全部未設定過——分數只印在畫面上,沒有一份機器可讀的檔案留下來(交接紀錄
+// 寫「13 個只有 1 個留檔」是錯的,實際是 0 個,html 是人看的不是機器可讀的分數)。
+//
+// 這一節釘住 mutate.ts 這個唯一入口「必須」在組給 Stryker 的參數裡強制加上 json reporter
+// 與明確的輸出路徑,無論被指到的那個 stryker*.json 自己怎麼寫;而且要驗到檔案真的落地、
+// 內容算得出來的分數跟畫面印出來的一致——「加了旗標」是宣稱,「檔案存在」才是驗證。
+//
+// 手法沿用 §12(sandboxWithFakeStryker):複製 mutate.ts 原封不動、放一支假 stryker,
+// 走的是真正的 spawnStryker 那條路,不真的跑一輪 Stryker。假 stryker 收到的 argv 也原樣
+// 寫進 spawn-args.json,斷言直接看那個檔案——這是「實際 spawn 的參數」,不是猜的。
+//
+// 不改任何 stryker*.json:沙盒裡的設定檔是從 REPO_ROOT 原封不動複製過去的。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 假 stryker 用的固定報告:2 killed / 1 survived → 66.666…% ,四捨五入印成 66.67%。 */
+const FAKE_MUTATION_REPORT = {
+  files: {
+    'fake.ts': {
+      language: 'typescript',
+      mutants: [
+        { id: '1', status: 'Killed' },
+        { id: '2', status: 'Killed' },
+        { id: '3', status: 'Survived' },
+      ],
+    },
+  },
+};
+const FAKE_SCORE_STDOUT_LINE = 'Mutation score: 66.67%';
+
+/** 從報告裡算分數,用的是跟「印出來的那行」同一份定義(killed + timeout 算過)。 */
+function scoreFromMutationReport(report: typeof FAKE_MUTATION_REPORT): number {
+  let killed = 0;
+  let total = 0;
+  for (const file of Object.values(report.files)) {
+    for (const m of file.mutants) {
+      total += 1;
+      if (m.status === 'Killed' || m.status === 'Timeout') killed += 1;
+    }
+  }
+  return total === 0 ? 0 : (killed / total) * 100;
+}
+
+type FakeStrykerBehavior = 'honors-config' | 'never-writes-report';
+
+/**
+ * 造一個「mutate.ts 複本 + 假 stryker」的沙盒,沿用 sandboxWithFakeStryker 的手法。
+ * 差別是這次的假 stryker 是一支 node 腳本:讀自己收到的 argv,從尾端找第一個
+ * 存在且解得開的 `.json`,當作「最終真的生效的設定」——不管那是原封不動的
+ * `stryker.*.json`,還是 mutate.ts 合成出來的另一份。
+ *
+ * `behavior: 'never-writes-report'` 模擬「Stryker 宣稱成功,實際什麼都沒產出」
+ * (這個 repo 最貴的一課:ok 不等於發生),不管設定內容一律不落地報告,只印分數。
+ * 專門餵給下面的零輸入測試。
+ */
+function sandboxForReportArtifact(
+  dir: string,
+  configFileName: string,
+  behavior: FakeStrykerBehavior = 'honors-config',
+): { runner: string; argsFile: string } {
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
+  cpSync(MUTATE_MODULE, join(dir, 'scripts', 'mutate.ts'));
+  // 原封不動複製真正的設定檔——這張工單不准改 stryker*.json,沙盒裡也不改一個字。
+  cpSync(join(REPO_ROOT, configFileName), join(dir, configFileName));
+
+  const argsFile = join(dir, 'spawn-args.json');
+  const bin = join(dir, 'node_modules', '.bin', 'stryker');
+  writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const argv = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(argv));
+let cfg = null;
+for (let i = argv.length - 1; i >= 0; i--) {
+  const a = argv[i];
+  if (!a || a.startsWith('-') || !a.endsWith('.json')) continue;
+  const p = path.isAbsolute(a) ? a : path.resolve(process.cwd(), a);
+  if (!fs.existsSync(p)) continue;
+  try {
+    cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+    break;
+  } catch {}
+}
+const reporters = (cfg && cfg.reporters) || [];
+const outFile = cfg && cfg.jsonReporter && cfg.jsonReporter.fileName;
+const shouldWrite = ${behavior === 'honors-config' ? 'true' : 'false'} && reporters.includes('json') && !!outFile;
+if (shouldWrite) {
+  const abs = path.isAbsolute(outFile) ? outFile : path.resolve(process.cwd(), outFile);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, ${JSON.stringify(JSON.stringify(FAKE_MUTATION_REPORT))});
+}
+console.log(${JSON.stringify(FAKE_SCORE_STDOUT_LINE)});
+process.exit(0);
+`,
+    'utf8',
+  );
+  chmodSync(bin, 0o755);
+
+  const runner = join(dir, 'runner.mts');
+  writeFileSync(
+    runner,
+    `import { runMutate } from ${JSON.stringify(join(dir, 'scripts', 'mutate.ts'))};
+// 只給 lockPath:runStryker 走預設值,也就是真的 spawnStryker。
+const code = await runMutate({ lockPath: process.argv[2], argv: ['node', 'x', '--', ${JSON.stringify(configFileName)}] });
+console.log('EXITED ' + code);
+process.exitCode = code;
+`,
+    'utf8',
+  );
+  return { runner, argsFile };
+}
+
+/**
+ * 跑沙盒裡的 runner,回收 exit code 與合併過的 stdout+stderr。
+ * 用 TSX_BIN(絕對路徑)直接叫,不是 `node --import tsx`:沙盒的 cwd 在 /tmp 底下,
+ * bare specifier 會從 cwd 找 node_modules,找不到就整支炸掉(同檔 §「鎖的位置不看測試套件
+ * 自己在哪裡跑」已經踩過這個坑)。
+ */
+function runReportSandbox(dir: string, runner: string): Promise<{ code: number | null; out: string }> {
+  return new Promise((res) => {
+    const lockPath = join(dir, '.stryker.lock');
+    const child = spawn(TSX_BIN, [runner, lockPath], { cwd: dir });
+    let out = '';
+    child.stdout.on('data', (c) => (out += String(c)));
+    child.stderr.on('data', (c) => (out += String(c)));
+    child.on('close', (code) => res({ code, out }));
+  });
+}
+
+const REPORT_CONFIG_FILE = 'stryker.zero-guards-llmspend.json';
+const REPORT_NAME = 'zero-guards-llmspend';
+const REPORT_OUTPUT_REL = join('reports', 'mutation', `${REPORT_NAME}.json`);
+
+describe('變異分數留檔:mutate.ts 必須在唯一入口強制 json reporter 與明確輸出路徑', () => {
+  it(
+    '組給 Stryker 的參數裡,最終生效的設定要同時保留原本的 reporters 並加上 json(是加不是換),而且 jsonReporter.fileName 是明確路徑',
+    async () => {
+      const dir = tmp('mutate-report-args');
+      const { runner, argsFile } = sandboxForReportArtifact(dir, REPORT_CONFIG_FILE);
+      const { code, out } = await runReportSandbox(dir, runner);
+      expect(code, `runner 沒有正常結束:${out}`).toBe(0);
+      expect(existsSync(argsFile), `假 stryker 沒被叫起來,拿不到實際 spawn 的參數:${out}`).toBe(true);
+
+      const args = JSON.parse(readFileSync(argsFile, 'utf8')) as string[];
+      let resolved: { reporters?: string[]; jsonReporter?: { fileName?: string } } | null = null;
+      for (let i = args.length - 1; i >= 0; i--) {
+        const a = args[i]!;
+        if (!a.endsWith('.json')) continue;
+        const p = resolve(dir, a);
+        if (!existsSync(p)) continue;
+        resolved = JSON.parse(readFileSync(p, 'utf8'));
+        break;
+      }
+      expect(resolved, `實際 spawn 的參數裡找不到解得開的設定檔:${JSON.stringify(args)}`).not.toBeNull();
+
+      const original = JSON.parse(readFileSync(join(REPO_ROOT, REPORT_CONFIG_FILE), 'utf8')) as { reporters: string[] };
+      const reporters = resolved?.reporters ?? [];
+      for (const r of original.reporters) {
+        expect(reporters, `合成後的 reporters 弄丟了原本就有的 ${r}(是加不是換):${JSON.stringify(reporters)}`).toContain(r);
+      }
+      expect(reporters, `合成後的 reporters 沒有加上 json:${JSON.stringify(reporters)}`).toContain('json');
+      expect(resolved?.jsonReporter?.fileName, `沒有明確指定 jsonReporter.fileName,實際收到:${JSON.stringify(resolved)}`).toBe(
+        REPORT_OUTPUT_REL,
+      );
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  it(
+    '⚠️ 最重要的一條:跑完之後報告要真的落在 reports/mutation/<name>.json、parse 得動、且算出來的分數跟畫面印出來的一致(對不上要同時印兩個數字)',
+    async () => {
+      const dir = tmp('mutate-report-lands');
+      const { runner } = sandboxForReportArtifact(dir, REPORT_CONFIG_FILE);
+      const { code, out } = await runReportSandbox(dir, runner);
+      expect(code, `runner 沒有成功結束:${out}`).toBe(0);
+
+      const reportPath = join(dir, REPORT_OUTPUT_REL);
+      expect(
+        existsSync(reportPath),
+        `報告沒有落在 ${REPORT_OUTPUT_REL}——加旗標是宣稱,檔案存在才是驗證。實際輸出:${out}`,
+      ).toBe(true);
+
+      const raw = readFileSync(reportPath, 'utf8');
+      let parsed: typeof FAKE_MUTATION_REPORT | undefined;
+      expect(() => {
+        parsed = JSON.parse(raw);
+      }, `報告檔案 parse 不動:${raw.slice(0, 200)}`).not.toThrow();
+
+      const fileScore = scoreFromMutationReport(parsed!);
+      const printedMatch = out.match(/Mutation score:\s*([\d.]+)%/);
+      expect(printedMatch, `畫面上找不到分數:${out}`).not.toBeNull();
+      const printedScore = Number(printedMatch![1]);
+
+      expect(
+        fileScore,
+        `檔案裡算出來的分數(${fileScore.toFixed(2)})跟畫面印出來的分數(${printedScore})對不上`,
+      ).toBeCloseTo(printedScore, 1);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  it(
+    'Stryker 沒有真的產出報告檔案時(旗標加了、退出碼還是 0),mutate.ts 不能安靜地當成功——退出碼要非 0,而且要點名是哪個檔案沒出現',
+    async () => {
+      const dir = tmp('mutate-report-missing');
+      const { runner } = sandboxForReportArtifact(dir, REPORT_CONFIG_FILE, 'never-writes-report');
+      const { code, out } = await runReportSandbox(dir, runner);
+
+      expect(code, `Stryker 沒交出報告卻被當成功,退出碼:${code};實際輸出:${out}`).not.toBe(0);
+      expect(out, `訊息沒有點名是哪個檔案沒出現(應該提到 ${REPORT_NAME}):${out}`).toContain(REPORT_NAME);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  it(
+    '輸出目錄建不起來時(reports 被同名的一般檔案佔住),mutate.ts 要講清楚壞在哪,不能靜靜當成功',
+    async () => {
+      const dir = tmp('mutate-report-blocked-dir');
+      const { runner } = sandboxForReportArtifact(dir, REPORT_CONFIG_FILE);
+      // 用一個同名的普通檔案擋住 reports/,mkdir -p reports/mutation 會撞 ENOTDIR。
+      writeFileSync(join(dir, 'reports'), 'not a directory');
+
+      const { code, out } = await runReportSandbox(dir, runner);
+
+      expect(code, `輸出目錄建不起來卻被當成功:${out}`).not.toBe(0);
+      expect(out.trim().length > 0, '目錄建不起來時什麼訊息都沒印,壞在哪都不知道').toBe(true);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 16. 變異分數留檔:同行程補測(審核輪 2026-09-12,ADR-049)
+//
+// 背景:上面 §15 的三條黑盒測試是真的子行程,Stryker 的覆蓋率插樁跨不過行程邊界,
+// 量不到 `configPositionalIndex` / `reportBaseName` / `withReportEnforcement` 被執行到——
+// 「量尺看不見」不等於「沒被測到」,但也不等於「已經測夠了」,所以在這裡補跟 §9 同形狀的
+// 同行程測試(直接塞假的 `run`,不開子行程),讓 Stryker 也看得見。§15 那三條照工單要求留著,
+// 兩者驗的不是同一件事(黑盒驗「真的走 spawnStryker 時整條路線串得起來」,這裡驗邏輯本身),
+// 不重疊。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 讓 `withReportEnforcement` 讀到的 `process.cwd()` 變成 `dir`,跑完(含拋例外)一定還原。
+ * 用 `vi.spyOn` 換回傳值,不真的 `process.chdir()`——Stryker 跑 vitest 是 worker_threads 池,
+ * Node 的 worker thread 裡 `process.chdir()` 直接丟 `ERR_WORKER_UNSUPPORTED_OPERATION`。
+ */
+async function withCwd<T>(dir: string, fn: () => Promise<T> | T): Promise<T> {
+  const spy = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+  try {
+    return await fn();
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+describe('configPositionalIndex', () => {
+  it('沒有任何參數時回 null', () => {
+    expect(configPositionalIndex([])).toBeNull();
+  });
+
+  it('只有子指令、沒有位置參數時回 null(下一個是旗標)', () => {
+    expect(configPositionalIndex(['run', '--concurrency'])).toBeNull();
+  });
+
+  it('緊接在子指令後面的是旗標(以 - 開頭)時回 null', () => {
+    expect(configPositionalIndex(['run', '-c'])).toBeNull();
+  });
+
+  it('緊接在子指令後面不是旗標時回 1', () => {
+    expect(configPositionalIndex(['run', 'stryker.zero-guards-due.json'])).toBe(1);
+  });
+
+  it('位置參數後面還有其他旗標,一樣認第 1 個位置', () => {
+    expect(configPositionalIndex(['run', 'stryker.foo.json', '--concurrency', '2'])).toBe(1);
+  });
+});
+
+describe('reportBaseName', () => {
+  it('標準檔名去掉 stryker. 前綴與 .json 後綴', () => {
+    expect(reportBaseName('stryker.zero-guards-due.json')).toBe('zero-guards-due');
+  });
+
+  it('預設設定檔算出來是 config', () => {
+    expect(reportBaseName('stryker.config.json')).toBe('config');
+  });
+
+  it('沒有 stryker. 前綴時只去掉 .json 後綴', () => {
+    expect(reportBaseName('foo.json')).toBe('foo');
+  });
+
+  it('帶路徑時只看檔名那一段(basename)', () => {
+    expect(reportBaseName('some/dir/stryker.scanner-mutatelock.json')).toBe('scanner-mutatelock');
+  });
+
+  it('只去掉開頭的 stryker.,中間出現的 stryker. 不動(前綴規則有錨點 ^)', () => {
+    expect(reportBaseName('foo.stryker.json')).toBe('foo.stryker');
+  });
+
+  it('只去掉結尾的 .json,中間出現的 .json 不動(後綴規則有錨點 $)', () => {
+    expect(reportBaseName('stryker.config.json.bak')).toBe('config.json.bak');
+  });
+});
+
+describe('withReportEnforcement(同行程,假的 run)', () => {
+  it('reporters 合成是加不是換,jsonReporter.fileName 指到 reports/mutation/<name>.json,報告存在時原樣回傳 run 的退出碼', async () => {
+    const dir = tmp('report-enforce-honors');
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({ reporters: ['clear-text'] }));
+    const logs: string[] = [];
+    let receivedArgs: string[] = [];
+
+    const code = await withCwd(dir, () =>
+      withReportEnforcement(async (args) => {
+        receivedArgs = args;
+        const cfg = JSON.parse(readFileSync(args[1]!, 'utf8')) as { jsonReporter: { fileName: string } };
+        mkdirSync(dirname(resolve(dir, cfg.jsonReporter.fileName)), { recursive: true });
+        writeFileSync(resolve(dir, cfg.jsonReporter.fileName), '{}');
+        return 0;
+      }, (msg) => logs.push(msg))(['run', 'stryker.foo.json']),
+    );
+
+    expect(code).toBe(0);
+    expect(logs, `不該有任何警告訊息:${JSON.stringify(logs)}`).toEqual([]);
+    // 位置參數是 args[1] 的替換(finalArgs[posIndex] = effectiveAbs),不是插入多一個元素——
+    // 原本只有 2 個參數,合成後也該還是 2 個,不能變成 3 個(那是「沒有位置參數」那條路走錯了)。
+    expect(receivedArgs, `參數個數變了,像是走到了插入而不是替換:${JSON.stringify(receivedArgs)}`).toHaveLength(2);
+    expect(receivedArgs[1]).toBe(resolve(dir, 'reports', 'mutation', '.effective-foo.json'));
+    const effective = JSON.parse(readFileSync(receivedArgs[1]!, 'utf8')) as {
+      reporters: string[];
+      jsonReporter: { fileName: string };
+    };
+    expect(effective.reporters).toEqual(['clear-text', 'json']);
+    expect(effective.jsonReporter.fileName).toBe(join('reports', 'mutation', 'foo.json'));
+  });
+
+  it('原本的設定沒有 reporters 欄位時,當成空陣列處理,合成後只有 json 一個', async () => {
+    const dir = tmp('report-enforce-no-reporters-field');
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({}));
+    let receivedArgs: string[] = [];
+
+    await withCwd(dir, () =>
+      withReportEnforcement(async (args) => {
+        receivedArgs = args;
+        const cfg = JSON.parse(readFileSync(args[1]!, 'utf8')) as { jsonReporter: { fileName: string } };
+        mkdirSync(dirname(resolve(dir, cfg.jsonReporter.fileName)), { recursive: true });
+        writeFileSync(resolve(dir, cfg.jsonReporter.fileName), '{}');
+        return 0;
+      }, () => {})(['run', 'stryker.foo.json']),
+    );
+
+    const effective = JSON.parse(readFileSync(receivedArgs[1]!, 'utf8')) as { reporters: string[] };
+    expect(effective.reporters).toEqual(['json']);
+  });
+
+  it('原本的 reporters 已經有 json 時不重複加', async () => {
+    const dir = tmp('report-enforce-dedup');
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({ reporters: ['clear-text', 'json'] }));
+    let receivedArgs: string[] = [];
+
+    await withCwd(dir, () =>
+      withReportEnforcement(async (args) => {
+        receivedArgs = args;
+        const cfg = JSON.parse(readFileSync(args[1]!, 'utf8')) as { jsonReporter: { fileName: string } };
+        mkdirSync(dirname(resolve(dir, cfg.jsonReporter.fileName)), { recursive: true });
+        writeFileSync(resolve(dir, cfg.jsonReporter.fileName), '{}');
+        return 0;
+      }, () => {})(['run', 'stryker.foo.json']),
+    );
+
+    const effective = JSON.parse(readFileSync(receivedArgs[1]!, 'utf8')) as { reporters: string[] };
+    expect(effective.reporters).toEqual(['clear-text', 'json']);
+  });
+
+  it('沒有位置參數(空跑)時退回 stryker.config.json,並且把合成後的路徑插在子指令後面', async () => {
+    const dir = tmp('report-enforce-default-config');
+    writeFileSync(join(dir, 'stryker.config.json'), JSON.stringify({ reporters: [] }));
+    let receivedArgs: string[] = [];
+
+    await withCwd(dir, () =>
+      withReportEnforcement(async (args) => {
+        receivedArgs = args;
+        const cfg = JSON.parse(readFileSync(args[1]!, 'utf8')) as { jsonReporter: { fileName: string } };
+        mkdirSync(dirname(resolve(dir, cfg.jsonReporter.fileName)), { recursive: true });
+        writeFileSync(resolve(dir, cfg.jsonReporter.fileName), '{}');
+        return 0;
+      }, () => {})(['run', '--concurrency', '2']),
+    );
+
+    expect(receivedArgs[0]).toBe('run');
+    expect(receivedArgs[2]).toBe('--concurrency');
+    expect(receivedArgs[3]).toBe('2');
+    const effective = JSON.parse(readFileSync(receivedArgs[1]!, 'utf8')) as { jsonReporter: { fileName: string } };
+    expect(effective.jsonReporter.fileName).toBe(join('reports', 'mutation', 'config.json'));
+  });
+
+  it('讀不到 / parse 不動目標設定檔時跳過強制,原樣把 args 交給 run', async () => {
+    const dir = tmp('report-enforce-unreadable');
+    // 故意不寫 stryker.config.json,模擬全新環境沒有預設檔。
+    let receivedArgs: string[] | null = null;
+
+    const code = await withCwd(dir, () =>
+      withReportEnforcement(async (args) => {
+        receivedArgs = args;
+        return 0;
+      }, () => {})(['run', '--concurrency', '2']),
+    );
+
+    expect(code).toBe(0);
+    expect(receivedArgs).toEqual(['run', '--concurrency', '2']);
+  });
+
+  it('run 回 0 但承諾的報告沒有落地時,退出碼要改成非 0,訊息要點名報告名字', async () => {
+    const dir = tmp('report-enforce-missing-report');
+    writeFileSync(join(dir, 'stryker.zero-guards-llmspend.json'), JSON.stringify({ reporters: [] }));
+    const logs: string[] = [];
+
+    const code = await withCwd(dir, () =>
+      withReportEnforcement(async () => 0, (msg) => logs.push(msg))(['run', 'stryker.zero-guards-llmspend.json']),
+    );
+
+    expect(code).not.toBe(0);
+    expect(logs.some((m) => m.includes('zero-guards-llmspend')), `訊息沒點名檔案:${JSON.stringify(logs)}`).toBe(
+      true,
+    );
+  });
+
+  it('run 自己已經回非 0,報告也沒落地時,保留 run 原本的退出碼,不蓋成 1', async () => {
+    const dir = tmp('report-enforce-nonzero-kept');
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({ reporters: [] }));
+
+    const code = await withCwd(dir, () => withReportEnforcement(async () => 7, () => {})(['run', 'stryker.foo.json']));
+
+    expect(code).toBe(7);
+  });
+
+  it('報告輸出目錄建不起來時(reports 被同名檔案佔住),回非 0 且記一條警告', async () => {
+    const dir = tmp('report-enforce-blocked-dir');
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({ reporters: [] }));
+    writeFileSync(join(dir, 'reports'), 'not a directory');
+    const logs: string[] = [];
+    let ran = false;
+
+    const code = await withCwd(dir, () =>
+      withReportEnforcement(async () => {
+        ran = true;
+        return 0;
+      }, (msg) => logs.push(msg))(['run', 'stryker.foo.json']),
+    );
+
+    expect(ran, 'mkdir 失敗時不該還去叫 run').toBe(false);
+    expect(code).not.toBe(0);
+    expect(logs, '目錄建不起來時沒有記任何警告').toHaveLength(1);
+    expect(logs[0], `警告訊息是空的,講不清楚壞在哪:${JSON.stringify(logs)}`).toContain('reports');
   });
 });

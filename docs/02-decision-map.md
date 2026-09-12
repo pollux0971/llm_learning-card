@@ -750,6 +750,37 @@ graph TD
 | ~~cucumber 的 TypeScript loader 設定~~ | 已決定(ADR-033) | — |
 | golden 評分的維度與規模 | I2 前 | 12-prompt-quality/phase-2 |
 
+## ADR-049 · `withReportEnforcement` 等三個函式為了同行程覆蓋而 `export`,不是可接受的架構代價
+
+- **Status**: accepted · 2026-09-12(技術顧問裁決)
+- **Context**: 「變異分數留檔」工單開發輪(`bfc5481`)新增 `configPositionalIndex` /
+  `reportBaseName` / `withReportEnforcement` 三個函式,`scripts/mutate.ts` 自己的嚴格級變異分數
+  從基準 100% 掉到 85.90%(0 survived、54 no-coverage,全部落在這三個函式)。原因不是邏輯有洞:
+  這三個函式**確實被** `scripts/mutate.test.ts` §15 的黑盒子行程沙盒測到,只是那個手法是
+  `spawn(TSX_BIN, …)` 開真的子行程,Stryker 的覆蓋率插樁跨不過行程邊界,量不到。
+
+  開發輪交接留了兩個選項:A(加 export、補同行程單元測試把分數拉回去)或 B(記一條 ADR
+  接受這 54 個 no-coverage 是黑盒測試手法的架構代價)。技術顧問否決 B:那三個函式不是
+  `spawnStryker` 那種「真的沒辦法在單一行程裡測」(要驗真的 OS signal、真的 process group
+  kill),`withReportEnforcement` 收的是可注入的 `run: (args) => Promise<number>`,跟 §9 全部
+  測試同一個形狀。**把量測工具的盲區(跨行程覆蓋率插樁)寫成「可接受的架構代價」,等於用量尺
+  的極限去定義「做完」**——量尺看不見既不等於沒被測到,也不等於已經測夠了,兩個方向都不成立。
+- **Decision**: 選 **A**。三個函式從 module-private 改 `export`,只為了讓
+  `scripts/mutate.test.ts` 能同行程呼叫(不開子行程)。每個 `export` 那一行附兩件事:
+  1. 為什麼匯出(同行程覆蓋 Stryker 看不見的部分,指回本條 ADR);
+  2. **退場條件**——哪天測這支函式有不必擴大公開介面的接縫,這個 export 就該收回。這是暫時
+     措施,不是新的公開 API,下一個讀到 `export` 的人不該把它當成給外面用的介面。
+
+  §15 的三條黑盒測試**照工單要求保留**,不因為补了同行程測試就拿掉:黑盒驗的是「真的走
+  `spawnStryker` 時整條路線串得起來」(真的 spawn、真的解析 argv、真的落地報告檔案),同行程
+  測試驗的是函式本身的邏輯分支(reporters 加不是換、posIndex 各種形狀、mkdir/JSON.parse 失敗
+  路徑),兩者不重疊,是互補不是取代。
+
+  補的同行程測試新增兩個 describe 區塊(`configPositionalIndex`、`reportBaseName`)與一個
+  `withReportEnforcement` 區塊(共 16 條),用 `process.chdir` 切到 `mkdtempSync` 出來的臨時目錄
+  跑,跑完(含拋例外)用 `finally` 切回去——`withReportEnforcement` 認的是真的
+  `process.cwd()`,沒有另外開一個 cwd 注入點,不值得為了測試改函式簽章。
+
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)

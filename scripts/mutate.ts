@@ -18,8 +18,19 @@
  * (`scripts/mutate.test.ts` §13 掃所有文字檔守著這條,含 .ts 的註解)。
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { closeSync, fsyncSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** 鎖檔名。放在主 repo 的 `.git/` 旁邊(不是各 worktree 自己的根)。 */
@@ -544,6 +555,108 @@ export function strykerArgs(argv: string[]): string[] {
   return passthrough[0] === 'run' ? passthrough : ['run', ...passthrough];
 }
 
+/**
+ * 變異分數留檔(工單 2026-09-12)。
+ *
+ * 背景:13 個 stryker*.json 的 reporters 各寫各的,只有 1 個(其實是 0 個,見交接)留了機器可讀
+ * 的 json。設定散在 13 個檔案裡不可靠,所以在 `npm run mutate` 這個唯一入口強制:不管使用者指到
+ * 哪一份 stryker*.json,組給 Stryker 的參數裡一定要有 json reporter 與明確的輸出路徑。
+ *
+ * 這支包住的是**預設的** `runStryker`(也就是真的 `spawnStryker`)。測試裡自己注入 `runStryker`
+ * 的那些(§9 的鎖/退出碼測試)一律繞過這層,原因是它們測的是鎖與退出碼透傳,不是報告——
+ * 讓它們自己的 stub 收到原封不動的 `strykerArgs(argv)` 輸出,不要被這層加料。
+ */
+
+/**
+ * `strykerArgs(argv)` 的輸出裡,設定檔只可能是緊接在 `run` 子指令後面的那個位置參數
+ * (Stryker CLI 只認這個形狀:子指令、選填的設定檔、其餘旗標)。找不到位置參數(全是旗標,
+ * 或根本沒有任何參數)回 null,呼叫端退回預設的 `stryker.config.json`。
+ *
+ * 匯出僅供測試:同行程覆蓋 Stryker 看不見的部分(ADR-049,工單 2026-09-12 第三輪審核輪)。
+ * 退場條件:哪天測這支函式有不必擴大公開介面的接縫,這個 export 就該收回。
+ */
+export function configPositionalIndex(args: string[]): number | null {
+  if (args.length >= 2 && !args[1]!.startsWith('-')) return 1;
+  return null;
+}
+
+/**
+ * 設定檔名去掉開頭的 `stryker.` 與結尾的 `.json`,算出報告落點的名字(預設檔算出來是 `config`)。
+ *
+ * 匯出僅供測試:同行程覆蓋 Stryker 看不見的部分(ADR-049,工單 2026-09-12 第三輪審核輪)。
+ * 退場條件:哪天測這支函式有不必擴大公開介面的接縫,這個 export 就該收回。
+ */
+export function reportBaseName(configFileArg: string): string {
+  return basename(configFileArg).replace(/^stryker\./, '').replace(/\.json$/, '');
+}
+
+/**
+ * 包住 `run`(真的 spawnStryker):讀目標設定檔 → 合成 reporters(加不是換)+ jsonReporter →
+ * 寫成一份 effective 設定檔取代原本的位置參數 → 跑完後驗證承諾的報告檔案真的落地。
+ *
+ * 讀不到 / parse 不動目標設定檔(例如全新環境裡根本沒有預設的 `stryker.config.json`,
+ * §「鎖的位置不看測試套件自己在哪裡跑」那個沙盒就是這樣)時**跳過強制**,原樣把 args 交給
+ * Stryker——這不是我們要擋的錯誤形狀,擋下來只會讓「沒指定設定檔也沒有預設檔」這種邊角案例
+ * 連 Stryker 都叫不起來,比什麼都不做更糟。
+ *
+ * 匯出僅供測試:同行程覆蓋 Stryker 看不見的部分(ADR-049,工單 2026-09-12 第三輪審核輪)——
+ * §15 的黑盒子行程沙盒測試真的測到這支,但 Stryker 的覆蓋率插樁跨不過行程邊界,看不見。
+ * 退場條件:哪天測這支函式有不必擴大公開介面的接縫,這個 export 就該收回。
+ */
+export function withReportEnforcement(
+  run: (args: string[]) => Promise<number>,
+  log: (msg: string) => void,
+): (args: string[]) => Promise<number> {
+  return async (args: string[]): Promise<number> => {
+    const cwd = process.cwd();
+    const posIndex = configPositionalIndex(args);
+    const configFileArg = posIndex === null ? 'stryker.config.json' : args[posIndex]!;
+
+    let original: Record<string, unknown>;
+    try {
+      original = JSON.parse(readFileSync(resolve(cwd, configFileArg), 'utf8')) as Record<string, unknown>;
+    } catch {
+      return run(args);
+    }
+
+    const name = reportBaseName(configFileArg);
+    const reportRel = join('reports', 'mutation', `${name}.json`);
+    const reportAbs = resolve(cwd, reportRel);
+    const effectiveAbs = resolve(cwd, 'reports', 'mutation', `.effective-${name}.json`);
+
+    const originalReporters = Array.isArray(original.reporters) ? (original.reporters as string[]) : [];
+    const reporters = originalReporters.includes('json') ? originalReporters : [...originalReporters, 'json'];
+    const effective = {
+      ...original,
+      reporters,
+      jsonReporter: { ...(original.jsonReporter as Record<string, unknown> | undefined), fileName: reportRel },
+    };
+
+    try {
+      mkdirSync(dirname(effectiveAbs), { recursive: true });
+      writeFileSync(effectiveAbs, JSON.stringify(effective));
+    } catch (err) {
+      log(`建不起來報告輸出目錄(${dirname(reportRel)}),沒辦法跑 Stryker:${String(err)}`);
+      return 1;
+    }
+
+    const finalArgs = [...args];
+    if (posIndex === null) {
+      finalArgs.splice(1, 0, effectiveAbs);
+    } else {
+      finalArgs[posIndex] = effectiveAbs;
+    }
+
+    const code = await run(finalArgs);
+
+    // 【判斷】加旗標是宣稱,檔案存在才是驗證(P-84 家族同一課)。就算 Stryker 自己回 0,
+    // 只要承諾的報告沒出現就不能算成功;Stryker 自己已經是非 0 的話保留那個退出碼,不要蓋成 1。
+    if (existsSync(reportAbs)) return code;
+    log(`Stryker 結束了(退出碼 ${code}),但報告沒有落在 ${reportRel}——加旗標是宣稱,檔案存在才是驗證。`);
+    return code === 0 ? 1 : code;
+  };
+}
+
 export interface RunDeps {
   argv?: string[];
   lockPath?: string;
@@ -572,9 +685,11 @@ export async function runMutate(deps: RunDeps = {}): Promise<number> {
     ((path: string) =>
       // 展開 deps.lock 再蓋 info.task:給的 info 只能蓋 pid / cwd / startedAt,標籤一律是 stryker。
       acquireLock(path, { ...deps.lock, info: { ...(deps.lock?.info ?? selfLockInfo()), task: 'stryker' } }));
-  const runStryker = deps.runStryker ?? spawnStryker;
-  const install = deps.installCleanup ?? ((release: () => void) => installCleanup(release));
   const log = deps.log ?? ((msg: string) => console.log(msg));
+  // 只有走預設值(真的 spawnStryker)才需要強制報告落地;測試自己注入的 runStryker 一律繞過,
+  // 它們測的是鎖與退出碼透傳,不該被這層加料(見 withReportEnforcement 上面的說明)。
+  const runStryker = deps.runStryker ?? withReportEnforcement(spawnStryker, log);
+  const install = deps.installCleanup ?? ((release: () => void) => installCleanup(release));
   const lockPath = deps.lockPath ?? strykerLockPath();
 
   let held: HeldLock;
