@@ -8,7 +8,7 @@
     "check:env-keys",
     "typecheck",
     "lint:docs",
-    "test",
+    "check:test-ledger",
     "accept:standalone",
     "standalone",
     "accept:dry",
