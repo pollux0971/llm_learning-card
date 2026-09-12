@@ -1,0 +1,15 @@
+{
+  "score": 94.29,
+  "killed": 537,
+  "timeout": 8,
+  "survived": 26,
+  "noCoverage": 7,
+  "ignored": 68,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.scanner-mutatelock.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.scanner-mutatelock.json",
+  "commit": "e7f8f00"
+}
