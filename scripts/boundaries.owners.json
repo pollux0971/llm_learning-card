@@ -317,6 +317,10 @@
       "infra"
     ],
     [
+      "scripts/zero-input-roster.ts",
+      "infra"
+    ],
+    [
       "scripts/_root.js",
       "infra"
     ],

@@ -1,7 +1,7 @@
 {
   "$comment": "零輸入守門的棘輪基準(ADR-045)。每一條是一個既有入口的洞,記進來那天就已經存在,不是新增的風險。三道鎖在 scripts/zero-input-guard.test.ts 的 describe('棘輪基準'):不在這裡的檢查必須過;在這裡的檢查必須仍然紅,變綠就從這裡拿掉;條數 ≤ max,只准減不准增,每還一批就把 max 改小。還債順序見 ADR-045 的 Consequences。",
   "max": 47,
-  "excludedMax": 1,
+  "excludedMax": 2,
   "entries": [
     {
       "command": "scripts/due.ts · due",

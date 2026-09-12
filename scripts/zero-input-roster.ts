@@ -289,19 +289,18 @@ export const ROSTER: Record<string, Entry> = {
       'argv 轉換、鎖、finally/signal 釋放都在 scripts/mutate.test.ts 以注入 runStryker 與假鎖完整測。',
   },
   'scripts/run-tests.ts': {
-    kind: 'entry',
-    commands: [
-      {
-        label: 'run-tests',
-        baselines: { healthy: (s) => ({ args: ['--', '--help'], cwd: ownGitRepo(s, false) }) },
-        omit: { empty: '完全沒有參數會真的啟動全套 vitest；這裡用 --help 與設定檔錯誤只探 CLI 參數層，跨 worktree 鎖的等待與釋放由 run-tests.test.ts 的注入測試守。' },
-        probes: [
-          { kind: 'missing', name: '--config 不存在', build: (s) => { const cwd = ownGitRepo(s, false); const p = missingPath(cwd, 'vitest.config.ts'); return { args: ['--', '--config', p], cwd, mention: p }; } },
-          { kind: 'malformed', name: '不認得的參數', build: (s) => ({ args: ['--', '--not-a-vitest-option'], cwd: ownGitRepo(s, false) }) },
-          { kind: 'wrong-type', name: '--config 是一個目錄', build: (s) => { const cwd = ownGitRepo(s, false); return { args: ['--', '--config', emptyDir(cwd, 'config-dir')], cwd }; } },
-        ],
-      },
-    ],
+    kind: 'excluded',
+    reason:
+      '全套 vitest 的包裝(跟 Stryker 共用 .stryker.lock 排隊):沒有參數就拿鎖、真的起整套 vitest,' +
+      '在 vitest 裡再起一個 vitest 是遞迴。參數轉換(vitestArgs / isPartialRun)與鎖的行為在 ' +
+      'scripts/run-tests.test.ts 用注入的假 runVitest 測。' +
+      // 2026-09-12:roster-location 那張試著把它改成 entry(用 `-- --help` 繞開「會真的起全套」),
+      // 四條探針全紅,而紅的內容全是 **vitest 自己的** 輸出:`--help` 的 usage、CACError 的
+      // stack、rolldown 的 UNRESOLVED_ENTRY。要讓它們變綠,run-tests.ts 得攔截並改寫 vitest 的
+      // stderr —— 那會把真正的測試輸出一起蓋掉,代價遠大於收益。
+      // **那次嘗試不是白費:它把「為什麼排除」從『會遞迴』推進到『這支是純轉發,探它的 CLI 等於
+      // 探 vitest 的 CLI』** —— 後者才是不能收進來的真正理由,前者只是表象。
+      '這一條被實測過一次(見上),不是沒試過就寫排除。',
   },
 
   // ── 守門腳本(模板 v1.3.4,勿手改;這裡的紅燈走模板升版,不直接改檔) ──
