@@ -40,7 +40,8 @@
  * 這支不重新發明任何一條鎖的規則。
  */
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -68,6 +69,54 @@ export interface RunTestsDeps {
   log?: (msg: string) => void;
   /** isPartialRun 用來判「位置參數是不是存在的路徑」。預設 process.cwd()。 */
   cwd?: string;
+}
+
+/**
+ * testcase 清單是之後 multiset 比對的基準，不是每次全套成功就能自動替換的快取。
+ * 維護者確認「這次確實是預期的完整範圍」後才顯式開關更新；局部跑永遠不會走到這裡。
+ */
+export function shouldUpdateTestcaseBaseline(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.UPDATE_JUNIT_TESTCASE_BASELINE === '1';
+}
+
+const XML_ENTITY = /&(?:amp|lt|gt|quot|apos|#x[\da-f]+|#\d+);/gi;
+
+function unescapeXml(value: string): string {
+  return value.replace(XML_ENTITY, (entity) => {
+    const body = entity.slice(1, -1);
+    if (body === 'amp') return '&';
+    if (body === 'lt') return '<';
+    if (body === 'gt') return '>';
+    if (body === 'quot') return '"';
+    if (body === 'apos') return "'";
+    const code = body.startsWith('#x') ? Number.parseInt(body.slice(2), 16) : Number.parseInt(body.slice(1), 10);
+    return Number.isNaN(code) ? entity : String.fromCodePoint(code);
+  });
+}
+
+/** JUnit 的 testcase = 檔案 + suite + name;保留重複名稱,因此是 multiset 不是 Set。 */
+export function testcaseNamesFromJunit(xml: string): string[] {
+  const names: string[] = [];
+  for (const match of xml.matchAll(/<testcase\b([^>]*)>/gi)) {
+    const attrs = match[1] ?? '';
+    const attr = (name: string): string => {
+      const found = attrs.match(new RegExp(`\\b${name}\\s*=\\s*([\"'])(.*?)\\1`, 'i'));
+      return found ? unescapeXml(found[2]!) : '';
+    };
+    const classname = attr('classname');
+    const testName = attr('name');
+    if (classname || testName) names.push(classname && testName ? `${classname} > ${testName}` : classname || testName);
+  }
+  return names.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** 全套測試的唯一持久化基準;局部測試不呼叫這支,避免覆寫整套基準。 */
+export function writeTestcaseNames(xml: string, cwd: string = process.cwd()): void {
+  const names = testcaseNamesFromJunit(xml);
+  if (names.length === 0) throw new Error('JUnit 報告沒有任何 testcase 名稱');
+  const out = join(cwd, 'reports', 'junit', 'testcase-names.txt');
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${names.join('\n')}\n`, 'utf8');
 }
 
 /**
@@ -153,7 +202,7 @@ function isSameOrAncestor(dir: string, here: string): boolean {
  */
 export async function runTests(deps: RunTestsDeps = {}): Promise<number> {
   const argv = deps.argv ?? process.argv;
-  const runVitest = deps.runVitest ?? spawnVitest;
+  const runVitest = deps.runVitest;
   const install = deps.installCleanup ?? ((release: () => void) => installCleanup(release));
   const log = deps.log ?? ((msg: string) => console.log(msg));
   const cwd = deps.cwd ?? process.cwd();
@@ -162,7 +211,7 @@ export async function runTests(deps: RunTestsDeps = {}): Promise<number> {
   // args[0] 一定是 `run`,後面才是使用者給 vitest 的東西。
   if (isPartialRun(args.slice(1), cwd)) {
     // 小範圍:連鎖都不碰(不算鎖的路徑、不 acquire、不掛 signal)。日常開發的命脈。
-    return runVitest(args);
+    return runVitest ? runVitest(args) : spawnVitest(args, false, log);
   }
 
   const lockPath = deps.lockPath ?? strykerLockPath();
@@ -187,7 +236,7 @@ export async function runTests(deps: RunTestsDeps = {}): Promise<number> {
   // finally 管正常結束與例外;signal 走 installCleanup 那條路(finally 跑不到)。兩邊都要有。
   const uninstall = install(() => held.release());
   try {
-    return await runVitest(args);
+    return await (runVitest ? runVitest(args) : spawnVitest(args, shouldUpdateTestcaseBaseline(), log));
   } finally {
     uninstall();
     held.release();
@@ -205,10 +254,16 @@ export async function runTests(deps: RunTestsDeps = {}): Promise<number> {
  * 搶 CPU,正是這把鎖要防的假紅。終端機的 Ctrl-C 沒這個問題(SIGINT 是給整個前景 group 的),
  * 但 `kill <pid>`、被 supervisor 收掉、被 timeout 砍掉都是只打一個 pid。
  */
-function spawnVitest(args: string[]): Promise<number> {
+function spawnVitest(args: string[], recordNames: boolean, log: (msg: string) => void): Promise<number> {
   const bin = join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '.bin', 'vitest');
+  const tempDir = recordNames ? mkdtempSync(join(tmpdir(), 'llm-learning-cards-junit-')) : null;
+  const junitFile = tempDir ? join(tempDir, 'results.xml') : null;
+  // 兩個 reporter 並存:保留原本的終端輸出,另取 JUnit 只抽穩定的 testcase 名稱。
+  const finalArgs = junitFile
+    ? [...args, '--reporter=default', '--reporter=junit', `--outputFile.junit=${junitFile}`]
+    : args;
   return new Promise((done) => {
-    const child = spawn(bin, args, { stdio: 'inherit', detached: true });
+    const child = spawn(bin, finalArgs, { stdio: 'inherit', detached: true });
     const forward = (sig: 'SIGINT' | 'SIGTERM') => () => {
       // 負的 pid = 整個 process group。group 已經沒了(ESRCH)就當作已經死透,不能丟。
       try {
@@ -228,11 +283,25 @@ function spawnVitest(args: string[]): Promise<number> {
     child.on('error', (err) => {
       unforward();
       console.error(`跑不起來 vitest(${bin}):${String(err)}`);
+      if (tempDir) rmSync(tempDir, { recursive: true, force: true });
       done(1);
     });
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       unforward();
-      done(code ?? 1);
+      let result = code ?? 1;
+      // 被 signal 中斷時 JUnit 可能只是半截 XML,不可以拿半截名稱覆寫上一個完整基準。
+      // 顯式更新也只接受成功且沒被 signal 截斷的全套；失敗/半截 XML 都不能污染舊基準。
+      if (junitFile && tempDir && signal === null && result === 0) {
+        try {
+          writeTestcaseNames(readFileSync(junitFile, 'utf8'));
+        } catch (err) {
+          log(`Vitest 結束了(退出碼 ${result}),但 testcase 名稱基準寫不出來:${String(err)}`);
+          if (result === 0) result = 1;
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      }
+      done(result);
     });
   });
 }

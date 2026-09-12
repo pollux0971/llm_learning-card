@@ -229,6 +229,10 @@
       "infra"
     ],
     [
+      "scripts/reports-persist.test.ts",
+      "infra"
+    ],
+    [
       "scripts/degraded-report.ts",
       "infra"
     ],

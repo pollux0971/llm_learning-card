@@ -6,6 +6,14 @@ target/
 reports/*
 !reports/degraded/
 reports/degraded/.raw/
+!reports/mutation/
+reports/mutation/*
+!reports/mutation/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*.json
+reports/mutation/.raw-*.json
+reports/mutation/.effective-*.json
+!reports/junit/
+reports/junit/*
+!reports/junit/testcase-names.txt
 .stryker-tmp/
 # 跨 worktree 的 Stryker 鎖(P-29)。放在主 repo 的根,不然各 worktree 看不到彼此。
 .stryker.lock

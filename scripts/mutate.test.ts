@@ -40,9 +40,14 @@ import {
   STALE_AFTER_MS,
   acquireLock,
   classifyLock,
+  commitShortSha,
   configPositionalIndex,
   installCleanup,
   isMainModule,
+  mutationCommand,
+  mutationRawReportPath,
+  mutationSummaryFromReport,
+  mutationSummaryPath,
   parseLock,
   pidIsAlive,
   readLock,
@@ -52,9 +57,11 @@ import {
   selfLockInfo,
   strykerArgs,
   strykerLockPath,
+  strykerVersion,
   tryAcquire,
   waitingMessage,
   withReportEnforcement,
+  writeMutationSummary,
   type HeldLock,
   type LockInfo,
   type LockVerdict,
@@ -2874,5 +2881,205 @@ describe('withReportEnforcement(同行程,假的 run)', () => {
     expect(code).not.toBe(0);
     expect(logs, '目錄建不起來時沒有記任何警告').toHaveLength(1);
     expect(logs[0], `警告訊息是空的,講不清楚壞在哪:${JSON.stringify(logs)}`).toContain('reports');
+  });
+});
+
+describe('mutationSummaryFromReport(同行程)', () => {
+  it('Ignored 不進 Stryker 分母，且每一種原始報告狀態都留在摘要裡', () => {
+    const summary = mutationSummaryFromReport(
+      {
+        files: {
+          'fixture.ts': {
+            mutants: [
+              { status: 'Killed' },
+              { status: 'Timeout' },
+              { status: 'Survived' },
+              { status: 'NoCoverage' },
+              { status: 'Ignored' },
+              { status: 'RuntimeError' },
+              { status: 'CompileError' },
+              { status: 'Pending' },
+            ],
+          },
+        },
+      },
+      { command: 'fixture', strykerVersion: 'fixture', config: 'fixture', commit: 'fixture' },
+    );
+
+    // Stryker's valid mutants are exactly Killed/Timeout/Survived/NoCoverage: 2 / 4 = 50.
+    // The Ignored mutant makes the old all-mutants denominator produce 25 instead, so this fixture
+    // must stay non-zero for Ignored to keep the regression observable.
+    expect(summary).toMatchObject({
+      score: 50,
+      killed: 1,
+      timeout: 1,
+      survived: 1,
+      noCoverage: 1,
+      ignored: 1,
+      runtimeError: 1,
+      compileError: 1,
+      pending: 1,
+    });
+  });
+
+  it('壞形狀不捏造狀態計數，空的有效分母是 0 分', () => {
+    const metadata = { command: 'fixture', strykerVersion: 'fixture', config: 'fixture', commit: 'fixture' };
+    for (const report of [null, [], {}, { files: [] }, { files: { bad: null, alsoBad: { mutants: {} } } }]) {
+      expect(mutationSummaryFromReport(report, metadata)).toMatchObject({
+        score: 0,
+        killed: 0,
+        timeout: 0,
+        survived: 0,
+        noCoverage: 0,
+        ignored: 0,
+        runtimeError: 0,
+        compileError: 0,
+        pending: 0,
+      });
+    }
+  });
+
+  it('truthy primitive 的 files / file 也不能被當成可列舉的報告物件', () => {
+    const metadata = { command: 'fixture', strykerVersion: 'fixture', config: 'fixture', commit: 'fixture' };
+    expect(mutationSummaryFromReport({ files: 'not an object' }, metadata).score).toBe(0);
+    expect(mutationSummaryFromReport({ files: { bad: 'not a file' } }, metadata).score).toBe(0);
+  });
+
+  it('非物件 mutant 不計數，四個 valid status 是分母，其他狀態留在可稽核欄位', () => {
+    const summary = mutationSummaryFromReport(
+      {
+        files: {
+          a: {
+            mutants: [null, 'bad', {}, { status: 'Killed' }, { status: 'Timeout' }, { status: 'Survived' }, { status: 'NoCoverage' }, { status: 'Ignored' }, { status: 'RuntimeError' }, { status: 'CompileError' }, { status: 'Pending' }],
+          },
+        },
+      },
+      { command: 'fixture', strykerVersion: 'fixture', config: 'fixture', commit: 'fixture' },
+    );
+    expect(summary).toMatchObject({ score: 50, killed: 1, timeout: 1, survived: 1, noCoverage: 1, ignored: 1, runtimeError: 1, compileError: 1, pending: 1 });
+  });
+});
+
+describe('mutation report helper functions(同行程)', () => {
+  it('命令完整保留唯一入口、設定檔、旗標與 shell quote', () => {
+    expect(mutationCommand(['node', 'scripts/mutate.ts'])).toBe('npm run mutate --');
+    expect(mutationCommand(['node', 'scripts/mutate.ts', '--', 'stryker.foo.json', '--mutate', 'a file.ts'], 'stryker.foo.json')).toBe(
+      "npm run mutate -- stryker.foo.json --mutate 'a file.ts'",
+    );
+    expect(mutationCommand(['node', 'scripts/mutate.ts', '--', '--mutate', 'x.ts'], 'stryker.config.json')).toBe(
+      'npm run mutate -- stryker.config.json --mutate x.ts',
+    );
+    expect(mutationCommand(['node', 'scripts/mutate.ts', '--', "a'b.ts"])).toBe("npm run mutate -- 'a'\\''b.ts'");
+  });
+
+  it('commitShortSha 在 git worktree 回 short SHA，在非 git 目錄回 null', () => {
+    expect(commitShortSha(REPO_ROOT)).toMatch(/^[0-9a-f]{7}$/);
+    expect(commitShortSha(tmp('not-a-git-repo'))).toBeNull();
+  });
+
+  it('raw 與 SHA 摘要路徑的命名固定，避免同設定的不同 commit 覆蓋彼此', () => {
+    const dir = tmp('mutation-paths');
+    expect(mutationRawReportPath(dir, 'scanner')).toBe(join(dir, 'reports', 'mutation', '.raw-scanner.json'));
+    expect(mutationSummaryPath(dir, 'scanner', 'abcdef0')).toBe(join(dir, 'reports', 'mutation', 'abcdef0-scanner.json'));
+  });
+
+  it('strykerVersion 先讀 cwd 的安裝版本，無效本地版本則回退到本 repo 的已安裝版本', () => {
+    const dir = tmp('mutation-version');
+    const packageJson = join(dir, 'node_modules', '@stryker-mutator', 'core', 'package.json');
+    mkdirSync(dirname(packageJson), { recursive: true });
+    writeFileSync(packageJson, JSON.stringify({ version: '99.1.0' }), 'utf8');
+    expect(strykerVersion(dir)).toBe('99.1.0');
+    writeFileSync(packageJson, JSON.stringify({ version: '' }), 'utf8');
+    expect(strykerVersion(dir)).toBe('10.0.0');
+    writeFileSync(packageJson, 'not json', 'utf8');
+    expect(strykerVersion(dir)).toBe('10.0.0');
+  });
+
+  it('writeMutationSummary 會以完整狀態欄位寫出可自行驗分的 JSON', () => {
+    const dir = tmp('mutation-summary-write');
+    const raw = join(dir, 'raw.json');
+    const summary = join(dir, 'summary.json');
+    writeFileSync(raw, JSON.stringify({ files: { x: { mutants: [{ status: 'Killed' }, { status: 'Survived' }, { status: 'Ignored' }] } } }), 'utf8');
+    writeMutationSummary(raw, summary, { command: 'fixture', strykerVersion: 'fixture', config: 'fixture', commit: 'fixture' });
+    expect(JSON.parse(readFileSync(summary, 'utf8'))).toMatchObject({ score: 50, killed: 1, survived: 1, ignored: 1, runtimeError: 0, compileError: 0, pending: 0 });
+  });
+
+  it('withReportEnforcement 在有 commit 的 worktree 寫 SHA 摘要，並刪除上一輪 raw', async () => {
+    const dir = tmp('report-enforce-sha');
+    const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' });
+    expect(git(dir, 'init', '-q').status).toBe(0);
+    expect(git(dir, 'commit', '--allow-empty', '-qm', 'init').status).toBe(0);
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({ reporters: [] }), 'utf8');
+    const staleRaw = mutationRawReportPath(dir, 'foo');
+    mkdirSync(dirname(staleRaw), { recursive: true });
+    writeFileSync(staleRaw, 'stale', 'utf8');
+
+    await withCwd(dir, () =>
+      withReportEnforcement(async (args) => {
+        const effective = JSON.parse(readFileSync(args[1]!, 'utf8')) as { jsonReporter: { fileName: string } };
+        expect(existsSync(staleRaw), '上一輪 raw 必須先刪掉，不能被誤認成這輪產出').toBe(false);
+        writeFileSync(join(dir, effective.jsonReporter.fileName), JSON.stringify({ files: { x: { mutants: [{ status: 'Killed' }, { status: 'Ignored' }] } } }), 'utf8');
+        return 0;
+      }, () => {})(['run', 'stryker.foo.json']),
+    );
+
+    const sha = git(dir, 'rev-parse', '--short=7', 'HEAD').stdout.trim();
+    expect(JSON.parse(readFileSync(mutationSummaryPath(dir, 'foo', sha), 'utf8'))).toMatchObject({ score: 100, killed: 1, ignored: 1, commit: sha });
+  });
+
+  it('無 commit 的沙盒仍回傳 run 的退出碼、不假造 SHA 摘要', async () => {
+    const dir = tmp('report-enforce-no-sha');
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({ reporters: [] }), 'utf8');
+    const code = await withCwd(dir, () =>
+      withReportEnforcement(async (args) => {
+        const effective = JSON.parse(readFileSync(args[1]!, 'utf8')) as { jsonReporter: { fileName: string } };
+        writeFileSync(join(dir, effective.jsonReporter.fileName), JSON.stringify({ files: {} }), 'utf8');
+        return 7;
+      }, () => {})(['run', 'stryker.foo.json']),
+    );
+    expect(code).toBe(7);
+    expect(existsSync(join(dir, 'reports', 'mutation', 'foo.json'))).toBe(true);
+    expect(existsSync(join(dir, 'reports', 'mutation', 'undefined-foo.json'))).toBe(false);
+  });
+
+  it('舊 raw 無法刪除時中止，不把別的檔案當成本輪報告', async () => {
+    const dir = tmp('report-enforce-unlink-error');
+    const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' });
+    expect(git(dir, 'init', '-q').status).toBe(0);
+    expect(git(dir, 'commit', '--allow-empty', '-qm', 'init').status).toBe(0);
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({ reporters: [] }), 'utf8');
+    const raw = mutationRawReportPath(dir, 'foo');
+    mkdirSync(raw, { recursive: true });
+    const logs: string[] = [];
+    let ran = false;
+    const code = await withCwd(dir, () =>
+      withReportEnforcement(async () => {
+        ran = true;
+        return 0;
+      }, (message) => logs.push(message))(['run', 'stryker.foo.json']),
+    );
+    expect(code).toBe(1);
+    expect(ran).toBe(false);
+    expect(logs).toHaveLength(1);
+  });
+
+  it('有 raw 但摘要寫失敗時不能把 run 的 0 假裝成功', async () => {
+    const dir = tmp('report-enforce-summary-error');
+    const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' });
+    expect(git(dir, 'init', '-q').status).toBe(0);
+    expect(git(dir, 'commit', '--allow-empty', '-qm', 'init').status).toBe(0);
+    writeFileSync(join(dir, 'stryker.foo.json'), JSON.stringify({ reporters: [] }), 'utf8');
+    const sha = git(dir, 'rev-parse', '--short=7', 'HEAD').stdout.trim();
+    mkdirSync(mutationSummaryPath(dir, 'foo', sha), { recursive: true });
+    const logs: string[] = [];
+    const code = await withCwd(dir, () =>
+      withReportEnforcement(async (args) => {
+        const effective = JSON.parse(readFileSync(args[1]!, 'utf8')) as { jsonReporter: { fileName: string } };
+        writeFileSync(join(dir, effective.jsonReporter.fileName), JSON.stringify({ files: {} }), 'utf8');
+        return 0;
+      }, (message) => logs.push(message))(['run', 'stryker.foo.json']),
+    );
+    expect(code).toBe(1);
+    expect(logs[0]).toContain('摘要寫不出');
   });
 });

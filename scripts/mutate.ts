@@ -590,9 +590,154 @@ export function reportBaseName(configFileArg: string): string {
   return basename(configFileArg).replace(/^stryker\./, '').replace(/\.json$/, '');
 }
 
+/** `reports/degraded/` 的命名慣例:摘要的主體是產生它的 commit(short SHA)。 */
+export function commitShortSha(cwd: string = process.cwd()): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 完整報告是暫存輸入,只有這個摘要會進版控。`.raw-` 也讓 gitignore 能明確排除它。 */
+export function mutationRawReportPath(cwd: string, name: string): string {
+  return resolve(cwd, 'reports', 'mutation', `.raw-${name}.json`);
+}
+
+/** 摘要檔名:同一個設定可在不同 commit 留下可比較的歷史。 */
+export function mutationSummaryPath(cwd: string, name: string, sha: string): string {
+  return resolve(cwd, 'reports', 'mutation', `${sha}-${name}.json`);
+}
+
+export interface MutationSummary {
+  score: number;
+  killed: number;
+  timeout: number;
+  survived: number;
+  noCoverage: number;
+  /** Stryker excludes ignored mutants from its valid-mutant score denominator. */
+  ignored: number;
+  /** Stryker excludes invalid mutants (runtime errors) from its score denominator. */
+  runtimeError: number;
+  /** Stryker excludes invalid mutants (compile errors) from its score denominator. */
+  compileError: number;
+  /** A completed report normally has none, but retain the status for an auditable total. */
+  pending: number;
+  command: string;
+  strykerVersion: string;
+  config: string;
+  commit: string;
+}
+
+/** Stryker JSON 的位置綁 mutant,所以只抽可跨時間比較的絕對數,不把 mutants 清單留下。 */
+export function mutationSummaryFromReport(
+  report: unknown,
+  metadata: Pick<MutationSummary, 'command' | 'strykerVersion' | 'config' | 'commit'>,
+): MutationSummary {
+  const files = report && typeof report === 'object' && !Array.isArray(report)
+    ? (report as { files?: unknown }).files
+    : undefined;
+  let killed = 0;
+  let timeout = 0;
+  let survived = 0;
+  let noCoverage = 0;
+  let ignored = 0;
+  let runtimeError = 0;
+  let compileError = 0;
+  let pending = 0;
+  if (files && typeof files === 'object' && !Array.isArray(files)) {
+    for (const file of Object.values(files as Record<string, unknown>)) {
+      const mutants = file && typeof file === 'object' && !Array.isArray(file)
+        ? (file as { mutants?: unknown }).mutants
+        : undefined;
+      if (!Array.isArray(mutants)) continue;
+      for (const mutant of mutants) {
+        const status = mutant && typeof mutant === 'object' ? (mutant as { status?: unknown }).status : undefined;
+        if (status === 'Killed') killed += 1;
+        else if (status === 'Timeout') timeout += 1;
+        else if (status === 'Survived') survived += 1;
+        else if (status === 'NoCoverage') noCoverage += 1;
+        else if (status === 'Ignored') ignored += 1;
+        else if (status === 'RuntimeError') runtimeError += 1;
+        else if (status === 'CompileError') compileError += 1;
+        else if (status === 'Pending') pending += 1;
+      }
+    }
+  }
+  // Stryker's JSON reporter serializes the raw MutationTestResult, not a precomputed score.
+  // Match Stryker 10's `mutation-testing-metrics/src/calculateMetrics.ts#toMetrics`:
+  // `mutationScore = totalDetected / totalValid`, where detected is Killed + Timeout and
+  // valid excludes Ignored plus invalid RuntimeError/CompileError (and Pending).
+  const valid = killed + timeout + survived + noCoverage;
+  return {
+    score: valid === 0 ? 0 : Number((((killed + timeout) / valid) * 100).toFixed(2)),
+    killed,
+    timeout,
+    survived,
+    noCoverage,
+    ignored,
+    runtimeError,
+    compileError,
+    pending,
+    ...metadata,
+  };
+}
+
+function shellQuote(arg: string): string {
+  return /^[A-Za-z0-9_./:=+@%-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/** 摘要中的完整指令採用文件約定的唯一入口,不記錄內部 node/tsx 路徑。 */
+export function mutationCommand(argv: string[], configFileArg?: string): string {
+  const at = argv.indexOf('--');
+  const passthrough = at === -1 ? [] : argv.slice(at + 1);
+  // `npm run mutate` 的預設設定是隱式的;摘要是拿來重現分數的，故也要把它寫回命令。
+  // 自訂設定原本就在 passthrough 時不重複插入，保留使用者給的相對/絕對路徑原樣。
+  const commandArgs = configFileArg && !passthrough.includes(configFileArg) ? [configFileArg, ...passthrough] : passthrough;
+  return ['npm', 'run', 'mutate', '--', ...commandArgs].map(shellQuote).join(' ');
+}
+
+/**
+ * Read the installed Stryker version recorded with a summary.
+ *
+ * Exported only for same-process mutation coverage (ADR-049): the CLI path is a child process
+ * and Stryker cannot instrument across that boundary. Remove this export when a narrower test seam exists.
+ */
+export function strykerVersion(cwd: string): string {
+  const candidates = [
+    resolve(cwd, 'node_modules', '@stryker-mutator', 'core', 'package.json'),
+    resolve(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@stryker-mutator', 'core', 'package.json'),
+  ];
+  for (const packageJson of candidates) {
+    try {
+      const version = (JSON.parse(readFileSync(packageJson, 'utf8')) as { version?: unknown }).version;
+      if (typeof version === 'string' && version.length > 0) return version;
+    } catch {
+      // A copied test sandbox may not have dependencies; the real repo does.
+    }
+  }
+  return 'unknown';
+}
+
+/**
+ * Convert one raw Stryker JSON report to the committed summary artifact.
+ *
+ * Exported only for same-process mutation coverage (ADR-049); remove it when this behavior has
+ * a narrower test seam that does not widen the module surface.
+ */
+export function writeMutationSummary(
+  reportAbs: string,
+  summaryAbs: string,
+  metadata: Pick<MutationSummary, 'command' | 'strykerVersion' | 'config' | 'commit'>,
+): void {
+  const report = JSON.parse(readFileSync(reportAbs, 'utf8')) as unknown;
+  const summary = mutationSummaryFromReport(report, metadata);
+  writeFileSync(summaryAbs, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+}
+
 /**
  * 包住 `run`(真的 spawnStryker):讀目標設定檔 → 合成 reporters(加不是換)+ jsonReporter →
- * 寫成一份 effective 設定檔取代原本的位置參數 → 跑完後驗證承諾的報告檔案真的落地。
+ * 寫成一份 effective 設定檔取代原本的位置參數 → 跑完後把完整報告轉成帶 SHA 的摘要。
  *
  * 讀不到 / parse 不動目標設定檔(例如全新環境裡根本沒有預設的 `stryker.config.json`,
  * §「鎖的位置不看測試套件自己在哪裡跑」那個沙盒就是這樣)時**跳過強制**,原樣把 args 交給
@@ -620,8 +765,12 @@ export function withReportEnforcement(
     }
 
     const name = reportBaseName(configFileArg);
-    const reportRel = join('reports', 'mutation', `${name}.json`);
-    const reportAbs = resolve(cwd, reportRel);
+    const sha = commitShortSha(cwd);
+    // 沒有 git 的複製沙盒仍保留原本的測試落點;正式 worktree 一律是 SHA 摘要名。
+    // 沒有 commit 就沒有可比較的主體,因此不產生假 SHA 摘要。
+    const reportRel = sha ? join('reports', 'mutation', `.raw-${name}.json`) : join('reports', 'mutation', `${name}.json`);
+    const reportAbs = sha ? mutationRawReportPath(cwd, name) : resolve(cwd, reportRel);
+    const summaryAbs = sha ? mutationSummaryPath(cwd, name, sha) : resolve(cwd, 'reports', 'mutation', `${name}.json`);
     const effectiveAbs = resolve(cwd, 'reports', 'mutation', `.effective-${name}.json`);
 
     const originalReporters = Array.isArray(original.reporters) ? (original.reporters as string[]) : [];
@@ -634,6 +783,12 @@ export function withReportEnforcement(
 
     try {
       mkdirSync(dirname(effectiveAbs), { recursive: true });
+      // 不可把上一輪的完整報告誤認成這一輪的產出;先刪掉舊 raw,再由 Stryker 重新交付。
+      try {
+        unlinkSync(reportAbs);
+      } catch (err) {
+        if (errnoCode(err) !== 'ENOENT') throw err;
+      }
       writeFileSync(effectiveAbs, JSON.stringify(effective));
     } catch (err) {
       log(`建不起來報告輸出目錄(${dirname(reportRel)}),沒辦法跑 Stryker:${String(err)}`);
@@ -651,7 +806,21 @@ export function withReportEnforcement(
 
     // 【判斷】加旗標是宣稱,檔案存在才是驗證(P-84 家族同一課)。就算 Stryker 自己回 0,
     // 只要承諾的報告沒出現就不能算成功;Stryker 自己已經是非 0 的話保留那個退出碼,不要蓋成 1。
-    if (existsSync(reportAbs)) return code;
+    if (existsSync(reportAbs)) {
+      if (!sha) return code;
+      try {
+        writeMutationSummary(reportAbs, summaryAbs, {
+          command: mutationCommand(process.argv, configFileArg),
+          strykerVersion: strykerVersion(cwd),
+          config: basename(configFileArg),
+          commit: sha ?? 'uncommitted',
+        });
+        return code;
+      } catch (err) {
+        log(`Stryker 報告落地了,但摘要寫不出 ${summaryAbs}:${String(err)}`);
+        return code === 0 ? 1 : code;
+      }
+    }
     log(`Stryker 結束了(退出碼 ${code}),但報告沒有落在 ${reportRel}——加旗標是宣稱,檔案存在才是驗證。`);
     return code === 0 ? 1 : code;
   };
