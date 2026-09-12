@@ -993,6 +993,32 @@ graph TD
 > **各自在合併前取號,誰也看不到誰的未提交文件** —— 那正是 ADR-052 那支守門要防的形狀。
 > 合併時由 git 報衝突而發現,協調者改成 053。**`check:adr-numbers` 在鏈上,合併後會再驗一次。**
 
+## ADR-054 · 零輸入名冊與斷言分離，排除只表示真的不適用
+
+- **Status**: accepted · 2026-09-12
+- **Context**: 零輸入守門的 ROSTER 是新入口必須更新的設定，卻放在
+  `scripts/zero-input-guard.test.ts`。同日兩個獨立工作各以 `excluded` 登記
+  `mutate.ts` 與 `run-tests.ts`，理由都是「這輪只加名冊，不補探針」；這把尚未完成
+  的時間狀態塞進「真的不適用」的類別槽位，只有數量棘輪、沒有到期機制。
+- **Decision**: 選方案 **(b)**：整份 ROSTER（含 TypeScript 型別、fixture builders 與
+  `build:` 函式）移到 `scripts/zero-input-roster.ts`，測試檔只 import 後執行
+  完整性、棘輪與結果斷言。這符合原規則的效果判準：設定移出 `*.test.ts`，新增入口不再
+  被檔案位置逼著修改斷言；且單一有型別的名冊不會產生 JSON 清單與 TypeScript builder
+  的漂移。重新判定後，`run-tests.ts` 改為 `entry`：在自己的暫存 git repo 拿本地鎖，
+  用 `--help` 作健康基線、用不存在/目錄設定檔與未知旗標作便宜 probe；真正零參數會啟動
+  全套工作，明確寫在 `omit.empty`。反之 `mutate.ts` 仍是 `excluded`：它在解析任何
+  參數前即取得跨 worktree 鎖，且所有 CLI 路徑都交給 Stryker 啟動，沒有同時便宜、隔離且
+  不干擾其他 mutate 的黑盒 probe；其 argv 與鎖生命週期由注入式 unit test 守住。
+  因而 `excludedMax` 降為 **1**。
+- **Alternatives**:
+  - **(a) JSON 清單 + TypeScript builders**：開發輪能只改 JSON，但檔名/探針與 build 函式
+    分散兩處，完整性檢查也無法保證兩層同步，正是容易悄悄漂移的雙重來源。
+  - **(c) 留在測試檔、放寬規則為允許名冊註冊**：只靠人工辨識「這次是註冊而非放寬」；
+    當天兩次事故已表明這個位置耦合會反覆誘導時間狀態被誤登成 excluded。
+- **Consequences**: 名冊現在有單一非測試來源，完整性測試直接 import 它；每一個
+  `scripts/*.ts`（包括名冊模組本身）仍必須被列出。未來新增守門只修改
+  `zero-input-roster.ts`，而 `excluded` 僅保留給沒有可負擔 probe 的實質類別判斷。
+
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)
