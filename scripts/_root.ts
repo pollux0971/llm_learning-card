@@ -1,4 +1,4 @@
-// SOURCE: template v1.4.3 (629b609) sha256=4fa7673937d82953cffbc8ec5b7d2907cf05a7f1e87d0ca184ddfb4a0c67700a — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.5.0 (9853eab) sha256=4fa7673937d82953cffbc8ec5b7d2907cf05a7f1e87d0ca184ddfb4a0c67700a — 勿手改;升版用 sync-gates.sh
 /**
  * 所有守門腳本共用的 repo 根解析。
  *

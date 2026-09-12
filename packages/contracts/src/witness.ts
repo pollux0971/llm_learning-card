@@ -273,7 +273,16 @@ export interface WitnessRecord {
   file: string;
   test: string;
   signals: Partial<Record<DegradedSignal, number>>;
+  /**
+   * `ran`:測試本體跑完了(passed / failed 都算)。`skipped`:測試本體裡 `ctx.skip()` 的——
+   * **照樣寫列**,但不進分母、也不沖到 outside(ADR-047:outside 只收「測試之外觸發的」,
+   * 兩種來源的錯法不同,不混桶)。省略等於 `ran`(有這個欄位之前寫出的 JSONL)。
+   * `it.skip` / `it.todo` 沒有 afterEach,天生沒有列。
+   */
+  status?: WitnessStatus;
 }
+
+export type WitnessStatus = 'ran' | 'skipped';
 
 /** 在 beforeAll / 檔案頂層 / afterAll 觸發、歸不到單一測試的紀錄,test 欄位填這個。 */
 export const OUTSIDE_ANY_TEST = '(outside any test)';

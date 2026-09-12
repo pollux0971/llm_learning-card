@@ -27,6 +27,11 @@
  * 以及 vitest 的子字串 pattern(`npm test -- mutate`)。pattern 也當全套是**故意往安全的方向錯**:
  * 多鎖一次的代價是等幾分鐘,漏鎖一次的代價是整輪 OOM 或假紅。要快就給真的路徑。
  *
+ * **超集也算全套**(§2b):給的路徑解析後的聯集涵蓋了**所有**含 `*.test.ts` 的頂層目錄
+ * (現況 `packages scripts apps features` 四個全給),那是 100% 只是換了個寫法,照樣拿鎖。
+ * 測試根是**掃 cwd 的頂層目錄**算出來的,不從 vitest config 推;`node_modules`、點開頭目錄、
+ * 建置產物不掃。cwd 底下一個測試根都沒有時這層不介入。
+ *
  * 「cwd 本身或祖先」那半句是審核輪補的洞:`.`、`''`、`./`、`/`、`scripts/..` 全都「存在」,
  * 但 vitest 拿它們當 filter 會跑**整套**(實測 `vitest list .` 跟 `vitest list` 都是 2661 條),
  * 沒鎖跑整套正是這支要防的事。`..` 也擋(vitest 對它找到 0 個檔,擋了沒損失)。
@@ -35,7 +40,7 @@
  * 這支不重新發明任何一條鎖的規則。
  */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -93,7 +98,46 @@ export function isPartialRun(passthrough: string[], cwd: string = process.cwd())
   // 那是整個 repo,vitest 會跑全套。只要有一個這種,旁邊再多幾個真的檔案也救不回來
   // (vitest 的 filter 是「或」),所以它蓋過一切,不是 some() 裡的一員。
   if (existing.some((target) => isSameOrAncestor(target, here))) return false;
-  return existing.length > 0;
+  if (existing.length === 0) return false;
+  // 超集(§2b):給的路徑聯集涵蓋了所有含 *.test.ts 的頂層目錄 → 那是 100%,只是換了個寫法。
+  // 沒有任何測試根(cwd 不存在、或這裡根本沒測試)→ 這層不介入,上面的規則照舊。
+  const roots = testRoots(here);
+  if (roots.length > 0 && roots.every((root) => existing.includes(root))) return false;
+  return true;
+}
+
+const TEST_FILE = /\.test\.ts$/;
+/** 不掃的目錄:相依、建置產物、Stryker 沙盒(整個專案的複本)。點開頭的一律不掃。 */
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'target', 'coverage', 'reports']);
+
+/** cwd 底下「含 *.test.ts 的頂層目錄」,解析成絕對路徑。掃出來的,不從 vitest config 推。 */
+export function testRoots(cwd: string): string[] {
+  return listDirs(cwd)
+    .filter((name) => hasTestFile(join(cwd, name)))
+    .map((name) => resolve(cwd, name));
+}
+
+function listDirs(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name))
+      .map((e) => e.name);
+  } catch {
+    // Stryker disable next-line ArrayDeclaration: 這個回傳值一定再過一次 hasTestFile → readdirSync,不存在的名字在那層被濾成 false;任何非空陣列(`["Stryker was here"]`)結果都一樣,真等價(覆核輪判定,2026-09-05)
+    return [];
+  }
+}
+
+/** 找到第一個 *.test.ts 就回,不把整棵樹列完。 */
+function hasTestFile(dir: string): boolean {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  if (entries.some((e) => e.isFile() && TEST_FILE.test(e.name))) return true;
+  return listDirs(dir).some((name) => hasTestFile(join(dir, name)));
 }
 
 /** `dir` 是不是 `here` 本身或它的祖先。兩邊都已經 resolve 過。`/` 已經以 sep 結尾,不能再接一個。 */
