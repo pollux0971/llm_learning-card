@@ -594,15 +594,15 @@ const ROSTER: Record<string, Entry> = {
         baselines: {
           healthy: (s) => {
             const root = emptyDir(s, 'consumer');
-            file(root, 'scripts/gates.config.json', JSON.stringify({ jsonDuplicateKeys: { include: ['scripts/*.json'] } }));
+            file(root, 'scripts/json-duplicate-keys.scope.json', JSON.stringify({ include: ['scripts/*.json'] }));
             return { args: ['--root', root] };
           },
         },
         probes: [
-          { kind: 'empty', name: 'include 是空陣列', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/gates.config.json', JSON.stringify({ jsonDuplicateKeys: { include: [] } })); return { args: ['--root', root] }; } },
+          { kind: 'empty', name: 'include 是空陣列', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/json-duplicate-keys.scope.json', JSON.stringify({ include: [] })); return { args: ['--root', root] }; } },
           { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
-          { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/gates.config.json', '{ "jsonDuplicateKeys": '); return { args: ['--root', root] }; } },
-          { kind: 'wrong-type', name: 'include 是字串', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/gates.config.json', JSON.stringify({ jsonDuplicateKeys: { include: 'scripts/*.json' } })); return { args: ['--root', root] }; } },
+          { kind: 'malformed', name: 'json-duplicate-keys.scope.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/json-duplicate-keys.scope.json', '{ "include": '); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: 'include 是字串', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/json-duplicate-keys.scope.json', JSON.stringify({ include: 'scripts/*.json' })); return { args: ['--root', root] }; } },
         ],
       },
     ],

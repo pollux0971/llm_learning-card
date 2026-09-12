@@ -5,9 +5,10 @@
  * 小型 JSON 語法走訪器逐一讀每個 object 的 member。每個 object 都有自己的
  * `seen` 表，所以只在同一層重複才報錯，巢狀物件的同名鍵是合法的。
  *
- * 掃描範圍不是寫在程式裡，而是 `gates.config.json` 的
- * `jsonDuplicateKeys.include` glob 陣列。新增符合現有 glob 的 JSON 設定檔會自動
- * 納入；空範圍或沒有命中任何檔案一律是掃描器壞掉，不會假裝乾淨。
+ * 掃描範圍不是寫在程式裡，而是這支 gate 自己的
+ * `json-duplicate-keys.scope.json` 設定檔的 `include` glob 陣列。新增符合現有
+ * glob 的 JSON 設定檔會自動納入；空範圍或沒有命中任何檔案一律是掃描器壞掉，
+ * 不會假裝乾淨。
  *
  * 用法:
  *   npx tsx scripts/check-json-duplicate-keys.ts
@@ -18,14 +19,15 @@ import { join, relative, resolve } from 'node:path';
 import {
   DEFAULT_SKIP_DIRS,
   ROOT as GIT_ROOT,
-  loadGatesConfig,
   lookupConfig,
+  readConfigJson,
   requireConfigType,
   requireRootDir,
 } from './_root.js';
 
 const GATE_NAME = 'json-duplicate-keys';
 const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
+const CONFIG_FILENAME = 'json-duplicate-keys.scope.json';
 
 export interface DuplicateKey {
   key: string;
@@ -220,19 +222,22 @@ function configError(message: string): never {
 }
 
 function loadInclude(root: string, rootExplicit: boolean): string[] {
-  const found = lookupConfig(import.meta.dirname, 'gates.config.json', { root, rootExplicit });
-  console.log(`gates.config.json: ${found.source}`);
+  const found = lookupConfig(import.meta.dirname, CONFIG_FILENAME, { root, rootExplicit });
+  console.log(`${CONFIG_FILENAME}: ${found.source}`);
   if (found.hardErrorMessage) configError(found.hardErrorMessage);
-  if (!found.path) configError(`找不到 gates.config.json(搜尋過:${found.triedPaths.join('、')})`);
-  const config = loadGatesConfig(found.path, GATE_NAME)!;
-  const scope = config.jsonDuplicateKeys;
-  if (scope === undefined) configError('gates.config.json 缺少 "jsonDuplicateKeys" 範圍設定');
-  requireConfigType(scope, 'jsonDuplicateKeys', 'object', GATE_NAME);
-  const include = (scope as Record<string, unknown>).include;
-  if (include === undefined) configError('jsonDuplicateKeys 缺少 "include" glob 陣列');
-  requireConfigType(include, 'jsonDuplicateKeys.include', 'array', GATE_NAME);
+  if (!found.path) configError(`找不到 ${CONFIG_FILENAME}(搜尋過:${found.triedPaths.join('、')})`);
+  const config = readConfigJson(found.path, GATE_NAME);
+  requireConfigType(config, CONFIG_FILENAME, 'object', GATE_NAME);
+  const obj = config as Record<string, unknown>;
+  const unknownKeys = Object.keys(obj).filter((key) => key !== 'include');
+  if (unknownKeys.length > 0) {
+    configError(`${CONFIG_FILENAME} 有不認識的鍵:${unknownKeys[0]}(打錯字?)已知鍵:include`);
+  }
+  const include = obj.include;
+  if (include === undefined) configError(`${CONFIG_FILENAME} 缺少 "include" glob 陣列`);
+  requireConfigType(include, `${CONFIG_FILENAME}.include`, 'array', GATE_NAME);
   if (!Array.isArray(include) || include.length === 0 || include.some((glob) => typeof glob !== 'string' || glob.length === 0)) {
-    configError('jsonDuplicateKeys.include 必須是非空的 glob 字串陣列');
+    configError(`${CONFIG_FILENAME}.include 必須是非空的 glob 字串陣列`);
   }
   return include as string[];
 }

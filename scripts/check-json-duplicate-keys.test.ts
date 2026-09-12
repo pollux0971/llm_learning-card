@@ -8,6 +8,7 @@ import { discoverJsonFiles, findDuplicateKeys } from './check-json-duplicate-key
 const CHECK_TS = resolve(import.meta.dirname, 'check-json-duplicate-keys.ts');
 const SPAWN_TIMEOUT_MS = 60_000;
 const dirs: string[] = [];
+const CONFIG_FILENAME = 'json-duplicate-keys.scope.json';
 const INCLUDE = ['scripts/*.json', 'stryker*.json', 'package.json', 'tsconfig*.json'];
 
 afterEach(() => {
@@ -18,7 +19,7 @@ function makeRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'lc-json-dupkey-'));
   dirs.push(root);
   mkdirSync(join(root, 'scripts'));
-  writeFileSync(join(root, 'scripts', 'gates.config.json'), JSON.stringify({ jsonDuplicateKeys: { include: INCLUDE } }, null, 2));
+  writeFileSync(join(root, 'scripts', CONFIG_FILENAME), JSON.stringify({ include: INCLUDE }, null, 2));
   writeFileSync(join(root, 'package.json'), '{"name":"fixture"}\n');
   writeFileSync(join(root, 'tsconfig.json'), '{"compilerOptions":{}}\n');
   return root;
@@ -60,7 +61,7 @@ describe('check-json-duplicate-keys: config scope and CLI', () => {
     write(root, 'other.json', '{}\n');
     expect(discoverJsonFiles(root, INCLUDE).map((path) => path.slice(root.length + 1).replaceAll('\\', '/'))).toEqual([
       'package.json',
-      'scripts/gates.config.json',
+      `scripts/${CONFIG_FILENAME}`,
       'scripts/new-setting.json',
       'stryker.new-rule.json',
       'tsconfig.browser.json',
@@ -85,13 +86,13 @@ describe('check-json-duplicate-keys: config scope and CLI', () => {
 
   it('範圍缺席或掃到 0 個檔案一律紅，不能把掃描器壞掉當乾淨', () => {
     const root = makeRoot();
-    write(root, 'scripts/gates.config.json', '{}\n');
+    write(root, `scripts/${CONFIG_FILENAME}`, '{}\n');
     const absent = run(root);
     expect(absent.code).toBe(1);
-    expect(absent.output).toContain('缺少 "jsonDuplicateKeys"');
+    expect(absent.output).toContain(`缺少 "include"`);
     expect(absent.output).toContain('scanned=0');
 
-    write(root, 'scripts/gates.config.json', JSON.stringify({ jsonDuplicateKeys: { include: ['never/*.json'] } }));
+    write(root, `scripts/${CONFIG_FILENAME}`, JSON.stringify({ include: ['never/*.json'] }));
     const empty = run(root);
     expect(empty.code).toBe(1);
     expect(empty.output).toContain('沒有命中任何檔案');

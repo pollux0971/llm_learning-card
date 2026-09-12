@@ -24,9 +24,6 @@
     "tags": "@standalone and not @manual"
   },
   "skipDirs": ["tmp-learning"],
-  "jsonDuplicateKeys": {
-    "include": ["scripts/*.json", "stryker*.json", "package.json", "tsconfig*.json"]
-  },
   "nextGates": {
     "mode": "enforce"
   },
