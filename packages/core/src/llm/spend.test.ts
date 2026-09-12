@@ -40,7 +40,7 @@ function event(partial: Record<string, unknown>): LogEvent {
 }
 
 describe('isLlmCallEvent', () => {
-  it('只認 llm_call 而且 provider 是 openai 的事件', () => {
+  it('只認 llm_call 且排除明確免費的 ollama', () => {
     expect(isLlmCallEvent(event({}))).toBe(true);
   });
 
@@ -48,8 +48,12 @@ describe('isLlmCallEvent', () => {
     expect(isLlmCallEvent(event({ provider: 'ollama' }))).toBe(false);
   });
 
-  it('anthropic 也不算:ADR-034 決定雲端只用 OpenAI,預算就是 OpenAI 的預算', () => {
-    expect(isLlmCallEvent(event({ provider: 'anthropic' }))).toBe(false);
+  it('anthropic 要算:provider 選擇與花費計算是兩件事', () => {
+    expect(isLlmCallEvent(event({ provider: 'anthropic' }))).toBe(true);
+  });
+
+  it('沒見過的 provider 也要算:排除法預設煞車', () => {
+    expect(isLlmCallEvent(event({ provider: 'mystery' }))).toBe(true);
   });
 
   it('其他型別的事件不算', () => {
@@ -79,6 +83,15 @@ describe('computeDailySpend', () => {
     const spend = computeDailySpend([event({ tokens_in: 1_000_000, tokens_out: 500_000 })], TODAY, PRICES);
     expect(spend.usd).toBeCloseTo(7.5, 10);
     expect(spend.calls).toBe(1);
+  });
+
+  it('anthropic 的雲端事件也計入花費', () => {
+    const spend = computeDailySpend(
+      [event({ provider: 'anthropic', tokens_in: 1_000_000, tokens_out: 500_000 })],
+      TODAY,
+      PRICES,
+    );
+    expect(spend).toEqual({ usd: 7.5, calls: 1 });
   });
 
   it('多筆事件相加', () => {

@@ -1,12 +1,17 @@
 /**
- * 當日 OpenAI 花費(ADR-039)。
+ * 當日 LLM 花費(ADR-039、ADR-056)。
  *
  * 花費不另外存 counter 檔——`state/log.jsonl` 已經有 `llm_call` 事件帶
  * `tokens_in` / `tokens_out`(契約 §10),再存一份就有兩個真相來源,而且
  * counter 檔要處理原子寫入與跨日重置。從 log 算是純函式,好測。
  *
- * 只算 `provider === 'openai'` 的事件——閘道(`ollama`)跑在使用者自己的硬體上,
- * 免費,不計入預算。
+ * 只排除明確免費的本機閘道(`ollama`)——它跑在使用者自己的硬體上,不計入預算;
+ * 其他 provider 一律計入。這不是在修一條目前到得了的「anthropic 成功但漏算」路徑:
+ * 現在 provider 與金鑰剛好同住一個設定檔,缺檔會同時讓 provider 落回 anthropic
+ * 且沒有金鑰,呼叫會失敗。那個互斥是佈局的巧合,不是安全設計:只要有人把
+ * `ANTHROPIC_API_KEY` 放進 shell、CI secret 或 agent 環境,路徑就會通而煞車看不到。
+ * 花費煞車不應依賴金鑰與 provider 恰好在同一個檔案,所以採排除免費 provider 的規則;
+ * 新增未知 provider 時預設計費,避免白名單漏列時把花費當成零。
  *
  * 獨立成檔案(不放進 `routing.ts`)是為了不動 `routing.ts` 既有的嚴格 95%
  * 變異門檻,比照 `token-limits.ts` 的做法(ADR-036 的教訓)。
@@ -17,11 +22,11 @@
  *   (`LLM_PRICE_IN_PER_M` / `LLM_PRICE_OUT_PER_M`)。
  * - `DailySpend { usd, calls }`:當日金額與筆數。
  * - `DEFAULT_DAILY_CAP_USD = 1`:`LLM_DAILY_CAP_USD` 沒設時的預設值。
- * - `isLlmCallEvent(event)`:type 是 `llm_call` 且 provider 是 openai 的型別守衛。
+ * - `isLlmCallEvent(event)`:type 是 `llm_call` 且 provider 不是免費本機 `ollama` 的型別守衛。
  * - `dayOf(ts)`:把 ISO 8601 時間戳切成 `YYYY-MM-DD`(取本地日期,跟使用者的
  *   「今天」一致——預算是使用者感受到的一天,不是 UTC 的一天)。
  * - `computeDailySpend(events, day, prices)`:純函式。只挑 `type === 'llm_call'`、
- *   `provider === 'openai'`、`dayOf(ts) === day` 的事件,把
+ *   `provider !== 'ollama'`、`dayOf(ts) === day` 的事件,把
  *   `tokens_in / 1e6 * inPerM + tokens_out / 1e6 * outPerM` 加總。缺欄位的
  *   token 數當 0(逾時/截斷的事件沒有 token 欄位,但仍算一筆 `calls`)。
  * - `isBudgetExhausted(spentUsd, capUsd)`:**`spent >= cap` 就算達到**(ADR-039)。
@@ -76,9 +81,9 @@ function numberField(event: LogEvent, key: string): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : witnessed('llm.spend.tokens-missing-zero', 0);
 }
 
-/** `type === 'llm_call'` 且 `provider === 'openai'`——只有雲端會花錢。 */
+/** `type === 'llm_call'` 且 `provider !== 'ollama'`——只有明確免費的本機閘道不計費。 */
 export function isLlmCallEvent(event: LogEvent): boolean {
-  return event.type === 'llm_call' && field(event, 'provider') === 'openai';
+  return event.type === 'llm_call' && field(event, 'provider') !== 'ollama';
 }
 
 /** ISO 8601 → `YYYY-MM-DD`(本地日期,對齊使用者感受到的「今天」)。 */
