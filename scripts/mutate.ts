@@ -665,10 +665,13 @@ function shellQuote(arg: string): string {
 }
 
 /** 摘要中的完整指令採用文件約定的唯一入口,不記錄內部 node/tsx 路徑。 */
-export function mutationCommand(argv: string[]): string {
+export function mutationCommand(argv: string[], configFileArg?: string): string {
   const at = argv.indexOf('--');
   const passthrough = at === -1 ? [] : argv.slice(at + 1);
-  return ['npm', 'run', 'mutate', '--', ...passthrough].map(shellQuote).join(' ');
+  // `npm run mutate` 的預設設定是隱式的;摘要是拿來重現分數的，故也要把它寫回命令。
+  // 自訂設定原本就在 passthrough 時不重複插入，保留使用者給的相對/絕對路徑原樣。
+  const commandArgs = configFileArg && !passthrough.includes(configFileArg) ? [configFileArg, ...passthrough] : passthrough;
+  return ['npm', 'run', 'mutate', '--', ...commandArgs].map(shellQuote).join(' ');
 }
 
 function strykerVersion(cwd: string): string {
@@ -772,7 +775,7 @@ export function withReportEnforcement(
       if (!sha) return code;
       try {
         writeMutationSummary(reportAbs, summaryAbs, {
-          command: mutationCommand(process.argv),
+          command: mutationCommand(process.argv, configFileArg),
           strykerVersion: strykerVersion(cwd),
           config: basename(configFileArg),
           commit: sha ?? 'uncommitted',

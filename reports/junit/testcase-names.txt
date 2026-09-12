@@ -1747,6 +1747,11 @@ scripts/check-env-keys.test.ts > check-env-keys:純函式(不碰檔案) > diffKe
 scripts/check-env-keys.test.ts > check-env-keys:純函式(不碰檔案) > diffKeys 鍵集合完全一致時兩邊都是空陣列
 scripts/check-env-keys.test.ts > check-env-keys:純函式(不碰檔案) > extractKeys 只取鍵名,忽略註解、空行,不管值長什麼樣
 scripts/check-env-keys.test.ts > check-env-keys:純函式(不碰檔案) > extractKeys 對同一個鍵重複出現時去重
+scripts/check-json-duplicate-keys.test.ts > check-json-duplicate-keys: config scope and CLI > 反向驗證：同一 object 的第二個鍵會紅，訊息指名檔案、鍵與兩行
+scripts/check-json-duplicate-keys.test.ts > check-json-duplicate-keys: config scope and CLI > 符合 config glob 的新 JSON 檔會自動納入，不靠手抄檔名
+scripts/check-json-duplicate-keys.test.ts > check-json-duplicate-keys: config scope and CLI > 範圍缺席或掃到 0 個檔案一律紅，不能把掃描器壞掉當乾淨
+scripts/check-json-duplicate-keys.test.ts > check-json-duplicate-keys: parser > 只報同一層的重複，保留兩個行號
+scripts/check-json-duplicate-keys.test.ts > check-json-duplicate-keys: parser > 同一行兩個鍵、跳脫 key 與字串內引號都正確處理
 scripts/check-known-defects.test.ts > check-known-defects:0 目標的例外(不是掃描器壞了) > 登記表是空的、也沒有任何場景掛 tag → exit 1,但訊息說「這支 gate 現在用不到」,不是「掃描器壞了」
 scripts/check-known-defects.test.ts > check-known-defects:0 目標的例外(不是掃描器壞了) > 登記表用 `_doc` metadata 項目(不算條目)加上沒有任何 tag → 一樣落在 0 目標例外
 scripts/check-known-defects.test.ts > check-known-defects:S9 設定檔壞掉 > cucumber 列舉指令的輸出不是合法 JSON → 大聲失敗
@@ -2212,6 +2217,12 @@ scripts/mutate.test.ts > 變異分數留檔:mutate.ts 必須在唯一入口強�
 scripts/mutate.test.ts > 錯誤不是 ENOENT / EEXIST 就往外丟 > readLock 碰到 ENOENT 以外的錯誤要往外丟,不能靜靜當成沒鎖
 scripts/mutate.test.ts > 錯誤不是 ENOENT / EEXIST 就往外丟 > tryAcquire 碰到 EEXIST 以外的錯誤要往外丟,不能靜靜當成「有人持鎖」
 scripts/mutate.test.ts > 鎖的位置不看測試套件自己在哪裡跑 > 從 worktree 裡起跑、不給 lockPath:鎖落在主 repo 的根,不是那個 worktree 的根
+scripts/reports-persist.test.ts > JUnit testcase 名稱基準 > 以 classname + name 當完整名，並保留重複名稱作為 multiset
+scripts/reports-persist.test.ts > JUnit testcase 名稱基準 > 只有明確維護開關才允許成功全套覆寫基準
+scripts/reports-persist.test.ts > JUnit testcase 名稱基準 > 局部執行真實 run-tests CLI 時，既有的全套基準位元組不變
+scripts/reports-persist.test.ts > mutation 摘要 > 保留四類計數和可重現命令；預設設定也必須明寫設定檔
+scripts/reports-persist.test.ts > mutation 摘要 > 在有 commit 的 worktree 將 raw 報告轉成 <sha>-<設定名>.json，而不是留下 raw 報告
+scripts/reports-persist.test.ts > reports 的 gitignore 例外 > 只放行 SHA mutation 摘要與 junit 基準，raw/effective 產物仍被 git 擋下
 scripts/review.test.ts > review.ts --dry-run 印出基數 > 到期清單本身不變:該列的卡片 id、stage、逾期天數還在(既有行為的護欄)
 scripts/review.test.ts > review.ts --dry-run 印出基數 > 基數是真的數出來的:刪掉一張卡,「幾張卡」要跟著變
 scripts/review.test.ts > review.ts --dry-run 印出基數 > 有卡、今天沒到期:輸出帶「幾張卡」與「幾張到期」兩個數字
@@ -2638,6 +2649,23 @@ scripts/zero-input-guard.test.ts > scripts/check-gherkin-dup.ts · check-gherkin
 scripts/zero-input-guard.test.ts > scripts/check-gherkin-dup.ts · check-gherkin-dup > [wrong-type] gates.config.json 是陣列:輸出跟基線 healthy 不可以長一樣
 scripts/zero-input-guard.test.ts > scripts/check-gherkin-dup.ts · check-gherkin-dup > [wrong-type] gates.config.json 是陣列:退出碼非 0
 scripts/zero-input-guard.test.ts > scripts/check-gherkin-dup.ts · check-gherkin-dup > 基線 healthy:exit 0、沒有裸錯誤(基線本身壞了,底下的比較就沒有意義)
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [empty] include 是空陣列:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [empty] include 是空陣列:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [empty] include 是空陣列:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [empty] include 是空陣列:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [malformed] json-duplicate-keys.scope.json 是壞 JSON:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [malformed] json-duplicate-keys.scope.json 是壞 JSON:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [malformed] json-duplicate-keys.scope.json 是壞 JSON:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [malformed] json-duplicate-keys.scope.json 是壞 JSON:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [missing] --root 不存在:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [missing] --root 不存在:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [missing] --root 不存在:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [missing] --root 不存在:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [wrong-type] include 是字串:不噴裸 stack trace、不吐裸引擎訊息
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [wrong-type] include 是字串:指名有問題的那條路徑
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [wrong-type] include 是字串:輸出跟基線 healthy 不可以長一樣
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > [wrong-type] include 是字串:退出碼非 0
+scripts/zero-input-guard.test.ts > scripts/check-json-duplicate-keys.ts · check-json-duplicate-keys > 基線 healthy:exit 0、沒有裸錯誤(基線本身壞了,底下的比較就沒有意義)
 scripts/zero-input-guard.test.ts > scripts/check-known-defects.ts · check-known-defects > [empty] 登記表只有 _doc、也沒有場景掛 tag(0 目標):不噴裸 stack trace、不吐裸引擎訊息
 scripts/zero-input-guard.test.ts > scripts/check-known-defects.ts · check-known-defects > [empty] 登記表只有 _doc、也沒有場景掛 tag(0 目標):指名有問題的那條路徑
 scripts/zero-input-guard.test.ts > scripts/check-known-defects.ts · check-known-defects > [empty] 登記表只有 _doc、也沒有場景掛 tag(0 目標):輸出跟基線 healthy 不可以長一樣

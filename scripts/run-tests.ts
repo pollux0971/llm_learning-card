@@ -71,6 +71,14 @@ export interface RunTestsDeps {
   cwd?: string;
 }
 
+/**
+ * testcase 清單是之後 multiset 比對的基準，不是每次全套成功就能自動替換的快取。
+ * 維護者確認「這次確實是預期的完整範圍」後才顯式開關更新；局部跑永遠不會走到這裡。
+ */
+export function shouldUpdateTestcaseBaseline(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.UPDATE_JUNIT_TESTCASE_BASELINE === '1';
+}
+
 const XML_ENTITY = /&(?:amp|lt|gt|quot|apos|#x[\da-f]+|#\d+);/gi;
 
 function unescapeXml(value: string): string {
@@ -228,7 +236,7 @@ export async function runTests(deps: RunTestsDeps = {}): Promise<number> {
   // finally 管正常結束與例外;signal 走 installCleanup 那條路(finally 跑不到)。兩邊都要有。
   const uninstall = install(() => held.release());
   try {
-    return await (runVitest ? runVitest(args) : spawnVitest(args, true, log));
+    return await (runVitest ? runVitest(args) : spawnVitest(args, shouldUpdateTestcaseBaseline(), log));
   } finally {
     uninstall();
     held.release();
@@ -282,7 +290,8 @@ function spawnVitest(args: string[], recordNames: boolean, log: (msg: string) =>
       unforward();
       let result = code ?? 1;
       // 被 signal 中斷時 JUnit 可能只是半截 XML,不可以拿半截名稱覆寫上一個完整基準。
-      if (junitFile && tempDir && signal === null) {
+      // 顯式更新也只接受成功且沒被 signal 截斷的全套；失敗/半截 XML 都不能污染舊基準。
+      if (junitFile && tempDir && signal === null && result === 0) {
         try {
           writeTestcaseNames(readFileSync(junitFile, 'utf8'));
         } catch (err) {
