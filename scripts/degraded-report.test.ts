@@ -909,9 +909,16 @@ describe('量尺 · 乙 · 子行程:宣稱 --full 但 ran_all 量出來是假 �
   });
 
   it('自己起 vitest 時:加 --reporter=json --outputFile(是加不是換,default reporter 還在),raw 目錄留下兩個證據檔,紀錄數 == 要跑的數', () => {
-    // 這條(跟同檔其他用 run() 的測試不同)是真的起一個 tsx + vitest 子行程跑一個測試檔,
-    // 冷啟動就會超過 vitest 預設的 5000ms 測試逾時,即使單獨跑也一樣(2026-09-05 量過)。
+    // 這條(跟同檔其他用 run() 的測試不同)是真的起一個 tsx + vitest 子行程跑一個測試檔。
     // spawnSync 本身的 90_000ms 逾時(見 run())沒變,這裡放寬的是外層 it() 的逾時。
+    //
+    // ⚠️ 逾時放寬到 30s 的實際量測(顧問要求註明,免得被讀成掩蓋):
+    //   2026-09-12 空機實測 —— 單獨跑(`-t "自己起 vitest 時"`)1.66s / 1.55s(兩次),
+    //   整個檔一起跑時這一條 1853ms。**都遠低於 vitest 預設的 5000ms。**
+    //   也就是說 2026-09-05 寫的「冷啟動就會超過 5000ms,即使單獨跑也一樣」**今天重現不出來**。
+    //   30s 留的是**負載餘裕**,不是量出來的需求:別的 worktree 在跑 Stryker 時整機會被吃滿,
+    //   而這條要冷啟一個完整的 tsx + vitest 子行程,是全檔最怕被排擠的一條。
+    //   要收窄的話請**先在有 Stryker 併跑的情況下量過**再改,不要照空機數字砍。
     const r = run(['--', 'packages/core/src/weekly/iso-week.test.ts']);
     expect(r.status).toBe(0);
     // 指令列印出來的就是實際 spawn 的參數:default 與 json 兩個 reporter 都在

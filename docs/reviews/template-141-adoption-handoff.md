@@ -1,3 +1,13 @@
+> **搬遷註記(2026-09-12,協調者)**:這份原本躺在 repo 根目錄叫 `REVIEW.md`,
+> 由 `template-141` 那輪的 worker 寫,並被 commit 進 main(來源 `7ab8558`)。
+> **這是同一個坑的第三次**(前兩次搬去 `docs/reviews/03-llm-router-phase-2-round-1.md`
+> 與 `docs/reviews/stryker-lock-allsuite.md`)。模板 1.4.2 之後交接檔改放
+> `.orca-brief/REVIEW.md`(gitignore),這份是 1.4.2 之前那輪寫的,所以還在舊位置。
+> **內文原封不動保留**,只加這段 —— 唯一的例外是下面那條指到 check-doc-rot 測試某一行的參照,
+> 前綴從 repo 根相對改成 `../../` 開頭:那是**搬家造成的失效連結**
+> (`lint:docs` 會驗 backtick 裡「路徑:行號」形式的參照),改的是指路,不是紀錄內容。
+> 同一輪的協調者視角摘要在 `template-141-to-143-adoption.md`。
+
 # 採用模板 v1.4.1 → v1.4.2 → v1.4.3 — 交接
 
 > **1.4.3 收尾見 §七(最新狀態在那裡;§一–§六 是 1.4.2 當時的交接,原文保留)。**
@@ -95,7 +105,7 @@
 `scripts/mutate.test.ts` 會 grep 全 repo 所有文字檔,禁止字面的 Stryker CLI 子指令(明講不開例外)。1.4.1 進來兩處命中:
 - `scripts/doc-rot.blacklist.json`(本 repo 的設定):那條規則的 `pattern` 與 `reason` 是字面寫法。已改成
   `npx\s+stryker\s+run`、`reason` 改寫、加 `note` 說明理由;`--self-test` 3/3 仍命中。
-- `scripts/check-doc-rot.test.ts:432`(**模板檔**,SOURCE 標頭,不能改):測試資料裡的字面規則。
+- `../../scripts/check-doc-rot.test.ts:432`(**模板檔**,SOURCE 標頭,不能改):測試資料裡的字面規則。
   **協調者決 B2、拒絕 B1**(「來源可查 ≠ 內容可信」,SOURCE 豁免等於幫整個目錄開後門)。模板出 **1.4.2**:fixture 改 `['npx','stryker','run'].join(' ')`、黑名單改 `\s+` regex、新增 `no-bypass-literal.test.ts`(PITFALLS P-83)。本 repo 重 sync 到 1.4.2 後 `mutate.test.ts` 150/150 綠。
 
 ### 9. 兩個探針不過:`check-next-gates` / `check-phase-status` 對不存在的 `--root` 不指名路徑(**等你決定,沒塞進基準**)
