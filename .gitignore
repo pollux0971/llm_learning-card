@@ -47,9 +47,31 @@ contracts/fixtures/**/state/lint-report-*.md
 .cursor/
 .pytest_cache/
 
-# ⚠️ repo 裡的巢狀簽出。原本只寫在 .git/info/exclude,而那個檔不在版控裡——
-# 新 clone、新機器一律沒有。移進來讓它活得下去(「活得下去的判準是進了版控,
-# 不是換了目錄」)。⚠️ 只忽略 worktrees/,不要忽略整個 .claude/——
-# .claude/skills/*.md 是版控內容。
+# ── 從 .git/info/exclude 搬進來的十條 ─────────────────────────────────
+# ⚠️ 那個檔不在版控裡——新 clone、新機器一律沒有這些忽略規則,而這些檔案
+# 一定會被 agent 產生,然後 `git add -A` 會把它們全部帶進去
+# (裡面有 agent-registry.json 與 mailbox/ 這種會變動、含內部狀態的東西)。
+# 「活得下去的判準是進了版控,不是換了目錄。」
+#
+# ⚠️ 只忽略這些具名的東西,不要忽略整個 .claude/——.claude/skills/*.md 是版控內容。
+#
+# ⚠️ 驗這一段的方法有兩種,不能混用(2026-09-12 踩過):
+#   目錄樣式(結尾 /)→ 要拿「目錄內的一個路徑」去問:
+#       git check-ignore -v .claude/worktrees/foo
+#     直接問 `.claude/worktrees` 而它不存在時,git 沒有意見——
+#     而「沒有意見」跟「說不」印出來一樣。
+#   檔案樣式        → 直接問那個路徑即可。
+#
+# 完成條件(可驗證,不是「我覺得搬完了」):
+#   grep -vE '^#|^$' .git/info/exclude | wc -l   →   0
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+.claude/routines/.state/
 .claude/worktrees/
+.claude/checkpoints/
+.claude/mailbox/
+.claude/agent-registry.json
+.claude/agent-memory-local
+.claude/first-run
+.claude/assistant-daemon-state.json
 
