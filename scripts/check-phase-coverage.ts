@@ -1,4 +1,4 @@
-// SOURCE: template v1.5.0 (9853eab) sha256=88205646de5008d41ee5af30ce55ef2b330c73169493c19cde4aa6cd3678d1dd — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.2 (1051b44) sha256=e08dd004ec0141bcd1349154adae8fcfc2803f75e9daa0dd580f63b1e04c4e4c — 勿手改;升版用 sync-gates.sh
 /**
  * Phase 涵蓋率檢查(P-32,見 docs/03-agile-workflow.md 合併檢查段落)。
  *
@@ -8,15 +8,18 @@
  * cucumber,分兩段檢查,抓的是兩種不同的病:
  *
  *   段一(預設,dry-run):不執行 step 的內容,只確認 tag 表達式比對到 ≥1 個場景、
- *   且每個 step 都能對上一個定義(cucumber 在 dry-run 下仍會回報 undefined)。
- *   抓的是「接線」問題——tag 打錯字、資料夾跟 tag 對不上、step 完全沒寫——
- *   而且不會跑到 step 裡有副作用的程式碼。
+ *   且每個 step 恰好對上一個定義——cucumber 在 dry-run 下會把 undefined(沒定義)與
+ *   ambiguous(≥2 個定義)都印在摘要行,但**退出碼仍是 0,`--strict` 也是**(P-86,
+ *   1.6.0 實測 @cucumber/cucumber 11.3.0),所以這裡讀摘要行判斷,不看退出碼:摘要行
+ *   出現 undefined/ambiguous 任一桶 ≥ 1 就算這個 phase 紅。1.6.0 之前段一只數場景數,
+ *   檔頭卻寫「每個 step 都能對上一個定義」——那句話從來沒被程式檢查過。
+ *   抓的是「接線」問題——tag 打錯字、資料夾跟 tag 對不上、step 完全沒寫、兩個 worker
+ *   各自定義了同一句——而且不會跑到 step 裡有副作用的程式碼。
  *
  *   段二(`--run`,真跑):實際執行 step,要求輸出 `N scenarios (N passed)`
  *   且 N ≥ 1,輸出裡只要出現 failed/undefined/ambiguous 就算這個 phase 紅。
- *   抓的是「邏輯」問題——step 有定義但斷言失敗、同一句話比對到兩個 step
- *   定義(ambiguous)——這些 dry-run 不會執行到,只有真跑才看得到。
- *   真跑比較慢、有副作用,所以預設不開,要加 `--run` 才做。
+ *   抓的是「邏輯」問題——step 有定義但斷言失敗——這些 dry-run 不會執行到,只有真跑
+ *   才看得到。真跑比較慢、有副作用,所以預設不開,要加 `--run` 才做。
  *
  * cucumber 執行目錄(cwd)三層決定(某些 repo 的 cucumber 設定不在 repo 根,
  * 而是某個 workspace package 底下,例如 `features/cucumber.js` +
@@ -265,7 +268,10 @@ function baseEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function runDryRun(cwd: string, tagExpr: string): { scenarios: number; output: string } | { error: string; output: string } {
+/** 段一:dry-run。回傳場景數與摘要行裡壞掉的桶(undefined/ambiguous,數字 ≥ 1 的才算)。
+ *  cucumber 對 dry-run 的這兩種狀態退出碼是 0(P-86),所以這裡完全不看 r.status,只讀摘要行;
+ *  摘要行是 `N scenarios (a passed, b undefined, …)` 與 `N steps (…)`,兩行都看。 */
+function runDryRun(cwd: string, tagExpr: string): { scenarios: number; bad: string[]; output: string } | { error: string; output: string } {
   const r = spawnSync('npx', ['cucumber-js', '--tags', tagExpr, '--dry-run', '--format', 'summary'], {
     cwd,
     encoding: 'utf8',
@@ -274,9 +280,17 @@ function runDryRun(cwd: string, tagExpr: string): { scenarios: number; output: s
   });
   const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   if (r.error) return { error: r.error.message, output };
-  const m = output.match(/(\d+)\s+scenarios?\b/);
+  const m = output.match(/(\d+)\s+scenarios?\b\s*(?:\(([^)]*)\))?/);
   if (!m) return { error: '輸出裡找不到 "N scenarios"', output };
-  return { scenarios: Number(m[1]), output };
+  const stepsLine = output.match(/(\d+)\s+steps?\b\s*(?:\(([^)]*)\))?/);
+  const bad: string[] = [];
+  for (const detail of [m[2] ?? '', stepsLine?.[2] ?? '']) {
+    for (const kw of ['undefined', 'ambiguous']) {
+      const km = detail.match(new RegExp(`(\\d+)\\s+${kw}\\b`, 'i'));
+      if (km && Number(km[1]) >= 1 && !bad.some((b) => b.startsWith(kw))) bad.push(`${kw}=${km[1]}`);
+    }
+  }
+  return { scenarios: Number(m[1]), bad, output };
 }
 
 interface RunResult { scenarios: number; passed: number; bad: string[]; output: string }
@@ -415,15 +429,24 @@ function main(): void {
       console.log(`  ✗ ${p.relFile}  0 個場景(tag "${tagExpr}")`);
       continue;
     }
+    if (result.bad.length) {
+      // 摘要行不乾淨:cucumber 自己的 Failures: 清單(哪句沒定義、哪兩個定義撞了)在 output 裡,
+      // 印出來給終端機前的人看,不轉述。
+      failures.push(`${p.relFile}  dry-run 摘要行 ${result.bad.join(', ')}(cucumber 退出碼對此仍是 0,P-86)`);
+      console.log(`  ✗ ${p.relFile}  ${result.scenarios} 個場景,但 ${result.bad.join(', ')}`);
+      const detail = result.output.trim();
+      if (detail) console.log(detail.split('\n').map((l) => `      ${l}`).join('\n'));
+      continue;
+    }
     console.log(`  ✓ ${p.relFile}  ${result.scenarios} 個場景`);
     tagOkFiles.push(p);
   }
 
   if (failures.length) {
-    console.log(`\n✗ 段一(dry-run):${failures.length} 個 phase 檔沒有涵蓋率:`);
+    console.log(`\n✗ 段一(dry-run):${failures.length} 個 phase 檔沒有涵蓋率或摘要行不乾淨:`);
     for (const f of failures) console.log(`  ${f}`);
   } else {
-    console.log('\n✓ 段一(dry-run):全部 phase 檔至少涵蓋 1 個場景');
+    console.log('\n✓ 段一(dry-run):全部 phase 檔至少涵蓋 1 個場景,0 undefined、0 ambiguous');
   }
 
   if (!RUN) {

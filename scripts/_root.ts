@@ -1,4 +1,4 @@
-// SOURCE: template v1.5.0 (9853eab) sha256=4fa7673937d82953cffbc8ec5b7d2907cf05a7f1e87d0ca184ddfb4a0c67700a — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.2 (1051b44) sha256=99d167fb3501960dd473a1b2a81856c9be66c8fead4cc656384144182db25279 — 勿手改;升版用 sync-gates.sh
 /**
  * 所有守門腳本共用的 repo 根解析。
  *
@@ -273,6 +273,8 @@ export function requireConfigType(value: unknown, key: string, kind: ConfigValue
  *   docRot                      — check-doc-rot.ts(S7)
  *   knownDefects                — check-known-defects.ts(S8)
  *   phaseStatus                 — check-phase-status.ts(S15)
+ *   moduleCast                  — check-module-cast.ts(1.6.0,P-88)
+ *   dryRun                      — check-dry-run.ts(1.6.0,P-86):tags
  */
 export const KNOWN_GATES_CONFIG_KEYS = [
   'cucumberCwd',
@@ -287,6 +289,8 @@ export const KNOWN_GATES_CONFIG_KEYS = [
   'docRot',
   'knownDefects',
   'phaseStatus',
+  'moduleCast',
+  'dryRun',
 ] as const;
 
 /** `obj` 的頂層鍵裡,有沒有不在 `knownKeys` 的——通常是打錯字(`"chian"` 之類)。
@@ -354,6 +358,9 @@ export const DEFAULT_SKIP_DIRS: readonly string[] = [
   '.turbo',
   '.cache',
   'target',
+  '.stryker-tmp',   // 變異測試沙盒是**整個 repo 的複本**;任何走訪檔案樹的掃描器踩進去都會
+                    // 把自己的 fixture 與舊 worktree 的整份模板當成真命中,而且 `scanned=N`
+                    // 會隨「那一刻磁碟上剛好有沒有沙盒」跳動,連量尺一起壞掉(1.6.2,P-90)
   '__pycache__',
   '.venv',
   'venv',

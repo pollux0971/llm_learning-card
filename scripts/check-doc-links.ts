@@ -1,4 +1,4 @@
-// SOURCE: template v1.5.0 (9853eab) sha256=bb0992d3ff1bffa2b8d8f312c7acba520a3268f4d7d1e3f8e36f50069a191c5d — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.2 (1051b44) sha256=f0c996086ebbe7652e6f8b6d5019029fc9d0a44c053c2f3956a7ae4e7e7d1f95 — 勿手改;升版用 sync-gates.sh
 /**
  * 文件連結檢查(見 docs/03-agile-workflow.md「文件漂移」維護項)。
  *
@@ -84,12 +84,13 @@ export const SCANNER_BROKEN = '這不是很乾淨,是掃描器壞了';
  * S10 之前這支腳本自己維護一份 `DEFAULT_SKIP_SEGMENTS` / `DEFAULT_SKIP_PREFIXES`——跟
  * `check-boundaries.ts` 各自一份的下場一樣:漏掉的目錄名(例如 `.next`)在一支 gate
  * 補了、另一支沒補。現在改成 `_root.ts` 的 `DEFAULT_SKIP_DIRS`(所有掃描器共用)當底,
- * 只在這支腳本自己需要的地方加**它專屬**的兩項:`.stryker-tmp`(變異測試暫存,只有這支
- * 腳本原本就排除)、`archive`(模板慣例的封存目錄,不是每個專案都有,不放進通用清單)。
+ * 只在這支腳本自己需要的地方加**它專屬**的一項:`archive`(模板慣例的封存目錄,不是每個專案都有,不放進通用清單)。
  * `contracts/fixtures` 是這支腳本原本就有的路徑前綴排除,理由不變(刻意造的測試資料,
  * 不是文件)。
  */
-const EXTRA_SKIP_SEGMENTS = ['.stryker-tmp', 'archive'];
+// `.stryker-tmp` 1.6.2 起升進 `_root.ts` 的 DEFAULT_SKIP_DIRS(它不是這支專屬的——
+// 沙盒是整個 repo 的複本,每一支走訪檔案樹的掃描器都會踩,見 P-90)。這裡只剩 `archive`。
+const EXTRA_SKIP_SEGMENTS = ['archive'];
 const EXTRA_SKIP_PREFIXES = ['contracts/fixtures'];
 
 interface GatesConfig {
