@@ -514,6 +514,27 @@ export const ROSTER: Record<string, Entry> = {
       },
     ],
   },
+  'scripts/check-template-freshness.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-template-freshness',
+        baselines: {
+          healthy: (s) => {
+            const upstream = emptyDir(s, 'template');
+            file(upstream, 'VERSION', '1.6.8\n');
+            return { args: [], env: { TEMPLATE_DIR: upstream } };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: '$TEMPLATE_DIR/VERSION 是空檔', build: (s) => { const upstream = emptyDir(s, 'template'); file(upstream, 'VERSION', ''); return { args: [], env: { TEMPLATE_DIR: upstream } }; } },
+          { kind: 'missing', name: '沒有 $TEMPLATE_DIR', legitZero: 'CI 沒有模板路徑時只能回報無法判斷;這不是同版也不是錯誤,見 ADR-055。', build: () => ({ args: [], env: { TEMPLATE_DIR: '' } }) },
+          { kind: 'malformed', name: 'VERSION 不是三段版本', build: (s) => { const upstream = emptyDir(s, 'template'); file(upstream, 'VERSION', 'release-next\n'); return { args: [], env: { TEMPLATE_DIR: upstream } }; } },
+          { kind: 'wrong-type', name: '$TEMPLATE_DIR 指到檔案', build: (s) => ({ args: [], env: { TEMPLATE_DIR: file(s, 'template', 'not a directory\n') } }) },
+        ],
+      },
+    ],
+  },
   'scripts/check-next-gates.ts': {
     kind: 'entry',
     commands: [

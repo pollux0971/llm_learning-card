@@ -1004,12 +1004,15 @@ graph TD
   `build:` 函式）移到 `scripts/zero-input-roster.ts`，測試檔只 import 後執行
   完整性、棘輪與結果斷言。這符合原規則的效果判準：設定移出 `*.test.ts`，新增入口不再
   被檔案位置逼著修改斷言；且單一有型別的名冊不會產生 JSON 清單與 TypeScript builder
-  的漂移。重新判定後，`run-tests.ts` 改為 `entry`：在自己的暫存 git repo 拿本地鎖，
-  用 `--help` 作健康基線、用不存在/目錄設定檔與未知旗標作便宜 probe；真正零參數會啟動
-  全套工作，明確寫在 `omit.empty`。反之 `mutate.ts` 仍是 `excluded`：它在解析任何
+  的漂移。`run-tests.ts` 一度在本張改判為 `entry`（`--help` 當健康基線、
+  壞設定檔與未知旗標當便宜 probe），**合併後實測四條探針全紅而回退**：紅的內容全是
+  vitest 自己的輸出（`--help` 的 usage、CACError 的 stack、rolldown 的 UNRESOLVED_ENTRY）。
+  要讓它們變綠，`run-tests.ts` 必須攔截並改寫 vitest 的 stderr，那會把真正的測試輸出
+  一起蓋掉。**那次嘗試把排除理由從「會遞迴」推進到「這支是純轉發，探它的 CLI 等於探
+  vitest 的 CLI」——後者才是真正的理由**，已寫進名冊。因此 `run-tests.ts` 維持
+  `excluded`，`excludedMax` 維持 **2**。`mutate.ts` 同樣是 `excluded`：它在解析任何
   參數前即取得跨 worktree 鎖，且所有 CLI 路徑都交給 Stryker 啟動，沒有同時便宜、隔離且
   不干擾其他 mutate 的黑盒 probe；其 argv 與鎖生命週期由注入式 unit test 守住。
-  因而 `excludedMax` 降為 **1**。
 - **Alternatives**:
   - **(a) JSON 清單 + TypeScript builders**：開發輪能只改 JSON，但檔名/探針與 build 函式
     分散兩處，完整性檢查也無法保證兩層同步，正是容易悄悄漂移的雙重來源。
@@ -1018,6 +1021,14 @@ graph TD
 - **Consequences**: 名冊現在有單一非測試來源，完整性測試直接 import 它；每一個
   `scripts/*.ts`（包括名冊模組本身）仍必須被列出。未來新增守門只修改
   `zero-input-roster.ts`，而 `excluded` 僅保留給沒有可負擔 probe 的實質類別判斷。
+## ADR-055 · 模板新鮮度另做收割窗口報告,不接必跑鏈
+
+- **Status**: accepted · 2026-09-12
+- **Context**: `check:gates --check` 的雜湊只回答「同步後檔案有沒有被手改」,不回答「上游模板後來有沒有出新版本」。兩種狀態在剛同步完成時相同,之後才分開；因此 `check:gates` 綠不能證明本 repo 已跟上模板。版本必須分別讀本 repo 的 `scripts/_root.ts` 檔頭與 `$TEMPLATE_DIR/VERSION`,不能把任一版本寫死。
+- **Decision**: 新增 `check:template-freshness` npm script,回報同版、上游較新、或無法判斷三態；無 `$TEMPLATE_DIR` 時 rc=0 但明確印「無法判斷」,不印成同版。另列出兩邊同步檔去掉檔頭後的內容差異,供升版前預估影響範圍。
+- **Alternatives**: 不接入 `gates.config.json` 的 `chain`,因為它只在收割窗口跑；CI 沒有模板路徑,接入必跑鏈會逼人關掉這個檢查。改以 `unwired` 登記並寫明「只在收割窗口跑;CI 沒有模板路徑,進鏈會逼人關掉它」,讓刻意不接線成為可見決定而非遺漏。
+- **Consequences**: 收割窗口可用一個固定 npm script 先量出版本與預期變更檔,再決定是否執行升版；CI 仍只依賴自包含的 `check:gates --check`。上游版本格式或本地檔頭損壞時回報無法判斷,避免錯誤宣稱同版。
+- **Related**: ADR-053, ADR-054, scripts/check-template-freshness.ts, scripts/gates.config.json
 
 ## 已推翻
 
