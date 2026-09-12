@@ -45,7 +45,7 @@
  * 見 describe('棘輪基準')。
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -355,6 +355,25 @@ function gatesConfigDir(scratch: string, files: Record<string, string>): Record<
   return { GATES_CONFIG_DIR: d };
 }
 
+const REPO_NODE_MODULES = join(REPO_ROOT, 'node_modules');
+
+/** 給 check-dry-run.ts 用的最小可跑真 cucumber 的 consumer:cucumber.json + 一個 phase 檔 +
+ *  一個 steps 檔,恰好各自一個定義。跟 check-dry-run.test.ts 同一個手法——node_modules 是
+ *  指向本 repo 的符號連結,不然 npx 在 scratch 目錄裡找不到 cucumber-js / tsx。
+ *  `noFeatures` 拿掉 phase 檔,留下空的 features/ 給「0 個場景」探針用。 */
+function dryRunFixture(scratch: string, rel: string, opts: { noFeatures?: boolean } = {}): string {
+  const root = join(scratch, rel);
+  mkdirSync(root, { recursive: true });
+  symlinkSync(REPO_NODE_MODULES, join(root, 'node_modules'), 'dir');
+  file(root, 'cucumber.json', JSON.stringify({ default: { paths: ['features/**/*.feature'], import: ['features/steps/**/*.js'] } }, null, 2));
+  file(root, 'scripts/gates.config.json', '{}');
+  file(root, 'features/steps/alpha.steps.js', ["const { Given } = require('@cucumber/cucumber');", "Given('the store has {int} items', function () {});", ''].join('\n'));
+  if (!opts.noFeatures) {
+    file(root, 'features/01-alpha/phase-1.feature', ['@phase-1', 'Feature: alpha', '  Scenario: one', '    Given the store has 3 items', ''].join('\n'));
+  }
+  return root;
+}
+
 /**
  * check-phase-coverage 不帶 --list 就會真的起 cucumber:段一 dry-run 一個資料夾約十秒,
  * 段二會把 done / in-progress 的 phase 真跑一遍(幾分鐘)。`--run-phases` 指一個不存在的
@@ -650,6 +669,39 @@ const ROSTER: Record<string, Entry> = {
           { kind: 'empty', name: 'features/steps/ 存在但沒有 .steps.ts', build: (s) => { emptyDir(s, 'features/steps'); return { args: [], cwd: s }; } },
           { kind: 'missing', name: '沒有 features/steps/', build: (s) => ({ args: [], cwd: emptyDir(s, 'norepo') }) },
           { kind: 'malformed', name: '.steps.ts 是垃圾文字', build: (s) => { file(s, 'features/steps/x.steps.ts', 'this is not typescript ((\n'); return { args: [], cwd: s }; } },
+        ],
+      },
+    ],
+  },
+  'scripts/check-module-cast.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-module-cast',
+        baselines: { healthy: () => ({ args: [] }) },
+        probes: [
+          { kind: 'empty', name: 'features/steps/ 存在但沒有 .ts 檔', build: (s) => { emptyDir(s, 'features/steps'); return { args: [], cwd: s }; } },
+          { kind: 'missing', name: '沒有 features/steps/', build: (s) => ({ args: [], cwd: emptyDir(s, 'norepo') }) },
+          { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => ({ args: [], env: gatesConfigDir(s, { 'gates.config.json': '{ "moduleCast": ' }) }) },
+          { kind: 'wrong-type', name: 'moduleCast.scanDirs 是字串', build: (s) => ({ args: [], env: gatesConfigDir(s, { 'gates.config.json': '{ "moduleCast": { "scanDirs": "x" } }' }) }) },
+        ],
+      },
+    ],
+  },
+  'scripts/check-dry-run.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-dry-run',
+        // 跟 check-dry-run.test.ts 同一個手法:真的跑 cucumber,fixture 的 node_modules 是
+        // 指向本 repo node_modules 的符號連結——這支守門的全部價值就是「cucumber dry-run 對
+        // ambiguous/undefined 的退出碼是 0」這個實測事實,用假輸出測就是在測自己的想像。
+        baselines: { healthy: (s) => ({ args: ['--root', dryRunFixture(s, 'consumer')] }) },
+        probes: [
+          { kind: 'empty', name: 'features/ 存在但沒有 .feature', build: (s) => ({ args: ['--root', dryRunFixture(s, 'consumer', { noFeatures: true })] }) },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+          { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => ({ args: ['--root', emptyDir(s, 'consumer')], env: gatesConfigDir(s, { 'gates.config.json': '{ "dryRun": ' }) }) },
+          { kind: 'wrong-type', name: 'dryRun.tags 是數字', build: (s) => ({ args: ['--root', emptyDir(s, 'consumer')], env: gatesConfigDir(s, { 'gates.config.json': '{ "dryRun": { "tags": 5 } }' }) }) },
         ],
       },
     ],

@@ -8,14 +8,20 @@
     "accept:standalone",
     "standalone",
     "accept:dry",
+    "check:dry-run",
     "check:steps",
     "check:gherkin-dup",
+    "check:module-cast",
     "accept:coverage",
     "check:gates",
     "check:doc-rot",
     "check:next-gates",
     "check:phase-status"
   ],
+  "dryRun": {
+    "tags": "@standalone and not @manual"
+  },
+  "skipDirs": ["tmp-learning"],
   "nextGates": {
     "mode": "enforce"
   },
