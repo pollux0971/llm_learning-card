@@ -47,7 +47,7 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
    `scanned=<實際>` 那個數字自己會長,清單不會。
 
    目前 `scanned=N` 是 chain 長度,不是這次真的跑了幾步；`ran=` 已提案上游,尚未生效。
-   排序原則見 `scripts/gates.chain-order.md`。
+   排序原則見 `docs/02-decision-map.md` 的 ADR-052 第 2 點(唯一真相;不另放一份,兩份會漂)。
 
    ⚠️ **這條在 2026-09-05 之前只是 SKILL.md 裡一行手打指令,沒有進 `package.json`** ——
    也就是「清單上寫著、實際沒人跑」。技術顧問抓到後才補成 `npm run check:gates`。
