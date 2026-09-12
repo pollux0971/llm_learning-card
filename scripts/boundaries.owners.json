@@ -253,6 +253,26 @@
       "infra"
     ],
     [
+      "scripts/check-step-dup.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-dry-run.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-dry-run.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-module-cast.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-module-cast.test.ts",
+      "infra"
+    ],
+    [
       "scripts/check-gherkin-dup.ts",
       "infra"
     ],
@@ -326,7 +346,7 @@
   ],
   "contractsOwner": "contracts",
   "coverageBaseline": {
-    "managed": 244,
-    "scanned": 244
+    "managed": 249,
+    "scanned": 249
   }
 }

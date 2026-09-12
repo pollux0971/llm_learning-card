@@ -1,4 +1,4 @@
-// SOURCE: template v1.5.0 (9853eab) sha256=52aed570a694979514242e9f8c64b48eab93ad7e7bda1c4e2e5500a3f3ed6fb2 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.4 (4dc1513) sha256=871c48f3efca027e767c63fdafdefd85c3cf3d1b3a37ad14352d8d6de9b89c0c — 勿手改;升版用 sync-gates.sh
 /**
  * 文件腐爛黑名單掃描(S7,來源 nightmare-assault;模板 1.4.1 S13 補上 report 模式、
  * 自我測試與事故記錄檔的預設排除,同樣來源 nightmare-assault:他們自己的第一版
@@ -97,6 +97,7 @@ import {
   requireConfigType,
   requireKnownTopLevelKeys,
   requireRootDir,
+  resolveSkipDirs,
   splitSkipDirs,
 } from './_root.js';
 
@@ -231,10 +232,11 @@ function loadBlacklist(): { entries: BlacklistEntry[]; path: string } {
  *  **整個 ROOT**(不像 boundaries/gherkin-dup 只掃固定的少數子樹),不做前綴比對的話
  *  會遞迴進 `.claude/worktrees/<其他 worktree>` 把整個 repo 重新掃一次。 */
 function resolveSkipDirsForDocRot(gatesConfig: Record<string, unknown> | undefined): { segments: Set<string>; prefixes: string[] } {
-  const extra = gatesConfig?.skipDirs;
-  if (extra !== undefined) requireConfigType(extra, 'skipDirs', 'array', GATE_NAME);
-  const extraStrings = Array.isArray(extra) ? extra.filter((s): s is string => typeof s === 'string') : [];
-  return splitSkipDirs(new Set([...DEFAULT_SKIP_DIRS, ...extraStrings]));
+  // 1.6.3 起改為委派給 `_root.ts` 的 `resolveSkipDirs()`,不再自己複製一份合併邏輯。
+  // 原因:這裡原本重寫了「型別檢查 + 合併 DEFAULT_SKIP_DIRS」,於是 1.6.3 加在共用函式裡的
+  // **glob 硬錯**對這支不生效——同一個 `skipDirs` 設定,在別支會大聲失敗、在這支靜默無效。
+  // 這正是 P-90 的形狀(共用清單存在卻有人繞過它自己列一份),只是這次繞過的是**函式**不是清單。
+  return splitSkipDirs(resolveSkipDirs(gatesConfig, GATE_NAME));
 }
 
 function toPosix(p: string): string {

@@ -1,4 +1,4 @@
-// SOURCE: template v1.5.0 (9853eab) sha256=4fa7673937d82953cffbc8ec5b7d2907cf05a7f1e87d0ca184ddfb4a0c67700a — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.4 (4dc1513) sha256=14775b9592f6a7220166c7318663f05ebae41ed2ac28d375174bb248bc7a5b21 — 勿手改;升版用 sync-gates.sh
 /**
  * 所有守門腳本共用的 repo 根解析。
  *
@@ -273,6 +273,8 @@ export function requireConfigType(value: unknown, key: string, kind: ConfigValue
  *   docRot                      — check-doc-rot.ts(S7)
  *   knownDefects                — check-known-defects.ts(S8)
  *   phaseStatus                 — check-phase-status.ts(S15)
+ *   moduleCast                  — check-module-cast.ts(1.6.0,P-88)
+ *   dryRun                      — check-dry-run.ts(1.6.0,P-86):tags
  */
 export const KNOWN_GATES_CONFIG_KEYS = [
   'cucumberCwd',
@@ -287,6 +289,8 @@ export const KNOWN_GATES_CONFIG_KEYS = [
   'docRot',
   'knownDefects',
   'phaseStatus',
+  'moduleCast',
+  'dryRun',
 ] as const;
 
 /** `obj` 的頂層鍵裡,有沒有不在 `knownKeys` 的——通常是打錯字(`"chian"` 之類)。
@@ -354,6 +358,9 @@ export const DEFAULT_SKIP_DIRS: readonly string[] = [
   '.turbo',
   '.cache',
   'target',
+  '.stryker-tmp',   // 變異測試沙盒是**整個 repo 的複本**;任何走訪檔案樹的掃描器踩進去都會
+                    // 把自己的 fixture 與舊 worktree 的整份模板當成真命中,而且 `scanned=N`
+                    // 會隨「那一刻磁碟上剛好有沒有沙盒」跳動,連量尺一起壞掉(1.6.2,P-90)
   '__pycache__',
   '.venv',
   'venv',
@@ -369,6 +376,17 @@ export function resolveSkipDirs(gatesConfig: Record<string, unknown> | undefined
   if (extra === undefined) return new Set(DEFAULT_SKIP_DIRS);
   requireConfigType(extra, 'skipDirs', 'array', gateName);
   const extraStrings = (extra as unknown[]).filter((s): s is string => typeof s === 'string');
+  // glob 硬錯,不是靜默忽略(1.6.3,P-91):這個集合是**逐字比對**的,`learning-*` 這種寫法
+  // 一個目錄都排除不到,而且不報錯——consumer 會以為問題解決了,於是不再追。
+  // 「回傳值長得像回執」那一族最壞的一種。打錯字跟不支援 glob 的症狀一模一樣,所以寧可大聲失敗。
+  const globbed = extraStrings.filter((d) => /[*?[\]]/.test(d));
+  if (globbed.length > 0) {
+    failConfig(
+      gateName,
+      `設定檔鍵 skipDirs 不支援 glob,請逐字列出目錄名:${globbed.join(', ')}` +
+        `(這個集合是逐字比對的,含萬用字元的項目一個目錄都排除不到)`,
+    );
+  }
   return new Set([...DEFAULT_SKIP_DIRS, ...extraStrings]);
 }
 

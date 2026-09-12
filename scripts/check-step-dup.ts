@@ -1,4 +1,4 @@
-// SOURCE: template v1.5.0 (9853eab) sha256=80d384ea2d1f7382908730933e93ecc3c516347dee4c72d14e3155a5eb589898 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.4 (4dc1513) sha256=2d9c0f6cf41f5da2d8ae64ee453dd0bf9f5c4f8580060152351ed48917d3131a — 勿手改;升版用 sync-gates.sh
 /**
  * 步驟重複檢查(見 docs/03-agile-workflow.md「便宜的模型做機械工作」與 PITFALLS.md P-02)。
  *
@@ -24,10 +24,21 @@
  *      的 Map。cucumber expression 的所有參數型別({string}/{int}/{}/{word}/...)與
  *      regex 的捕獲群都正規化成同一個萬用字 {},跟步驟句那邊的 {string}/{int}/{param}
  *      也統一收斂成 {} 再比對形狀是否相同
- *   3. 對每個出現在 feature 檔裡的步驟形狀(不限跨幾個資料夾):
- *        定義 0 次 → 不歸這支管(cucumber --strict 跑下去會判 undefined,那是另一道檢查)
+ *   3. 對**定義那邊**的每一種形狀(不管 feature 檔有沒有用到):
  *        定義 1 次 → OK,不管那個定義住在哪個 *.steps.ts 檔
- *        定義 ≥2 次 → 列出這句話與每個定義所在的檔案,退出 1
+ *        定義 ≥2 次 → 列出這句話、每個定義所在的檔案與原始寫法、目前哪些資料夾在用
+ *                     (沒有任何 feature 用到就明說「目前沒有 feature 用到」),退出 1
+ *      feature 裡出現但定義 0 次 → 不歸這支管(`check-dry-run.ts` 讀 dry-run 摘要行的
+ *      undefined 桶,那是另一道檢查)
+ *
+ *   1.6.0 之前的第 3 條是「對每個出現在 feature 檔裡的步驟形狀」——只有 feature 已經用到
+ *   的句子才會被比對定義次數,結果**跨檔逐字相同、但 feature 還沒用到**的定義完全看不見
+ *   (P-87,來源 AI_KM 2026-09-08):測試 agent 新開一個 steps 檔,照抄別的 phase 的英文
+ *   措辭當自己的定義,只跑自己的 tag 全綠(自己的場景還沒寫到那句),別人跑他的 tag 才炸
+ *   ambiguous,而且訊息指向**別人的**場景。「自己全綠、合進去別人紅」的另一形態。
+ *   另一個看不見的角落:定義用了 cucumber expression 的 optional/alternative 語法
+ *   (`the log line(s) contain(s) {string}`、`a/an item`),正規化後永遠對不上任何 feature
+ *   句的形狀,重複定義照樣漏。改成直接對定義清單本身找重複,兩個角落一起補上。
  *
  * 用法(repo 根從 `git rev-parse --show-toplevel` 解析,不在 git repo 裡則退回 cwd):
  *   npx tsx scripts/check-step-dup.ts               # 複製進 repo 後執行
@@ -37,7 +48,8 @@
  *
  * 退出碼:
  *   0  沒有被定義 ≥2 次的步驟形狀
- *   1  有步驟形狀被定義 ≥2 次;或掃到 0 個 .feature 檔 / 0 個步驟句(這不是很乾淨,是掃描器壞了)
+ *   1  有步驟形狀被定義 ≥2 次(不管 feature 有沒有用到);或掃到 0 個 .feature 檔 / 0 個步驟句 /
+ *      0 個可解析的步驟定義(這不是很乾淨,是掃描器壞了)
  *
  * 反向驗證(用根目錄 scripts/ 暫放這支腳本的方式對真實資料跑,跑完刪除暫存檔案,
  * 確認 `git status` 乾淨,不要留下改動):
@@ -49,6 +61,9 @@
  *   (c) 找一句只定義在某個能力自己的 *.steps.ts、但被 docs/integration 的場景重用的句子
  *       (常見情況:整合場景直接寫該能力 phase-1 已經在用的斷言字彙)。確認它不在失敗清單裡
  *       (跨資料夾但恰好 1 個定義 → OK)→ 綠,不用改任何檔案。
+ *   (d) 挑一句**沒有任何 feature 用到**的定義(或自己新寫一句 `Then('nobody uses this yet', …)`
+ *       在兩個 steps 檔各放一份)→ 應該紅,列出兩個檔案並註明「目前沒有 feature 用到」。
+ *       這是 1.6.0 補的角落,`check-step-dup.test.ts` 有對應的自動測試。
  */
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -197,27 +212,6 @@ function regexToKey(source: string): string {
   return body.replace(/\((?:\?:)?[^()]*\)/g, '{}');
 }
 
-function extractDefinitionKeys(rawSrc: string): string[] {
-  const src = stripComments(rawSrc);
-  const keys: string[] = [];
-  const callRe = /\b(?:Given|When|Then)\s*\(\s*/g;
-  let m: RegExpExecArray | null;
-  while ((m = callRe.exec(src)) !== null) {
-    const after = m.index + m[0].length;
-    const next = src[after];
-    if (next === '"' || next === "'" || next === '`') {
-      const parsed = parseStringLiteral(src, after + 1, next);
-      if (parsed) keys.push(literalToKey(parsed.value));
-    } else if (next === '/') {
-      const parsed = parseRegexLiteral(src, after + 1);
-      if (parsed) keys.push(regexToKey(parsed.source));
-    }
-    // 其餘(例如 `for (const phrase of [...]) { Then(phrase, ...) }` 這種變數形式)不是
-    // 「直接以引號或 / 開頭」的定義,略過——這是這支腳本刻意的限制,見檔頭註解。
-  }
-  return keys;
-}
-
 function collectStepDefinitionFiles(): string[] {
   if (!existsSync(STEPS_DIR)) return [];
   return readdirSync(STEPS_DIR)
@@ -225,15 +219,39 @@ function collectStepDefinitionFiles(): string[] {
     .map((name) => join(STEPS_DIR, name));
 }
 
-function buildDefinitionsByKey(): Map<string, string[]> {
-  const map = new Map<string, string[]>();
+/** 一個步驟定義:住在哪個檔、原始寫法(字串字面值或 regex source)、是哪一種。 */
+interface StepDefinition { file: string; literal: string; kind: 'expression' | 'regex' }
+
+function extractDefinitions(rawSrc: string): { key: string; literal: string; kind: 'expression' | 'regex' }[] {
+  const src = stripComments(rawSrc);
+  const out: { key: string; literal: string; kind: 'expression' | 'regex' }[] = [];
+  const callRe = /\b(?:Given|When|Then)\s*\(\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = callRe.exec(src)) !== null) {
+    const after = m.index + m[0].length;
+    const next = src[after];
+    if (next === '"' || next === "'" || next === '`') {
+      const parsed = parseStringLiteral(src, after + 1, next);
+      if (parsed) out.push({ key: literalToKey(parsed.value), literal: parsed.value, kind: 'expression' });
+    } else if (next === '/') {
+      const parsed = parseRegexLiteral(src, after + 1);
+      if (parsed) out.push({ key: regexToKey(parsed.source), literal: `/${parsed.source}/`, kind: 'regex' });
+    }
+    // 其餘(例如 `for (const phrase of [...]) { Then(phrase, ...) }` 這種變數形式)不是
+    // 「直接以引號或 / 開頭」的定義,略過——這是這支腳本刻意的限制,見檔頭註解。
+  }
+  return out;
+}
+
+function buildDefinitionsByKey(): Map<string, StepDefinition[]> {
+  const map = new Map<string, StepDefinition[]>();
   for (const file of collectStepDefinitionFiles()) {
     const rel = toPosix(relative(ROOT, file));
     const src = readFileSync(file, 'utf8');
-    for (const key of extractDefinitionKeys(src)) {
-      const list = map.get(key) ?? [];
-      list.push(rel);
-      map.set(key, list);
+    for (const d of extractDefinitions(src)) {
+      const list = map.get(d.key) ?? [];
+      list.push({ file: rel, literal: d.literal, kind: d.kind });
+      map.set(d.key, list);
     }
   }
   return map;
@@ -281,11 +299,19 @@ function main(): void {
       `features/steps/*.steps.ts 共 ${stepFiles.length} 個檔案,${defCount} 個可解析定義`,
   );
 
+  if (defCount === 0) {
+    // feature 有句子、定義卻一個都解析不到:steps 目錄放錯地方、檔名不是 *.steps.ts、或定義
+    // 全用變數形式——不管哪種,這支守門對「重複定義」什麼都檢查不了,不能宣稱通過。
+    console.log(`✗ ${STEPS_DIR} 底下解析到 0 個步驟定義(*.steps.ts 裡 Given/When/Then 直接接引號或 / 的呼叫)。這不是很乾淨,是掃描器壞了。`);
+    console.log(`gate=${GATE_NAME} result=FAIL scanned=0`);
+    process.exit(1);
+  }
+
   const crossFolder = [...groups.entries()].filter(([, g]) => g.folders.size >= 2);
 
   if (LIST_ONLY) {
     for (const [key, g] of crossFolder.sort((a, b) => b[1].folders.size - a[1].folders.size)) {
-      const defFiles = defsByKey.get(key) ?? [];
+      const defFiles = (defsByKey.get(key) ?? []).map((d) => d.file);
       const label = [...g.displayTexts].join(' | ');
       console.log(`  [${g.folders.size} 資料夾]  ${label}`);
       console.log(`      定義於:${defFiles.length ? defFiles.join(', ') : '(undefined)'}`);
@@ -294,22 +320,32 @@ function main(): void {
     process.exit(0);
   }
 
-  const duplicated = [...groups.entries()].filter(([key]) => (defsByKey.get(key) ?? []).length >= 2);
+  // 1.6.0:對**定義清單本身**找重複,不再只看 feature 已經用到的句子(P-87)。
+  const duplicated = [...defsByKey.entries()].filter(([, defs]) => defs.length >= 2);
   if (duplicated.length) {
     console.log(`\n✗ ${FAILURE_MESSAGE}`);
     console.log(`\n${duplicated.length} 句被定義了 ≥2 次:`);
-    for (const [key, g] of duplicated) {
-      const defFiles = defsByKey.get(key)!;
-      const label = [...g.displayTexts].join(' | ');
+    let unusedCount = 0;
+    for (const [key, defs] of duplicated) {
+      const g = groups.get(key);
+      const label = g ? [...g.displayTexts].join(' | ') : key;
       console.log(`  "${label}"`);
-      console.log(`      定義於:${defFiles.join(', ')}`);
-      console.log(`      用於:${[...g.folders].sort().join(', ')}`);
+      for (const d of defs) console.log(`      定義於:${d.file}  ${d.kind === 'regex' ? d.literal : `'${d.literal}'`}`);
+      if (g) {
+        console.log(`      用於:${[...g.folders].sort().join(', ')}`);
+      } else {
+        unusedCount++;
+        console.log('      用於:(目前沒有任何 .feature 用到——只跑自己的 tag 看不到,一旦有人寫了這句就 ambiguous,而且訊息會指向別人的場景;P-87)');
+      }
+    }
+    if (unusedCount) {
+      console.log(`\n  其中 ${unusedCount} 句目前沒有 feature 用到:這種重複 \`cucumber --dry-run\` 也印不出來(dry-run 只走 feature 裡有的句子),只有這支守門看得到。`);
     }
     console.log(`gate=${GATE_NAME} result=FAIL scanned=${totalSteps}`);
     process.exit(1);
   }
 
-  console.log(`✓ 無重複定義(跨資料夾形狀 ${crossFolder.length} 種,每種都恰好 0 或 1 個定義)`);
+  console.log(`✓ 無重複定義(${defCount} 個定義每種形狀恰好 1 個;跨資料夾的句子 ${crossFolder.length} 種)`);
   console.log(`gate=${GATE_NAME} result=PASS scanned=${totalSteps}`);
   process.exit(0);
 }
