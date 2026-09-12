@@ -136,16 +136,19 @@ interface BaselineEntry {
 interface BaselineFile {
   /** 鎖 3:條數 ≤ 這個數;每還一批就把它改小。 */
   max: number;
+  /** `excluded` 是「不適用」的類別判斷,不是待辦事項;數量只能減不能增。 */
+  excludedMax: number;
   entries: BaselineEntry[];
 }
 
 export function loadBaseline(path: string): BaselineFile {
   const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error(`${path}:頂層要是物件`);
-  const { max, entries } = raw as Record<string, unknown>;
+  const { max, excludedMax, entries } = raw as Record<string, unknown>;
   if (typeof max !== 'number' || !Number.isInteger(max) || max < 0) throw new Error(`${path}:max 要是非負整數`);
+  if (typeof excludedMax !== 'number' || !Number.isInteger(excludedMax) || excludedMax < 0) throw new Error(`${path}:excludedMax 要是非負整數`);
   if (!Array.isArray(entries)) throw new Error(`${path}:entries 要是陣列`);
-  return { max, entries: entries as BaselineEntry[] };
+  return { max, excludedMax, entries: entries as BaselineEntry[] };
 }
 
 export const baselineKey = (command: string, probe: string, category: Category): string => `${command} :: ${probe} :: ${category}`;
@@ -490,12 +493,49 @@ const ROSTER: Record<string, Entry> = {
     ],
   },
   'scripts/check-adr-numbers.ts': {
-    kind: 'excluded',
-    reason: '本輪只補 ROSTER 名冊條目，不新增探針或斷言；ADR-052 的零輸入探針另立工單處理。',
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-adr-numbers',
+        baselines: {
+          healthy: (s) => {
+            const root = emptyDir(s, 'consumer');
+            file(root, 'docs/adr.md', '# ADR-001\n');
+            file(root, 'scripts/adr-numbers.scope.json', JSON.stringify({ include: ['docs/*.md'] }));
+            return { args: ['--root', root] };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: 'include 是空陣列', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/adr-numbers.scope.json', JSON.stringify({ include: [] })); return { args: ['--root', root] }; } },
+          { kind: 'missing', name: 'adr-numbers.scope.json 不存在', build: (s) => { const root = emptyDir(s, 'consumer'); const p = join(root, 'scripts/adr-numbers.scope.json'); return { args: ['--root', root], mention: p }; } },
+          { kind: 'malformed', name: 'adr-numbers.scope.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/adr-numbers.scope.json', '{ "include": '); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: 'include 是字串', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'scripts/adr-numbers.scope.json', JSON.stringify({ include: 'docs/*.md' })); return { args: ['--root', root] }; } },
+        ],
+      },
+    ],
   },
   'scripts/check-deliberately-absent.ts': {
-    kind: 'excluded',
-    reason: '直接解析目前 git worktree 的實際 hooks 路徑並檢查版控外狀態；本輪依工單手動造假 hook 驗證 FAIL/PASS，不新增零輸入案例或放寬斷言。',
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-deliberately-absent',
+        baselines: {
+          healthy: (s) => {
+            const root = ownGitRepo(s, false);
+            file(root, 'scripts/deliberately-absent.json', JSON.stringify({ absent: [{ path: '.intentionally-absent', reason: '這個檔案必須不存在', adr: 'ADR-001' }] }));
+            return { args: ['--root', root] };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: 'absent 是空陣列', build: (s) => { const root = ownGitRepo(s, false); file(root, 'scripts/deliberately-absent.json', JSON.stringify({ absent: [] })); return { args: ['--root', root] }; } },
+          { kind: 'missing', name: 'deliberately-absent.json 不存在', build: (s) => { const root = ownGitRepo(s, false); const p = join(root, 'scripts/deliberately-absent.json'); return { args: ['--root', root], mention: p }; } },
+          { kind: 'malformed', name: 'deliberately-absent.json 是壞 JSON', build: (s) => { const root = ownGitRepo(s, false); file(root, 'scripts/deliberately-absent.json', '{ "absent": '); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: 'absent 是物件', build: (s) => { const root = ownGitRepo(s, false); file(root, 'scripts/deliberately-absent.json', JSON.stringify({ absent: {} })); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: '第一筆缺少 reason', build: (s) => { const root = ownGitRepo(s, false); file(root, 'scripts/deliberately-absent.json', JSON.stringify({ absent: [{ path: '.intentionally-absent', adr: 'ADR-001' }] })); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: '第一筆缺少 adr', build: (s) => { const root = ownGitRepo(s, false); file(root, 'scripts/deliberately-absent.json', JSON.stringify({ absent: [{ path: '.intentionally-absent', reason: '這個檔案必須不存在' }] })); return { args: ['--root', root] }; } },
+        ],
+      },
+    ],
   },
   'scripts/check-boundaries.ts': {
     kind: 'entry',
@@ -1212,6 +1252,14 @@ function getResult(file: string, label: string, name: string): RunResult {
 const entryCommands = (): { file: string; command: Command }[] =>
   Object.entries(ROSTER).flatMap(([file, entry]) => (entry.kind === 'entry' ? entry.commands.map((command) => ({ file, command })) : []));
 
+function assertExcludedCount(count: number, max: number): void {
+  expect(
+    count,
+    `excluded 有 ${count} 筆,超過 max=${max}。又多一個「不適用」:請說明為什麼它真的不適用;` +
+      '若只是尚未補探針,應改成 entry 並補齊零輸入案例。',
+  ).toBeLessThanOrEqual(max);
+}
+
 beforeAll(async () => {
   const jobs: (() => Promise<void>)[] = [];
   for (const { file: entryFile, command } of entryCommands()) {
@@ -1293,6 +1341,16 @@ describe('清單完整性:磁碟上每一個入口都要在 ROSTER 裡', () => {
         expect(target?.kind, `${file} 的 via 指到 ${entry.via},那不是清單裡的入口`).toBe('entry');
       }
     }
+  });
+
+  it('excluded 筆數 ≤ excludedMax;「不適用」只能減不能增', () => {
+    const excluded = Object.values(ROSTER).filter((entry) => entry.kind === 'excluded');
+    assertExcludedCount(excluded.length, BASELINE.excludedMax);
+  });
+
+  it('反向驗證:故意多加一筆 excluded → 紅,訊息要求說明為什麼又多一個「不適用」', () => {
+    const excluded = Object.values(ROSTER).filter((entry) => entry.kind === 'excluded');
+    expect(() => assertExcludedCount(excluded.length + 1, excluded.length)).toThrow('又多一個「不適用」');
   });
 
   it('每個命令四種輸入形狀都要有探針,略過的要寫理由;legitZero 要有理由', () => {
