@@ -197,6 +197,14 @@
       "infra"
     ],
     [
+      "scripts/check-ledger-pollution.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-ledger-pollution.test.ts",
+      "infra"
+    ],
+    [
       "scripts/check-boundaries.local.test.ts",
       "infra"
     ],

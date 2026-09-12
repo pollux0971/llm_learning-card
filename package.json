@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "test": "tsx scripts/run-tests.ts --",
+    "check:test-ledger": "tsx scripts/check-ledger-pollution.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "accept": "NODE_OPTIONS=--import=tsx cucumber-js",
