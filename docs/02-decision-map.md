@@ -854,6 +854,77 @@ graph TD
   (跟另外三支腳本同一個模式)後,`--live` 才真的跑得起來。這條算是這輪工單
   順手發現、順手修的第二個獨立缺口,不是本來要修的那兩行。
 
+## ADR-051 · `learning/` 是主簽出跨 git worktree 共用的帳本,不是「每個簽出各自一份」
+
+- **Status**: accepted · 2026-09-12(協調者 + 技術顧問裁決)
+- **Context**: ADR-050 交出去之後,協調者實測到 `learning/state/log.jsonl` 其實是
+  **每個 git worktree 各自一份**:主簽出 36 筆(今日 0 筆),`llm-accountable` 這個
+  worktree 39 筆(= 36 + ADR-050 那次驗收的 3 筆)。ADR-050 的 `createDefaultLiveRouter()`
+  用 `ROOT`(這個 worktree 自己在磁碟上的位置)當 `learningDir` 的預設值,而 `ROOT`
+  在每個 worktree 都不一樣——**修完 ADR-050 之後,煞車接上了,但接的是「這個簽出
+  自己的帳本」,不是使用者唯一的那一份。**
+
+  兩個後果:
+  1. **每日上限的作用點錯了。** `LLM_DAILY_CAP_USD` 原本要擋的是「使用者今天花了多少」,
+     現在變成「這個簽出今天花了多少」——N 個 worktree 就能實際花到 N 倍的錢,
+     而每一個 worktree 都會誠實回報「未達上限」,因為它只看得到自己那份 log。
+     **沒有任何一個在說謊,但加起來超過。**
+  2. **worktree 會被清掉。** 那次驗收的 3 筆花費紀錄只存在於 `llm-accountable` 這個
+     worktree 的複本裡,而且沒有 commit——協調者收割、清掉 worktree 的那一刻,
+     那 3 筆就會永久消失、沒有任何痕跡,`llm-spend` 會回到誠實地說 `$0.0000`。
+     **帳本必須活得比 worktree 久,這不是「列舉不完整」的風險,是「正常的清理
+     流程會定期抹掉帳」。**
+
+  技術顧問否決了「讀取時加總所有現存 worktree 的 log」這個選項:加總的是「現在
+  存在的簽出」,一個簽出被清掉,它花掉的錢就從總數裡永久消失、沒有任何跡象——
+  跟選項 2 是同一個問題,只是從「憑證消失」換成「總數悄悄變小」。
+- **Decision**: 選 **單一帳本**,不是加總。`learning/` 一律解析到**主簽出**
+  (`git rev-parse --git-common-dir` 的上一層),不管呼叫的人現在站在哪個 worktree
+  ——跟 `scripts/mutate.ts` 的 `.stryker.lock`(`strykerLockPath()`)同一個問題、
+  同一招。新增 `packages/core/src/llm/vault.ts`(`resolveVaultRoot()` /
+  `resolveVaultLearningDir()`),**不重用** `strykerLockPath()` 本人——那是
+  `infra` owner,`03-llm-router` 依賴 `infra` 的下一步會是 library 依賴一支
+  script,方向反了;這幾行本身夠小、夠穩,照抄一份比跨層 import 乾淨(跟
+  `router-gateway.ts` 重複 `createFileLogAppender` 而不是跨檔案共用私有函式
+  同一個判斷)。
+
+  三個呼叫端跟著改:
+  1. `golden-run.ts` 的 `createDefaultLiveRouter()`:`learningDir` 不給時退回
+     `resolveVaultLearningDir(ROOT)`,不是 `join(ROOT, 'learning')`。決策本身拆成
+     `resolveLiveLearningDir(learningDir?)` 這個純函式——跟 ADR-050 對 `logAppender`
+     的態度一致,「沒給的話退回哪裡」要能不碰真的檔案系統就測到。
+  2. `scripts/llm-spend.ts`:`DEFAULT_LOG_PATH` 這個字面值常數保留(`parseSpendArgs()`
+     是純函式,不碰 git/檔案系統,測試不必真的在 git repo 裡跑),但 `main()`
+     看到這個 sentinel 時,在真的要做 I/O 之前,用新拆出來的 `resolveLogPath()`
+     解析成 `resolveVaultLearningDir()` 的絕對路徑。
+  3. `scripts/llm.ts`:同樣的預設值改法(`args.log` 沒給時用
+     `join(resolveVaultLearningDir(), 'state/log.jsonl')`)。
+
+  `scripts/ingest.ts` **不在這次修改範圍**:它的 `--out` 是使用者每次都要明講的
+  必要參數,不是「沒講就悄悄退回某個預設值」——使用者自己決定要把資料放哪裡,
+  跟這裡「預設值不該悄悄指錯地方」是不同的問題。
+
+  **附帶抓到一個問題**(不是這條修的目標,是修的過程中量到的):`scripts/llm-spend.ts`
+  的 `main()` 呼叫在檔案頂層無條件執行(`main().catch(...)`,沒有
+  `import.meta.url === pathToFileURL(process.argv[1]).href` 這種入口守衛)。
+  這支是這批腳本裡**唯一一支既是 CLI 入口、又被自己的測試檔直接 `import` 純函式**
+  的——`llm-spend.test.ts` 每次 `import { buildSpendReport, ... } from './llm-spend.js'`
+  就會真的執行一次 `main()`。改之前這件事無害(預設路徑只是一個相對字串,測試
+  cwd 底下通常讀不到东西);改完之後,每次 import 都會真的 shell 出去解析主簽出、
+  真的讀使用者的花費帳本、把真的資料印進測試輸出——只是讀,不會寫壞,但完全
+  不必要。補上入口守衛,`main()` 只在真的被當 CLI 執行時才跑。
+- **Consequences**: `RunGoldenOptions.learningDir`(ADR-050 加的那個測試/CLI `--out`
+  覆寫欄位)不受影響,行為不變。新增 `packages/core/src/llm/vault.test.ts`(照
+  `scripts/mutate.test.ts` 的 `describe('strykerLockPath')` 手法,合成的臨時
+  git repo + worktree,零真實資料風險)驗 `resolveVaultRoot` / `resolveVaultLearningDir`
+  本身;`scripts/llm-spend.test.ts` 與 `packages/core/src/prompt-quality/live-run.test.ts`
+  各補上 `resolveLogPath()` / `resolveLiveLearningDir()` 的純函式測試——這兩個都
+  刻意不用真的呼叫 `main()` / `createDefaultLiveRouter()` 零參數版本再斷言檔案
+  內容,那樣做在自動測試裡就是又造出一次「悄悄寫進使用者真的帳本」,跟這條 ADR
+  要堵的洞是同一種形狀,不能為了測試方便就犯規。**真的跨 worktree 端對端證據
+  是交接附的陽性對照(真的在這個 worktree 跑一次、看主簽出的 `llm-spend --today`
+  有沒有看到),不是自動測試。**
+
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)

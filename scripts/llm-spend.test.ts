@@ -44,12 +44,13 @@ import {
   formatSpendReport,
   exitCodeFor,
   parseSpendArgs,
+  resolveLogPath,
   DEFAULT_LOG_PATH,
   EXIT_UNDER_CAP,
   EXIT_AT_OR_OVER_CAP,
   EXIT_CANNOT_COMPUTE,
 } from './llm-spend.js';
-import type { SpendReport } from './llm-spend.js';
+import type { SpendReport, SpendCliArgs } from './llm-spend.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 
@@ -580,4 +581,36 @@ const FORBIDDEN = join(REPO_ROOT, 'learning');
 
 it('測試本身不碰 learning/', () => {
   expect(tmpDirs.every((d) => !d.startsWith(FORBIDDEN))).toBe(true);
+});
+
+/**
+ * ADR-051:learning/ 是主簽出跨 worktree 共用的帳本,沒給 --log 時要指回主簽出,
+ * 不是目前這個 git worktree 自己的一份。`resolveVaultLearningDir()` 本身跨
+ * worktree 解析同一個路徑的保證在 packages/core/src/llm/vault.test.ts 驗過
+ * (真的 git repo + worktree);這裡只驗 `resolveLogPath()` 這一層的決策邏輯
+ * ——sentinel 沒被動過就解析、被使用者明講就原樣用——用注入的假 vaultLearningDir,
+ * 不必真的 shell 出去、真的在 git worktree 裡跑一次子行程(那個手法會需要子行程
+ * cwd 底下有一份完整的 tsconfig/node_modules 才能解析 @core/* 路徑別名,拿一個
+ * 全新的臨時 git repo 當「假 worktree」裝不出這個環境;真的跨 worktree 證據見
+ * ADR-051 交接的陽性對照,不是這裡)。
+ */
+describe('scripts/llm-spend.ts — resolveLogPath (ADR-051)', () => {
+  it('sentinel(使用者沒給 --log)時,解析成 vaultLearningDir()/state/log.jsonl', () => {
+    const args: SpendCliArgs = { logPath: DEFAULT_LOG_PATH, json: false };
+    expect(resolveLogPath(args, () => '/fake/vault/learning')).toBe('/fake/vault/learning/state/log.jsonl');
+  });
+
+  it('使用者明講 --log 時,原樣用,不被 vault 解析蓋過去', () => {
+    const args: SpendCliArgs = { logPath: '/custom/log.jsonl', json: false };
+    const vaultLearningDir = vi.fn(() => '/fake/vault/learning');
+    expect(resolveLogPath(args, vaultLearningDir)).toBe('/custom/log.jsonl');
+    // 明講的路徑優先到「連 vault 解析都不用做」——不只是「算出來又被丟掉」。
+    expect(vaultLearningDir).not.toHaveBeenCalled();
+  });
+
+  it('不注入 vaultLearningDir 時,預設用真的 resolveVaultLearningDir()(這個 repo 本身也是一個 git repo/worktree,解析得出一個字串)', () => {
+    const args: SpendCliArgs = { logPath: DEFAULT_LOG_PATH, json: false };
+    const result = resolveLogPath(args);
+    expect(result.endsWith(join('learning', 'state', 'log.jsonl'))).toBe(true);
+  });
 });

@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { LlmRouterImpl, UnaccountableLlmCallError } from '@core/llm/index.js';
+import { LlmRouterImpl, UnaccountableLlmCallError, resolveVaultLearningDir } from '@core/llm/index.js';
 import type { LogEvent } from '@contracts/index.js';
 import {
   DEFAULT_GOLDEN_BASE_DIR,
@@ -20,6 +20,7 @@ import {
   LiveRunOfflineError,
   MissingGoldenSetError,
   createDefaultLiveRouter,
+  resolveLiveLearningDir,
   defaultGoldenBaseDir,
   estimateCostUsd,
   runGolden,
@@ -424,6 +425,21 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'llm_call', task: 'grade.apply' });
+  });
+
+  /**
+   * ADR-051:`resolveLiveLearningDir()` 是 `createDefaultLiveRouter()` 沒給
+   * `learningDir` 時實際會用的那個決策,拆成純函式測,不必真的呼叫
+   * `createDefaultLiveRouter()`(那會真的 `mkdirSync`,雖然目的地已存在時是
+   * no-op,但不需要冒這個險)。跟 `resolveVaultLearningDir()` 本身跨 worktree
+   * 解析同一個路徑的保證(見 packages/core/src/llm/vault.test.ts,合成的臨時
+   * git repo,零真實資料風險)是兩層不同的東西:那邊測「怎麼解析」,這裡測
+   * 「沒給的時候有沒有真的去解析,還是照抄了別的東西」。
+   */
+  it('resolveLiveLearningDir(): 有給就原樣用,沒給就退回 resolveVaultLearningDir(ROOT)', () => {
+    expect(resolveLiveLearningDir('/custom/dir')).toBe('/custom/dir');
+    expect(resolveLiveLearningDir(undefined)).toBe(resolveVaultLearningDir(ROOT));
+    expect(resolveLiveLearningDir()).toBe(resolveVaultLearningDir(ROOT));
   });
 
   it('對照:直接用 LlmRouterImpl({}) 重現舊 bug(不給 logPath/logAppender)——call() 現在硬錯,不再是悄悄不寫', async () => {
