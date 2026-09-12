@@ -697,7 +697,13 @@ export function mutationCommand(argv: string[], configFileArg?: string): string 
   return ['npm', 'run', 'mutate', '--', ...commandArgs].map(shellQuote).join(' ');
 }
 
-function strykerVersion(cwd: string): string {
+/**
+ * Read the installed Stryker version recorded with a summary.
+ *
+ * Exported only for same-process mutation coverage (ADR-049): the CLI path is a child process
+ * and Stryker cannot instrument across that boundary. Remove this export when a narrower test seam exists.
+ */
+export function strykerVersion(cwd: string): string {
   const candidates = [
     resolve(cwd, 'node_modules', '@stryker-mutator', 'core', 'package.json'),
     resolve(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@stryker-mutator', 'core', 'package.json'),
@@ -713,7 +719,13 @@ function strykerVersion(cwd: string): string {
   return 'unknown';
 }
 
-function writeMutationSummary(
+/**
+ * Convert one raw Stryker JSON report to the committed summary artifact.
+ *
+ * Exported only for same-process mutation coverage (ADR-049); remove it when this behavior has
+ * a narrower test seam that does not widen the module surface.
+ */
+export function writeMutationSummary(
   reportAbs: string,
   summaryAbs: string,
   metadata: Pick<MutationSummary, 'command' | 'strykerVersion' | 'config' | 'commit'>,
