@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.2 (1051b44) sha256=479829ea49478c14613adf5743196cef540bb51271fff16f8d8d275d37b40467 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.4 (4dc1513) sha256=479829ea49478c14613adf5743196cef540bb51271fff16f8d8d275d37b40467 — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-dry-run.ts 的測試(模板 1.6.0,P-86)。
  *

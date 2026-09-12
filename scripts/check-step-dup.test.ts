@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.2 (1051b44) sha256=5ad25eebee6eaf1cb82c489eb2e34a1a7f85c18402ae0988e2de4d553ccd3cb2 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.4 (4dc1513) sha256=5ad25eebee6eaf1cb82c489eb2e34a1a7f85c18402ae0988e2de4d553ccd3cb2 — 勿手改;升版用 sync-gates.sh
 /**
  * scripts/check-step-dup.ts 的測試(模板 1.6.0,P-87)。
  *

@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.2 (1051b44) sha256=174187aef25bd2ad4770728e1e29cced5df31f73cb0e1828e9ac86bc59f6d91e — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.4 (4dc1513) sha256=174187aef25bd2ad4770728e1e29cced5df31f73cb0e1828e9ac86bc59f6d91e — 勿手改;升版用 sync-gates.sh
 /**
  * Phase 狀態表漂移檢查(S15,來源:專案 A 協調者,2026-09-05;PITFALLS P-75)。
  *

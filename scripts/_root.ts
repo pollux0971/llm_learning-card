@@ -1,4 +1,4 @@
-// SOURCE: template v1.6.2 (1051b44) sha256=99d167fb3501960dd473a1b2a81856c9be66c8fead4cc656384144182db25279 — 勿手改;升版用 sync-gates.sh
+// SOURCE: template v1.6.4 (4dc1513) sha256=14775b9592f6a7220166c7318663f05ebae41ed2ac28d375174bb248bc7a5b21 — 勿手改;升版用 sync-gates.sh
 /**
  * 所有守門腳本共用的 repo 根解析。
  *
@@ -376,6 +376,17 @@ export function resolveSkipDirs(gatesConfig: Record<string, unknown> | undefined
   if (extra === undefined) return new Set(DEFAULT_SKIP_DIRS);
   requireConfigType(extra, 'skipDirs', 'array', gateName);
   const extraStrings = (extra as unknown[]).filter((s): s is string => typeof s === 'string');
+  // glob 硬錯,不是靜默忽略(1.6.3,P-91):這個集合是**逐字比對**的,`learning-*` 這種寫法
+  // 一個目錄都排除不到,而且不報錯——consumer 會以為問題解決了,於是不再追。
+  // 「回傳值長得像回執」那一族最壞的一種。打錯字跟不支援 glob 的症狀一模一樣,所以寧可大聲失敗。
+  const globbed = extraStrings.filter((d) => /[*?[\]]/.test(d));
+  if (globbed.length > 0) {
+    failConfig(
+      gateName,
+      `設定檔鍵 skipDirs 不支援 glob,請逐字列出目錄名:${globbed.join(', ')}` +
+        `(這個集合是逐字比對的,含萬用字元的項目一個目錄都排除不到)`,
+    );
+  }
   return new Set([...DEFAULT_SKIP_DIRS, ...extraStrings]);
 }
 
