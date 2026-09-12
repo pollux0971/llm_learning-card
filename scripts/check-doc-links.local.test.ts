@@ -804,9 +804,13 @@ describe('輸出的完整格式(訊息本身就是這張工單的產出)', () =>
   //   `skipDirs` 都要回來改這一行**,那是刻意的:設定改了、輸出就變了,本來就該有人確認一次。
   //   2026-09-12 加 `tmp-learning` 時這三條紅過一次 —— 那次紅是對的,它逼我看見「我改的設定
   //   有人在逐字讀」。**改 `skipDirs` 之前先 grep 誰在讀那一行。**
+  // 2026-09-12 模板升到 v1.6.2:.stryker-tmp 從我們自己的 skipDirs 移進 _root.ts 的
+  // DEFAULT_SKIP_DIRS(P-90),排位跟著模板陣列的順序移到 target 後面(不再是我們附加項
+  // 裡最後才出現的那個)。這裡照實際輸出更新,不要改成用 resolveSkipDirs() 算——見上面的
+  // 註解,那樣會變成用被測的東西驗自己。
   const SKIP_LINE =
     'doc-links: 排除片段 [node_modules, .git, .next, .nuxt, .svelte-kit, dist, build, out, coverage, ' +
-    '.turbo, .cache, target, __pycache__, .venv, venv, reports, .stryker-tmp, archive, tmp-learning]、' +
+    '.turbo, .cache, target, .stryker-tmp, __pycache__, .venv, venv, reports, archive, tmp-learning]、' +
     '排除前綴 [.claude/worktrees, contracts/fixtures]';
 
   it('全綠:排除清單、統計、✓,沒有多餘的東西', () => {
