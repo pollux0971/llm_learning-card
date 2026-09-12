@@ -514,6 +514,18 @@ export const ROSTER: Record<string, Entry> = {
       },
     ],
   },
+  'scripts/check-ledger-pollution.ts': {
+    kind: 'excluded',
+    reason:
+      // 這是**類別判斷**,不是「這輪還沒做」——跟 mutate.ts / run-tests.ts 同一類,
+      // 但各自的類別理由不同,見下。
+      '它的 main() 無條件跑一次完整 vitest(它要比的就是「跑之前 vs 跑之後」的帳本行數),' +
+      '在 vitest 裡再起一個 vitest 是遞迴,所以沒有便宜的黑盒探測路徑。' +
+      '⚠️ 這句的射程只到「CLI 這一層」:它的判定邏輯 runLedgerGuard 與 countLedgerLines ' +
+      '是純函式、runTests 可注入,四種零輸入情況(帳本不存在 → UNKNOWN、測試後不存在、' +
+      '行數改變、測試自己紅)都在 scripts/check-ledger-pollution.test.ts 裡以注入方式測到,' +
+      '包含故意追加一行讓它紅的陽性對照。',
+  },
   'scripts/check-template-freshness.ts': {
     kind: 'entry',
     commands: [
