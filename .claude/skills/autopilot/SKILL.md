@@ -192,6 +192,22 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
   寫成現在式(「現在有兩個 session 在顧」),那是**把過期的觀測講成當下的事實**。
   跟上面那條同族:變數不是排除法,是時間。
 
+- **要查「還有沒有別的地方也這樣」**
+  → **用名冊(roster)列舉,不要用 grep。** grep 只找得到**你想得到的那幾個字**;
+  名冊才找得到**你想不到的**。實例(2026-09-12):要查「還有哪支守門自帶一份排除清單」,
+  查法是 grep 那個目錄名 —— 那只抓得到「自帶**同一個值**」的,抓不到「自帶**同一段邏輯**」的,
+  於是漏掉了 `check-doc-rot.ts`(它自己複製了一份 `resolveSkipDirs`)。
+  正確形狀跟零輸入守門一樣:**列舉 `scripts/check-*.ts`,斷言每一支都真的呼叫共用函式;
+  沒呼叫的要明講在豁免清單並附理由,兩邊都沒有就紅。**
+
+- **`git merge` 沒報衝突,不代表合併對了**
+  → **合併完真的去讀那個檔。** 實例(2026-09-12):main 與分支各自在 `gates.config.json`
+  **同一個物件的不同位置**插入 `"skipDirs"` 鍵 —— 行層級沒有重疊,git 自動合併「成功」,
+  結果是**一個 JSON 物件裡兩個同名鍵**,`JSON.parse` 靜靜取最後一個,沒有任何東西會報錯。
+  **git 的合併單位是行,JSON 的語意單位是鍵**,兩者不對齊的地方就是這種洞。
+  worker 做對的事是**合併完真的去讀了那個檔**,而不是相信 git 沒報衝突 ——
+  跟「不信『理論上不衝突』」同一條。
+
 真正該停的只有 §4 那幾條。**把上面這些誤判成停止,比漏掉一個真煞車更常發生。**
 
 ## 4c. 「分支上全綠、合併後紅」的兩種形狀(P-49)
@@ -269,7 +285,16 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
      (同日實測:主簽出移走 `.env`、沒 export → **12 紅**;移走 `.env`、有 export → **579 綠**。
       所以 **export 是有效的** —— 之前有人說「export 也傳不進探針」,那句重現不出來,別照抄。
       真正的問題是「乾淨簽出沒人 export 就紅」,所以 `env-probe` 那張把值注入進測試檔。)
-  2. **pre-commit hook**(`scripts/hooks/pre-commit` 要自己 `cp` 到 `.git/hooks/` 並 `chmod +x`)
+  2. ⚠️ ~~**pre-commit hook**(`scripts/hooks/pre-commit` 要自己 `cp` 到 `.git/hooks/` 並 `chmod +x`)~~
+     **本 repo 刻意不裝這支 hook,派工說明不要再叫 worker 裝。理由見 ADR-048。**
+     取而代之的是測試(守 `stryker*.json` 的 `inPlace`,以及 `strykerArgs()` 收到 `--inPlace` 要硬錯)。
+     劃掉不刪,因為**這一條錯了兩件事**,兩件都值得下一個人看到:
+     - **它不是「每個 worktree 一份」,是全域的。** linked worktree 共用 `$GIT_COMMON_DIR/hooks`
+       (三個 worktree 的 `git rev-parse --git-path hooks` 都指主簽出的 `.git/hooks`)。
+       **一個 worker 裝,所有人都裝上**,而且 `git status` 看不到、版控裡也沒有。
+       這個錯誤在單一簽出的專案上永遠不會顯現。
+     - **裝了之後,任何人在跑變異測試,全部 worktree 包含 main 都不能 commit**(殘鎖則是永久封鎖)。
+       而它防的危害(就地改檔)在本 repo 不存在 —— 13 個設定的 `inPlace` 全部未設定。
   3. **`TEMPLATE_DIR`** —— `check:gates` 在 worktree 要設,不然找不到模板。
   這三樣的共同形狀是「**在版控外面**」,所以 `git clone` / `worktree add` 都不會帶。
   模板 1.4.2 會把它做成 `TASK.md.template` 的第 0 步與 CHECKLIST 的一節;**在那之前由派工說明帶。**

@@ -690,6 +690,53 @@ graph TD
 
 ---
 
+## ADR-048 · 本 repo 刻意**不裝** `scripts/hooks/pre-commit`,改用測試守 `inPlace`
+
+- **Status**: accepted · 2026-09-12(技術顧問裁決,不待覆核)
+- **Context**: 模板出貨一支 `scripts/hooks/pre-commit`(S12,來源 nightmare-assault):
+  偵測到 `.mutate.lock` / `.stryker.lock` 就拒絕 commit,防的是「把**被突變過的檔案** commit 進去」。
+  模板刻意不自動安裝,由 consumer 決定;而協調者的派工說明一直寫「worker 自己 `cp` 到 `.git/hooks/`」。
+
+  2026-09-12 它真的被某個 worker 裝上了,於是量到三件事:
+
+  1. ⚠️ **它是全域的,不是每個 worktree 一份。** linked worktree 共用 `$GIT_COMMON_DIR/hooks`
+     （三個 worktree 的 `git rev-parse --git-path hooks` 都指到主簽出的 `.git/hooks`，`core.hooksPath` 未設）。
+     **一個 worker 裝,所有人都裝上**,而且 `git status` 看不到、版控裡也沒有。
+     「每個 worktree 各自裝一份」是錯的心智模型,而這個錯誤在單一簽出的專案上永遠不會顯現。
+  2. **它會讓全部人不能 commit。** 直接跑 hook 實測:沒有鎖 → rc=0;**有活著的鎖 → rc=1**;
+     **殘鎖(pid 已死)→ rc=1**。`.stryker.lock` 是跨 worktree 共用的,一輪變異測試 5~10 分鐘,
+     審核輪要跑好幾個設定 —— 期間**任何 worktree、包含 main,都不能 commit**;殘鎖則是永久封鎖到有人手動刪。
+  3. **它防的危害在本 repo 不存在。** 13 個 `stryker*.json` 的 `inPlace` **全部未設定**(預設 false = 沙箱),
+     跑完 `git status --short` = 0,**工作區從來沒有被突變過**。
+
+  另外兩個不一致:hook 的訊息叫人「照這個專案自己的復原流程處理」,**那份文件不存在**;
+  而且**它描述的問題已經不存在了** —— 鎖自己會回收殘鎖(`kill -0`,P-29 就做了;
+  2026-09-12 實測種一個死 pid 的鎖,`npm run mutate` 直接搶到並開跑)。
+  **兩個元件對同一個狀態的認知不一致,而不一致的那一邊擋的是人。**
+
+- **Decision**: **不裝這支 hook**(`.git/hooks/pre-commit` 已改名為 `pre-commit.disabled-2026-09-12` 留存),
+  改用**測試**守住同一件事。測試嚴格地更好:失敗在**測試時**不是**commit 時**,不封鎖任何人。
+
+  驗收三條,缺一不可:
+  1. **目錄列舉**所有 `stryker*.json`,`inPlace` 必須 false 或未設定 —— **新增設定檔漏掉要結構上紅**。
+  2. ⚠️ **`strykerArgs()` 收到 `--inPlace`(含 `--inPlace=true`、`--in-place`,大小寫不敏感)要硬錯並說明。**
+     `scripts/mutate.ts` 的 `strykerArgs()` 把 `--` 之後的參數**原樣透傳**,所以
+     **`npm run mutate -- --inPlace` 會直接就地改檔,13 個設定檔全是 false 也攔不住。**
+     只檢查設定檔**守住的是沒人會走的那條路,漏掉的是唯一能一鍵觸發的那條**。
+     **不是靜默過濾,是拒絕並說明理由**(靜默過濾又是一個「看起來有設、實際沒有」)。
+  3. 反向驗證:任一設定改 `inPlace: true` → 紅且指名哪一個檔;拔掉第 2 條的檢查 → 紅。
+
+  **修法的順序很重要:先改派工說明的來源(`.claude/skills/autopilot/SKILL.md` §4b),再寫文件。**
+  下一個 worker 讀的是派工說明,不是 `docs/`;**doc 是被動的,派工說明是主動的**,
+  兩者衝突時贏的是 worker 眼前那一份。順序反過來就會再發生一次。
+
+- **Consequences**:
+  1. 這是「**先量自己中不中;加防線之前先查一個設定值**」的又一次(§4a 那條)。差別是**防線已經裝上了**,
+     而代價是全域 commit 停擺 —— 所以這次是「量完之後**拆掉**」,不是「量完之後不裝」。
+  2. `inPlace` 目前**沒有任何測試守著**,拿掉 hook 就拿掉了唯一(而且是意外得來的)那道防線,
+     所以第 1、2 條驗收是這條 ADR 的**前提**,不是附帶。
+  3. 現況乾淨(13 個設定檔 0 個提到 `inPlace`),**直接 enforce,不開基準**。
+
 ## 待決(不影響開工)
 
 | 項目 | 需在何時前決定 | 阻擋什麼 |
