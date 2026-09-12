@@ -3,6 +3,7 @@
   "chain": [
     "check:json-duplicate-keys",
     "check:adr-numbers",
+    "check:deliberately-absent",
     "boundaries",
     "check:env-keys",
     "typecheck",
