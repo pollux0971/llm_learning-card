@@ -115,17 +115,42 @@ describe('reports 的 gitignore 例外', () => {
 });
 
 describe('mutation 摘要', () => {
-  it('保留四類計數和可重現命令；預設設定也必須明寫設定檔', () => {
+  it('保留完整 Stryker 狀態計數和可重現命令；預設設定也必須明寫設定檔', () => {
     const summary = mutationSummaryFromReport(
       {
         files: {
-          'x.ts': { mutants: [{ status: 'Killed' }, { status: 'Timeout' }, { status: 'Survived' }, { status: 'NoCoverage' }] },
+          'x.ts': {
+            mutants: [
+              { status: 'Killed' },
+              { status: 'Timeout' },
+              { status: 'Survived' },
+              { status: 'NoCoverage' },
+              { status: 'Ignored' },
+              { status: 'RuntimeError' },
+              { status: 'CompileError' },
+              { status: 'Pending' },
+            ],
+          },
         },
       },
       { command: mutationCommand(['node', 'scripts/mutate.ts', '--', '--mutate', 'packages/core/src/x.ts'], 'stryker.config.json'), strykerVersion: '10.0.0', config: 'stryker.config.json', commit: 'abcdef0' },
     );
 
-    expect(summary).toMatchObject({ score: 50, killed: 1, timeout: 1, survived: 1, noCoverage: 1, config: 'stryker.config.json', commit: 'abcdef0' });
+    // The fixture must contain Ignored: without it, the old all-mutants denominator bug stays hidden.
+    // Stryker counts only the four valid statuses in its score: (Killed + Timeout) / valid = 2 / 4.
+    expect(summary).toMatchObject({
+      score: 50,
+      killed: 1,
+      timeout: 1,
+      survived: 1,
+      noCoverage: 1,
+      ignored: 1,
+      runtimeError: 1,
+      compileError: 1,
+      pending: 1,
+      config: 'stryker.config.json',
+      commit: 'abcdef0',
+    });
     expect(summary.command).toBe('npm run mutate -- stryker.config.json --mutate packages/core/src/x.ts');
   });
 
@@ -147,6 +172,15 @@ describe('mutation 摘要', () => {
 
     expect(code).toBe(0);
     const mutationFiles = readFileSync(join(cwd, 'reports', 'mutation', `${git(cwd, 'rev-parse', '--short=7', 'HEAD').stdout.trim()}-config.json`), 'utf8');
-    expect(JSON.parse(mutationFiles)).toMatchObject({ score: 50, killed: 1, survived: 1, config: 'stryker.config.json' });
+    expect(JSON.parse(mutationFiles)).toMatchObject({
+      score: 50,
+      killed: 1,
+      survived: 1,
+      ignored: 0,
+      runtimeError: 0,
+      compileError: 0,
+      pending: 0,
+      config: 'stryker.config.json',
+    });
   });
 });

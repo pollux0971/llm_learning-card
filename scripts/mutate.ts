@@ -615,6 +615,14 @@ export interface MutationSummary {
   timeout: number;
   survived: number;
   noCoverage: number;
+  /** Stryker excludes ignored mutants from its valid-mutant score denominator. */
+  ignored: number;
+  /** Stryker excludes invalid mutants (runtime errors) from its score denominator. */
+  runtimeError: number;
+  /** Stryker excludes invalid mutants (compile errors) from its score denominator. */
+  compileError: number;
+  /** A completed report normally has none, but retain the status for an auditable total. */
+  pending: number;
   command: string;
   strykerVersion: string;
   config: string;
@@ -633,7 +641,10 @@ export function mutationSummaryFromReport(
   let timeout = 0;
   let survived = 0;
   let noCoverage = 0;
-  let total = 0;
+  let ignored = 0;
+  let runtimeError = 0;
+  let compileError = 0;
+  let pending = 0;
   if (files && typeof files === 'object' && !Array.isArray(files)) {
     for (const file of Object.values(files as Record<string, unknown>)) {
       const mutants = file && typeof file === 'object' && !Array.isArray(file)
@@ -642,20 +653,32 @@ export function mutationSummaryFromReport(
       if (!Array.isArray(mutants)) continue;
       for (const mutant of mutants) {
         const status = mutant && typeof mutant === 'object' ? (mutant as { status?: unknown }).status : undefined;
-        total += 1;
         if (status === 'Killed') killed += 1;
         else if (status === 'Timeout') timeout += 1;
         else if (status === 'Survived') survived += 1;
         else if (status === 'NoCoverage') noCoverage += 1;
+        else if (status === 'Ignored') ignored += 1;
+        else if (status === 'RuntimeError') runtimeError += 1;
+        else if (status === 'CompileError') compileError += 1;
+        else if (status === 'Pending') pending += 1;
       }
     }
   }
+  // Stryker's JSON reporter serializes the raw MutationTestResult, not a precomputed score.
+  // Match Stryker 10's `mutation-testing-metrics/src/calculateMetrics.ts#toMetrics`:
+  // `mutationScore = totalDetected / totalValid`, where detected is Killed + Timeout and
+  // valid excludes Ignored plus invalid RuntimeError/CompileError (and Pending).
+  const valid = killed + timeout + survived + noCoverage;
   return {
-    score: total === 0 ? 0 : Number((((killed + timeout) / total) * 100).toFixed(2)),
+    score: valid === 0 ? 0 : Number((((killed + timeout) / valid) * 100).toFixed(2)),
     killed,
     timeout,
     survived,
     noCoverage,
+    ignored,
+    runtimeError,
+    compileError,
+    pending,
     ...metadata,
   };
 }

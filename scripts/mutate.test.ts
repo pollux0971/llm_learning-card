@@ -43,6 +43,7 @@ import {
   configPositionalIndex,
   installCleanup,
   isMainModule,
+  mutationSummaryFromReport,
   parseLock,
   pidIsAlive,
   readLock,
@@ -2874,5 +2875,44 @@ describe('withReportEnforcement(同行程,假的 run)', () => {
     expect(code).not.toBe(0);
     expect(logs, '目錄建不起來時沒有記任何警告').toHaveLength(1);
     expect(logs[0], `警告訊息是空的,講不清楚壞在哪:${JSON.stringify(logs)}`).toContain('reports');
+  });
+});
+
+describe('mutationSummaryFromReport(同行程)', () => {
+  it('Ignored 不進 Stryker 分母，且每一種原始報告狀態都留在摘要裡', () => {
+    const summary = mutationSummaryFromReport(
+      {
+        files: {
+          'fixture.ts': {
+            mutants: [
+              { status: 'Killed' },
+              { status: 'Timeout' },
+              { status: 'Survived' },
+              { status: 'NoCoverage' },
+              { status: 'Ignored' },
+              { status: 'RuntimeError' },
+              { status: 'CompileError' },
+              { status: 'Pending' },
+            ],
+          },
+        },
+      },
+      { command: 'fixture', strykerVersion: 'fixture', config: 'fixture', commit: 'fixture' },
+    );
+
+    // Stryker's valid mutants are exactly Killed/Timeout/Survived/NoCoverage: 2 / 4 = 50.
+    // The Ignored mutant makes the old all-mutants denominator produce 25 instead, so this fixture
+    // must stay non-zero for Ignored to keep the regression observable.
+    expect(summary).toMatchObject({
+      score: 50,
+      killed: 1,
+      timeout: 1,
+      survived: 1,
+      noCoverage: 1,
+      ignored: 1,
+      runtimeError: 1,
+      compileError: 1,
+      pending: 1,
+    });
   });
 });
