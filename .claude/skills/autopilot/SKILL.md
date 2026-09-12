@@ -37,21 +37,23 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
 
 1. **收割**:哪些 worktree 的審核回來了 → PASS 的合併(一次一個,`git checkout main && git merge --no-ff <branch>`,**不 rebase**,每個 phase 三輪 commit 的軌跡是刻意留的),合併後跑完整檢查:
    ```bash
-   npm run boundaries && npm run typecheck && npm run lint:docs && npm test && npm run accept:standalone && npm run standalone
-   npm run accept:dry        # 必看「0 ambiguous」:步驟定義撞名不會讓任何測試變紅,只有這步抓得到
-   npm run check:steps       # 每句 gherkin 恰好一個步驟定義
-   npm run check:gherkin-dup # 重複的 gherkin 場景;**必跑且必須 exit 0**,不准靠放寬規則變綠
-   npm run accept:coverage   # 每個 phase-N.feature 用自己的 tag 至少比對到 1 個場景;tag 打錯字只有這步抓得到
-   npm run check:gates       # 守門漂移偵測:scripts/ 的守門與同步當時的 sha256 不符就紅。
-                             # 目前同步到 **v1.3.4**,沒有任何已知例外——**任何一行紅都是真的漂移**。
-                             # 設定檔(boundaries.owners.json / boundaries.allow.json / gates.config.json)
-                             # 印「○ 你的設定檔,不比對」,那是對的。
-                             # 模板路徑吃 $TEMPLATE_DIR,沒設就用預設的模板 worktree。
+   npm run check:all         # 這一行就是全部。最後印 `gate=all result=PASS scanned=14`。
    ```
+
+   ⚠️ **不要再手打那份清單。** 這裡原本列了 11 條手打指令,**少三個 gate**
+   (`doc-rot`、`next-gates`、`phase-status`)。2026-09-12 協調者照那份跑完回報「全鏈綠」,
+   技術顧問用 `check:all` 一跑是 14 步 —— 結論剛好一樣,但**那是運氣,不是驗證**。
+   **手打的清單一定會跟 `package.json` 漂開**,而漂開的方向永遠是「少跑」。
+   `scanned=14` 那個數字自己會長,清單不會。
 
    ⚠️ **這條在 2026-09-05 之前只是 SKILL.md 裡一行手打指令,沒有進 `package.json`** ——
    也就是「清單上寫著、實際沒人跑」。技術顧問抓到後才補成 `npm run check:gates`。
    **清單裡的每一條都要是 npm script**,否則它就只是一句話。
+   **下一階更難看見:清單上寫著、跑了、但它不會紅。**
+   實例(2026-09-12,顧問實測):`accept:dry` 印得出 `16 ambiguous` 卻**回 exit 0**,
+   加 `--strict` 也一樣;於是 `check:all` 14 步全綠、同時可以有 16 個場景是 ambiguous 的。
+   「必看 0 ambiguous」這句在**人讀輸出**的年代有效,進了自動鏈之後**沒有人讀那一行**。
+   **規則:任何守門接進鏈之前,先故意弄壞輸入讓它紅一次;沒紅過的守門不算接上。**
    **合併後留一份 junit,下次比「名稱集合」不比「總數」**:
    ```bash
    npx vitest run --reporter=junit --outputFile="reports/junit/$(git rev-parse --short HEAD).xml"
@@ -172,6 +174,23 @@ grep -o "ADR-0[0-9]*" docs/02-decision-map.md | sort -u | tail -1   # 目前最�
   **同一條規則,同一個推導,兩個用途,安全的方向剛好相反。**
   他們的工人原話:「**我搬了你的結論,沒搬你的前提。**」
   這條是「先量自己中不中」的**反向版**:那條管「別人的坑」,這條管「別人的解法」。
+
+- **看到別的 repo / worktree 有未提交的東西,不敢動**
+  → **不敢動是對的,但要用對的理由。查三樣再下判斷:`git status`(有什麼)、
+  **那批檔的 mtime**(那批多舊)、**`git log -1`**(repo 本身多活),然後 `ListAgents` 找歸屬。
+  實例(2026-09-12,同一件事我用兩個不同的錯理由連走兩遍):
+  1. `/data/python/dev-paradigm` 有 17 個未提交檔,我推論「我沒動過 → 一定是技術顧問的」。
+     **那是用排除法指認負責人。** 顧問說不是他的。
+  2. 顧問給的更正是「那批 mtime 全是四天前,四天沒動的工作區更可能是**沒有人**在顧」。
+     我去量,mtime 確實是四天前 —— **但那個 repo 的最後一個 commit 是當天 10:57**,
+     `ListAgents` 也看得到兩個 `dev-paradigm-*` session 在線。
+     **活躍 repo 裡的陳年殘留 ≠ 廢棄工作區。** 只看 mtime 會把前者誤判成後者。
+  兩個錯理由結論同向(都是「不要動」),所以**沒有任何東西會告訴你理由錯了** —— 這正是要記的原因。
+
+- **引用 `ListAgents` / `git log` / `pgrep` 這類會漂的觀測**
+  → **要嘛當場重查,要嘛寫明幾點量的。** 顧問把四十分鐘前建 cron 時的 `ListAgents` 快照
+  寫成現在式(「現在有兩個 session 在顧」),那是**把過期的觀測講成當下的事實**。
+  跟上面那條同族:變數不是排除法,是時間。
 
 真正該停的只有 §4 那幾條。**把上面這些誤判成停止,比漏掉一個真煞車更常發生。**
 
