@@ -560,6 +560,32 @@ const ROSTER: Record<string, Entry> = {
       },
     ],
   },
+  'scripts/check-env-keys.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'check-env-keys',
+        // 健康基線:.env.example 跟 .env 的鍵集合一致(1 個鍵)。
+        baselines: {
+          healthy: (s) => {
+            const root = emptyDir(s, 'consumer');
+            file(root, '.env.example', 'FOO=\n');
+            file(root, '.env', 'FOO=x\n');
+            return { args: ['--root', root] };
+          },
+        },
+        probes: [
+          // .env 不存在是工單 2026-09-12 明講的合法狀態(乾淨簽出/CI)——不是洞,是設計。
+          { kind: 'missing', name: '.env 不存在(乾淨簽出/CI,合法跳過)', legitZero: '工單 2026-09-12:.env 是版控外的東西,乾淨簽出本來就沒有;訊息與退出碼跟其餘缺檔情況不同,見腳本檔頭', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, '.env.example', 'FOO=\n'); return { args: ['--root', root] }; } },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+          { kind: 'missing', name: '.env.example 不存在', build: (s) => { const root = emptyDir(s, 'consumer'); return { args: ['--root', root], mention: join(root, '.env.example') }; } },
+          { kind: 'empty', name: '.env.example 是空檔(0 個鍵)', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, '.env.example', ''); file(root, '.env', ''); return { args: ['--root', root] }; } },
+          { kind: 'malformed', name: '.env.example 是目錄不是檔案', build: (s) => { const root = emptyDir(s, 'consumer'); emptyDir(root, '.env.example'); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: '.env 是目錄不是檔案', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, '.env.example', 'FOO=\n'); emptyDir(root, '.env'); return { args: ['--root', root] }; } },
+        ],
+      },
+    ],
+  },
   'scripts/check-known-defects.ts': {
     kind: 'entry',
     commands: [

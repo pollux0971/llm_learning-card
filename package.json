@@ -33,6 +33,7 @@
     "accept:dry": "NODE_OPTIONS=--import=tsx cucumber-js --tags 'not @manual' --dry-run",
     "check:dry-run": "tsx scripts/check-dry-run.ts",
     "check:module-cast": "tsx scripts/check-module-cast.ts",
+    "check:env-keys": "tsx scripts/check-env-keys.ts",
     "witness:degraded": "tsx scripts/degraded-report.ts"
   },
   "devDependencies": {
