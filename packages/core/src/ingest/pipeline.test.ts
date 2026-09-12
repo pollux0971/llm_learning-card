@@ -200,7 +200,9 @@ describe('runIngestPipeline', () => {
   // 成功了,而磁碟上躺著一個讀不出來的圖檔;log 裡還會多一筆「已略過」的 warning,
   // 跟真正的原因無關,違反 ADR-041 的「恰好一筆」。
   //
-  // TODO(ADR-041):ingest.ts 的 deps catch-all 目前把所有錯誤一視同仁,這個是紅的。
+  // ~~TODO(ADR-041):ingest.ts 的 deps catch-all 目前把所有錯誤一視同仁,這個是紅的。~~
+  // **已完成(2026-09-12 核對)**:`ingest.ts` 已有 `if (err instanceof GraphFileCorruptError) throw err;`,
+  // 這條是綠的。
   it('deps.json 損壞時不吞 GraphFileCorruptError,讓 CLI 以非 0 退出碼結束', async () => {
     const corrupt = '{"security":{"nodes":["sec-0001"],"edges":[["sec-0001"';
     const depsPath = join(dir, 'graph', 'deps.json');
