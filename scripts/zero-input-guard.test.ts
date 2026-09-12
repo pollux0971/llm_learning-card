@@ -489,6 +489,10 @@ const ROSTER: Record<string, Entry> = {
       },
     ],
   },
+  'scripts/check-adr-numbers.ts': {
+    kind: 'excluded',
+    reason: '本輪只補 ROSTER 名冊條目，不新增探針或斷言；ADR-052 的零輸入探針另立工單處理。',
+  },
   'scripts/check-boundaries.ts': {
     kind: 'entry',
     commands: [

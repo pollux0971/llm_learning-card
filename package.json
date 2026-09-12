@@ -34,6 +34,7 @@
     "check:dry-run": "tsx scripts/check-dry-run.ts",
     "check:module-cast": "tsx scripts/check-module-cast.ts",
     "check:json-duplicate-keys": "tsx scripts/check-json-duplicate-keys.ts",
+    "check:adr-numbers": "tsx scripts/check-adr-numbers.ts",
     "check:env-keys": "tsx scripts/check-env-keys.ts",
     "witness:degraded": "tsx scripts/degraded-report.ts"
   },
