@@ -1056,3 +1056,16 @@ graph TD
 ## 已推翻
 
 - ADR-037 · 本機模型延後 → **部分** superseded by ADR-039(只有「使用者決定裝本機模型」那個 gate 被推翻,其餘仍然有效)
+## ADR-057 · 守門的略過清單用名字是過渡,正解是用性質(含 `.git` 就不進去)
+
+- **Status**: accepted · 2026-09-13
+- **Context**: `learning/` 是使用者自己的 git repo(自己的 gitignore、29 個 md)。`scripts/_root.ts` 的 `DEFAULT_SKIP_DIRS` 與 `gates.config.json` 的 `skipDirs` **都是列名字**,而 `tmp-learning` 在清單裡、`learning` 不在 —— 於是 `doc-rot` 走進去掃了。只讀不寫、`docRot.mode=report`,沒有造成傷害,但讓 `scanned=` 不可比(隔離簽出 578 / 主簽出 734)。**兩者性質相同,差別只是有沒有人想到那個名字** —— 那就是「grep 只找得到你想得到的那幾個字」。
+- **Decision**: 本地把 `learning` **逐字**加進 `gates.config.json` 的 `skipDirs`,當**過渡**;正解(走到任何含 `.git` 的目錄就不進去)寫成上游提案 `docs/skip-dir-git-repo-upstream-proposal.md`,由協調者轉交 `dev-paradigm`。判斷用 `existsSync(join(dir, '.git'))` 而**不是** `statSync(...).isDirectory()` —— linked worktree 的 `.git` 是一個**檔案**,不是目錄。
+- **Alternatives**:
+  - **直接改 `scripts/_root.ts`** —— **不採用**。它是上游模板檔(檔頭有 SOURCE 標頭 + sha256),手改會讓 `check:gates` 紅,而且下一次 `sync-gates.sh` 升版會**無聲蓋掉**。同型的錯誤這個 repo 已經發生過兩次(`ran=`、`KNOWN_GATES_CONFIG_KEYS`)。
+  - **只把 `learning` 加進 `DEFAULT_SKIP_DIRS`** —— 同上,那也是模板檔。
+  - **不修,接受 `scanned=` 不可比** —— 不採用:`scanned=` 是我們每輪拿來比對的數字,不可比等於那個訊號沒用。
+- **Consequences**: `doc-rot` 的 `scanned` 從 745 降到 684(陽性對照:拿掉 `learning` 再放回,兩個數字都量過,base `73ec1bd`)。**⚠️ 上游用性質判斷落地之後,`skipDirs` 裡的 `learning` 這一筆要刪** —— 退場條件同時寫在 `doc-rot.blacklist.json` 的 `_doc` 裡。
+  ⚠️ **這個修法的射程比它看起來窄:** 同一張單用名冊(不是 grep)盤點出,12 支會走目錄的守門裡**只有 5 支呼叫共用 `resolveSkipDirs`**,另外 7 支吃不到 `gates.config.json` 的 `skipDirs`。**所以「我在 `skipDirs` 加了 `learning`」這句話,對其中 7 支是假的。** 那 7 支見工單 `task_739bce8f4968`(A 類 5 支直接用 `DEFAULT_SKIP_DIRS`,設定對它們**永遠**無效;B 類 2 支自己寫合併函式,今天等價、之後會漂)。
+- **Related**: ADR-053(刻意缺席要留痕)、`scripts/_root.ts`、`scripts/gates.config.json`、`docs/skip-dir-git-repo-upstream-proposal.md`
+

@@ -35,7 +35,7 @@ worktree 的 `.git` 可能是檔案而不是目錄；兩種形狀都代表該目
 
 在上游落地前，本 consumer 的 `scripts/gates.config.json` 暫時把 `learning` 加到
 `skipDirs`。`learning` 是使用者自己的 git repo；正解是用性質（含 `.git` 就不進去）
-判斷，已提案上游，見 ADR-0NN。落地後這一筆要刪。
+判斷，已提案上游，見 ADR-057。落地後這一筆要刪。
 
 ## 陽性對照（本次量測）
 
