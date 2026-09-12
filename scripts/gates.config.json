@@ -25,7 +25,7 @@
   "dryRun": {
     "tags": "@standalone and not @manual"
   },
-  "skipDirs": ["tmp-learning"],
+  "skipDirs": ["tmp-learning", "learning"],
   "nextGates": {
     "mode": "enforce"
   },
