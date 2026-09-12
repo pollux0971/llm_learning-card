@@ -1220,10 +1220,42 @@ console.log('EXITED ' + code);
   return { runner, pidFile };
 }
 
+/**
+ * §12 / §12b / §12c 共用:「訊號送出後,這些 pid 是不是全死了」的等待方式。
+ *
+ * 2026-09-12 手記(真的抓到過一次,不是猜的):在同一次 vitest run 裡跟其他會開關子行程的
+ * 東西一起跑時,這三條測試偶發紅過(§12b 的 SIGTERM / SIGINT 兩支、§12c 的兩個 runner)。
+ * 已知**不是機器負載的絕對值**——SIGINT 那次紅在 load 4.06,另一次全套在 load 29.40 是綠的。
+ * 用 `--reporter=verbose` 連跑 12 次抓到一次真紅,錯誤訊息是「stryker (pid …) 還活著」,而
+ * 同一次跑裡 worker 的死活斷言(有輪詢)先過了——說明 worker(`sleep`)收到訊號後由核心直接
+ * 結束,不需要排到 CPU 執行使用者態程式;Stryker 主行程是 Node,收到訊號後要真的被排到
+ * CPU 才能跑完退出前的清理,而「跟它同時搶 CPU 的其他子行程」多的時候,這段排隊時間會拉長。
+ * 原本的寫法在「worker 都死了」之後,對 Stryker 主行程只做**一次**沒有輪詢的 `pidIsAlive`
+ * 檢查——這才是真正的病灶(§12b/§12c 完全相同,§12 則是另外切了一個跟測試逾時脫鉤的固定
+ * 5 秒小窗口,同一個家族)。
+ *
+ * 修法:把這條 it() 本來就核准的 `SPAWN_TIMEOUT_MS` 預算,原封不動地留給「等死透」這一步,
+ * 而不是另外發明一個更小的固定常數——放寬那個小常數只是把紅的門檻推遠,形狀不變;用測試
+ * 本來就有的預算才是真的在「輪詢直到條件成立或逾時」,而不是「輪詢一半、時間到了就不輪詢」。
+ *
+ * 退場條件:這是這張工單(mutate-flaky)本身的修復,已經套用,不用再拿掉。
+ */
+async function waitUntilAllDead(pids: readonly number[], deadlineAt: number): Promise<number[]> {
+  // 不能寫 `pids.some(pidIsAlive)`:some/filter 會把索引當第二個參數塞進去,
+  // 那是 pidIsAlive 可注入的 `kill`,索引 0 → `kill = 0` → TypeError → 被當成「活著」(見 §12b 舊註解)。
+  const alive = (p: number) => pidIsAlive(p);
+  while (pids.some(alive) && Date.now() < deadlineAt) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return pids.filter(alive);
+}
+
 describe('SIGTERM 之後 Stryker 子行程不留', () => {
   it(
     '殺掉 npm run mutate,底下的 stryker 也要跟著死(不然它繼續吃記憶體)',
     async () => {
+      // 這條 it() 的完整預算(SPAWN_TIMEOUT_MS),扣掉收尾斷言與 finally 清理的安全邊界。
+      const dieDeadline = Date.now() + SPAWN_TIMEOUT_MS - 2_000;
       const dir = tmp('mutate-childkill');
       const lockPath = join(dir, '.stryker.lock');
       const { runner, pidFile } = sandboxWithFakeStryker(dir);
@@ -1235,8 +1267,8 @@ describe('SIGTERM 之後 Stryker 子行程不留', () => {
       const exited = new Promise<number | null>((res) => child.on('close', (code) => res(code)));
 
       // 等到假 stryker 真的被 spawn 起來為止。
-      const deadline = Date.now() + SPAWN_TIMEOUT_MS - 5_000;
-      while (!existsSync(pidFile) && Date.now() < deadline) {
+      const spawnDeadline = Date.now() + SPAWN_TIMEOUT_MS - 5_000;
+      while (!existsSync(pidFile) && Date.now() < spawnDeadline) {
         await new Promise((r) => setTimeout(r, 100));
       }
       expect(existsSync(pidFile), `假 stryker 沒被叫起來:${out}`).toBe(true);
@@ -1248,14 +1280,10 @@ describe('SIGTERM 之後 Stryker 子行程不留', () => {
       child.kill('SIGTERM');
       await exited;
 
-      // 給 kernel 一點時間收屍。
-      const gone = Date.now() + 5_000;
-      while (pidIsAlive(strykerPid) && Date.now() < gone) {
-        await new Promise((r) => setTimeout(r, 100));
-      }
+      const survivors = await waitUntilAllDead([strykerPid], dieDeadline);
 
       // 這兩條缺一不可:鎖放掉了但 stryker 還在 = 下一個人拿到鎖,然後被同一個 stryker OOM。
-      expect(pidIsAlive(strykerPid), `父行程死了但 stryker (pid ${strykerPid}) 還活著:${out}`).toBe(false);
+      expect(survivors.includes(strykerPid), `父行程死了但 stryker (pid ${strykerPid}) 還活著:${out}`).toBe(false);
       expect(existsSync(lockPath), `SIGTERM 之後鎖還在:${out}`).toBe(false);
     },
     SPAWN_TIMEOUT_MS,
@@ -1336,6 +1364,8 @@ describe.each(['SIGTERM', 'SIGINT'] as const)('%s 之後 Stryker 的 worker 不�
   it(
     `殺掉 npm run mutate(${sig}),stryker 底下 fork 出來的 worker 也要跟著死,一個都不能留`,
     async () => {
+      // 這條 it() 的完整預算(SPAWN_TIMEOUT_MS),扣掉收尾斷言與 finally 清理的安全邊界。
+      const dieDeadline = Date.now() + SPAWN_TIMEOUT_MS - 2_000;
       const dir = tmp('mutate-workerkill');
       const lockPath = join(dir, '.stryker.lock');
       const { runner, pidFile, workersFile } = sandboxWithForkingStryker(dir);
@@ -1368,21 +1398,17 @@ describe.each(['SIGTERM', 'SIGINT'] as const)('%s 之後 Stryker 的 worker 不�
         child.kill(sig);
         await exited;
 
-        // 給 kernel 一點時間收屍;3 個都死了就不用等滿。
-        const gone = Date.now() + 5_000;
-        // 不能寫 `workers.some(pidIsAlive)`:some / filter 會把索引當第二個參數塞進去,
-        // 那是 pidIsAlive 可注入的 `kill`,索引 0 → `kill = 0` → TypeError → 被當成「活著」。
-        // 第一版就是這樣紅在假孤兒上的。
-        const alive = (w: number) => pidIsAlive(w);
-        while (workers.some(alive) && Date.now() < gone) {
-          await new Promise((r) => setTimeout(r, 100));
-        }
-
-        const survivors = workers.filter(alive);
+        // 兩批 pid 一起等到死透為止:worker 是 `sleep`,收到訊號被核心直接結束,不用排 CPU;
+        // Stryker 主行程是 Node,退出前要真的被排到 CPU 才能跑完清理——只等 worker、不等它,
+        // 就是 2026-09-12 抓到的那個真紅(worker 已全死,主行程還沒被排到 CPU)。見上面
+        // waitUntilAllDead 的手記。
+        // waitUntilAllDead 回傳的是「還活著的」(survivors),不是「死了的」。
+        const remaining = await waitUntilAllDead([...workers, strykerPid], dieDeadline);
+        const survivors = remaining.filter((p) => workers.includes(p));
         // 主行程死了、鎖放了,但 worker 還在跑 = 下一個拿到鎖的人跟這幾個 worker 搶 CPU,
         // 正是這把鎖要防的假紅。要的是 **0**,不是「少幾個」。
         expect(survivors, `stryker 主行程死了但 worker 還活著(孤兒 ${survivors.length}/3):${out}`).toEqual([]);
-        expect(pidIsAlive(strykerPid), `stryker (pid ${strykerPid}) 還活著:${out}`).toBe(false);
+        expect(remaining.includes(strykerPid), `stryker (pid ${strykerPid}) 還活著:${out}`).toBe(false);
         expect(existsSync(lockPath), `SIGTERM 之後鎖還在:${out}`).toBe(false);
       } finally {
         // 測試紅的時候孤兒是真的:自己收掉,不留 3 個 sleep 給下一條測試或下一個人。
@@ -1412,6 +1438,8 @@ describe('SIGTERM 只收自己的 Stryker group,別的 worktree 的 worker 不�
   it(
     '兩個 runner 各帶 3 個 worker:殺 A → A 的 3 個死、B 的 3 個活、B 的鎖還在;再殺 B → 全死',
     async () => {
+      // 這條 it() 的完整預算(SPAWN_TIMEOUT_MS),扣掉收尾斷言與 finally 清理的安全邊界。
+      const dieDeadline = Date.now() + SPAWN_TIMEOUT_MS - 2_000;
       const dirA = tmp('mutate-groupkill-a');
       const dirB = tmp('mutate-groupkill-b');
       const A = sandboxWithForkingStryker(dirA);
@@ -1420,10 +1448,6 @@ describe('SIGTERM 只收自己的 Stryker group,別的 worktree 的 worker 不�
       const lockB = join(dirB, '.stryker.lock');
       // 不能寫 `workers.some(pidIsAlive)`:索引會被塞進 pidIsAlive 可注入的 `kill`(見 §12b)。
       const alive = (w: number) => pidIsAlive(w);
-      const settle = async (workers: number[]) => {
-        const gone = Date.now() + 5_000;
-        while (workers.some(alive) && Date.now() < gone) await new Promise((r) => setTimeout(r, 100));
-      };
       const start = (runner: string, lockPath: string) => {
         const child = spawn(process.execPath, ['--import', 'tsx', runner, lockPath], { cwd: REPO_ROOT });
         let out = '';
@@ -1454,20 +1478,27 @@ describe('SIGTERM 只收自己的 Stryker group,別的 worktree 的 worker 不�
         // 殺 A。B 那邊什麼都不該變。
         ra.child.kill('SIGTERM');
         await ra.exited;
-        await settle(wa);
+        await waitUntilAllDead(wa, dieDeadline);
         expect(wa.filter(alive), `A 死了但 A 的 worker 還在:${ra.out()}`).toEqual([]);
         expect(existsSync(lockA), `A 死了鎖還在:${ra.out()}`).toBe(false);
         // 這條是核心:B 的 3 個 worker、B 的 stryker、B 的鎖,一個都不能被 A 的 group kill 波及。
+        // B 沒被送過任何訊號,不會「隨時間變死」,所以不用等——這條斷言本來就不是等待型的。
         expect(wb.filter(alive), `殺 A 波及到 B 的 worker(B 活著的:${wb.filter(alive).length}/3):${rb.out()}`).toEqual(wb);
         expect(pidIsAlive(strykerB), `殺 A 把 B 的 stryker 也殺了:${rb.out()}`).toBe(true);
         expect(existsSync(lockB), `殺 A 把 B 的鎖也放了:${rb.out()}`).toBe(true);
 
-        // 再殺 B,現在才全死。
+        // 再殺 B,現在才全死。把 worker 跟 stryker 主行程一起等到死透——只等 worker、對主行程
+        // 做一次性檢查,就是 2026-09-12 抓到的那個真紅(worker 是 sleep 先死,Node 主行程要
+        // 排到 CPU 才能跑完清理,常常還沒排到)。見 waitUntilAllDead 的手記。
         rb.child.kill('SIGTERM');
         await rb.exited;
-        await settle(wb);
-        expect(wb.filter(alive), `B 死了但 B 的 worker 還在:${rb.out()}`).toEqual([]);
-        expect(pidIsAlive(strykerB)).toBe(false);
+        // waitUntilAllDead 回傳的是「還活著的」(survivors),不是「死了的」。
+        const bRemaining = await waitUntilAllDead([...wb, strykerB], dieDeadline);
+        expect(
+          wb.filter((p) => bRemaining.includes(p)),
+          `B 死了但 B 的 worker 還在:${rb.out()}`,
+        ).toEqual([]);
+        expect(bRemaining.includes(strykerB), `stryker (pid ${strykerB}) 還活著:${rb.out()}`).toBe(false);
         expect(existsSync(lockB)).toBe(false);
       } finally {
         for (const w of [...wa, ...wb]) {
