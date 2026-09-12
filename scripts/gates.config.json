@@ -2,6 +2,7 @@
   "cucumberCwd": ".",
   "chain": [
     "check:json-duplicate-keys",
+    "check:adr-numbers",
     "boundaries",
     "check:env-keys",
     "typecheck",
