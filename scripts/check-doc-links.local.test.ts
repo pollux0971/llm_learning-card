@@ -798,9 +798,15 @@ describe('輸出的完整格式(訊息本身就是這張工單的產出)', () =>
   // 模板 v1.3.0 起,第一行多印一行「生效中的排除清單」(內建預設 + gates.config.json 追加)。
   // 那行是刻意的:排除清單現在可設定,看不到它就沒辦法判斷「掃到的檔數為什麼是這個數字」。
   // 模板 v1.4.0 起(S10)預設清單改成所有掃描器共用的 `_root.ts` DEFAULT_SKIP_DIRS,順序與內容跟著它。
+  //
+  // ⚠️ 這一行**故意寫死**,不要改成從 `resolveSkipDirs()` 算出來 —— 那會變成「用被測的東西算出期望值」
+  //   (套套邏輯:清單壞掉時期望值跟著壞,測試照樣綠)。代價是**每次動 `gates.config.json` 的
+  //   `skipDirs` 都要回來改這一行**,那是刻意的:設定改了、輸出就變了,本來就該有人確認一次。
+  //   2026-09-12 加 `tmp-learning` 時這三條紅過一次 —— 那次紅是對的,它逼我看見「我改的設定
+  //   有人在逐字讀」。**改 `skipDirs` 之前先 grep 誰在讀那一行。**
   const SKIP_LINE =
     'doc-links: 排除片段 [node_modules, .git, .next, .nuxt, .svelte-kit, dist, build, out, coverage, ' +
-    '.turbo, .cache, target, __pycache__, .venv, venv, reports, .stryker-tmp, archive]、' +
+    '.turbo, .cache, target, __pycache__, .venv, venv, reports, .stryker-tmp, archive, tmp-learning]、' +
     '排除前綴 [.claude/worktrees, contracts/fixtures]';
 
   it('全綠:排除清單、統計、✓,沒有多餘的東西', () => {

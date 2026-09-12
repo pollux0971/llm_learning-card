@@ -36,5 +36,9 @@
   ],
   "phaseStatus": {
     "mode": "report"
-  }
+  },
+  "skipDirs": [
+    ".stryker-tmp",
+    "tmp-learning"
+  ]
 }

@@ -1008,7 +1008,8 @@ describe('removeCategoryGraph: 三個分類只動中間那個', () => {
 // `analyzeDependencies()` 已經在處理另一個失敗(殘留循環)時被呼叫的,圖檔整個讀不
 // 出來的時候,「殘留了哪一條循環」那筆 warning 在語意上根本到不了。
 //
-// 下面這組對應 deps.ts / ingest.ts 的 TODO(ADR-041),現在是紅的。
+// ~~下面這組對應 deps.ts / ingest.ts 的 TODO(ADR-041),現在是紅的。~~
+// **已完成(2026-09-12 核對)**:`deps.ts` 會丟 `GraphFileCorruptError`,這組是綠的。
 
 /** 幾種真實會遇到的壞法:被截斷、空檔、被別的東西覆寫。 */
 const CORRUPT_SAMPLES: [name: string, bytes: string][] = [
