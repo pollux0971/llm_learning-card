@@ -1069,3 +1069,14 @@ graph TD
   ⚠️ **這個修法的射程比它看起來窄:** 同一張單用名冊(不是 grep)盤點出,12 支會走目錄的守門裡**只有 5 支呼叫共用 `resolveSkipDirs`**,另外 7 支吃不到 `gates.config.json` 的 `skipDirs`。**所以「我在 `skipDirs` 加了 `learning`」這句話,對其中 7 支是假的。** 那 7 支見工單 `task_739bce8f4968`(A 類 5 支直接用 `DEFAULT_SKIP_DIRS`,設定對它們**永遠**無效;B 類 2 支自己寫合併函式,今天等價、之後會漂)。
 - **Related**: ADR-053(刻意缺席要留痕)、`scripts/_root.ts`、`scripts/gates.config.json`、`docs/skip-dir-git-repo-upstream-proposal.md`
 
+## ADR-058 · 不替「已經會自己紅的東西」再加一支守門(junit schema 那張不做)
+
+- **Status**: accepted · 2026-09-13
+- **Context**: 有人提過一張單:`reports/junit/` 的檔名規則擋不了**內容**,所以想加一支驗 JSON schema 的守門。表面上合理 —— 檔名對、內容壞,現在確實沒有東西會擋。
+- **Decision**: **不做,並把理由留在這裡。**
+- **Alternatives**:
+  - **加一支驗 schema 的守門** —— **不採用。** 那個 schema 的**唯一消費者是我們自己的對帳腳本,而那個腳本讀到壞內容會當場紅。** **加一支守門去保護一個已經會自己紅的東西,就是「防線裝上了、危害不存在」。** 那跟本 repo 已經記過的 pre-commit hook 是同一族:它防的危害在這裡不存在(13 個 Stryker 設定的 `inPlace` 全部未設定),裝上去反而讓所有 worktree 在跑變異測試時都不能 commit。
+  - **等到真的被咬一次再做** —— 這其實就是「不做」的另一種說法,而且它比「先做」誠實:**危害出現的那天,我們會有一個真實案例可以照著設計守門**,而不是照著想像設計。
+- **Consequences**: `reports/junit/` 的內容仍然沒有 schema 守門。**如果哪天對帳腳本讀到壞內容而沒有紅**(也就是它變得寬容了),這個決定的前提就不成立,要回來重看。**⚠️ 那才是這一則要留痕的原因:「不做」的理由掛在「別人會紅」上,而別人會不會紅是會變的。**
+- **Related**: ADR-048(刻意不裝 pre-commit hook,同族)、ADR-053(刻意缺席的決定要留痕)
+
