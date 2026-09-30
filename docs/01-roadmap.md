@@ -10,16 +10,16 @@
 | 欄位 | 值 |
 |---|---|
 | 目前階段 | **I1 · 內容管線 —— 通過**(2026-09-04,tag `I1`)。第四次真呼叫 `@e2e @llm` 全綠,兩條人工確認由技術顧問判定 PASS。下一步:12-prompt-quality/phase-2 的 gate 解除,之後 `/integrate I2` |
-| 目前 sprint | **2026-W37** — **沒有 feature phase 推進**,整週在基礎設施與量尺(見 `docs/sprints/2026-W37.md`)。⚠️ 09-12 發現**花錢的煞車在 `--live` 這條路上沒有接**:真呼叫不進 `learning/state/log.jsonl`,`llm-spend --today` 回報「確信的零」,每日上限一次都不會觸發。**修好之前不跑任何 `--live`。** |
+| 目前 sprint | **2026-W37** — **沒有 feature phase 推進**,整週在基礎設施與量尺(見 `docs/sprints/2026-W37.md`)。⚠️ 09-12 發現**花錢的煞車在 `--live` 這條路上沒有接**:真呼叫不進 `learning/state/log.jsonl`,`llm-spend --today` 回報「確信的零」,每日上限一次都不會觸發。**修好之前不跑任何 `--live`。** 驗證中,見工單 T1。 |
 | 下一個 gate 已解除但沒人排的 | **`12-prompt-quality/phase-2`** —— gate 自 2026-09-04 解除,備註「由協調者安排」,**8 天沒被排**。2026-09-12 去排時撞出上面那三個洞。 |
-| 契約版本 | 1.1.0(凍結) |
+| 契約版本 | 1.2.0(凍結) |
 | 最後更新 | 2026-09-12 |
 
 ## 全貌
 
 ```mermaid
 graph TD
-  C[contracts 1.1.0 凍結] --> W0[Wave 0 · 十一個 phase-1 平行]
+  C[contracts 1.2.0 凍結] --> W0[Wave 0 · 十一個 phase-1 平行]
   W0 --> I1[I1 內容管線]
   I1 --> I2[I2 複習迴圈 CLI ★ 開始每天用]
   I2 --> I3[I3 桌面複習]
@@ -34,7 +34,7 @@ graph TD
 
 ## Wave 0 · 十一個 phase-1,完全平行
 
-**前提**:`contracts/types.md` 1.1.0 已凍結、`contracts/fixtures/` 已建立。
+**前提**:`contracts/types.md` 1.2.0 已凍結、`contracts/fixtures/` 已建立。
 
 **規則**:這十一個 phase 之間**沒有任何依賴**。可以十一個同時開,也可以一次一個。
 每個都只 import `contracts/`,跨資料夾 import 是違規。
