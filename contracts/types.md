@@ -408,6 +408,8 @@ Wave 0 的 UI 功能用 `MemoryFs implements LearningFs`(吃 fixture),整合時�
    所以只需補點);
 6. 沒有任何一段是 **Windows 保留裝置名**:段落在**第一個 `.` 之前**的部分,不分大小寫,等於 `CON`、`PRN`、`AUX`、`NUL`、
    `COM1`–`COM9`、`LPT1`–`LPT9`(`nul.md` 也算:Windows 對有沒有副檔名都當裝置;`console.md` 不算)。
+   **這份清單未核實,見 ADR-062**:它是依記憶寫的,沒有對照 Microsoft 檔名規範原文(可能還有 `COM0`、`LPT0`、上標數字的 `COM¹` 之類);
+   10 phase-2 的階段 0 要查原文再補。
    依據是對反斜線用的同一個判準:路徑的意義取決於作業系統,就拒絕。平台是真的要做
    (`features/10-desktop-shell/FEATURE.md` 的 phase-4 macOS、phase-5 Windows;`tauri.conf.json` 的 bundle targets 是 `"all"`)。
 
@@ -448,6 +450,7 @@ NUL 與其他控制字元(不在字元集合)、反斜線(不在字元集合,所
 不會被明顯的測試抓到。只決定「允許中文」而不處理正規化形式,得到的是一個在 Linux 上全綠、在 macOS 上有洞的防護。
 
 **`write` 對 `raw/` 一律拒絕。** `relPath` 的第一段(不分大小寫)等於 `raw` 時,`write` 拒絕;讀不在這條裡。
+「不分大小寫」是**固定的 ASCII 對照**(只把 `A`–`Z` 摺成 `a`–`z`),**不用依語系變化的 `toLowerCase`**:同一個字串在不同語系下摺疊結果可能不同(例如土耳其語的 `I`),而這條是防線。
 這是執行既有的硬約定(§12 `raw/<category>/` 唯讀;`CLAUDE.md` 硬規則 2「不改 `raw/`,那是使用者的素材」),
 不是修改它。審查時查到:`phase-2.feature` 提到 `raw` 零次、`apps/` 底下 UI 呼叫 `write(` 零次,所以這條硬規則
 目前在路徑防護這一層沒有任何執行者。比對「不分大小寫」是因為在不分大小寫的檔案系統上 `Raw/x.md` 與 `raw/x.md`
