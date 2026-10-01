@@ -23,18 +23,118 @@ Feature: The file boundary and the learning directory
     When the front end requests a card file
     Then the read command is invoked with a path relative to the learning directory
 
-  Scenario Outline: Paths that escape the learning directory are refused
-    When the front end requests the path <path>
+  # Path check (decision of 2026-10-01, contract section 13, version 1.3.0):
+  # the LearningFs boundary does no conversion of any kind. The input must already be the
+  # one clean form, otherwise it is refused. The string that is checked and the string that
+  # is used are the same string, byte for byte. The check is a whitelist (single "/" between
+  # non-empty segments, every character in the allowed set, no segment starting or ending with ".",
+  # no segment that is a Windows reserved device name),
+  # so traversal, absolute paths, drive letters, "~", backslashes, percent signs, leading
+  # whitespace, NUL and redundant spellings ("./", "//") are refused without a rule each.
+  # "cards/../state/reviews.json" is refused on purpose: nothing here needs to walk back.
+  # The asset protocol handler is the only place that decodes (exactly once, as the protocol
+  # defines); it then hands the result to the same check.
+  #
+  # Encoding of the <path> column: every path is a JSON string, quotes included, and the
+  # step definition decodes it with JSON.parse. Reason: a Gherkin table cell trims
+  # surrounding whitespace and treats a backslash as an escape, so a raw cell cannot carry
+  # " ../x" or a Windows path. Inside a cell one real backslash is written as four
+  # backslashes (Gherkin turns each pair into one, JSON.parse turns the remaining pair
+  # into one). The expected decoded value of every row is in
+  # features/10-desktop-shell/PATH-GUARD-EVIDENCE.md.
+
+  Scenario Outline: Paths that are not clean relative paths are refused through the read command
+    When the front end requests the JSON-encoded path <path> through the read command
     Then the request is refused
-    And a warning is logged
+    And the refusal is returned to the TypeScript caller
+    And the TypeScript caller records a warning event through recordEvent
+    And no file outside the learning directory is read
 
     Examples:
-      | path                        |
-      | ../../etc/passwd            |
-      | cards/../../../etc/passwd   |
-      | /etc/passwd                 |
-      | cards/./../../secret        |
-      | ..%2f..%2fetc%2fpasswd      |
+      | path                           |
+      | "../../etc/passwd"             |
+      | "cards/../../../etc/passwd"    |
+      | "/etc/passwd"                  |
+      | "cards/./../../secret"         |
+      | "//etc/passwd"                 |
+      | ".."                           |
+      | "..%2f..%2fetc%2fpasswd"       |
+      | "..%2F..%2Fetc%2Fpasswd"       |
+      | "%2e%2e/%2e%2e/etc/passwd"     |
+      | "..%252f..%252fetc"            |
+      | "..\\\\..\\\\etc\\\\passwd"    |
+      | "cards\\\\..\\\\..\\\\secret"  |
+      | "\\\\etc\\\\passwd"            |
+      | "\\\\\\\\server\\\\share\\\\x" |
+      | "C:\\\\Windows\\\\win.ini"     |
+      | "C:/Windows/win.ini"           |
+      | "file:///etc/passwd"           |
+      | "~/secret"                     |
+      | " ../x"                        |
+      | "cards/../state/reviews.json"  |
+      | "./cards/a.md"                 |
+      | "cards//a.md"                  |
+      | "cards/.hidden.md"             |
+      | "cards/a."                     |
+      | "nul.md"                       |
+      | "CON"                          |
+      | "cards/Aux.txt"                |
+      | "com1.md"                      |
+      | "cards/"                       |
+      | ""                             |
+
+  Scenario: A path containing a NUL character is refused
+    When the front end requests the path "cards/a.md", then a NUL character, then ".png" through the read command
+    Then the request is refused
+    And the refusal is returned to the TypeScript caller
+    And the TypeScript caller records a warning event through recordEvent
+
+  # The invariant is "nothing sits between the check and the use". For a refused request
+  # there is no "string that would have been used", so it is observed through what the
+  # file system behind the boundary receives: nothing when refused, the identical string when allowed.
+  Scenario: A refused path never reaches the file system, not even in a converted form
+    Given the boundary sits in front of a file system that records every call it receives
+    When the front end requests the JSON-encoded path "..\\..\\etc\\passwd" through the read command
+    Then the request is refused
+    And the file system behind the boundary received no call
+
+  Scenario: An allowed path reaches the file system byte for byte
+    Given the boundary sits in front of a file system that records every call it receives
+    When the front end requests the JSON-encoded path "cards/a.md" through the read command
+    Then the request succeeds
+    And the file system behind the boundary received exactly one call
+    And the string it received is byte-identical to "cards/a.md"
+
+  Scenario: An allowed write reaches the file system byte for byte
+    Given the boundary sits in front of a file system that records every call it receives
+    When the front end writes to the JSON-encoded path "state/reviews.json" through the write command
+    Then the request succeeds
+    And the file system behind the boundary received exactly one call
+    And the string it received is byte-identical to "state/reviews.json"
+
+  # Known limitation: a refusal on the asset protocol path has no TypeScript caller
+  # to return to, so it is written to the Rust log only. It does not produce a
+  # contract section 10 warning event. Reimplementing the section 11b four-step
+  # write in Rust was rejected because nothing would check that it stayed identical.
+  Scenario Outline: Paths that escape through the asset protocol are refused without going through the read command
+    When the web view requests the asset url for the JSON-encoded path <path> directly
+    Then the request is refused
+    And the refusal is written to the Rust log only
+    And no warning event is written to the learning log
+
+    Examples:
+      | path                          |
+      | "../../etc/passwd"            |
+      | "/etc/passwd"                 |
+      | "..%2f..%2fetc%2fpasswd"      |
+      | "..\\\\..\\\\etc\\\\passwd"   |
+      | "cards/../state/reviews.json" |
+      | "..%252f..%252fetc"           |
+
+  Scenario: The asset protocol is scoped to the learning directory
+    Given the application configuration
+    Then the asset protocol is enabled with a scope limited to the learning directory
+    And the asset protocol applies the same path checks as the read command
 
   Scenario Outline: Legitimate paths are allowed
     When the front end requests the path <path>
@@ -45,6 +145,33 @@ Feature: The file boundary and the learning directory
       | cards/security/sec-0042.md    |
       | state/reviews.json            |
       | assets/sec-0042-diagram.png   |
+      | assets/sec_0042_diagram.png   |
+      | cards/console.md              |
+
+  # Writing under raw/ is refused (contract section 13, 1.3.0): raw/ is the person's own
+  # material and is read-only (section 12, hard rule 2). The first segment is compared
+  # without regard to case, because on a case-insensitive file system Raw/ and raw/ are one directory.
+  Scenario Outline: Writing under raw is refused
+    When the front end writes to the JSON-encoded path <path> through the write command
+    Then the request is refused
+    And the refusal is returned to the TypeScript caller
+    And the TypeScript caller records a warning event through recordEvent
+    And no file under raw is created or changed
+
+    Examples:
+      | path                  |
+      | "raw/security/x.md"   |
+      | "Raw/security/x.md"   |
+
+  Scenario: Listing the root is refused
+    When the front end lists the JSON-encoded directory ""
+    Then the request is refused
+
+  Scenario: A listing only returns names that would themselves pass the check
+    Given a directory that contains a hidden entry ".hidden" and a file "ok.md"
+    When the front end lists that directory
+    Then the result is ["ok.md"]
+    And no error is raised
 
   Scenario: A symbolic link out of the directory is refused
     Given a symbolic link inside the learning directory points outside it
