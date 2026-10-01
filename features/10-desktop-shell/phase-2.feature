@@ -27,7 +27,8 @@ Feature: The file boundary and the learning directory
   # the LearningFs boundary does no conversion of any kind. The input must already be the
   # one clean form, otherwise it is refused. The string that is checked and the string that
   # is used are the same string, byte for byte. The check is a whitelist (single "/" between
-  # non-empty segments, every character in the allowed set, no segment starting with "."),
+  # non-empty segments, every character in the allowed set, no segment starting or ending with ".",
+  # no segment that is a Windows reserved device name),
   # so traversal, absolute paths, drive letters, "~", backslashes, percent signs, leading
   # whitespace, NUL and redundant spellings ("./", "//") are refused without a rule each.
   # "cards/../state/reviews.json" is refused on purpose: nothing here needs to walk back.
@@ -74,6 +75,11 @@ Feature: The file boundary and the learning directory
       | "./cards/a.md"                 |
       | "cards//a.md"                  |
       | "cards/.hidden.md"             |
+      | "cards/a."                     |
+      | "nul.md"                       |
+      | "CON"                          |
+      | "cards/Aux.txt"                |
+      | "com1.md"                      |
 
   Scenario: A path containing a NUL character is refused
     When the front end requests the path "cards/a.md", then a NUL character, then ".png" through the read command
@@ -120,6 +126,32 @@ Feature: The file boundary and the learning directory
       | state/reviews.json            |
       | assets/sec-0042-diagram.png   |
       | assets/sec_0042_diagram.png   |
+      | cards/console.md              |
+
+  # Writing under raw/ is refused (contract section 13, 1.3.0): raw/ is the person's own
+  # material and is read-only (section 12, hard rule 2). The first segment is compared
+  # without regard to case, because on a case-insensitive file system Raw/ and raw/ are one directory.
+  Scenario Outline: Writing under raw is refused
+    When the front end writes to the JSON-encoded path <path> through the write command
+    Then the request is refused
+    And the refusal is returned to the TypeScript caller
+    And the TypeScript caller records a warning event through recordEvent
+    And no file under raw is created or changed
+
+    Examples:
+      | path                  |
+      | "raw/security/x.md"   |
+      | "Raw/security/x.md"   |
+
+  Scenario: Listing the root is refused
+    When the front end lists the JSON-encoded directory ""
+    Then the request is refused
+
+  Scenario: A listing only returns names that would themselves pass the check
+    Given a directory that contains a hidden entry ".hidden" and a file "ok.md"
+    When the front end lists that directory
+    Then the result is ["ok.md"]
+    And no error is raised
 
   Scenario: A symbolic link out of the directory is refused
     Given a symbolic link inside the learning directory points outside it
