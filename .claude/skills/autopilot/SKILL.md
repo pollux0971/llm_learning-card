@@ -526,8 +526,10 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 - **模板要釘版本**:`check:gates` 預設對「活的」`/data/python/dev-paradigm` HEAD,同一個 commit 會隨時間由綠變紅
   (上游 `0d02c74` 起要求 `.npx-init-manifest.json`)。釘我們檔頭的版本:
   `git -C /data/python/dev-paradigm archive v1.6.8 | tar -x -C <目錄>`,再 `TEMPLATE_DIR=<目錄>`。**只有 `check:gates` 單獨紅在 manifest 那一行時,照此判斷,不要去修,也不要當成自己合壞。**
-- **限 worker 數**:`VITEST_MAX_WORKERS=2`(整套自己會把 8 核吃到 load 50,逾時不是邏輯錯)。
-- 指令:`VITEST_MAX_WORKERS=2 TEMPLATE_DIR=<目錄> npm run check:all`。
+- **限 worker 數**:`VITEST_MAX_WORKERS=1`。預設約 7 個 worker 會把 8 核吃到 load 50–78,逾時全是自我競爭;
+  **2 個 worker 在同一條件下有綠有紅**(同一份程式、load 24–28:`degraded-report.test.ts` 那個會起內層 vitest 的測試,
+  孤立最慢 3 秒,鏈內 5.65 秒,一次綠一次紅)。timeout 與斷言不動。T3 量出曲線前一律用 1。
+- 指令:`VITEST_MAX_WORKERS=1 TEMPLATE_DIR=<目錄> npm run check:all`。
 - **回報要帶**:host、核數、worker 數、起跑與結束的 1/5/15 分 load、樹 sha 前後。沒有這些欄位,事後分不出「程式變慢」和「機器變忙」。
 - 上一條的處理是量測條件,不是標準;T3 / T4 會把它們變成機制。
 
