@@ -23,18 +23,96 @@ Feature: The file boundary and the learning directory
     When the front end requests a card file
     Then the read command is invoked with a path relative to the learning directory
 
-  Scenario Outline: Paths that escape the learning directory are refused
-    When the front end requests the path <path>
+  # Normalisation order (decision of 2026-10-01, contract section 13):
+  #   normalise first (decode, convert separators, trim, collapse repeated separators),
+  #   then check, then use that same normalised string.
+  # The string that is checked and the string that is used are byte-identical.
+  # A path is refused when normalising changes its meaning (it becomes a traversal,
+  # an absolute path or a home path). A path whose meaning does not change under
+  # normalisation is allowed. `cards/../state/reviews.json` is refused on purpose:
+  # section 13 says a path containing `..` is refused, and nothing here needs to walk back.
+  #
+  # Encoding of the <path> column: every path is a JSON string, quotes included, and the
+  # step definition decodes it with JSON.parse. Reason: a Gherkin table cell trims
+  # surrounding whitespace and treats a backslash as an escape, so a raw cell cannot carry
+  # " ../x" or a Windows path. Inside a cell one real backslash is written as four
+  # backslashes (Gherkin turns each pair into one, JSON.parse turns the remaining pair
+  # into one). The expected decoded value of every row is in
+  # features/10-desktop-shell/PATH-GUARD-EVIDENCE.md.
+
+  Scenario Outline: Paths that escape the learning directory through the read command are refused
+    When the front end requests the JSON-encoded path <path> through the read command
     Then the request is refused
-    And a warning is logged
+    And the refusal is returned to the TypeScript caller
+    And the TypeScript caller records a warning event through recordEvent
+    And no file outside the learning directory is read
 
     Examples:
-      | path                        |
-      | ../../etc/passwd            |
-      | cards/../../../etc/passwd   |
-      | /etc/passwd                 |
-      | cards/./../../secret        |
-      | ..%2f..%2fetc%2fpasswd      |
+      | path                           |
+      | "../../etc/passwd"             |
+      | "cards/../../../etc/passwd"    |
+      | "/etc/passwd"                  |
+      | "cards/./../../secret"         |
+      | "//etc/passwd"                 |
+      | ".."                           |
+      | "..%2f..%2fetc%2fpasswd"       |
+      | "..%2F..%2Fetc%2Fpasswd"       |
+      | "%2e%2e/%2e%2e/etc/passwd"     |
+      | "..%252f..%252fetc"            |
+      | "..\\\\..\\\\etc\\\\passwd"    |
+      | "cards\\\\..\\\\..\\\\secret"  |
+      | "\\\\etc\\\\passwd"            |
+      | "\\\\\\\\server\\\\share\\\\x" |
+      | "C:\\\\Windows\\\\win.ini"     |
+      | "C:/Windows/win.ini"           |
+      | "file:///etc/passwd"           |
+      | "~/secret"                     |
+      | " ../x"                        |
+      | "cards/../state/reviews.json"  |
+
+  Scenario: A path containing a NUL character is refused
+    When the front end requests the path "cards/a.md", then a NUL character, then ".png" through the read command
+    Then the request is refused
+    And the refusal is returned to the TypeScript caller
+    And the TypeScript caller records a warning event through recordEvent
+
+  Scenario: The checked path is the used path
+    When the front end requests the JSON-encoded path "..\\..\\etc\\passwd" through the read command
+    Then the request is refused
+    And the string that was checked is byte-identical to the string that would have been used
+
+  Scenario Outline: Redundant spellings of a legitimate path are allowed after normalisation
+    When the front end requests the JSON-encoded path <path> through the read command
+    Then the request succeeds
+    And the file that is read is <normalised>
+
+    Examples:
+      | path             | normalised |
+      | "./cards/a.md"   | cards/a.md |
+      | "cards//a.md"    | cards/a.md |
+
+  # Known limitation: a refusal on the asset protocol path has no TypeScript caller
+  # to return to, so it is written to the Rust log only. It does not produce a
+  # contract section 10 warning event. Reimplementing the section 11b four-step
+  # write in Rust was rejected because nothing would check that it stayed identical.
+  Scenario Outline: Paths that escape through the asset protocol are refused without going through the read command
+    When the web view requests the asset url for the JSON-encoded path <path> directly
+    Then the request is refused
+    And the refusal is written to the Rust log only
+    And no warning event is written to the learning log
+
+    Examples:
+      | path                          |
+      | "../../etc/passwd"            |
+      | "/etc/passwd"                 |
+      | "..%2f..%2fetc%2fpasswd"      |
+      | "..\\\\..\\\\etc\\\\passwd"   |
+      | "cards/../state/reviews.json" |
+
+  Scenario: The asset protocol is scoped to the learning directory
+    Given the application configuration
+    Then the asset protocol is enabled with a scope limited to the learning directory
+    And the asset protocol applies the same path checks as the read command
 
   Scenario Outline: Legitimate paths are allowed
     When the front end requests the path <path>
