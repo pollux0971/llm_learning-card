@@ -1,0 +1,15 @@
+{
+  "score": 91.06,
+  "killed": 349,
+  "timeout": 48,
+  "survived": 33,
+  "noCoverage": 6,
+  "ignored": 0,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.scanner-doclinks.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.scanner-doclinks.json",
+  "commit": "9a36483"
+}
