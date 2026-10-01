@@ -492,6 +492,54 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
    **1min > 5min > 15min = 還在漲**。同一個 30 在退潮時可以開工,在上升時不行。
    這條的前提是「load 是這台機器上所有人共用的」,前提不成立(例如換到獨占機器)時判準要重看。
 
+## 4e. 派工前置、非作者驗證、環境備忘(2026-10-01,技術顧問批准)
+
+### 派 worker 的前置(四件,缺一不算派好)
+
+1. **env -u 啟動**:`env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY <agent 指令>`(所有 provider key)。
+2. **worker 第一步回報原始輸出**:`echo "${OPENAI_API_KEY:-UNSET}"; echo "${ANTHROPIC_API_KEY:-UNSET}"`,兩個都要是 `UNSET`。
+   收的人要輸出,不收「我 unset 了」(`env -u` 對不存在的變數也會靜默成功)。
+3. **派工前量檔案**:`ls <worktree>/.env` 必須回 `No such file`,輸出貼進回報。**這步才是真的在保護的那層。**
+   `scripts/llm.ts` 與 `scripts/_env.ts` 用 `process.loadEnvFile(new URL('../.env', import.meta.url))`(ADR-034),
+   路徑相對於腳本所在的簽出,且不覆蓋已存在的變數 —— `env -u` 讓變數「不存在」,`.env` 反而把它補回來。
+   所以 worker 安全是因為它的簽出裡沒有 `.env` 這個檔,不是因為 `env -u`。
+4. **禁止在主簽出派 worker**(禁止項,不是建議):主簽出有 `.env`。
+
+第二個 clone `/data/python/llm_learning-cards-workers`(push URL 已停用)同時做到「推不出去」與「拿不到 key」。
+⚠️ 但帳本(`resolveVaultLearningDir`,用 `git rev-parse --git-common-dir`)與 `.stryker.lock` 只解 worktree 不解 clone:
+三個 clone = 三份日上限。**開 clone 之前先列「還有什麼東西的範圍是從 repo 根算出來的」。**
+**煞車(2026-10-01 顧問):帳本範圍修好之前,任何 clone、任何 worktree 都不准 `--live` 或任何會打真 provider 的東西。**
+
+### 非作者反向驗證(§2 第 1 步)要加的
+
+對**新增或修改的測試檔**:
+1. `grep -nE 'rmSync|rm -rf|unlinkSync|writeFileSync|mkdirSync'` 有沒有命中?
+2. 命中的目標路徑是**字面常數**還是**執行時算出來的**?算出來的要追到底看它可能指向哪。
+3. 目標落在 `learning/`、`state/`、`raw/` 或任何 git 追蹤路徑底下 → **退回,不管護欄多緊**。護欄是條件,會失效,而且失效時測試還是綠的。
+
+實例(2026-10-01):T1 的 `live-run.test.ts` 在 `finally` 裡 `rmSync(resolveVaultLearningDir(ROOT), { recursive: true })`,
+協調者只跑了測試與突變、沒讀副作用,技術顧問抓到。
+另:**非作者要選一個不在作者清單上的突變點**;tree sha 開跑與跑完各記一次,不同就作廢。
+
+### 合併後跑 check:all 的兩個條件(顧問 2026-10-01 實測)
+
+- **模板要釘版本**:`check:gates` 預設對「活的」`/data/python/dev-paradigm` HEAD,同一個 commit 會隨時間由綠變紅
+  (上游 `0d02c74` 起要求 `.npx-init-manifest.json`)。釘我們檔頭的版本:
+  `git -C /data/python/dev-paradigm archive v1.6.8 | tar -x -C <目錄>`,再 `TEMPLATE_DIR=<目錄>`。**只有 `check:gates` 單獨紅在 manifest 那一行時,照此判斷,不要去修,也不要當成自己合壞。**
+- **限 worker 數**:`VITEST_MAX_WORKERS=2`(整套自己會把 8 核吃到 load 50,逾時不是邏輯錯)。
+- 指令:`VITEST_MAX_WORKERS=2 TEMPLATE_DIR=<目錄> npm run check:all`。
+- **回報要帶**:host、核數、worker 數、起跑與結束的 1/5/15 分 load、樹 sha 前後。沒有這些欄位,事後分不出「程式變慢」和「機器變忙」。
+- 上一條的處理是量測條件,不是標準;T3 / T4 會把它們變成機制。
+
+### 環境備忘
+
+- workers clone 登記進了 Orca(`orca-ide repo add`);撤銷 `orca-ide repo remove`。環境副作用要登記。
+- §4d 第 4 條的 load 判準是**紀律不是機制**:擋不住整條鏈同時跑。等 T3。`cargo-mutants` 也要拿 `.stryker.lock`。
+- Codex 啟動坑:更新提示(加 `-c check_for_update_on_startup=false`;**別按 Enter**,選項 1 會 `curl | sh`)、
+  信任目錄提示(新 clone 第一次會問)、`codegraph init` 會問(小範圍回「不要」)、`terminal send` 要加 `--enter` 才送出。
+- **`pgrep -f` / `pkill -f` 會比中自己的命令字串。** 撈到的行先排除自己再當證據;比對完整 argv 並排除自己的 PID。
+- **輸出的結論行必須依賴量測結果。** 無條件 `echo "(以上為空 = 沒有…)"` 看起來跟有條件的一模一樣;要嘛 `if` 判命中數,要嘛不印結論只印原始輸出。
+
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
 ```
