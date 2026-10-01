@@ -34,8 +34,8 @@
 **A1 盤點。** 列出 32 檔裡每個會 spawn 子程序的測試,欄位:檔案:行、測試名、spawn 什麼、有效逾時
 (明寫 or 預設 5000)、來源行、**是否 spawn 到會編譯的東西**(cargo build、tsc 等;之後 cargo-mutants
 進來,一個 spawn npm 的和一個 spawn cargo 的耗時差一個量級)。母體大小寫在報告最前面。
-方法說明必須寫:光 `grep 'timeout'` 會把 `scripts/mutate.test.ts:2915`、`:2931`、
-`scripts/reports-persist.test.ts:184` 的 `timeout: 1` / `timeout: 0` 混進來——那是被測程式的參數,
+方法說明必須寫:光 `grep 'timeout'` 會把 `scripts/mutate.test.ts` 第 2915、2931 行、
+`scripts/reports-persist.test.ts` 第 184 行的 `timeout: 1` / `timeout: 0` 混進來——那是被測程式的參數,
 不是 vitest 的測試逾時。
 
 **A2 分類。** 每個測試三選一,每列附證據(把逾時拉大之後斷言還成不成立;讀碼,必要時實跑):
