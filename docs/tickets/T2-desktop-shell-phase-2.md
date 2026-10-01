@@ -9,12 +9,12 @@
 - 標的:`features/10-desktop-shell/` 的 phase-2。
 - gate:自身 phase-1 done(`NEXT.md`);跨資料夾:僅 10→01 的 `recordEvent`。
 
-## 前置(必須先合進 main,worker 才取得到)
+## 前置(必須先在 main,worker 才取得到)
 
-- 分支 `desktop-phase2-spec`(clone:`/data/python/llm_learning-cards-contracts`;頂端 `bf949f5`,基底 `3b6c211`):
-  改寫後的 `features/10-desktop-shell/phase-2.feature`、`PATH-GUARD-EVIDENCE.md` 與 `evidence/`、`NEXT.md` 的登記。
-- 分支 `contracts-1.2.0` 與疊在其上的 `contracts-s13`:契約 §13 的 1.3.0(白名單、不解碼)。
-- 合併順序與方式由協調者定(`--no-ff`,不壓 commit,SKILL.md §2)。
+- 契約 §13 的 1.3.0(白名單、不解碼)與 ADR-062:**已在 main**(B 組)。
+- `features/10-desktop-shell/` 的改寫後 `phase-2.feature`、`PATH-GUARD-EVIDENCE.md` 與 `evidence/`、`NEXT.md` 的登記:
+  C 組(分支 `desktop-phase2-spec`)。**C 組合進 main 之前,本工單不得派。**
+- 合併方式由協調者定(`--no-ff`,不壓 commit,SKILL.md §2)。
 
 ## 驗收條件
 
