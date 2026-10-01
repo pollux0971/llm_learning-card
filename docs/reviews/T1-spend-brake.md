@@ -165,6 +165,8 @@ npx vitest run packages/core/src/llm/router.test.ts packages/core/src/llm/router
 
 結論：屬於停止規則的結果 (i)：已有 call 前煞車，且新測試以實體帳本、環境 cap、假日期和假 adapter 證明其行為；不用修改實作。
 
+「本次驗證的範圍是單一 clone 的帳本。日上限目前以 clone 為單位計算,因此本結論不涵蓋跨 clone 的總額。見工單 T0。」
+
 ## 6. 全程零實際花費
 
 所有 router／gateway 測試均注入假 cloud adapter；live-run 的網路邊界以 `globalThis.fetch` 假實作攔截，假 API key 僅為測試字串，未設定真實憑證、未執行 `--live`。第 5 條的 cloud adapter 為測試內計數函式，沒有任何 fetch；第 4 條的唯一 `/v1/messages` 請求由 `installFakeCloud()` 在程序內回覆。指令與輸出原文同第 5 條，結果 `3 passed, 186 passed`。結論：通過，沒有真網路呼叫或費用。
