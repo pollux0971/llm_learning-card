@@ -395,7 +395,7 @@ Wave 0 的 UI 功能用 `MemoryFs implements LearningFs`(吃 fixture),整合時�
 不修剪**:收到什麼就檢查什麼,通過了就原樣使用,沒通過就拒絕。
 
 **檢查用白名單,不用黑名單。** 黑名單不完整的時候,失敗方向是放行;白名單不完整的時候,失敗方向是
-拒絕。兩份 Wave 0 的 stub guard 是黑名單(擋 `..` 與開頭的 `/`),實測 16 個輸入裡 14 個該拒絕的被放行
+拒絕。兩份 Wave 0 的 stub guard 是黑名單(擋 `..` 與開頭的 `/`),實測 16 個輸入全被放行(其中 14 個當時就判為該拒絕,另 2 個後來被 ADR-062 推翻改為拒絕)
 (`features/10-desktop-shell/PATH-GUARD-EVIDENCE.md`)。
 
 一個 `relPath` 通過,當且僅當:
@@ -469,6 +469,8 @@ NUL 與其他控制字元(不在字元集合)、反斜線(不在字元集合,所
 | `write` | `"raw/security/x.md"` | 拒絕 | `write` 對 `raw/` 一律拒絕 |
 | `read` | `"raw/security/security-basics.md"` | 本節不裁(見 10 phase-2 工單的推導義務) | 讀 `raw/` 不在 `write` 規則裡 |
 | `read` | `"cards/a."` | 拒絕 | 第 5 條:段不得以 `.` 結尾 |
+| `read` | `"cards/"` | 拒絕 | 第 1 條:沒有結尾的 `/` |
+| `read` | `""`(空字串) | 拒絕 | 第 1、2 條:至少一段、每段非空 |
 | `read` | `"nul.md"`、`"CON"`、`"cards/Aux.txt"`、`"com1.md"` | 拒絕 | 第 6 條:Windows 保留裝置名 |
 | `read` | `"cards/console.md"` | 通過(以字元集合為準) | 第 6 條只比第一個 `.` 之前的整段 |
 | `list` | `""`(空字串) | 拒絕 | `relDir` 至少一段,不開根目錄例外 |
