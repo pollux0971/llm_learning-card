@@ -23,14 +23,16 @@ Feature: The file boundary and the learning directory
     When the front end requests a card file
     Then the read command is invoked with a path relative to the learning directory
 
-  # Normalisation order (decision of 2026-10-01, contract section 13):
-  #   normalise first (decode, convert separators, trim, collapse repeated separators),
-  #   then check, then use that same normalised string.
-  # The string that is checked and the string that is used are byte-identical.
-  # A path is refused when normalising changes its meaning (it becomes a traversal,
-  # an absolute path or a home path). A path whose meaning does not change under
-  # normalisation is allowed. `cards/../state/reviews.json` is refused on purpose:
-  # section 13 says a path containing `..` is refused, and nothing here needs to walk back.
+  # Path check (decision of 2026-10-01, contract section 13, version 1.3.0):
+  # the LearningFs boundary does no conversion of any kind. The input must already be the
+  # one clean form, otherwise it is refused. The string that is checked and the string that
+  # is used are the same string, byte for byte. The check is a whitelist (single "/" between
+  # non-empty segments, every character in the allowed set, no segment starting with "."),
+  # so traversal, absolute paths, drive letters, "~", backslashes, percent signs, leading
+  # whitespace, NUL and redundant spellings ("./", "//") are refused without a rule each.
+  # "cards/../state/reviews.json" is refused on purpose: nothing here needs to walk back.
+  # The asset protocol handler is the only place that decodes (exactly once, as the protocol
+  # defines); it then hands the result to the same check.
   #
   # Encoding of the <path> column: every path is a JSON string, quotes included, and the
   # step definition decodes it with JSON.parse. Reason: a Gherkin table cell trims
@@ -69,6 +71,9 @@ Feature: The file boundary and the learning directory
       | "~/secret"                     |
       | " ../x"                        |
       | "cards/../state/reviews.json"  |
+      | "./cards/a.md"                 |
+      | "cards//a.md"                  |
+      | "cards/.hidden.md"             |
 
   Scenario: A path containing a NUL character is refused
     When the front end requests the path "cards/a.md", then a NUL character, then ".png" through the read command
@@ -80,16 +85,6 @@ Feature: The file boundary and the learning directory
     When the front end requests the JSON-encoded path "..\\..\\etc\\passwd" through the read command
     Then the request is refused
     And the string that was checked is byte-identical to the string that would have been used
-
-  Scenario Outline: Redundant spellings of a legitimate path are allowed after normalisation
-    When the front end requests the JSON-encoded path <path> through the read command
-    Then the request succeeds
-    And the file that is read is <normalised>
-
-    Examples:
-      | path             | normalised |
-      | "./cards/a.md"   | cards/a.md |
-      | "cards//a.md"    | cards/a.md |
 
   # Known limitation: a refusal on the asset protocol path has no TypeScript caller
   # to return to, so it is written to the Rust log only. It does not produce a
@@ -108,6 +103,7 @@ Feature: The file boundary and the learning directory
       | "..%2f..%2fetc%2fpasswd"      |
       | "..\\\\..\\\\etc\\\\passwd"   |
       | "cards/../state/reviews.json" |
+      | "..%252f..%252fetc"           |
 
   Scenario: The asset protocol is scoped to the learning directory
     Given the application configuration
@@ -123,6 +119,7 @@ Feature: The file boundary and the learning directory
       | cards/security/sec-0042.md    |
       | state/reviews.json            |
       | assets/sec-0042-diagram.png   |
+      | assets/sec_0042_diagram.png   |
 
   Scenario: A symbolic link out of the directory is refused
     Given a symbolic link inside the learning directory points outside it
