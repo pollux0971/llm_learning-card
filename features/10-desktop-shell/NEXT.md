@@ -26,6 +26,16 @@
   候選解法是 win32 跳過目錄 fsync,**必須在真 Windows 上驗過再寫**。診斷與不採用的替代方案
   見 **ADR-040** 的 Consequences 第 5 點。
 
+## 已登記、尚未做:`LearningFs` 介面目前有三處宣告
+
+`LearningFs`(契約 §13)現在在 `apps/test-card/src/types.ts` 與 `apps/teach-card/src/stubs/memory-fs.ts` 各有一份
+stub 宣告,phase-2 會產生第三份(真實作)。**計畫:phase-2 完成後,以真實作的形狀為準,把介面提升進
+`packages/contracts`;06、07 在 I3 拿掉 stub 時改用它。**
+
+順序不能反:現在從 stub 推介面,會讓不需要處理危險的實作(沒有 symlink、沒有 canonicalize、
+沒有 URL 編碼)去定義一個必須處理危險的介面。phase-2 的邊界例外(10→01)只放 `recordEvent`,
+不要順便把 `LearningFs` 的型別也拉進例外。Owner:phase-2 的審核輪。
+
 ## Gate 未滿足時
 
 **phase-2 沒有 gate,可以緊接著 phase-1 做。** 它提供 `LearningFs` 給 06 與 07,
