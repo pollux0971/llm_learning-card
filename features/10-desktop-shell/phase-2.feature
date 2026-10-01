@@ -43,7 +43,7 @@ Feature: The file boundary and the learning directory
   # into one). The expected decoded value of every row is in
   # features/10-desktop-shell/PATH-GUARD-EVIDENCE.md.
 
-  Scenario Outline: Paths that escape the learning directory through the read command are refused
+  Scenario Outline: Paths that are not clean relative paths are refused through the read command
     When the front end requests the JSON-encoded path <path> through the read command
     Then the request is refused
     And the refusal is returned to the TypeScript caller
@@ -80,6 +80,8 @@ Feature: The file boundary and the learning directory
       | "CON"                          |
       | "cards/Aux.txt"                |
       | "com1.md"                      |
+      | "cards/"                       |
+      | ""                             |
 
   Scenario: A path containing a NUL character is refused
     When the front end requests the path "cards/a.md", then a NUL character, then ".png" through the read command
@@ -87,10 +89,28 @@ Feature: The file boundary and the learning directory
     And the refusal is returned to the TypeScript caller
     And the TypeScript caller records a warning event through recordEvent
 
-  Scenario: The checked path is the used path
+  # The invariant is "nothing sits between the check and the use". For a refused request
+  # there is no "string that would have been used", so it is observed through what the
+  # file system behind the boundary receives: nothing when refused, the identical string when allowed.
+  Scenario: A refused path never reaches the file system, not even in a converted form
+    Given the boundary sits in front of a file system that records every call it receives
     When the front end requests the JSON-encoded path "..\\..\\etc\\passwd" through the read command
     Then the request is refused
-    And the string that was checked is byte-identical to the string that would have been used
+    And the file system behind the boundary received no call
+
+  Scenario: An allowed path reaches the file system byte for byte
+    Given the boundary sits in front of a file system that records every call it receives
+    When the front end requests the JSON-encoded path "cards/a.md" through the read command
+    Then the request succeeds
+    And the file system behind the boundary received exactly one call
+    And the string it received is byte-identical to "cards/a.md"
+
+  Scenario: An allowed write reaches the file system byte for byte
+    Given the boundary sits in front of a file system that records every call it receives
+    When the front end writes to the JSON-encoded path "state/reviews.json" through the write command
+    Then the request succeeds
+    And the file system behind the boundary received exactly one call
+    And the string it received is byte-identical to "state/reviews.json"
 
   # Known limitation: a refusal on the asset protocol path has no TypeScript caller
   # to return to, so it is written to the Rust log only. It does not produce a
