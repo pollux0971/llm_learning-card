@@ -88,7 +88,60 @@ UnaccountableLlmCallError: LLM 呼叫必須可記帳:請提供 `logPath`,或明�
 
 ## 4. ADR-051：主簽出才是帳本 owner
 
-原本 `resolveLiveLearningDir() === resolveVaultLearningDir(ROOT)` 的恆等式案例已替換為實際行為：在本非主簽出 worktree 呼叫 `createDefaultLiveRouter()`，經全域假雲端回覆一次 `grade.apply`，斷言唯一的 `llm_call` 寫入主簽出 `/data/python/llm_learning-cards-workers/learning/state/log.jsonl`，且本 worktree 的 `learning/state/log.jsonl` 不存在。為避免碰既有資料，只有主簽出尚無 `learning/` 時執行；本次該條件成立，測試後建立的目錄已移除。指令原文與輸出原文同第 1 條補測重跑（`3 passed, 186 passed`，tree SHA 前後均為 `b55c97fad5cf4bc097eb0c39fc6867512e0389c7`）。結論：通過；不需要修改 `router.ts` 或 `vault.ts`。
+舊測試會 `rm -rf` 真實 `learning/`，這是被退回的原因：它把 `resolveVaultLearningDir(ROOT)` 的執行期結果當成清理目標，即使有 `skipIf` 仍非結構性保護。新測試不再讀寫真實帳本，也沒有 `skipIf`：先以 `mkdtemp` 建立合成主簽出，複製最小程式／fixtures、`git init` 後以 `git worktree add` 建立合成 worktree；子程序在該合成 worktree 真正呼叫 `createDefaultLiveRouter()`，並以該 router 建出的真實 log appender 寫入一個假 `llm_call`。因此 `ROOT`、`git --git-common-dir` 與 `resolveVaultLearningDir()` 在結構上都只能解析到合成主簽出。斷言合成主簽出的 `learning/state/log.jsonl` 有事件、合成 worktree 自己的 log 不存在；`finally` 唯一遞迴刪除的路徑是 `mkdtemp` 直接回傳的 sandbox。沒有 API key、沒有 router call、沒有網路與 `--live`。
+
+指令原文：
+
+```text
+git rev-parse 'HEAD^{tree}'
+npx vitest run packages/core/src/llm/router.test.ts packages/core/src/llm/router-gateway.test.ts packages/core/src/prompt-quality/live-run.test.ts packages/core/src/llm/spend.test.ts
+git rev-parse 'HEAD^{tree}'
+```
+
+輸出原文：
+
+```text
+30fe123cb88980efa3e6797c05f386a62d0846ea
+
+ RUN  v4.1.11 /home/pollux/orca/workspaces/llm_learning-cards-workers/t1-spend-brake
+
+
+ Test Files  4 passed (4)
+      Tests  218 passed (218)
+   Start at  08:45:35
+   Duration  15.99s (transform 5.00s, setup 1.00s, import 12.91s, tests 11.38s, environment 8ms)
+
+30fe123cb88980efa3e6797c05f386a62d0846ea
+```
+
+指定變異把 `createDefaultLiveRouter()` 的預設目錄從 `resolveLiveLearningDir(learningDir)` 改成 `learningDir ?? join(ROOT, 'learning')`（worktree 自己的 `learning/`），測試如預期紅；已立即還原。指令原文：
+
+```text
+npx vitest run packages/core/src/prompt-quality/live-run.test.ts
+```
+
+輸出原文：
+
+```text
+ RUN  v4.1.11 /home/pollux/orca/workspaces/llm_learning-cards-workers/t1-spend-brake
+
+ ❯ packages/core/src/prompt-quality/live-run.test.ts (27 tests | 1 failed) 12525ms
+     × ADR-051: 合成 worktree 的預設 router 把帳本接到合成主簽出，不是 worktree 自己 10632ms
+
+ FAIL  packages/core/src/prompt-quality/live-run.test.ts > createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能悄悄不寫 > ADR-051: 合成 worktree 的預設 router 把帳本接到合成主簽出，不是 worktree 自己
+AssertionError: expected false to be true // Object.is equality
+
+ ❯ packages/core/src/prompt-quality/live-run.test.ts:486:39
+    484|
+    485|       const mainLogPath = join(main, 'learning/state/log.jsonl');
+    486|       expect(existsSync(mainLogPath)).toBe(true);
+       |                                       ^
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 26 passed (27)
+```
+
+結論：通過；新測試確實量到主簽出 owner，且清理在結構上不可能碰到真實 `learning/`。
 
 ## 5. 日上限在 adapter 呼叫前煞車
 
@@ -118,4 +171,4 @@ npx vitest run packages/core/src/llm/router.test.ts packages/core/src/llm/router
 
 ## 變更與交付前檢查
 
-變更僅為兩個測試檔：`packages/core/src/prompt-quality/live-run.test.ts` 的 ADR-051 行為測試，以及 `packages/core/src/llm/router-gateway.test.ts` 的日上限檔案帳本測試。`git diff --check` 已通過；提交後已再以新的 HEAD tree SHA 重跑第 5 條指令，確認提交未改變結果。
+變更僅為兩個測試檔：`packages/core/src/prompt-quality/live-run.test.ts` 的 ADR-051 行為測試，以及 `packages/core/src/llm/router-gateway.test.ts` 的日上限檔案帳本測試；本次退回只替換前者的清理風險測試與本報告第 4 條。舊測試會 `rm -rf` 真實 `learning/`，這是被退回的原因；新測試只刪 `mkdtemp` 直接建立的合成 sandbox。`git diff --check` 已通過；提交後已以新的 HEAD tree SHA 重跑四個指定測試檔，確認提交未改變結果。

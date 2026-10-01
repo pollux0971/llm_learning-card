@@ -7,11 +7,11 @@
  * 換成注入一個假 router 就等於什麼都沒驗到。
  */
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { LlmRouterImpl, UnaccountableLlmCallError, resolveVaultLearningDir } from '@core/llm/index.js';
+import { LlmRouterImpl, UnaccountableLlmCallError } from '@core/llm/index.js';
 import type { LogEvent } from '@contracts/index.js';
 import {
   DEFAULT_GOLDEN_BASE_DIR,
@@ -427,40 +427,69 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
   });
 
   /**
-   * ADR-051 的 owner 不能只測兩個 resolver 是否剛好回同一字串。這條真的站在
-   * 非主簽出的 worktree 呼叫 createDefaultLiveRouter()，並讓假雲端回一筆資料；
-   * 唯一可接受的帳本是主簽出的 learning/state/log.jsonl。
-   *
-   * 此測試只在主簽出尚無 learning/ 時執行，因為它要建立並完整移除自己創的
-   * 暫時帳本，絕不碰使用者既有的 learning/。
+   * ADR-051 的 owner 必須以真的 createDefaultLiveRouter() 驗，不是比較兩個
+   * resolver 的字串。這裡建立一個完整的合成 git 主簽出與 worktree，讓子程序
+   * 從合成 worktree 載入同一份 source；故 vault resolver 在結構上只能回合成
+   * 主簽出。清理目標永遠是 mkdtemp 直接給的 sandbox，絕不解析真實 learning/。
    */
-  it.skipIf(!IN_GIT_WORKTREE || existsSync(resolveVaultLearningDir(ROOT)))('ADR-051: 未指定 learningDir 時，真正寫入主簽出的帳本，不是目前 worktree', async () => {
-    installFakeCloud(true);
-    process.env.LLM_CLOUD_PROVIDER = 'anthropic';
-    process.env.LLM_CLOUD_MODEL = MODEL;
-    process.env.ANTHROPIC_API_KEY = 'test-key';
-    const mainLearningDir = resolveVaultLearningDir(ROOT);
-    const mainLogPath = join(mainLearningDir, 'state/log.jsonl');
+  it('ADR-051: 合成 worktree 的預設 router 把帳本接到合成主簽出，不是 worktree 自己', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'pq-live-vault-'));
+    const main = join(sandbox, 'main');
+    const worktree = join(sandbox, 'worktree');
+    const git = (cwd: string, ...args: string[]) => {
+      const result = spawnSync(
+        'git',
+        ['-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args],
+        { cwd, encoding: 'utf8', timeout: 60_000 },
+      );
+      if (result.status !== 0) throw new Error(`git ${args.join(' ')} 失敗:${result.stderr ?? ''}`);
+    };
 
-    // 本測試所在 ROOT 是非主簽出；若寫到這裡，就把日上限拆成每個 worktree 一份。
-    expect(mainLearningDir).not.toBe(join(ROOT, 'learning'));
     try {
-      const router = createDefaultLiveRouter();
-      await router.call('grade.apply', '同源政策是什麼?');
+      mkdirSync(main, { recursive: true });
+      // 要從合成 worktree 載入 golden-run.ts，ROOT 才會是合成 worktree；只複製
+      // 程式、fixtures 與 tsconfig，第三方套件則用唯讀 symlink，沒有真實 learning/ 路徑。
+      cpSync(join(ROOT, 'packages'), join(main, 'packages'), { recursive: true });
+      cpSync(join(ROOT, 'contracts'), join(main, 'contracts'), { recursive: true });
+      cpSync(join(ROOT, 'tsconfig.json'), join(main, 'tsconfig.json'));
+      cpSync(join(ROOT, 'package.json'), join(main, 'package.json'));
+      git(main, 'init', '-q', '-b', 'main', '.');
+      git(main, 'add', 'packages', 'contracts', 'tsconfig.json', 'package.json');
+      git(main, 'commit', '-q', '-m', 'synthetic source');
+      git(main, 'worktree', 'add', '-q', '-b', 'synthetic-worktree', worktree);
+      symlinkSync(join(ROOT, 'node_modules'), join(worktree, 'node_modules'));
 
+      const runner = join(worktree, '.t1-create-live-router.ts');
+      writeFileSync(
+        runner,
+        [
+          "import { createDefaultLiveRouter } from './packages/core/src/prompt-quality/golden-run.ts';",
+          '',
+          'const router = createDefaultLiveRouter() as unknown as { cloudRouter?: { log?: (event: unknown) => void } };',
+          'const log = router.cloudRouter?.log;',
+          "if (typeof log !== 'function') throw new Error('default router did not create a log appender');",
+          "log({ ts: '2026-10-01T12:00:00+08:00', type: 'llm_call', provider: 'openai', tokens_in: 1, tokens_out: 1 });",
+          // SDK 匯入可能留住 background handle；log 是同步 append，寫完即可明確結束
+          // 這個完全隔離的 child process，不讓測試等待與驗證無關的 handle。
+          'process.exit(0);',
+        ].join('\n'),
+      );
+      const child = spawnSync(process.execPath, ['--import=tsx', runner], {
+        cwd: worktree,
+        encoding: 'utf8',
+        timeout: 60_000,
+        env: { PATH: process.env.PATH ?? '' },
+      });
+      expect(child.status, child.stderr).toBe(0);
+
+      const mainLogPath = join(main, 'learning/state/log.jsonl');
       expect(existsSync(mainLogPath)).toBe(true);
-      const events = readFileSync(mainLogPath, 'utf8')
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-      expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({ type: 'llm_call', task: 'grade.apply' });
-      expect(existsSync(join(ROOT, 'learning/state/log.jsonl'))).toBe(false);
+      expect(readFileSync(mainLogPath, 'utf8')).toContain('"type":"llm_call"');
+      expect(existsSync(join(worktree, 'learning/state/log.jsonl'))).toBe(false);
     } finally {
-      rmSync(mainLearningDir, { recursive: true, force: true });
+      rmSync(sandbox, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it('對照:直接用 LlmRouterImpl({}) 重現舊 bug(不給 logPath/logAppender)——call() 現在硬錯,不再是悄悄不寫', async () => {
     installFakeCloud(true);
