@@ -1,6 +1,6 @@
 # 工單 T3:測試逾時、自我競爭與整鏈鎖
 
-> 狀態:第二版,待技術顧問對 B1a 的範圍確認後由協調者派工。
+> 狀態:第二版(技術顧問已批,含 B1a 範圍與 B2(i) 的改寫),T1 結束後由協調者派工。
 > 作者:統籌·契約。派工:協調者。審:技術顧問。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 
@@ -71,13 +71,14 @@ gherkin 的價值是用使用者的語言表達產品行為,一把跨 worktree �
 工單**不裁數值**,產出「worker 數 → 整套耗時與逾時數」的曲線,至少三個點(例如 8、4、2),
 每點記 host、cores、起跑 load、耗時、逾時數。`timeout` 與斷言不動。
 
-> ⚠️ 範圍待顧問明說:B1a **能不能把 `maxWorkers` 寫成 repo 的預設值**(動全域 `vitest.config.ts`),
-> 還是**只在量曲線時用 CLI 旗標**、結論回報顧問再裁預設值。本版預設採後者(只量、不改全域預設),
-> 顧問明說可以改預設才改。注意 `vitest.mutate.config.ts` 是另一份設定,不要連帶改。
+> 顧問已裁(2026-10-01):B1a **只在量曲線時用 CLI 旗標**,**不改 repo 預設值**;量完回報顧問,再裁預設值。
+> 理由:量測與政策分開——若量曲線時就改了 config,曲線是在改過的 config 上量的,沒有「改之前」的對照。
+> **明確禁止項(不是註解)**:不得修改 `vitest.mutate.config.ts`(另一份設定,看起來很像,
+> 順手改兩份的人不會覺得自己做錯了什麼);不得修改 `vitest.config.ts` 的 `maxWorkers` / `pool` / `testTimeout`。
 
 **B1b 逾時。** 只動 A2 的 (b) 類(從來沒被決定過的),用單一測試的 `timeout` 參數;
 不動全域 `testTimeout`(那要另行裁,因為它會讓真的卡死的測試也拖更久才被發現);(a)(c) 不動。
-順序:先 B1a,看曲線,再決定 B1b 還需不需要、範圍多大。
+順序:先 B1a,看曲線,再決定 B1b **需不需要**(若限 worker 數就讓逾時歸零,那些 timeout 本來就不是問題,問題是並行度);**一次只動一個變因**,同時動兩個永遠分不出是哪一個起作用。
 
 ### B2 整鏈鎖(次要)
 
@@ -86,9 +87,24 @@ gherkin 的價值是用使用者的語言表達產品行為,一把跨 worktree �
 
 第一步先回答:
 
-- (i) **鎖放哪**:必須是整台主機共用,**不能放在 checkout 裡,也不能是「repo 根」**。每個 worktree / clone
-  各有一份 checkout,放裡面就各鎖各的;顧問的 detached 隔離簽出(`/tmp/verify-120` 那類)也會繞過它,
-  而且會「成功」,沒有任何訊號。同形狀:ADR-051(記帳檔在每個 worktree 各一份)。
+- (i) **鎖的範圍要不要跨 clone**(舊版寫「鎖放哪」,已作廢——那個問題有現成答案)。現有的鎖路徑算法在
+  `scripts/mutate.ts` 的 `strykerLockPath()`(註解自己寫了為什麼):用 `git rev-parse --git-common-dir`
+  取主 repo 的工作目錄,所以**所有 worktree 算出同一個路徑**;**照它做,不要重新發明**。
+  但它解決不了 **clone**,因為 clone 有自己的 `.git`。技術顧問 2026-10-01 實測五個位置算出**三把**不同的鎖:
+  `/data/python/llm_learning-cards`(含 `/tmp/verify-120` 這類 worktree)、
+  `/data/python/llm_learning-cards-workers`(含 `~/orca/workspaces/llm_learning-cards-workers/*` 的 worktree)、
+  `/data/python/llm_learning-cards-contracts`。今天早上只有一把:為了讓不該推的角色推不出去而開的 clone,
+  把跨 worktree 的互斥切成互不相通的區域,而它們搶的是同一台 8 核機器。同形狀:ADR-051
+  (`resolveVaultLearningDir` 解到主簽出,`--git-common-dir` 解到主 repo 的 `.git`,兩者在 worktree 下等價、
+  在 clone 下不等價)。**現有的鎖在今天的新結構下已經犯了這個錯,不是「未來的新鎖可能犯」。**
+  兩個選項,**工單不裁,要量出依據再回報顧問**:
+  - 跨 clone(鎖在以主機為範圍的固定路徑,如 `/tmp` 或 `~/.cache` 底下):反映實際資源競爭(CPU 整台共用);
+    代價是同一台機器上別的 repo 用同一個模板時會互相擋。鎖識別要含「哪個 repo 的哪個任務」
+    (現有鎖檔已有 `pid`、`startedAt`、`cwd`、`task` 四個欄位,夠用)。顧問傾向此選項,但未裁。
+  - 不跨 clone(維持現狀):clone 之間互不干擾,但只是名義上的——它們搶同一顆 CPU。
+  **A 階段要加一條量測**:此刻這台機器上有幾個位置算出**不同**的鎖路徑(母體)。今天從 1 變 3,
+  會隨著開 clone 繼續變;報告記下日期與清單。機制在哪個檔:`scripts/mutate.ts`(以及 `run-tests.ts`)
+  檔頭**沒有** `SOURCE` 標頭,是 consumer 自己的檔,可以改;`check-all.ts` 有,不能改。
 - (ii) **N 是多少**:從 8 執行緒與 A3b 量出的單鏈 CPU 占用推,不憑印象。
 - (iii) **鎖被占時**:等多久、輸出誰占著(host / pid / 開始時間)、孤兒鎖怎麼辦。
 - (iv) **做在哪**(顧問已裁):現在做 1 —— 本 repo 的 `package.json` 讓 `check:all` 包一層 wrapper 腳本
@@ -118,7 +134,7 @@ gherkin 的價值是用使用者的語言表達產品行為,一把跨 worktree �
 3. **B1a**:有至少三個 worker 數的曲線(例如 8、4、2),每點有 host、起跑 load、耗時、逾時數。
 4. **鎖的正向測試**:同時起兩條鏈,第二條必須等或被拒,並印出第一條的 host / pid。
    對照:把鎖拿掉,第二條立刻跑起來,測試必須紅。
-5. **鎖在 checkout 之外**:在兩個不同 worktree 各起一條鏈,仍互斥。
+5. **鎖的範圍**(依 B2(i) 回報後顧問的裁決):若裁跨 clone,在兩個不同 clone 各起一條鏈,仍互斥;若裁不跨,測試要證明同一 clone 的兩個 worktree 互斥(沿用 `--git-common-dir`)。A 報告的「不同鎖路徑位置清單」存在。
 6. **孤兒鎖**:殺掉持鎖行程,下一條鏈能接手,並印出「接手了孤兒鎖」。
 7. **鏈輸出**每步都有 host / worker / load。
 
@@ -136,7 +152,7 @@ gherkin 的價值是用使用者的語言表達產品行為,一把跨 worktree �
 ## 不在範圍
 
 - 全域 `testTimeout`(要另行裁)。
-- `vitest.config.ts` 的 `maxWorkers` 是否成為 repo 預設值:**見 B1a 的待確認框**,確認前視為不在範圍。
+- `vitest.config.ts` 的 `maxWorkers` / `pool` / `testTimeout` 成為 repo 預設值:量完曲線、顧問另裁之前不在範圍;`vitest.mutate.config.ts` 一律不動。
 - 鏈內 18 個不拿鎖的步驟如何各自限流。
 - 統一字數實作。
 
