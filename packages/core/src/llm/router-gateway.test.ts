@@ -340,6 +340,63 @@ describe('GatewayLlmRouter.call — 當日預算', () => {
   });
 });
 
+/**
+ * 工單 T1:不只注入 spendReader 的單元接線；要用真正的 log.jsonl、環境變數
+ * LLM_DAILY_CAP_USD 與固定日期，證明每日上限在雲端 adapter 之前讀到帳本。
+ */
+describe('GatewayLlmRouter.call — T1 日上限的檔案帳本煞車', () => {
+  const TODAY = '2026-10-01';
+
+  function routerFromLog(logPath: string, calls: { cloud: number }): GatewayLlmRouter {
+    const adapter: CloudAdapter = {
+      async call({ prompt, model }) {
+        calls.cloud += 1;
+        return { text: `fake:${prompt}`, provider: 'openai', model, latency_ms: 1, tokens_in: 1, tokens_out: 1 };
+      },
+    };
+    return new GatewayLlmRouter({
+      env: {
+        LLM_CLOUD_PROVIDER: 'openai',
+        LLM_CLOUD_MODEL: 'fake-model',
+        OPENAI_API_KEY: 'fake-key',
+        LLM_DAILY_CAP_USD: '0.001',
+        LLM_PRICE_IN_PER_M: '1',
+        LLM_PRICE_OUT_PER_M: '1',
+      },
+      adapters: { openai: adapter },
+      onlineProber: async () => true,
+      localProber: async () => ({ available: false, models: [] }),
+      logPath,
+      today: () => TODAY,
+    });
+  }
+
+  it('已有剛好達上限的 llm_call 時，在 adapter 前丟 DailyBudgetExceededError；空帳本的同一呼叫則成功', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'router-gateway-t1-cap-'));
+    const logPath = join(dir, 'log.jsonl');
+    try {
+      // 1,000 input tokens × $1 / 1M = $0.001，剛好等於 LLM_DAILY_CAP_USD。
+      writeFileSync(
+        logPath,
+        `${JSON.stringify({ ts: `${TODAY}T12:00:00+08:00`, type: 'llm_call', provider: 'openai', tokens_in: 1_000, tokens_out: 0 })}\n`,
+      );
+      const blockedCalls = { cloud: 0 };
+      const blocked = routerFromLog(logPath, blockedCalls);
+
+      await expect(blocked.call('ingest.cards', '只用假 adapter')).rejects.toBeInstanceOf(DailyBudgetExceededError);
+      expect(blockedCalls.cloud).toBe(0);
+
+      writeFileSync(logPath, '');
+      const allowedCalls = { cloud: 0 };
+      const allowed = routerFromLog(logPath, allowedCalls);
+      await expect(allowed.call('ingest.cards', '只用假 adapter')).resolves.toMatchObject({ provider: 'openai' });
+      expect(allowedCalls.cloud).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('GatewayLlmRouter.call — 閘道 403 不觸發備援', () => {
   it('填了雲端模型名時錯誤往外丟,不改走雲端', async () => {
     const h = makeHarness();

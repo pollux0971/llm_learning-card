@@ -20,7 +20,6 @@ import {
   LiveRunOfflineError,
   MissingGoldenSetError,
   createDefaultLiveRouter,
-  resolveLiveLearningDir,
   defaultGoldenBaseDir,
   estimateCostUsd,
   runGolden,
@@ -428,18 +427,39 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
   });
 
   /**
-   * ADR-051:`resolveLiveLearningDir()` 是 `createDefaultLiveRouter()` 沒給
-   * `learningDir` 時實際會用的那個決策,拆成純函式測,不必真的呼叫
-   * `createDefaultLiveRouter()`(那會真的 `mkdirSync`,雖然目的地已存在時是
-   * no-op,但不需要冒這個險)。跟 `resolveVaultLearningDir()` 本身跨 worktree
-   * 解析同一個路徑的保證(見 packages/core/src/llm/vault.test.ts,合成的臨時
-   * git repo,零真實資料風險)是兩層不同的東西:那邊測「怎麼解析」,這裡測
-   * 「沒給的時候有沒有真的去解析,還是照抄了別的東西」。
+   * ADR-051 的 owner 不能只測兩個 resolver 是否剛好回同一字串。這條真的站在
+   * 非主簽出的 worktree 呼叫 createDefaultLiveRouter()，並讓假雲端回一筆資料；
+   * 唯一可接受的帳本是主簽出的 learning/state/log.jsonl。
+   *
+   * 此測試只在主簽出尚無 learning/ 時執行，因為它要建立並完整移除自己創的
+   * 暫時帳本，絕不碰使用者既有的 learning/。
    */
-  it('resolveLiveLearningDir(): 有給就原樣用,沒給就退回 resolveVaultLearningDir(ROOT)', () => {
-    expect(resolveLiveLearningDir('/custom/dir')).toBe('/custom/dir');
-    expect(resolveLiveLearningDir(undefined)).toBe(resolveVaultLearningDir(ROOT));
-    expect(resolveLiveLearningDir()).toBe(resolveVaultLearningDir(ROOT));
+  it.skipIf(!IN_GIT_WORKTREE || existsSync(resolveVaultLearningDir(ROOT)))('ADR-051: 未指定 learningDir 時，真正寫入主簽出的帳本，不是目前 worktree', async () => {
+    installFakeCloud(true);
+    process.env.LLM_CLOUD_PROVIDER = 'anthropic';
+    process.env.LLM_CLOUD_MODEL = MODEL;
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    const mainLearningDir = resolveVaultLearningDir(ROOT);
+    const mainLogPath = join(mainLearningDir, 'state/log.jsonl');
+
+    // 本測試所在 ROOT 是非主簽出；若寫到這裡，就把日上限拆成每個 worktree 一份。
+    expect(mainLearningDir).not.toBe(join(ROOT, 'learning'));
+    try {
+      const router = createDefaultLiveRouter();
+      await router.call('grade.apply', '同源政策是什麼?');
+
+      expect(existsSync(mainLogPath)).toBe(true);
+      const events = readFileSync(mainLogPath, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ type: 'llm_call', task: 'grade.apply' });
+      expect(existsSync(join(ROOT, 'learning/state/log.jsonl'))).toBe(false);
+    } finally {
+      rmSync(mainLearningDir, { recursive: true, force: true });
+    }
   });
 
   it('對照:直接用 LlmRouterImpl({}) 重現舊 bug(不給 logPath/logAppender)——call() 現在硬錯,不再是悄悄不寫', async () => {
