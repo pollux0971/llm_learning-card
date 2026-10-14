@@ -15,6 +15,7 @@ must_catch:
   - Rust warning 事件欄位漂移:改名 reason、拿掉 ts 的時區、或 type 寫錯字,LogEventSchema 驗證 Rust 寫出的那一行必須紅
   - §11b 任一步被拿掉:分別拿掉 fsync(fd)、rename、fsync(目錄)、失敗時刪 tmp,T7 共用向量對應那一列必須紅
   - §11b 吞錯範圍擴大:目錄 fsync 的 EIO 也當成功,T7 共用向量的 EIO 列必須紅
+  - 目錄 fsync 的 EINVAL 判斷錯誤:真實實作的判斷永遠不算成功(T2b 修正輪 N4:dir_fsync_unsupported 永遠回 false),或錯誤碼寫錯(N11:22 改 23),在 syscall 層注入 EINVAL 的那一列必須紅
   - asset 限流失效:拿掉 60 秒視窗(每次拒絕都寫一行),或寫出的那一行少了 count、count 少算,限流向量必須紅
   - SVG 裡的 script 被執行:拿掉 .svg 回應的 Content-Security-Policy: script-src 'none',或把 tauri.conf.json 的 csp 改回 null,header 與設定測試必須紅(另有 @manual 實機確認)
   - Rust 自己抄一份段向量、和向量檔脫鉤:path_guard 的段測試不從 contracts/fixtures/path-segment-vectors.json 讀(改成寫死在測試裡),或向量檔改了(加/刪/改一列)而 Rust 測試仍綠,列數、各 rule 列數與檔案 sha256 的斷言必須紅
@@ -149,6 +150,20 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
 
 9. Rust 的原子寫入(T2b 修補輪寫的)用 `include_str!` 讀 T7 產出的 **`packages/core/src/schema/atomic-write.vectors.json`**(從 `apps/desktop/src-tauri/` 用相對路徑),**逐列**跑過;Rust 用 trait 包 fs 呼叫來注入錯誤。Rust harness 也要斷言列數與列名,跟 TS harness 用同一份清單。
    向量的「注入」與「預期」兩欄 Rust 與 TS 必須逐列相同;Rust 不得自己新增或略過任何一列(要加就回報,改向量檔)。
+9a. **EINVAL 的判斷要在真實實作上被測到**(技術顧問 2026-10-15,T2b 修正輪 N4、N11 兩個突變存活)。
+    現況(T2b 修正輪 `a53b9e3` 的 `learning_fs.rs`):「EINVAL 算成功」分在兩個地方——`StdWriteIo::fsync_dir`(:182-199)把 `raw_os_error() == Some(22)`轉成 `detail: "EINVAL"` 字串,`dir_fsync_unsupported`(:212-214)再比對這個字串;而 `dir_fsync_unsupported` 是 `WriteIo` trait 的方法,測試的假 `Script`(:438 起)**自己實作了一份**(:524-526),所以真的那份判斷從來沒被呼叫到。
+    要求:
+    - 判斷改成一個**不能被測試替身覆寫**的函式(例如 `fn dir_fsync_is_unsupported(e: &io::Error) -> bool`,不放在 trait 上),用 `libc::EINVAL` 比對,不寫死 `22`;`IoStep` 保留原始的 `io::Error`(或至少 `raw_os_error`),不要只留字串。
+    - 測試替身只在 **syscall 層**注入 `io::Error`(`fsync_dir` 的那次 `sync_all` 回什麼),判斷一律走真的那個函式。
+    - 新增 `libc` 相依(版本由 worker 回報);只在 `cfg(unix)` 用,Windows 的對應碼是 phase-5 的事,寫進已知限制。
+
+    | T7 向量列 | 在 fsync(目錄) 注入 | 預期 |
+    |---|---|---|
+    | 目錄 fsync EINVAL | `io::Error::from_raw_os_error(libc::EINVAL)` | 成功;目標檔是新內容;沒有 `<name>.tmp` |
+    | 目錄 fsync EIO | `io::Error::from_raw_os_error(libc::EIO)` | 錯誤往外丟,`raw_os_error() == Some(libc::EIO)`;目標檔已經是新內容(rename 已完成) |
+    | 目錄 fsync ENOSPC | `io::Error::from_raw_os_error(libc::ENOSPC)` | 錯誤往外丟,`raw_os_error() == Some(libc::ENOSPC)` |
+
+    對照:把判斷改成永遠回 `false`(N4)、或把 `libc::EINVAL` 換成 `libc::EINVAL + 1`(N11),第一列必須紅;改成永遠回 `true`,第二、三列必須紅。
 10. Rust 的 `write` command 對 `learning/` 底下**所有**路徑都走這份原子寫入(不只 `state/`):同一個函式、少一條分支、少一個變異點。
 
 ### D. read 的 io 錯誤與拒絕分得出來(技術顧問裁決 (3))
