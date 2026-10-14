@@ -48,7 +48,7 @@ fn main() {
                 log::error!("refused asset: no learning root");
                 return refuse_response();
             };
-            let raw = request.uri().path().trim_start_matches('/');
+            let raw = asset_protocol::asset_rel_from_url_path(request.uri().path());
             match asset_protocol::handle_custom(&root, raw) {
                 Ok(out) => http::Response::builder()
                     .status(http::StatusCode::OK)

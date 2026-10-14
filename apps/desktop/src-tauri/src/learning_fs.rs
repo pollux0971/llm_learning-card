@@ -1,7 +1,8 @@
 //! 白名單通過之後才碰檔案系統。symlink 的 canonicalize 比對是另一道檢查,
 //! 跟白名單無關:拿掉它,字元集合那組仍然全綠,只有逃出根目錄的 symlink 變紅。
 
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -24,29 +25,34 @@ pub struct Outcome {
 fn inside(root: &Path, rel: &str) -> Result<PathBuf, Refusal> {
     let root = root.canonicalize().map_err(|_| Refusal::new("root"))?;
     let full = root.join(rel);
-    let existing = existing_ancestor(&full).ok_or(Refusal::new("symlink"))?;
-    let canon = existing
-        .canonicalize()
-        .map_err(|_| Refusal::new("symlink"))?;
-    if canon != root && !canon.starts_with(&root) {
-        return Err(Refusal::new("symlink"));
-    }
-    if full.exists() {
-        let followed = full.canonicalize().map_err(|_| Refusal::new("symlink"))?;
-        if followed != root && !followed.starts_with(&root) {
+    let mut acc = root.clone();
+    for seg in rel.split('/') {
+        if seg.is_empty() {
             return Err(Refusal::new("symlink"));
         }
+        acc.push(seg);
+        must_be_inside_if_present(&root, &acc)?;
+    }
+    if acc != full {
+        must_be_inside_if_present(&root, &full)?;
     }
     Ok(full)
 }
 
-fn existing_ancestor(path: &Path) -> Option<&Path> {
-    let mut cur = path;
-    loop {
-        if cur.exists() {
-            return Some(cur);
+/// 路徑上任何一段(含最後一段)只要存在任何東西——檔、目錄、或懸空 symlink——
+/// 就必須 canonicalize 成功且落在根內。`exists()` 對懸空 symlink 是 false,會漏檢;
+/// 這裡用 `symlink_metadata`。最後一段是懸空 symlink 時 canonicalize 失敗,一律拒絕。
+fn must_be_inside_if_present(root: &Path, path: &Path) -> Result<(), Refusal> {
+    match fs::symlink_metadata(path) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(Refusal::new("symlink")),
+        Ok(_) => {
+            let canon = fs::canonicalize(path).map_err(|_| Refusal::new("symlink"))?;
+            if canon != *root && !canon.starts_with(root) {
+                return Err(Refusal::new("symlink"));
+            }
+            Ok(())
         }
-        cur = cur.parent()?;
     }
 }
 
@@ -78,7 +84,7 @@ pub fn write(root: &Path, rel: &str, content: &str) -> Result<Outcome, Refusal> 
     if let Some(parent) = full.parent() {
         fs::create_dir_all(parent).map_err(|_| Refusal::new("io"))?;
     }
-    fs::write(&full, content).map_err(|_| Refusal::new("io"))?;
+    atomic_replace(&full, content, &StdWriteIo).map_err(|_| Refusal::new("io"))?;
     Ok(Outcome {
         value: serde_json::Value::Null,
         fs_calls: vec![record("write", rel)],
@@ -114,7 +120,7 @@ pub fn list(root: &Path, rel: &str) -> Result<Outcome, Refusal> {
 }
 
 /// 寫入四步可注入失敗。生產路徑用 `StdWriteIo`;測試替換單步。
-/// 紅測試階段 `atomic_replace` 仍走舊的 `fs::write`,所以失敗注入還沒接上。
+/// 契約 §11b / ADR-040:同目錄 `<name>.tmp` → fsync 檔 → rename → fsync 目錄。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IoStep {
     pub step: &'static str,
@@ -137,12 +143,102 @@ pub fn tmp_beside(dest: &Path) -> PathBuf {
     dest.with_file_name(format!("{name}.tmp"))
 }
 
-#[allow(dead_code)]
-pub fn atomic_replace(dest: &Path, content: &str, _io: &impl WriteIo) -> Result<(), IoStep> {
-    fs::write(dest, content).map_err(|e| IoStep {
-        step: "legacy",
-        detail: e.to_string(),
-    })
+pub struct StdWriteIo;
+
+impl WriteIo for StdWriteIo {
+    fn create_tmp(&self, tmp: &Path) -> Result<File, IoStep> {
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(tmp)
+            .map_err(|e| IoStep {
+                step: "create",
+                detail: e.to_string(),
+            })
+    }
+
+    fn write_all(&self, file: &mut File, bytes: &[u8]) -> Result<(), IoStep> {
+        file.write_all(bytes).map_err(|e| IoStep {
+            step: "write",
+            detail: e.to_string(),
+        })
+    }
+
+    fn fsync_file(&self, file: &File) -> Result<(), IoStep> {
+        file.sync_all().map_err(|e| IoStep {
+            step: "fsync_file",
+            detail: e.to_string(),
+        })
+    }
+
+    fn rename_over(&self, tmp: &Path, dest: &Path) -> Result<(), IoStep> {
+        fs::rename(tmp, dest).map_err(|e| IoStep {
+            step: "rename",
+            detail: e.to_string(),
+        })
+    }
+
+    fn fsync_dir(&self, dir: &Path) -> Result<(), IoStep> {
+        let file = File::open(dir).map_err(|e| IoStep {
+            step: "fsync_dir",
+            detail: e.to_string(),
+        })?;
+        match file.sync_all() {
+            Ok(()) => Ok(()),
+            // POSIX EINVAL = 22。tmpfs 與部分檔案系統不支援對目錄 fsync。
+            Err(e) if e.raw_os_error() == Some(22) => Err(IoStep {
+                step: "fsync_dir",
+                detail: "EINVAL".into(),
+            }),
+            Err(e) => Err(IoStep {
+                step: "fsync_dir",
+                detail: e.to_string(),
+            }),
+        }
+    }
+
+    fn remove_tmp(&self, tmp: &Path) -> Result<(), IoStep> {
+        match fs::remove_file(tmp) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(IoStep {
+                step: "remove_tmp",
+                detail: e.to_string(),
+            }),
+        }
+    }
+
+    fn dir_fsync_unsupported(&self, err: &IoStep) -> bool {
+        err.detail == "EINVAL"
+    }
+}
+
+pub fn atomic_replace(dest: &Path, content: &str, io: &impl WriteIo) -> Result<(), IoStep> {
+    let tmp = tmp_beside(dest);
+    let result = (|| {
+        {
+            let mut file = io.create_tmp(&tmp)?;
+            io.write_all(&mut file, content.as_bytes())?;
+            io.fsync_file(&file)?;
+        }
+        io.rename_over(&tmp, dest)?;
+        if let Some(dir) = dest.parent() {
+            if !dir.as_os_str().is_empty() {
+                match io.fsync_dir(dir) {
+                    Ok(()) => {}
+                    Err(err) if io.dir_fsync_unsupported(&err) => {}
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        // 清理失敗不能蓋掉原本的錯誤:這裡丟掉 remove 的 Result。
+        let _ = io.remove_tmp(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]

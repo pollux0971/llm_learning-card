@@ -12,10 +12,8 @@ pub const SCHEME: &str = "lc";
 
 /// 請求 path 進白名單之前,只拿掉一個開頭的 `/`。
 /// 去完還以 `/` 開頭(例如 `//x`)就原樣交給白名單拒絕,不能先收成 `x`。
-///
-/// 紅測試階段先保留現況(`trim_start_matches` 會拿掉每一個開頭斜線)。
 pub fn asset_rel_from_url_path(url_path: &str) -> &str {
-    url_path.trim_start_matches('/')
+    url_path.strip_prefix('/').unwrap_or(url_path)
 }
 
 #[derive(Debug)]
@@ -27,13 +25,20 @@ pub struct AssetOutcome {
     pub value: Option<String>,
 }
 
-/// 恰好一次。`percent_decode` 不會把解完的 `%` 再解一次。
-pub fn decode_once(raw: &str) -> String {
-    percent_decode_str(raw).decode_utf8_lossy().into_owned()
+/// 恰好一次,且必須是合法 UTF-8。失敗只拒絕,不把壞位元組換成 U+FFFD。
+/// `percent_decode` 不會把解完的 `%` 再解一次。
+pub fn decode_once(raw: &str) -> Result<String, Refusal> {
+    percent_decode_str(raw)
+        .decode_utf8()
+        .map(|s| s.into_owned())
+        .map_err(|_| Refusal::new("decode"))
 }
 
 pub fn handle_custom(root: &Path, url_path: &str) -> Result<Outcome, (Refusal, AssetOutcome)> {
-    let checked = decode_once(url_path);
+    let checked = match decode_once(url_path) {
+        Ok(s) => s,
+        Err(err) => return Err((err, refused(url_path, url_path))),
+    };
     if let Err(err) = path_guard::check_rel_path(&checked) {
         return Err((err, refused(&checked, url_path)));
     }
@@ -82,7 +87,10 @@ pub fn same_checks_as_read() -> bool {
     ];
     samples.iter().all(|p| {
         let via_read = path_guard::check_rel_path(p).is_err();
-        let via_asset = path_guard::check_rel_path(&decode_once(p)).is_err();
+        let via_asset = match decode_once(p) {
+            Ok(s) => path_guard::check_rel_path(&s).is_err(),
+            Err(_) => true,
+        };
         via_read == via_asset
     })
 }
@@ -123,7 +131,7 @@ pub fn checked_of(root: &Path, url_path: &str) -> String {
             .fs_calls
             .first()
             .map(|c| c.path.clone())
-            .unwrap_or_else(|| decode_once(url_path)),
+            .unwrap_or_else(|| decode_once(url_path).unwrap_or_else(|_| url_path.to_string())),
         Err((_, asset)) => asset.checked,
     }
 }
@@ -135,13 +143,16 @@ mod tests {
 
     #[test]
     fn double_encoding_still_contains_percent_after_one_decode() {
-        assert_eq!(decode_once("..%252f..%252fetc"), "..%2f..%2fetc");
-        assert!(path_guard::check_rel_path(&decode_once("..%252f..%252fetc")).is_err());
+        assert_eq!(decode_once("..%252f..%252fetc").unwrap(), "..%2f..%2fetc");
+        assert!(path_guard::check_rel_path(&decode_once("..%252f..%252fetc").unwrap()).is_err());
     }
 
     #[test]
     fn percent_encoded_hangul_decodes_once_to_nfc() {
-        assert_eq!(decode_once("cards/%EA%B0%80.md"), "cards/\u{AC00}.md");
+        assert_eq!(
+            decode_once("cards/%EA%B0%80.md").unwrap(),
+            "cards/\u{AC00}.md"
+        );
     }
 
     #[test]
