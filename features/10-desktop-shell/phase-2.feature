@@ -23,20 +23,32 @@ Feature: The file boundary and the learning directory
     When the front end requests a card file
     Then the read command is invoked with a path relative to the learning directory
 
-  # Path check (decision of 2026-10-01, contract section 13, version 1.3.0):
+  # Path check (contract section 13, version 1.3.1; decisions of 2026-10-01 and 2026-10-14):
   # the LearningFs boundary does no conversion of any kind. The input must already be the
   # one clean form, otherwise it is refused. The string that is checked and the string that
-  # is used are the same string, byte for byte. The check is a whitelist (single "/" between
-  # non-empty segments, every character in the allowed set, no segment starting or ending with ".",
-  # no segment that is a Windows reserved device name),
-  # so traversal, absolute paths, drive letters, "~", backslashes, percent signs, leading
-  # whitespace, NUL and redundant spellings ("./", "//") are refused without a rule each.
+  # is used are the same string, byte for byte. The check is a whitelist:
+  #   - single "/" between non-empty segments, no leading or trailing "/";
+  #   - every character is ASCII A-Z a-z 0-9 _ - . or has Unicode general category L, N or M;
+  #   - the whole path is already NFC (refused, never converted);
+  #   - at most 240 bytes of UTF-8;
+  #   - no segment starting or ending with ".";
+  #   - no segment whose part before the first "." is a Windows reserved device name
+  #     (CON PRN AUX NUL COM1-COM9 COM1-COM3 superscripts LPT1-LPT9 LPT1-LPT3 superscripts;
+  #     not COM0, not LPT0; compared with fixed ASCII case folding).
+  # So traversal, absolute paths, drive letters, "~", backslashes, percent signs, "+",
+  # leading whitespace, NUL and redundant spellings ("./", "//") are refused without a rule each.
+  # Upper case is allowed (category names are the person's own raw folder names).
   # "cards/../state/reviews.json" is refused on purpose: nothing here needs to walk back.
+  # raw/ is not served: all five LearningFs methods refuse a first segment of raw, compared
+  # with fixed ASCII case folding.
   # The asset protocol handler is the only place that decodes (exactly once, as the protocol
-  # defines); it then hands the result to the same check.
+  # defines); it then hands the result to the same check, and uses that decoded string.
   #
   # Encoding of the <path> column: every path is a JSON string, quotes included, and the
-  # step definition decodes it with JSON.parse. Reason: a Gherkin table cell trims
+  # step definition decodes it with JSON.parse. Characters outside ASCII are written as
+  # JSON unicode escapes (one backslash plus u plus four hex digits, written with two backslashes
+  # in a cell), so a decomposed form such as U+1100 U+1161 can never be silently turned into
+  # the composed form U+AC00 by an editor. Reason: a Gherkin table cell trims
   # surrounding whitespace and treats a backslash as an escape, so a raw cell cannot carry
   # " ../x" or a Windows path. Inside a cell one real backslash is written as four
   # backslashes (Gherkin turns each pair into one, JSON.parse turns the remaining pair
@@ -82,6 +94,13 @@ Feature: The file boundary and the learning directory
       | "com1.md"                      |
       | "cards/"                       |
       | ""                             |
+      | "cards/\\u1100\\u1161.md"      |
+      | "cards/\\uf900.md"             |
+      | "cards/e\\u0301.md"            |
+      | "COM\\u00b9.txt"               |
+      | "cards/C++.md"                 |
+      | "LPT\\u00b2.log"               |
+      | "cards/Lpt3.md"                |
 
   Scenario: A path containing a NUL character is refused
     When the front end requests the path "cards/a.md", then a NUL character, then ".png" through the read command
@@ -130,6 +149,9 @@ Feature: The file boundary and the learning directory
       | "..\\\\..\\\\etc\\\\passwd"   |
       | "cards/../state/reviews.json" |
       | "..%252f..%252fetc"           |
+      | "raw/security/x.md"            |
+      | "Raw/security/x.md"            |
+      | "cards/%E1%84%80%E1%85%A1.md"  |
 
   Scenario: The asset protocol is scoped to the learning directory
     Given the application configuration
@@ -148,20 +170,90 @@ Feature: The file boundary and the learning directory
       | assets/sec_0042_diagram.png   |
       | cards/console.md              |
 
-  # Writing under raw/ is refused (contract section 13, 1.3.0): raw/ is the person's own
-  # material and is read-only (section 12, hard rule 2). The first segment is compared
-  # without regard to case, because on a case-insensitive file system Raw/ and raw/ are one directory.
-  Scenario Outline: Writing under raw is refused
-    When the front end writes to the JSON-encoded path <path> through the write command
+  # Paths whose characters are outside plain ASCII are written as JSON unicode escapes (see the
+  # encoding note above): U+AC00 is a composed Hangul syllable (category Lo), U+00E9 is e with acute
+  # (Ll), and U+30FC (the last character of the katakana word) is the prolonged sound mark: category
+  # Lm, so it is allowed even though its Script is Common.
+  Scenario Outline: Paths in the allowed character set are allowed
+    When the front end requests the JSON-encoded path <path> through the read command
+    Then the request succeeds
+    And the file system behind the boundary received exactly one call
+    And the string it received is byte-identical to the decoded path
+
+    Examples:
+      | path                                                         |
+      | "cards/Security.md"                                          |
+      | "cards/\\uac00.md"                                           |
+      | "cards/\\u00e9.md"                                           |
+      | "cards/\\u30bb\\u30ad\\u30e5\\u30ea\\u30c6\\u30a3\\u30fc.md" |
+      | "com0.md"                                                    |
+      | "cards/console.md"                                           |
+      | "cards/lpt0.txt"                                             |
+
+  # The limit counts UTF-8 bytes of the whole relative path, not characters. 3-byte characters make
+  # the two outlines differ: an implementation that counts characters would accept the second one.
+  # Each path is "cards/", then <count> repetitions of <unit>, then ".md" (9 bytes of fixed text).
+  Scenario Outline: A path of at most 240 UTF-8 bytes is allowed
+    When the front end requests "cards/" followed by <count> repetitions of the JSON-encoded unit <unit> followed by ".md" through the read command
+    Then the path is <bytes> UTF-8 bytes long
+    And the request succeeds
+
+    Examples:
+      | unit        | count | bytes |
+      | "a"         | 231   | 240   |
+      | "\\uac00" | 77    | 240   |
+
+  Scenario Outline: A path of more than 240 UTF-8 bytes is refused
+    When the front end requests "cards/" followed by <count> repetitions of the JSON-encoded unit <unit> followed by ".md" through the read command
+    Then the path is <bytes> UTF-8 bytes long
+    And the request is refused
+    And the refusal is returned to the TypeScript caller
+
+    Examples:
+      | unit        | count | bytes |
+      | "a"         | 232   | 241   |
+      | "\\uac00" | 78    | 243   |
+
+  # The asset protocol decodes exactly once and then applies the same check to the decoded string.
+  # Percent-encoded U+AC00 decodes to a composed (NFC) name and is allowed; the double-encoded forms
+  # in the refusal table above still contain "%" after one decoding and are refused.
+  Scenario: A percent-encoded allowed name is decoded exactly once by the asset protocol and then allowed
+    When the web view requests the asset url for the JSON-encoded path "cards/%EA%B0%80.md" directly
+    Then the string checked and used is "cards/\uac00.md"
+    And the request succeeds
+
+  # raw/ is not served (contract section 13, 1.3.1): it is the person's own material and is
+  # read-only (section 12, hard rule 2), and its existence and names are not revealed either.
+  # All five LearningFs methods refuse. assetUrl refuses because it is a read path: if it
+  # did not, the web view could obtain a URL for a raw file and bypass the refusal of read.
+  # This outline covers the four methods that are Rust commands, whose refusal travels back to
+  # the TypeScript caller. assetUrl has a synchronous signature (it returns a string), so it is
+  # its own scenario below: the refusal on that side is a hint, and the authority is the asset
+  # protocol handler refusing when the web view actually requests the URL (the asset table above).
+  # The first segment is compared with fixed ASCII case folding, because on a case-insensitive
+  # file system Raw/ and raw/ are one directory.
+  Scenario Outline: The raw directory is not served by the four command-backed LearningFs methods
+    When the front end calls <operation> with the JSON-encoded path <path>
     Then the request is refused
     And the refusal is returned to the TypeScript caller
     And the TypeScript caller records a warning event through recordEvent
-    And no file under raw is created or changed
+    And no file under raw is read, created or changed
 
     Examples:
-      | path                  |
-      | "raw/security/x.md"   |
-      | "Raw/security/x.md"   |
+      | operation | path |
+      | read      | "raw/security/x.md" |
+      | read      | "Raw/security/x.md" |
+      | write     | "raw/security/x.md" |
+      | write     | "RAW/security/x.md" |
+      | exists    | "raw/security/x.md" |
+      | list      | "raw" |
+      | list      | "Raw/security" |
+
+  Scenario: The raw directory is not served by assetUrl either
+    Given the boundary sits in front of a file system that records every call it receives
+    When the front end calls assetUrl with the JSON-encoded path "raw/security/x.md"
+    Then the call is refused and returns no url
+    And the file system behind the boundary received no call
 
   Scenario: Listing the root is refused
     When the front end lists the JSON-encoded directory ""
