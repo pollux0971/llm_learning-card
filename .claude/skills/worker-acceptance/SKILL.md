@@ -1,11 +1,9 @@
 ---
 name: worker-acceptance
-description: 驗收 worker 交回的分支(含清理 worktree)。當你被指派「驗收」角色、收到協調者送來的 worker 分支,或要盤點/清理 worktree 時使用。內含七步驗收流程、證據檔格式、不可刪 worktree 的判準。只給驗收角色用;不合併、不 push。草稿,待顧問批准。
+description: 驗收 worker 交回的分支(含清理 worktree)。當你被指派「驗收」角色、收到協調者送來的 worker 分支,或要盤點/清理 worktree 時使用。內含七步驗收流程、證據檔格式、不可刪 worktree 的判準。只給驗收角色用;不合併、不 push。
 ---
 
 # /worker-acceptance — 驗收(含清理)角色的流程
-
-**狀態:草稿。** 顧問批准前,以顧問的派令為準。
 
 ## 0. 角色邊界(先讀,不可省)
 
@@ -48,7 +46,7 @@ description: 驗收 worker 交回的分支(含清理 worktree)。當你被指派
    - 該紅沒紅 = 測試漏洞,直接列為阻擋項。
 2. **自己設計至少 3 個工單沒列的突變**。挑法:邊界值(±1、空、最大)、條件反轉、被省略的錯誤路徑、原子寫入的任一步(寫暫存、fsync、rename)。對教學卡,字數規則見契約 §2(連字號與句點會切斷序列)。
 3. 每個突變記:改了哪裡(檔:行,不貼使用者資料)、哪個測試紅、紅的訊息原文;沒紅的另標「存活」並說明。
-4. 嚴格級模組(scheduler、grading 前兩層、驗證器、weekly 計數、路徑防護)另跑 Stryker,但**要先拿 CPU 位子**。
+4. 嚴格級模組另跑變異測試,**要先拿 CPU 位子**:TypeScript 的(scheduler、grading 前兩層、驗證器、weekly 計數)用 Stryker;Rust 的路徑防護用 cargo-mutants,不是 Stryker。
 
 ## 5. 對抗式審核(第 4 點)
 
@@ -92,7 +90,11 @@ merge 紀錄要用到的兩樣東西一定要有:**失敗訊息原文**、**開�
 
 ## 9. 清理 worktree
 
-**不可逆,所以只列、不刪。** 刪除只在顧問逐項批准後做,且一次一項。
+**不可逆,所以我自己不先刪。** 先列清單與證據,批准後才刪,且一次一項。
+
+誰批准:
+- **已合併工單的 worker worktree**,§9.3 六項全部符合時,**協調者批准就可以刪**(那是協調者登記的)。
+- **其他情況**(六項不全、不是工單開的、`agent-a551c3d51889a2793` 這類)才找顧問。
 
 ### 9.1 盤點(三個 repo 都要)
 
@@ -107,7 +109,7 @@ done
 ### 9.2 每個候選的證據(自己跑出來的輸出,缺一項就不列為可刪)
 
 1. `git status --porcelain --ignored` —— 未提交、untracked,**以及 gitignored**(`.orca-brief/` 這類工作筆記預設看不到,必須加 `--ignored`)。
-2. 未推送 commit:`git rev-list --count @{u}..HEAD`(沒有 upstream 就寫「無 upstream」,視為有未保存成果)。
+2. 未推送 commit:`git rev-list --count @{u}..HEAD`(沒有 upstream 就寫「無 upstream」)。**worker 分支永遠沒有 upstream**(workers clone 不能 push),所以這項見 §9.3 的二擇一,不單獨成立。
 3. 是否已進 main:`git merge-base --is-ancestor HEAD origin/main`,並列 `git rev-list --count origin/main..HEAD`。
 4. `/proc/*/cwd` 有沒有行程在裡面(列 pid)。
 5. 最近檔案修改時間(排除 `.git`、`node_modules`、`target`)。
@@ -115,7 +117,7 @@ done
 
 ### 9.3 判準
 
-- **可刪候選**:1 全空(含 ignored 裡沒有有價值的筆記)、2 為 0 且有 upstream、3 為 YES、4 無行程、5 夠舊、6 已收件審完。**6 項都要。**
+- **可刪候選**:1 全空(含 ignored 裡沒有有價值的筆記)、**(2 有 upstream 且 0 未推,或 3 為 YES)二擇一**、4 無行程、5 夠舊、6 已收件審完。**六項都要符合**(2 與 3 合算一項)。第 3 項為 YES 代表 HEAD 是 origin/main 的祖先,所有 commit 都已在 main 裡。
 - **使用中**:有行程在裡面,或 5 很新。標「使用中」,不動。
 - **不可刪**:有未提交/untracked 內容、有 main 沒有的 commit(含無 upstream)、無法確認。分支只存在 worktree 時,刪 worktree 前先確認分支另有保存。
 - **看起來空其實不空**:HEAD 等於 main 不代表空;分支名、記憶檔都不是依據。
@@ -124,4 +126,4 @@ done
 
 ## 10. 沒事做時
 
-不要自己找事。回報顧問「待命」,附上一行:目前兩個以上 repo 的 worktree 數量。
+不要自己找事。回報**協調者**一次「待命」就好,不回報顧問,也不要定時回報。
