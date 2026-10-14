@@ -593,7 +593,18 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent grok -
 - **換算:1 美元 = 1e10 `costUsdTicks`**(顧問用 `total_cost_usd 0.147148` ↔ `costUsdTicks 1471480000` 驗過)。回報**同時寫 ticks 原值與換算後的美元**,加上 session id。
 - 例:2026-10-14 探針兩回合 `totalTokens 62741`、`costUsdTicks 767500000` = 約 0.0768 美元。
 
-**清理一個 worker**:`orca-ide worktree rm --worktree path:<路徑> --force --json`,之後四邊都要量:目錄不在、`git worktree list` 與 branch 無殘留、`orca-ide worktree ps` 零命中、`/proc/*/cwd` 無殘留行程。
+**清理一個 worker**
+
+⚠️ `--force` 對有未提交修改的 worktree 會**直接刪掉**,沒有回頭路。所以 **`rm` 之前先量三件,任一不成立就先處理,不要用 `--force` 蓋過去**
+(2026-10-14 顧問刪 7 個 worktree 靠的就是這三件;其中三個有還沒審的報告 commit,先另存成分支才刪):
+1. **沒有未提交的東西**:`git -C <路徑> status --porcelain` 輸出 0 行(被 `.gitignore` 排除的不算)。
+2. **工作已經在別處**:`HEAD` 已在 main 裡(`git merge-base --is-ancestor <HEAD> origin/main`),**或**已另存成分支。
+   兩者都不是 → 先另存:`git fetch <那個 clone> <分支>:<分支>` 到主 repo,**比對 commit 與樹 sha 相同**才算存好。
+3. **沒有進行中的工作**:`orca-ide worktree ps` 顯示的 live 終端數 = 0,或已確認那個終端沒有在做事(讀畫面,不靠回傳值)。
+
+三件都成立,才執行 `orca-ide worktree rm --worktree path:<路徑> --force --json`(此時 `--force` 只是因為 Orca 要求,不是用來蓋過檢查)。
+之後四邊都要量:目錄不在、`git worktree list` 與 branch 無殘留、`orca-ide worktree ps` 零命中、`/proc/*/cwd` 無殘留行程。
+(協調者 2026-10-14 清掉的 grok 探針符合這三件:沒有改動、`HEAD` 就是 origin/main、終端已閒置;但當時是憑「我剛開、什麼都沒做」判斷,沒有逐件量 —— 下次照上面逐件量。)
 
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
