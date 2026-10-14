@@ -231,4 +231,81 @@ mod tests {
         assert!(check_rel_path(&ok_hangul).is_ok());
         assert!(refused(&bad_hangul));
     }
+
+    #[test]
+    fn nfc_mark_names_are_allowed_and_each_mark_is_mn_or_mc() {
+        use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
+
+        let hindi = "cards/\u{0939}\u{093F}\u{0902}\u{0926}\u{0940}.md";
+        let thai = "cards/\u{0E17}\u{0E35}\u{0E48}.md";
+        assert!(is_nfc(hindi), "hindi vector must already be NFC");
+        assert!(is_nfc(thai), "thai vector must already be NFC");
+        assert_marks_are_mn_or_mc("\u{0939}\u{093F}\u{0902}\u{0926}\u{0940}");
+        assert_marks_are_mn_or_mc("\u{0E17}\u{0E35}\u{0E48}");
+        assert!(check_rel_path(hindi).is_ok(), "{hindi:?}");
+        assert!(check_rel_path(thai).is_ok(), "{thai:?}");
+
+        fn assert_marks_are_mn_or_mc(stem: &str) {
+            let mut saw = false;
+            for c in stem.chars() {
+                if c.general_category_group() != GeneralCategoryGroup::Mark {
+                    continue;
+                }
+                saw = true;
+                let cat = c.general_category();
+                assert!(
+                    matches!(
+                        cat,
+                        GeneralCategory::NonspacingMark | GeneralCategory::SpacingMark
+                    ),
+                    "U+{:04X} is {:?}, not Mn/Mc",
+                    u32::from(c),
+                    cat
+                );
+            }
+            assert!(saw, "vector has no Mn/Mc code point: {stem:?}");
+        }
+    }
+
+    #[test]
+    fn all_28_reserved_names_are_refused_bare_and_nested() {
+        let mut names = vec!["CON".to_string(), "PRN".into(), "AUX".into(), "NUL".into()];
+        for n in 1..=9 {
+            names.push(format!("COM{n}"));
+            names.push(format!("LPT{n}"));
+        }
+        for s in ['\u{00B9}', '\u{00B2}', '\u{00B3}'] {
+            names.push(format!("COM{s}"));
+            names.push(format!("LPT{s}"));
+        }
+        assert_eq!(names.len(), 28, "{names:?}");
+        for name in &names {
+            assert!(refused(name), "bare {name}");
+            assert!(refused(&format!("x/{name}.md")), "x/{name}.md");
+        }
+        assert!(refused("COM\u{00B3}"), "COM³");
+        assert!(refused("LPT\u{00B3}"), "LPT³");
+        assert!(refused("x/COM\u{00B3}.md"));
+        assert!(refused("x/LPT\u{00B3}.md"));
+        for ok in ["com0.md", "lpt0.md", "com10.md"] {
+            assert!(check_rel_path(ok).is_ok(), "{ok} must pass");
+        }
+    }
+
+    #[test]
+    fn ascii_punctuation_is_refused() {
+        for p in [
+            "cards/a b.md",
+            "cards/a:b.md",
+            "cards/a*b.md",
+            "cards/a?b.md",
+            "cards/a<b.md",
+            "cards/a|b.md",
+            "cards/a\"b.md",
+            "cards/a+b.md",
+            "cards/a(b).md",
+        ] {
+            assert!(refused(p), "{p:?}");
+        }
+    }
 }

@@ -7,7 +7,8 @@
  *
  * 暫存目錄一律 mkdtemp,symlink 與哨兵檔也在那個暫存目錄裡,不指向真的 learning/。
  */
-import { Given, When, Then } from '@cucumber/cucumber';
+import { BeforeAll, Given, When, Then } from '@cucumber/cucumber';
+import { spawnSync } from 'node:child_process';
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import {
@@ -35,6 +36,29 @@ import {
 } from '../../apps/desktop/src/shell-config.js';
 
 const REPO = join(import.meta.dirname, '../..');
+
+/**
+ * cucumber 每次先重編 lc-fs。預先編好的 debug 二進位可能是舊的:
+ * 缺檔才紅擋不住「檔在,但是上一輪的」。編譯失敗讓整次 cucumber 紅,並印出 cargo 輸出。
+ */
+BeforeAll({ timeout: 300_000 }, function () {
+  const dir = join(import.meta.dirname, '../../apps/desktop/src-tauri');
+  const r = spawnSync('cargo', ['build', '--bin', 'lc-fs'], {
+    cwd: dir,
+    encoding: 'utf8',
+    timeout: 300_000,
+  });
+  const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  if (r.error || r.status !== 0) {
+    console.error(output);
+    throw new Error(`cargo build --bin lc-fs 失敗 status=${r.status ?? 'error'}\n${output}`);
+  }
+  const finished = output
+    .split('\n')
+    .filter((line) => line.includes('Finished') || line.includes('Compiling learning-cards-desktop'))
+    .join(' | ');
+  console.log(`lc-fs rebuilt: ${finished || 'cargo ok'}`);
+});
 
 interface Bag {
   parent: string;

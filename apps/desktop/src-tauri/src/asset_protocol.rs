@@ -10,6 +10,14 @@ use crate::path_guard::{self, Refusal};
 
 pub const SCHEME: &str = "lc";
 
+/// 請求 path 進白名單之前,只拿掉一個開頭的 `/`。
+/// 去完還以 `/` 開頭(例如 `//x`)就原樣交給白名單拒絕,不能先收成 `x`。
+///
+/// 紅測試階段先保留現況(`trim_start_matches` 會拿掉每一個開頭斜線)。
+pub fn asset_rel_from_url_path(url_path: &str) -> &str {
+    url_path.trim_start_matches('/')
+}
+
 #[derive(Debug)]
 pub struct AssetOutcome {
     pub ok: bool,
@@ -27,10 +35,7 @@ pub fn decode_once(raw: &str) -> String {
 pub fn handle_custom(root: &Path, url_path: &str) -> Result<Outcome, (Refusal, AssetOutcome)> {
     let checked = decode_once(url_path);
     if let Err(err) = path_guard::check_rel_path(&checked) {
-        return Err((
-            err,
-            refused(&checked, url_path),
-        ));
+        return Err((err, refused(&checked, url_path)));
     }
     match learning_fs::read(root, &checked) {
         Ok(mut out) => {
@@ -143,7 +148,10 @@ mod tests {
     fn builtin_reject_does_not_record_a_read() {
         let out = reject_builtin();
         assert!(out.fs_calls.is_empty());
-        assert!(out.rust_log.iter().any(|l| l.to_lowercase().contains("refus")));
+        assert!(out
+            .rust_log
+            .iter()
+            .any(|l| l.to_lowercase().contains("refus")));
     }
 
     #[test]
@@ -155,5 +163,111 @@ mod tests {
         let out = handle_custom(&parent, "cards/%EA%B0%80.md").unwrap();
         assert_eq!(out.fs_calls[0].path, "cards/\u{AC00}.md");
         let _ = fs::remove_dir_all(&parent);
+    }
+
+    #[test]
+    fn one_leading_slash_is_stripped_and_allowed() {
+        let rel = asset_rel_from_url_path("/cards/a.md");
+        assert_eq!(rel, "cards/a.md");
+        assert!(path_guard::check_rel_path(rel).is_ok());
+    }
+
+    #[test]
+    fn two_leading_slashes_stay_absolute_and_are_refused() {
+        let rel = asset_rel_from_url_path("//cards/a.md");
+        assert!(
+            rel.starts_with('/'),
+            "must not collapse //cards/a.md into a relative path, got {rel:?}"
+        );
+        assert!(
+            path_guard::check_rel_path(rel).is_err(),
+            "{rel:?} must be refused"
+        );
+    }
+
+    #[test]
+    fn three_leading_slashes_are_refused() {
+        let rel = asset_rel_from_url_path("///x");
+        assert!(
+            path_guard::check_rel_path(rel).is_err(),
+            "{rel:?} must be refused"
+        );
+        assert_ne!(rel, "x", "///x must not become x before the whitelist");
+    }
+
+    #[test]
+    fn handler_does_not_trim_every_leading_slash() {
+        let main = include_str!("main.rs");
+        assert!(
+            !main.contains("trim_start_matches('/')"),
+            "asset handler still strips every leading slash before the whitelist"
+        );
+        assert!(
+            main.contains("asset_rel_from_url_path"),
+            "handler must call the single-slash strip"
+        );
+    }
+
+    struct Mkdtemp(std::path::PathBuf);
+
+    impl Drop for Mkdtemp {
+        fn drop(&mut self) {
+            if self.0.starts_with("/tmp/opencode") {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+
+    impl std::ops::Deref for Mkdtemp {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    fn mkdtemp(prefix: &str) -> Mkdtemp {
+        let out = std::process::Command::new("mktemp")
+            .args(["-d", "-p", "/tmp/opencode", &format!("{prefix}.XXXXXX")])
+            .output()
+            .unwrap_or_else(|e| panic!("mktemp: {e}"));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let path = std::path::PathBuf::from(String::from_utf8(out.stdout).unwrap().trim());
+        assert!(path.starts_with("/tmp/opencode"), "{}", path.display());
+        Mkdtemp(path)
+    }
+
+    #[test]
+    fn percent_ff_is_refused_as_decode_not_replacement() {
+        let root = mkdtemp("lc-utf8");
+        let err = handle_custom(&root, "cards/%FF.md").expect_err("%FF");
+        assert_eq!(err.0.reason, "decode", "reason {:?}", err.0.reason);
+        assert!(
+            !err.1.checked.contains('\u{FFFD}'),
+            "converted invalid UTF-8: {:?}",
+            err.1.checked
+        );
+    }
+
+    #[test]
+    fn percent_truncated_utf8_is_refused_as_decode() {
+        let root = mkdtemp("lc-utf8");
+        let err = handle_custom(&root, "cards/%C3.md").expect_err("%C3");
+        assert_eq!(err.0.reason, "decode", "reason {:?}", err.0.reason);
+        assert!(!err.1.checked.contains('\u{FFFD}'), "{:?}", err.1.checked);
+    }
+
+    #[test]
+    fn percent_encoded_hangul_still_passes_strict_decode() {
+        let root = mkdtemp("lc-hangul");
+        fs::create_dir_all(root.join("cards")).unwrap();
+        fs::write(root.join("cards/\u{AC00}.md"), "hangul").unwrap();
+        let out =
+            handle_custom(&root, "cards/%EA%B0%80.md").expect("valid UTF-8 percent must pass");
+        assert_eq!(out.fs_calls[0].path, "cards/\u{AC00}.md");
+        assert_eq!(out.value, serde_json::json!("hangul"));
     }
 }
