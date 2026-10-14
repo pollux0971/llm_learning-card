@@ -54,6 +54,10 @@ Feature: The file boundary and the learning directory
   # backslashes (Gherkin turns each pair into one, JSON.parse turns the remaining pair
   # into one). The expected decoded value of every row is in
   # features/10-desktop-shell/PATH-GUARD-EVIDENCE.md.
+  #
+  # Escape rule, measured with @cucumber/gherkin: step text is NOT backslash-decoded, a table
+  # cell is. So a JSON string written in a step needs ONE backslash (for example é),
+  # and the same JSON string written in a table cell needs TWO backslashes (\\u00e9).
 
   Scenario Outline: Paths that are not clean relative paths are refused through the read command
     When the front end requests the JSON-encoded path <path> through the read command
