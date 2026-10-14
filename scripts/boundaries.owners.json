@@ -325,6 +325,10 @@
       "infra"
     ],
     [
+      "scripts/check-gates-pinned.test.ts",
+      "infra"
+    ],
+    [
       "scripts/zero-input-guard.test.ts",
       "infra"
     ],
