@@ -1,3 +1,20 @@
+---
+id: T2b
+deps: [10-desktop-shell/phase-1]
+touches: [apps/desktop/, features/steps/]
+cpu: heavy                             # cargo-mutants、完整 cargo test
+budget_usd: 6                          # 草估,統籌·契約填
+status: review
+owner: worker-grok
+must_catch:
+  - 白名單漏掉 Unicode Mark(M)類別(含組合記號)
+  - 保留名漏掉 com9(及 COM¹–COM³ 上標)
+  - raw 的五個方法(read write list exists assetUrl)有一個沒拒
+  - 先檢查後轉換:`..\..\etc\passwd` 與反斜線列
+  - 拿掉 canonicalize 比對,symlink 場景必須變紅
+  - asset handler 對雙重編碼 `..%252f` 放行
+---
+
 # 工單 T2b:10 desktop-shell phase-2 的實作(T2 的階段 1)
 
 > 狀態:草稿,待技術顧問審。

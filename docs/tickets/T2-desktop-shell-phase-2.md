@@ -1,3 +1,14 @@
+---
+id: T2
+deps: [10-desktop-shell/phase-1]
+touches: [apps/desktop/]
+cpu: heavy
+budget_usd: 0                          # 歷史工單;已被 T2b 取代,沒有以本張派工
+status: dropped                        # 被 T2b 取代(階段 0 已由報告完成,見 ADR-063)
+owner: 統籌
+must_catch: []
+---
+
 # 工單 T2:10 desktop-shell phase-2(LearningFs 的 Tauri 實作、路徑防護、載入真前端)
 
 > 狀態:技術顧問已批(14 條)。派工時機:T1 收了、T3 排好之後,不疊。

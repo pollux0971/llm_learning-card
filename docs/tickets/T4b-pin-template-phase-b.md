@@ -1,3 +1,16 @@
+---
+id: T4b
+deps: [T4]
+touches: [scripts/]
+cpu: light
+budget_usd: 0                          # 歷史工單,當時沒有記預算
+status: merged                         # 見 ADR-064
+owner: worker-grok
+must_catch:
+  - 零個標頭或兩組不同 (版本, commit) 時必須紅,不准多數決
+  - 標頭 commit 取不到時必須紅,不准退回活的 HEAD
+---
+
 # 工單 T4b:`check:gates` 釘住模板版本(T4 的階段 B)
 
 > 狀態:草稿,待技術顧問審。T4 階段 A 的報告已審(量測結論由顧問裁決,見下)。
