@@ -1164,7 +1164,7 @@ graph TD
   - §13 第一次有可執行的邊界。原本放行的 16 個輸入會被拒絕(14 個加推翻的 2 個,見 Decision),06/07 在 I3 拿掉 stub 時它們的呼叫端會撞到新的拒絕,所以是 minor 不是 patch。
   - **審查期間又找到六項缺口(`raw/` 唯讀、`relDir`、`list` 往返、結尾點、保留裝置名、大小寫)。** 其中前五項都能以「新增一條白名單條件」補上,沒有一項需要改結構;若當初用黑名單,每一項都會是一個靜默的洞。這是白名單的實際價值:它把「我們有沒有想到」換成「沒列的一律拒絕」。
   - **⚠️ asset protocol 旁路**:asset protocol 的請求不經過 read command,是 webview 直接去要檔案,而目前 `tauri.conf.json` 的 `security` 只有 `"csp": null`、沒有 `assetProtocol`。不處理的話 phase-2 會「全綠」而防護有完整旁路。這是 2026-10-01 所有發現裡唯一一個「沒發現的後果是真的安全漏洞」的。
-  - **⚠️ asset protocol 的已知限制(刻意留的缺口)**:透過 asset protocol 的路徑拒絕**不會**產生 §10 的 warning 事件;只有經過 read command 的拒絕會,因為 asset protocol 沒有 TS 呼叫端可以回傳。寧可留一個有紀錄的缺口,也不讓 Rust 自己寫第二份 §10 事件:§11b 經 ADR-040 已補成四步(寫 tmp、fsync、rename、fsync 目錄),一份獨立的 Rust 實作要重現那四步而沒有任何東西會檢查它有沒有重現;缺口是靜態的不會惡化,第二份實作會漂移,漂移那天沒有人會知道。
+  - **⚠️ asset protocol 的已知限制(刻意留的缺口)**(**superseded by ADR-069**:前提「TS 端能寫 §10 事件」在 webview 不成立,改由 Rust 寫並限流):透過 asset protocol 的路徑拒絕**不會**產生 §10 的 warning 事件;只有經過 read command 的拒絕會,因為 asset protocol 沒有 TS 呼叫端可以回傳。寧可留一個有紀錄的缺口,也不讓 Rust 自己寫第二份 §10 事件:§11b 經 ADR-040 已補成四步(寫 tmp、fsync、rename、fsync 目錄),一份獨立的 Rust 實作要重現那四步而沒有任何東西會檢查它有沒有重現;缺口是靜態的不會惡化,第二份實作會漂移,漂移那天沒有人會知道。
   - **⚠️ 本 ADR 沒解決**:`raw/` 讀取、大小寫政策、CJK 與 NFC、保留名清單核實,見上方 Decision 最後一條。四件都在 phase-2 階段 0,工單必須各給決定,不能只回答「允不允許中文」。
 - **Related**: ADR-040(§11b 四步原子寫入)、ADR-060(§2 本文與實作漂移)、ADR-061(硬約定索引缺口與硬/軟判準)、`contracts/types.md` §12 §13、`features/10-desktop-shell/PATH-GUARD-EVIDENCE.md`、`CLAUDE.md` 硬規則 2 與 5
 
@@ -1240,3 +1240,31 @@ graph TD
   - TS 的 §11b 寫入從三份變一份(`state/reviews.json`、ingest 的 state 與 deps、lint 報告都走 `writeFileAtomic`)。
   - 建目錄:`atomicWriteJson` 與 `appendLogEvent` 保留各自的 `mkdirSync` 加一行轉呼叫,因為既有測試對「`writeFileAtomic` 建不建目錄」要求相反;「一行」指的是不留第二份邏輯。
 - **Related**: ADR-040、ADR-060、ADR-069、`docs/tickets/T7-single-atomic-write.md`、`contracts/types.md` §11b
+
+## ADR-069 · 桌面程式的 §10 事件與 §11b 寫入改在 Rust 做:推翻 10-01 的「TS 呼叫 recordEvent」,因為 webview 沒有 node:fs
+
+- **Status**: accepted · 2026-10-15(技術顧問判定。§13 是軟約定;§10、§11b 本文不改,只是多一個照本文做的實作)
+- **Context**: 2026-10-01 對 10 phase-2 的裁決 b 是「Rust 把拒絕回給 TS,由 TS 呼叫 01 的 `recordEvent` 寫 warning」,理由是不要讓 Rust 再寫一份 §11b(見 ADR-062 Consequences 的 asset protocol 已知限制)。2026-10-15 前端只讀審查 T2b(`pollux0971/t2b-impl @ 51355fd`)時查到這個前提在桌面程式裡不成立:
+  1. `recordEvent` 經 `appendLineAtomic` 用 `node:fs`(`packages/core/src/schema/atomic-write.ts:1`);webview 裡沒有 `node:fs`。
+  2. T2b 是在 Node 的測試用 `ProbeBoundary` 裡呼叫 `recordEvent`(`apps/desktop/src/boundary.ts:127-136`),所以只有測試裡成立;app 裡**沒有任何 Tauri command**,前端根本拿不到 `LearningFs`。
+  3. 同一次審查也查到 Rust 的 `write` 是 `fs::write` 直接覆蓋,不是 §11b 的原子寫入。
+- **Decision**:
+  1. **warning 事件由 Rust 寫**:`O_APPEND`、一次 `write_all` 寫完「JSON + `\n`」、`fsync`;欄位與 TS 版相同,用 `LogEventSchema` 驗;TS 與 Rust 寫出的同一個事件(去掉 `ts` 與 Rust 加的欄位)必須深度相等。
+  2. **原子寫入由 Rust 做**,照 §11b 本文四步,**跑 T7 產出的共用向量**;TS 那邊只留一份(`writeFileAtomic`,見 ADR-070)。
+  3. **asset protocol 的拒絕也寫 warning,但限流**:同一個拒絕理由每 60 秒最多一行,帶 `count`(上一行之後被拒絕幾次);command 的拒絕不限流。
+  4. **要真的 `#[tauri::command]`**:read/write/list/exists 各一行,呼叫 probe 用的同一個 `learning_fs` 函式,另有直接呼叫 command 的拒絕測試。
+  5. **SVG 照樣服務**:`tauri.conf.json` 的 `csp` 不得為 `null`(至少 `default-src 'self'; script-src 'self'; object-src 'none'; frame-src 'none'; img-src 'self' lc: data:`);`.svg` 回應另帶 `Content-Security-Policy: script-src 'none'`;所有 asset 回應帶 `X-Content-Type-Options: nosniff`。
+  6. **首次啟動只讀 T5 的指標檔**,不寫指標檔、不寫 `config/vault-id`;讀不到就顯示要執行的 `scripts/vault.ts init` 指令。
+  7. 實作拆成 T2c-1(command、事件、io 錯誤、圖片、真前端)與 T2c-2(單一根目錄,依賴 T5)。
+- **Alternatives**:
+  - **維持裁決 b,讓 webview 經某個 command 把事件交給 Node 寫** —— 不採用。桌面程式沒有 Node 行程;多開一個只為了寫 log 的 sidecar,比多一份照向量驗過的 Rust 實作更重,而且它也是第二份執行路徑。
+  - **asset 拒絕不寫事件(維持 ADR-062 的缺口)** —— 不採用。缺口的唯一理由(沒有 TS 呼叫端)已經消失;不寫的話,asset 旁路上的攻擊嘗試在 §10 裡完全看不到。
+  - **asset 拒絕每次都寫** —— 不採用。webview 可以無限發壞請求,把 `log.jsonl` 灌爆;限流加 `count` 不丟數量。
+  - **不服務 SVG** —— 不採用。圖片素材可能是 SVG;用 CSP 擋 script 比禁一種格式便宜。
+  - **桌面程式在首次啟動自己寫指標檔(第三份 bootstrap)** —— 不採用。指標檔牽涉錢(帳本位置)與身分(`vault_id`),多一份就多一個會分歧的地方。
+- **Consequences**:
+  - §11b 會有 TS 與 Rust 兩份實作。風險是漂移(字數那題的形狀,ADR-060);緩解是兩邊讀同一份向量檔、逐列跑,任何一邊不能自己加減列。
+  - ADR-062 的「asset protocol 的已知限制」被本 ADR 取代(已在該條標記)。
+  - T2b 工單驗收 A 的「asset handler 的拒絕只進 Rust log、不寫 §10 事件」與 T2 第 6 條同時失效。
+  - 已知限制:限流的 `count` 在程式被強制結束時會少算(正常結束會補寫);Windows 的 `http://lc.localhost/` 形式與根目錄長度留給 phase-5。
+- **Related**: ADR-040(§11b 四步)、ADR-060(實作漂移)、ADR-062(白名單與已取代的缺口)、ADR-063、ADR-070、`docs/tickets/T2c-1-desktop-shell-phase-2-wiring.md`、`docs/tickets/T2c-2-desktop-shell-learning-root.md`、`docs/tickets/T7-single-atomic-write.md`
