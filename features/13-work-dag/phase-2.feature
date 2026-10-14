@@ -121,6 +121,28 @@ Feature: Tickets join the graph and the parallel rules turn it into a start list
       | deps       | T1      |
       | touches    | docs/   |
       | must_catch | none    |
+      | owner      | intern  |
+
+  Scenario: An id that cannot be a variable name is a problem and the file names it
+    Given the ticket file "T9-example.md" has a valid header except that "id" is "2nd-ticket"
+    When the dag check runs on the fake tree
+    Then it exits with status 1
+    And the report has the line "PROBLEM bad-header T9-example.md invalid id"
+
+  Scenario Outline: A budget of zero is only allowed for tickets that are finished
+    Given the fake tree has these tickets:
+      | id | deps | touches | cpu   | status   | budget_usd |
+      | T9 |      | docs/a/ | light | <status> | 0          |
+    When the dag check runs on the fake tree
+    Then it exits with status <exit>
+
+    Examples:
+      | status     | exit |
+      | merged     | 0    |
+      | dropped    | 0    |
+      | todo       | 1    |
+      | dispatched | 1    |
+      | review     | 1    |
 
   Scenario: A dependency that names nothing is a problem
     Given the fake tree has these tickets:
@@ -176,6 +198,30 @@ Feature: Tickets join the graph and the parallel rules turn it into a start list
     Then it exits with status 0
     And the report has no line starting with "PROBLEM r2-overlap"
 
+  Scenario Outline: A ticket in review keeps its landing until it is merged or dropped
+    Given the fake tree has these tickets:
+      | id | deps | touches                 | cpu   | status   |
+      | T1 |      | apps/desktop/src-tauri/ | light | <first>  |
+      | T2 |      | apps/desktop/src/       | light | <second> |
+    When the dag check runs on the fake tree
+    Then it exits with status <exit>
+
+    Examples:
+      | first  | second     | exit |
+      | review | dispatched | 1    |
+      | review | review     | 0    |
+      | merged | dispatched | 0    |
+      | dropped| dispatched | 0    |
+
+  Scenario: A ready ticket is held while another ticket in review sits on the same landing
+    Given the fake tree has these tickets:
+      | id | deps | touches                 | cpu   | status |
+      | T1 |      | apps/desktop/src-tauri/ | light | review |
+      | T2 |      | apps/desktop/src/       | light | todo   |
+    When the dag tool runs on the fake tree
+    Then the report has the line "HELD T2 by R2 with T1"
+    And the report has no START line for "T2"
+
   Scenario: The longest matching prefix decides the landing
     Given the fake tree has these tickets:
       | id | deps | touches                          | cpu   | status     |
@@ -215,7 +261,7 @@ Feature: Tickets join the graph and the parallel rules turn it into a start list
     Examples:
       | touches  | status     | exit |
       | docs/b/  | dispatched | 1    |
-      | docs/b/  | review     | 0    |
+      | docs/b/  | review     | 1    |
       | docs/b/  | todo       | 0    |
 
   Scenario: A path that matches no landing is a problem
@@ -283,6 +329,16 @@ Feature: Tickets join the graph and the parallel rules turn it into a start list
     And the report has the line "START T2"
     And the line "START T1" comes before the line "START T2"
 
+  Scenario: Ids are ordered naturally so T2 comes before T10
+    Given the fake tree has these tickets:
+      | id  | deps | touches      | cpu   | status |
+      | T10 |      | scripts/b.ts | light | todo   |
+      | T2  |      | docs/a/      | light | todo   |
+    When the dag tool runs on the fake tree
+    Then the report has the line "START T2"
+    And the report has the line "START T10"
+    And the line "START T2" comes before the line "START T10"
+
   Scenario: When two ready tickets cannot run together the lower id starts and the other is held
     Given the fake tree has these tickets:
       | id | deps | touches      | cpu   | status |
@@ -339,34 +395,36 @@ Feature: Tickets join the graph and the parallel rules turn it into a start list
     Then it exits with status 0
     And the report has the line "WARN r4-dispatched 4"
 
-  Scenario: The task commands are printed in dependency order and never run
+  Scenario: The task commands are printed as a runnable script in dependency order and never run
     Given the fake tree has these tickets:
-      | id | deps | touches      | cpu   | status |
-      | T2 | T1   | scripts/b.ts | light | todo   |
-      | T1 |      | docs/a/      | light | todo   |
-      | T0 |      | docs/z/      | light | merged |
+      | id  | deps    | touches      | cpu   | status |
+      | T10 | T2      | scripts/c.ts | light | todo   |
+      | T2  | T1      | scripts/b.ts | light | todo   |
+      | T1  |         | docs/a/      | light | todo   |
+      | T0  |         | docs/z/      | light | merged |
     And a stub program named "orca" is first on the path and records every call
     When the dag tool runs on the fake tree with the flag "--orca"
-    Then the output has a task command for "T1" with the spec "docs/tickets/T1-example.md" and no dependencies
-    And the output has a task command for "T2" with the spec "docs/tickets/T2-example.md" and the dependencies "T1"
-    And the line for "T1" comes before the line for "T2"
+    Then the output has a line that creates the task for "T1" from the file "docs/tickets/T1-example.md" with no dependency variables
+    And the output has a line that creates the task for "T2" from the file "docs/tickets/T2-example.md" with the dependency variables "T1"
+    And the output has a line that creates the task for "T10" from the file "docs/tickets/T10-example.md" with the dependency variables "T2"
+    And the lines for "T1", "T2" and "T10" appear in that order
     And the stub program was never called
 
-  Scenario: Tickets that are not waiting to be started get no task command
+  Scenario: Only tickets that are waiting to be started get a task line and finished dependencies are not listed
     Given the fake tree has these tickets:
-      | id | deps | touches      | cpu   | status     |
-      | T1 |      | docs/a/      | light | merged     |
-      | T2 |      | scripts/b.ts | light | dispatched |
-      | T3 |      | apps/desktop/ | light | todo       |
+      | id | deps   | touches       | cpu   | status     |
+      | T1 |        | docs/a/       | light | merged     |
+      | T2 |        | scripts/b.ts  | light | dispatched |
+      | T3 | T1, T2 | apps/desktop/ | light | todo       |
     When the dag tool runs on the fake tree with the flag "--orca"
-    Then the output has exactly 1 line starting with "orca orchestration task-create"
-    And the output has a task command for "T3" with the spec "docs/tickets/T3-example.md" and no dependencies
+    Then the output has exactly 1 line that creates a task
+    And the output has a line that creates the task for "T3" from the file "docs/tickets/T3-example.md" with no dependency variables
 
-  Scenario: A ticket file without a header is named and does not break the check
+  Scenario: A ticket file without a header is a problem and names the file
     Given the fake tree has a ticket file "T7-old.md" with no header
     When the dag check runs on the fake tree
-    Then it exits with status 0
-    And the report has the line "NOTE untracked-ticket T7-old.md"
+    Then it exits with status 1
+    And the report has the line "PROBLEM missing-header T7-old.md"
 
   Scenario: The check is part of the chain that check:all runs
     Given the gates configuration of this repository

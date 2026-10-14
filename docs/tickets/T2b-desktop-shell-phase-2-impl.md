@@ -3,8 +3,8 @@ id: T2b
 deps: [10-desktop-shell/phase-1]
 touches: [apps/desktop/, features/steps/]
 cpu: heavy                             # cargo-mutants、完整 cargo test
-budget_usd: 6                          # 草估,統籌·契約填
-status: review
+budget_usd: 8                          # 這一輪修補的預算;第一輪沒有預算,實際花了 $29.08
+status: dispatched                     # 退回 worker 修補中;回來驗收時才是 review(檔頭由協調者收批時維護)
 owner: worker-grok
 must_catch:
   - 白名單漏掉 Unicode Mark(M)類別(含組合記號)
@@ -20,6 +20,7 @@ must_catch:
 > 狀態:草稿,待技術顧問審。
 > 作者:統籌·契約。派工:協調者。審:技術顧問。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
+> 預算:第一輪沒有預算,實際花了 $29.08(顧問 2026-10-15 記);退回修補這一輪的預算是 $8。
 > 與 T2 的關係:T2 的階段 0(字元集合、大小寫、保留名、`raw/` 讀取的推導)已由報告完成,結論由技術顧問裁決後
 > 寫進契約 §13 的 1.3.1(見 ADR-063)。**本張是實作。T2 的條款處理如下,其餘以本張為準。**
 

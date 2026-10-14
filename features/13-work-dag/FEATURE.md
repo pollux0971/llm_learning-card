@@ -91,7 +91,7 @@ fixture 目錄混進與契約無關的東西。所以 fixture 放在自己的資
 | 工單(phase-2) | 檔頭的 `id` | `T2b` |
 | 決策 gate | `ADR-<NNN>`、`§<N>`(含字母後綴,如 `§11b`)、`commit <7 碼以上 hex>` | `ADR-040` |
 
-每筆記錄一行,**行首是固定的大寫關鍵字**,欄位以單一空格分隔,排序固定(關鍵字、再節點名稱的字典序),
+每筆記錄一行,**行首是固定的大寫關鍵字**,欄位以單一空格分隔,排序固定(關鍵字、再節點名稱的**自然排序**:數字段按數值比,`T2` 排在 `T10` 前面;字母與其他字元按碼位),
 所以同一棵樹跑兩次輸出逐位元組相同:
 
 ```
@@ -111,13 +111,23 @@ phase-2 增加的記錄:
 START <node>                              # 現在可以開,而且和已在跑的、這輪已選的都不違反 R2/R3/R4
 HELD <node> by <R2|R3|R4> with <node>[,...]   # 能開工(R1)但被規則擋住;每違反一條規則印一行,順序 R2、R3、R4
 LANDING <ticket> <landing>                # 每張 status 不是 merged / dropped 的工單,touches 最長前綴對到的落點
-NOTE <kind> <detail>                      # 例如 NOTE untracked-ticket <檔名>
+NOTE <kind> <detail>                      # 資訊,永不紅(目前沒有必須印的 NOTE)
 WARN <kind> <detail>                      # R4 / R5 違反:WARN r5-depth <id> <深度>、WARN r4-dispatched <數量>
-PROBLEM bad-header <id|檔名> missing|invalid <欄位>   # 另有 unresolved-ref、duplicate-id、cycle、r2-overlap <id> <id> on <落點>、r3-heavy <id> <id>、no-landing <id> <前綴>
+PROBLEM bad-header <id|檔名> missing|invalid <欄位>   # 另有 missing-header <檔名>、unresolved-ref、duplicate-id、cycle、r2-overlap <id> <id> on <落點>、r3-heavy <id> <id>、no-landing <id> <前綴>
 ```
 
-工單缺 `id` 時用檔名當名字。`--orca` 的行形狀:`orca orchestration task-create --task-title <id> --spec <工單檔相對路徑> --deps '<JSON 陣列,放尚未 merged 的依賴工單 id>'`,
-只印 `status: todo` 的工單,按拓樸序、同層按 id 字典序。
+工單缺 `id` 時用檔名當名字。`id` 必須符合 `^[A-Za-z][A-Za-z0-9_]*$`(它會當 bash 變數名)。
+
+**`--orca` 印的是一段可以直接執行的 bash**(顧問 2026-10-15 裁決),按拓樸序、同層自然排序,只含 `status: todo` 的工單,
+每張一行,deps 用前面已經建好的變數,**已經 `merged` 的依賴不列**:
+
+```
+T1=$(orca orchestration task-create --spec "$(cat docs/tickets/T1-….md)" --deps "[]" --json | jq -r '.<id 欄位>')
+T2=$(orca orchestration task-create --spec "$(cat docs/tickets/T2-….md)" --deps "[\"$T1\"]" --json | jq -r '.<id 欄位>')
+```
+
+`<id 欄位>` 的名字**由 phase-2 的實作者開工前用一次真的 `--json` 量出來,不要猜**,量到的值與指令寫進報告。
+工具**只印不執行**。依賴一張 `dispatched` / `review` 的工單(它在圖上但不是這批要建的)不列進 `--deps`(它已經在跑,不是 orca 要等的新 task)。
 `--check` 讓任何 `PROBLEM` 變成退出碼 1(沒有 `--check` 時永遠 0;用法錯誤 2);`WARN` 與 `NOTE` 永遠不紅。
 
 ### 節點的滿足條件
@@ -152,7 +162,7 @@ touches: [apps/desktop/src-tauri/]     # 路徑前綴
 cpu: heavy | light                      # heavy = 跑完整鏈、Stryker、cargo-mutants、計時量測
 budget_usd: 5
 status: todo | dispatched | review | merged | dropped
-owner: worker-grok | worker-claude | 統籌 | 前端 | 驗收
+owner: worker-grok | worker-claude | worker-codex | 統籌 | 前端 | 驗收   # worker-codex 是歷史值(Codex 已停用)
 must_catch: [ … ]                       # 驗收必須證明測試抓得到的突變
 ---
 ```
@@ -162,7 +172,10 @@ must_catch: [ … ]                       # 驗收必須證明測試抓得到的
 - **檔頭是 YAML 的一個受限子集**(dag 不 import 任何 YAML 套件,自己解析):`key: value` 一行一欄;清單可以寫成一行
   `[a, b]`,也可以寫成鍵下面逐行的 `- 項目`(`must_catch` 的項目常含逗號,用逐行);空白加 `#` 之後是註解;
   引號、巢狀、多行字串**不支援**,出現就是 `invalid`。
-- 欄位值不合法(`cpu: medium`、`status: wip`、`budget_usd` 不是非負數、`deps` 不是清單)或缺欄位,`dag:check` 紅。
+- 欄位值不合法(`cpu: medium`、`status: wip`、`owner` 不在清單、`budget_usd` 不是非負數、`deps` 不是清單)或缺欄位,`dag:check` 紅。
+- **`budget_usd: 0` 表示「歷史工單,沒有預算」,只有 `status` 是 `merged` 或 `dropped` 時才合法**;`todo` / `dispatched` / `review` 寫 0 是 `invalid budget_usd`。
+- **每張 `docs/tickets/` 底下的工單檔都必須有檔頭**;沒有檔頭的檔是 `PROBLEM missing-header <檔名>`,`dag:check` 紅(顧問裁決:
+  否則「新工單忘了檔頭」是靜默缺口)。已合併的舊工單也要補,`status: merged`。
 - 只有檔頭、沒有別的格式要求:工單內文怎麼寫不變(「工單唯一的正本」那條規矩不變)。
 
 ## 平行規則(顧問裁決,原文)
@@ -190,17 +203,19 @@ must_catch: [ … ]                       # 驗收必須證明測試抓得到的
 **新增檔還沒登記在落點表時**(例如即將新增的 `scripts/vault.ts`),要嘛 `touches` 寫它所在的目錄,
 要嘛工單把「登記落點」列為第一步並先合併那一列;`dag:check` 不替沒登記的檔猜落點。
 
-### 本規格對規則的解讀(**統籌·契約的推論,不是裁決**,請顧問確認或改)
+### 對規則的解讀(技術顧問 2026-10-15 逐條確認;第 4、6、7 條為顧問改過的版本)
 
 1. **R5 的「深度」**:一條依賴鏈上**尚未滿足的節點數**(含自己),已 `done`/`merged`/有 tag 的不算——否則歷史會讓深度只增不減。
 2. **R4 / R5 違反時只印 `WARN`,不讓 `dag:check` 紅**:顧問的紅燈清單裡沒有它們。
 3. **R4 的 3 只數 `dispatched`,不數 `review`**:`review` 佔的是驗收者,不是 worker;驗收的吃 CPU 已由 R3 管。
-4. **R2 只看工單,而且只比 `dispatched` 的**:進行中的 phase 沒有 `touches`,不參與 R2;`review` 的工單已經寫完,
-   不再寫檔(它佔的是驗收者與 R3 的 CPU),所以不佔落點。
+4. **R2 比 `dispatched` 和 `review` 的工單**(顧問改):`review` 的工單常被退回去修(T2b 就是),退回的那一刻又會寫檔;
+   如果 `review` 不佔落點,別的工單可能已經在同一塊開工,兩邊就撞了。**落點要佔到 `merged` 或 `dropped` 才放。**
+   進行中的 phase 沒有 `touches`,不參與 R2。`dag:check` 紅的條件:一對在 {`dispatched`, `review`} 的工單落點相交,
+   而且這一對裡**至少有一張是 `dispatched`**(推論:兩張都是 `review` 的,當初派工時若有相交,那時就已經紅過)。
 5. **`dropped` 的工單永遠不算滿足**:依賴它的工單印 `BLOCKED … by <id> (dropped)`,由人決定改 deps 或復活。
-6. **`START` 的選法**:`READY` 的工單依 id 字典序,逐張檢查「對已在跑的 + 這輪已選的」是否違反 R2/R3/R4,不違反就 `START`,
+6. **`START` 的選法**:`READY` 的工單依 id **自然排序**(`T2` 先於 `T10`),逐張檢查「對已在跑的 + 這輪已選的」是否違反 R2/R3/R4,不違反就 `START`,
    違反就 `HELD`。這只是一個固定、可重現的排序,**不是優先權**;優先權屬於協調者。
-7. **沒有檔頭的工單檔**:不進圖,印 `NOTE untracked-ticket <檔名>`,不紅。是否改成紅(讓「新工單忘了檔頭」被守住)見「開放問題」。
+7. **沒有檔頭的工單檔**是 `PROBLEM missing-header`,`dag:check` 紅(顧問改)。
 
 ## 步驟定義的約定(兩個 `.feature` 共用)
 
@@ -231,13 +246,10 @@ must_catch: [ … ]                       # 驗收必須證明測試抓得到的
 
 ## 開放問題
 
-- **fixture 偏離 README 原則 3**(見上),請顧問確認這個例外成立。
 - **tag 的測試做法**:規格選「真的 `git tag`,步驟定義在暫存目錄 `git init` 後打 tag」,不加 `--tags` 這種測試專用旗標
-  (測試專用的縫,正式路徑永遠不走)。代價是測試要起 git。
-- **`--orca` 的 `--deps`**:`orca orchestration task-create` 的 `--spec` 要的是文字、`--deps` 要的是 JSON 陣列(實測
-  `--help`,2026-10-15),而 orca 的 task id 要建立後才有。規格選:對每張 `todo` 工單按拓樸序印一行,
-  `--task-title` 放工單 id、`--spec` 放工單檔路徑、`--deps` 放**尚未 merged 的依賴工單的 id**(協調者照序執行時自己對應)。
-  這是推論;orca 若要真正的 task id,phase-2 開工前要先定怎麼對應。
-- **沒檔頭的工單要不要紅**:建議紅(否則「新工單忘了檔頭」是靜默缺口,正是 ADR-064 刻意不守的那種,而這裡守得起);
-  代價是 `T0`、`T4`、`T4b` 這些已合併的舊工單要補 `status: merged` 的檔頭。**顧問裁。**
-- **進行中的 phase 要不要參與 R2**:phase 沒有 `touches`;若要,得由 phase 對到它的落點資料夾。本規格選不參與。
+  (測試專用的縫,正式路徑永遠不走)。代價是測試要起 git。(顧問未反對,實作時再確認。)
+- **進行中的 phase 要不要參與 R2**:phase 沒有 `touches`;本規格選不參與(顧問同意)。
+- **`--orca` 的 `<id 欄位>`**:phase-2 實作者開工前量,見上。
+
+已定案(不再是問題):fixture 放自己資料夾底下的例外(ADR-065 已記)、phase-1 暫不掛 `@standalone`、`touches` 對落點的規則、
+受限 YAML、重複 id 算 PROBLEM、`owner` 加 `worker-codex`、`budget_usd: 0` 的條件、沒檔頭的工單算紅。

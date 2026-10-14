@@ -1218,14 +1218,14 @@ graph TD
 
 ## ADR-065 · 工作 DAG 從既有檔案推導,不另立狀態來源;平行規則 R1–R5;五個 session 的分工
 
-- **Status**: proposed · 2026-10-15(統籌·契約草擬。使用者 2026-10-15 的原話「重新設計dag,平行開發」即 `/feature` 的確認;分流結果 = 新資料夾 `13-work-dag`,不動契約,不推翻任何 ADR。R1–R5 是技術顧問的裁決原文;`features/13-work-dag/FEATURE.md`「本規格對規則的解讀」七條是草擬者的推論,等顧問確認或改)
+- **Status**: accepted · 2026-10-15(技術顧問裁決;統籌·契約草擬。使用者 2026-10-15 的原話「重新設計dag,平行開發」即 `/feature` 的確認;分流結果 = 新資料夾 `13-work-dag`,不動契約,不推翻任何 ADR。`features/13-work-dag/FEATURE.md`「對規則的解讀」七條已由顧問逐條確認,其中第 4、6、7 條是顧問改過的版本)
 - **Context**: 現在「哪些工能開工、哪些能同時做」靠協調者和顧問的記憶與對話排。已經發生過的失敗形狀:`12-prompt-quality/phase-2` 的 gate 在 2026-09-04 解除,備註寫「由協調者安排」,**8 天沒人排**(見 `docs/01-roadmap.md` 現況表);工單 T2b 的草稿漏了 Unicode Mark 類別與 `com9` 兩個該被測試抓住的突變,事後才補;兩個 worker 同時寫了 ADR-054(`autopilot` SKILL.md §4 的案例)。三者共同點:**能從檔案算出來的依賴與衝突,沒有人算**。
 - **Decision**:
   1. **圖是推導的,不是狀態。** 節點與邊從三種既有來源算出:`FEATURE.md` 的 Phase 表(phase 狀態的唯一來源)、`NEXT.md` 的 gate 宣告(phase gate 的正本)、git tag `I<N>`(整合點通過);phase-2 再加 `docs/tickets/` 的工單檔頭。**不新增任何要人手維護的登記表**,不存檔,每次重算。ADR-025 不變:`NEXT.md` 仍是 phase gate 的正本,`FEATURE.md` 仍是 phase 狀態的唯一來源。
   2. **決策 gate(ADR / § / commit)沒有可判定的完成訊號,一律列「待人判」,工具不猜。** ADR 存在不等於那個決定已經做了。
   3. **平行規則(技術顧問裁決原文)**:
      - **R1** ready = `deps` 全滿足(phase `done` / tag `I<N>` 存在 / 工單 `merged`)。
-     - **R2** 兩張工單同時跑,`touches` 用 `scripts/boundaries.owners.json` 最長前綴對到的落點不能重疊;落點是 `contracts` 的,和任何工作都互斥。
+     - **R2** 兩張工單同時跑,`touches` 用 `scripts/boundaries.owners.json` 最長前綴對到的落點不能重疊;落點是 `contracts` 的,和任何工作都互斥。**比的是 `dispatched` 和 `review` 的工單**:`review` 的工單常被退回去修,退回的那一刻又會寫檔,所以落點要佔到 `merged` 或 `dropped` 才放。
      - **R3** `cpu: heavy` 同一時間最多 1 個在 `dispatched` 或 `review`(驗收跑變異也算)。
      - **R4** phase 的 WIP ≤ 2(CLAUDE.md);`dispatched` 的工單 ≤ 3。
      - **R5** 依賴鏈深度 ≤ 4。
@@ -1245,7 +1245,9 @@ graph TD
 - **Consequences**:
   - 新增守門 `dag:check`,第一版必然對真樹叫狼(P-71):phase-2 驗收要先在真 repo 上跑一次並把每一條紅燈分類(工具錯 / 樹真的有毛病)才接進 `chain`;R5 在真樹上的實測值寫進報告。
   - **對 `features/README.md` 的一個例外**:phase-1 原則 3「只吃 `contracts/fixtures/`」,本功能的輸入是一整棵 `features/` + `docs/tickets/` 的樹,不是契約定義的資料格式,fixture 放在 `features/13-work-dag/fixtures/`。這條就是 README 要求的「記一筆」。
-  - `features/13-work-dag/FEATURE.md` 的七條解讀(R5 的深度算法、R4/R5 只 `WARN`、R4 的 3 只數 `dispatched`、R2 只比 `dispatched`、`dropped` 永遠不算滿足、`START` 的固定排序、無檔頭工單不紅)是草擬者推論,**ADR 定案前由顧問逐條確認**。
+  - `features/13-work-dag/FEATURE.md` 的七條解讀已定案:R5 的深度只算尚未滿足的節點、R4/R5 只 `WARN`、R4 的 3 只數 `dispatched`、R2 比 `dispatched` 和 `review`、`dropped` 永遠不算滿足、`START` 用**自然排序**(`T2` 先於 `T10`)、**沒檔頭的工單檔算紅**。
   - **已知不處理**:優先權(哪張先做)屬於協調者(ADR-052);圖只給固定、可重現的排序。進行中的 phase 不參與 R2(沒有 `touches`)。
-  - **誠實記下**:規則只約束「圖裡有的東西」。一張沒有檔頭的新工單不在圖裡(第一版印 `NOTE untracked-ticket`,不紅);是否改成紅見 FEATURE.md「開放問題」。
+  - **誠實記下**:規則只約束「圖裡有的東西」,所以每張工單檔都必須有檔頭,沒有的算紅;舊工單(T0 T2 T2b T3 T4 T4b)已補。`owner` 的清單含歷史值 `worker-codex`;`budget_usd: 0` 只准 `merged` / `dropped` 的歷史工單用。
+  - `--orca` 印的是可直接執行的 bash(每張 `todo` 工單一行,deps 用前面建好的變數,已 `merged` 的依賴不列),task id 欄位名由 phase-2 實作者開工前用一次真的 `--json` 量出來。
+  - ADR 號碼:本號與 066–068 由統籌·契約保留;前端的 T2c / T7 從 069 起。
 - **Related**: ADR-025(NEXT.md 管 gate)、ADR-052(排序原則)、ADR-064(刻意不守的義務與「不放進登記表」的理由)、`features/13-work-dag/`、`.claude/skills/autopilot/SKILL.md`
