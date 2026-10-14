@@ -1295,7 +1295,7 @@ graph TD
   1. §1:`type CategoryId = string; // 必須是 §13 的一個合法段,且 UTF-8 位元組 ≤ 64`。合法段的全文在 §13(字元集合、已是 NFC、不以 `.` 開頭或結尾、第一個 `.` 之前不是 Windows 保留裝置名;非空、無 `/`),§1 引用、不重寫。
   2. **長度上限 64 位元組**(顧問加):分類名會出現在 `cards/<cat>/<id>.short.md`、`graph/order-<cat>.json`;分類名太長,它底下每個路徑都會超過 §13 的 240。64 遠超過正常名字,而且一刀切掉所有長度邊界的情況。
   3. **執行的地方**:01 的 zod schema(卡片 frontmatter 的 `category`、`categories.yaml` 的 `id`)、ingest 建分類時(raw 資料夾名不合法就拒絕,**錯誤要說是哪一條規則、不建出任何東西**)、09 lint 回報既有資料裡的違規。
-  4. **兩份實作共用同一份機器可讀的向量檔** `contracts/fixtures/path-segment-vectors.json`(51 列,真碼位,以 JSON 轉義寫、附 `rule` 與 `why`;含 64 通過 / 65 拒絕的長度列)。TS(schema、ingest、lint)與 Rust(`LearningFs` 邊界)都載同一份,不各自抄 §13 的表。**Rust 是權威**(邊界在 Rust command),TS 那份是同一規則的第二份實作。
+  4. **兩份實作共用同一份機器可讀的向量檔** `contracts/fixtures/path-segment-vectors.json`(51 列,真碼位,以 JSON 轉義寫、每列附 `applies_to`(`segment` 與/或 `category`)、`rule`、`why`;含 64 通過 / 65 拒絕的長度列,這四列只適用於 `category`——對 §13 的路徑段,65 位元組是合法的,段沒有 64 的上限,只有整條路徑 240)。實作一律用 `applies_to` 選列,不得用 `rule` 欄分;`expect` 是對 `applies_to` 裡每一種檢查而言。TS(schema、ingest、lint)與 Rust(`LearningFs` 邊界)都載同一份,不各自抄 §13 的表。**Rust 是權威**(邊界在 Rust command),TS 那份是同一規則的第二份實作。
   5. 契約 §1 與 §13 都註明:**§13 第 2、3、5、6 條被 §1 引用,今後改動等於改 §1。**
 - **Alternatives**:
   - **維持寬鬆、只在 ingest 補檢查**:§1 與邊界仍然不一致,schema 與 lint 放行的分類邊界會拒絕;兩個地方各自記得同一條規則,正是 ADR-060 / ADR-063 看到的漂移形狀。**否決。**

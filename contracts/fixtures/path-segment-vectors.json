@@ -1,310 +1,510 @@
 {
-  "description": "Segment-level vectors for contracts/types.md section 1 CategoryId and section 13 (contract 1.4.0, ADR-067). Both the TypeScript and the Rust implementation load this one file. Every segment is written with JSON unicode escapes so no editor can turn a decomposed form into a composed one. expect=accept means the segment is a legal CategoryId and a legal single path segment; expect=refuse means it is neither. The 64-byte limit is the CategoryId limit of section 1 (UTF-8 bytes of the segment); the 240-byte limit of section 13 applies to a whole relPath and is not part of these vectors.",
+  "description": "Segment-level vectors for contracts/types.md section 1 CategoryId and section 13 (contract 1.4.0, ADR-067). Both the TypeScript and the Rust implementation load this one file. Every segment is written with JSON unicode escapes so no editor can turn a decomposed form into a composed one. Each row has applies_to, a list of the checks the row is about: 'segment' means a single path segment checked by section 13 (character set, NFC, leading and trailing dot, reserved device names, non-empty, no slash); 'category' means a CategoryId checked by section 1 (the segment rules plus at most 64 UTF-8 bytes). expect is the answer for EACH check listed in applies_to: accept means the segment passes every listed check, refuse means it fails every listed check. A check not listed in applies_to must ignore the row (for example the 65-byte rows are refused as a CategoryId but are legal path segments, because section 13 limits only the whole relPath to 240 bytes). Implementations must select rows by applies_to, never by the rule field; rule and why are explanations for people.",
   "unicode_version_used_to_verify": "15.0.0",
   "vectors": [
     {
       "segment": "security",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "ordinary ASCII lower case"
     },
     {
       "segment": "Security",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "upper case is allowed (ADR-063)"
     },
     {
       "segment": "a.b-c_d9",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "dot inside, hyphen, underscore, digits"
     },
     {
       "segment": "_x",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "underscore allowed, also first"
     },
     {
       "segment": "console",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "only the whole part before the first dot is compared"
     },
     {
       "segment": "com0",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "COM0 is not in the Microsoft list"
     },
     {
       "segment": "lpt0",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "LPT0 is not in the Microsoft list"
     },
     {
       "segment": "\uac00",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "nfc",
       "why": "U+AC00 is Lo and already NFC"
     },
     {
       "segment": "\u00e9",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "nfc",
       "why": "U+00E9 is Ll and already NFC"
     },
     {
       "segment": "\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u30fc",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "ends with U+30FC which is Lm (a letter) although its Script is Common"
     },
     {
       "segment": "\u540c\u6e90",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "Han letters are Lo"
     },
     {
       "segment": "x\u00b2",
       "expect": "accept",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "U+00B2 is No, so the character set allows it; only COM/LPT plus it is reserved"
     },
     {
       "segment": "",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "empty",
       "why": "a segment is non-empty"
     },
     {
       "segment": "a/b",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "separator",
       "why": "a segment has no slash"
     },
     {
       "segment": "a\\b",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "backslash is not in the set"
     },
     {
       "segment": "a b",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "space is not in the set"
     },
     {
       "segment": " a",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "leading space is not in the set"
     },
     {
       "segment": "a\t",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "tab is not in the set"
     },
     {
       "segment": "a\u00a0b",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "U+00A0 is Zs, not L/N/M"
     },
     {
       "segment": "a\u0000b",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "NUL is not in the set"
     },
     {
       "segment": ".hidden",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "leading-dot",
       "why": "a segment may not start with a dot"
     },
     {
       "segment": ".",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "leading-dot",
       "why": "a lone dot"
     },
     {
       "segment": "..",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "leading-dot",
       "why": "traversal spelling"
     },
     {
       "segment": "a.",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "trailing-dot",
       "why": "a segment may not end with a dot"
     },
     {
       "segment": "nul",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "reserved device name"
     },
     {
       "segment": "NUL",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "compared with fixed ASCII case folding"
     },
     {
       "segment": "Con",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "mixed case"
     },
     {
       "segment": "AUX",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "reserved device name"
     },
     {
       "segment": "prn",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "reserved device name"
     },
     {
       "segment": "com1",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "COM1"
     },
     {
       "segment": "COM9",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "COM9 is the end of the range"
     },
     {
       "segment": "lpt9",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "LPT9"
     },
     {
       "segment": "com1.md",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "the part before the first dot is compared"
     },
     {
       "segment": "COM\u00b9",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "superscript one is No, allowed by the character set, but reserved"
     },
     {
       "segment": "LPT\u00b2",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "superscript two"
     },
     {
       "segment": "com\u00b3.txt",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "reserved",
       "why": "superscript three, with extension"
     },
     {
       "segment": "C++",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "plus is not in the set"
     },
     {
       "segment": "a+b",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "plus is not in the set"
     },
     {
       "segment": "a%2Fb",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "percent sign is not in the set"
     },
     {
       "segment": "a:b",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "colon is not in the set"
     },
     {
       "segment": "a*b",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "asterisk is not in the set"
     },
     {
       "segment": "~",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "tilde is not in the set"
     },
     {
       "segment": "\uff0f",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "U+FF0F fullwidth solidus is Po, a look-alike of slash"
     },
     {
       "segment": "\ud83d\ude00",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "charset",
       "why": "U+1F600 is So, not L/N/M"
     },
     {
       "segment": "\u1100\u1161",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "nfc",
       "why": "Hangul Jamo pair; NFC form is U+AC00"
     },
     {
       "segment": "\uf900",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "nfc",
       "why": "compatibility ideograph; NFC form is U+8C48"
     },
     {
       "segment": "e\u0301",
       "expect": "refuse",
+      "applies_to": [
+        "segment",
+        "category"
+      ],
       "rule": "nfc",
       "why": "e plus combining acute; NFC form is U+00E9"
     },
     {
       "segment": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "expect": "accept",
+      "applies_to": [
+        "category"
+      ],
       "rule": "length",
       "why": "64 UTF-8 bytes, the limit (ADR-067)"
     },
     {
       "segment": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "expect": "refuse",
+      "applies_to": [
+        "category"
+      ],
       "rule": "length",
       "why": "65 UTF-8 bytes"
     },
     {
       "segment": "\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00a",
       "expect": "accept",
+      "applies_to": [
+        "category"
+      ],
       "rule": "length",
       "why": "21 x 3 bytes + 1 = 64 UTF-8 bytes"
     },
     {
       "segment": "\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00ab",
       "expect": "refuse",
+      "applies_to": [
+        "category"
+      ],
       "rule": "length",
       "why": "21 x 3 bytes + 2 = 65 UTF-8 bytes"
     }

@@ -36,7 +36,8 @@ type QuestionType = 'fill' | 'apply';
 
 **§1 引用 §13 的段規則,所以 §13「一個 `relPath` 通過,當且僅當」清單的第 2、3、5、6 條(字元集合與 NFC、開頭的點、結尾的點、保留名)今後的任何改動都等於改 §1 這個硬約定**,要走 ADR,不能當軟約定。
 **Rust 是權威**(`LearningFs` 的邊界在 Rust command),TypeScript 那一側(schema、ingest、lint)是同一規則的第二份實作;兩份載入
-同一個機器可讀的向量檔 `contracts/fixtures/path-segment-vectors.json`(真碼位,附 `rule` 與 `why`),不各自抄表。
+同一個機器可讀的向量檔 `contracts/fixtures/path-segment-vectors.json`(真碼位,每列附 `applies_to`、`rule`、`why`),不各自抄表。**實作用 `applies_to` 選列、不用 `rule` 欄分**:長度那四列只適用於 `category`(64 位元組的上限是 `CategoryId` 的,
+§13 的路徑段沒有這條,只有整條路徑 240);`expect` 是對 `applies_to` 裡每一種檢查而言。
 1.4.0 之前的 `CategoryId` 只禁空白與分隔符,所以 ingest 可能建出邊界讀不了的分類(例如 `C++`);收窄之後 ingest 建分類前就拒絕。
 
 ## 2. 教學卡
