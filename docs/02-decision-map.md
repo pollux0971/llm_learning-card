@@ -1215,3 +1215,37 @@ graph TD
   - `raw_type != commit` 那個子條件實際上多餘(型別不是 commit 時 raw 物件 sha 不可能等於 commit sha);突變實驗證實拿掉它測試仍綠。留著無害。
   - 上游(dev-paradigm)可以考慮:`check:gates` 不應該讓沒改過的舊 consumer 變紅。這是給上游的提案素材,**待 T3 的整鏈量測之後一起送**,現在不送。
 - **Related**: `docs/tickets/T4-pin-template-for-check-gates.md`、`docs/tickets/T4b-pin-template-phase-b.md`、`docs/reviews/T4-pin-template-phase-a-2026-10-01.md`、`docs/reviews/T4b-2026-10-15.md`、`scripts/check-gates-pinned.sh`、`scripts/check-gates-pinned.test.ts`
+
+## ADR-065 · 工作 DAG 從既有檔案推導,不另立狀態來源;平行規則 R1–R5;五個 session 的分工
+
+- **Status**: proposed · 2026-10-15(統籌·契約草擬。使用者 2026-10-15 的原話「重新設計dag,平行開發」即 `/feature` 的確認;分流結果 = 新資料夾 `13-work-dag`,不動契約,不推翻任何 ADR。R1–R5 是技術顧問的裁決原文;`features/13-work-dag/FEATURE.md`「本規格對規則的解讀」七條是草擬者的推論,等顧問確認或改)
+- **Context**: 現在「哪些工能開工、哪些能同時做」靠協調者和顧問的記憶與對話排。已經發生過的失敗形狀:`12-prompt-quality/phase-2` 的 gate 在 2026-09-04 解除,備註寫「由協調者安排」,**8 天沒人排**(見 `docs/01-roadmap.md` 現況表);工單 T2b 的草稿漏了 Unicode Mark 類別與 `com9` 兩個該被測試抓住的突變,事後才補;兩個 worker 同時寫了 ADR-054(`autopilot` SKILL.md §4 的案例)。三者共同點:**能從檔案算出來的依賴與衝突,沒有人算**。
+- **Decision**:
+  1. **圖是推導的,不是狀態。** 節點與邊從三種既有來源算出:`FEATURE.md` 的 Phase 表(phase 狀態的唯一來源)、`NEXT.md` 的 gate 宣告(phase gate 的正本)、git tag `I<N>`(整合點通過);phase-2 再加 `docs/tickets/` 的工單檔頭。**不新增任何要人手維護的登記表**,不存檔,每次重算。ADR-025 不變:`NEXT.md` 仍是 phase gate 的正本,`FEATURE.md` 仍是 phase 狀態的唯一來源。
+  2. **決策 gate(ADR / § / commit)沒有可判定的完成訊號,一律列「待人判」,工具不猜。** ADR 存在不等於那個決定已經做了。
+  3. **平行規則(技術顧問裁決原文)**:
+     - **R1** ready = `deps` 全滿足(phase `done` / tag `I<N>` 存在 / 工單 `merged`)。
+     - **R2** 兩張工單同時跑,`touches` 用 `scripts/boundaries.owners.json` 最長前綴對到的落點不能重疊;落點是 `contracts` 的,和任何工作都互斥。
+     - **R3** `cpu: heavy` 同一時間最多 1 個在 `dispatched` 或 `review`(驗收跑變異也算)。
+     - **R4** phase 的 WIP ≤ 2(CLAUDE.md);`dispatched` 的工單 ≤ 3。
+     - **R5** 依賴鏈深度 ≤ 4。
+  4. **`dag:check` 要紅的情況(顧問原文)**:有環、引用解析不到、檔頭缺欄位或值不合法、`status=dispatched` 的工單違反 R2 或 R3、`touches` 對不到落點表。接進 `check:all` 的 `chain`。
+  5. **工單檔頭**(格式在 `features/13-work-dag/FEATURE.md`):`id`、`deps`、`touches`、`cpu`、`budget_usd`、`status`、`owner`、`must_catch`。`must_catch` 的存在理由:驗收必須證明測試抓得到的突變,要在派工前就列出,不是事後補。
+  6. **分工**(角色,不寫 session 名,名字每次重開都變):
+     - **技術顧問**:技術裁決、DAG 規則、讀證據後 push main(只 fast-forward)、彙整要問使用者的事。
+     - **協調者**:只派 DAG 上 ready 的工、合併成批、跑完整 `check:all`、把證據送顧問;不自己驗收。
+     - **統籌·契約**:管「圖的內容」——工單、gherkin、FEATURE/NEXT、契約文字;每張工單寫檔頭;隨時備好 2 張 ready 的工單。
+     - **驗收**:每個 worker 交回的分支都由它獨立驗收、寫證據;合併後清 worktree。
+     - **前端**:UI / Tauri 的負責人;與統籌共寫 UI 工單、審 UI/Tauri 的 diff、觀感確認前先截圖。
+     不變:`CLAUDE.md` 只能問使用者的三件事;push 權在顧問;權限設定不放寬;吃 CPU 的一次只跑一個;寫檔一律在自己的分支。
+- **Alternatives**:
+  - **另立一份 DAG 登記檔(例如 `dag.json`,人手維護)** —— 不採用。又一份會漂的狀態來源;`deliberately-absent.json` 與 `gates.config.json` 的 `unwired` 已經是兩份鍵不同的登記表,再加一份只會多一個「改了這裡忘了那裡」。
+  - **直接用 orca 的 task / deps 當唯一的圖** —— 不採用。orca 的 task 是派工當下才建的,看不到還沒派的 phase 與 gate;而且 gate 的正本在檔案裡(ADR-025)。`--orca` 只是把推導結果印成 orca 指令,方向是檔案 → orca,不是反過來。
+  - **擴充模板的 `check-next-gates.ts`** —— 不採用。它有 SOURCE 標頭,勿手改;且它的工作是「引用解析得到」,不是「算依賴」。dag 自己解析,不 import 它。
+- **Consequences**:
+  - 新增守門 `dag:check`,第一版必然對真樹叫狼(P-71):phase-2 驗收要先在真 repo 上跑一次並把每一條紅燈分類(工具錯 / 樹真的有毛病)才接進 `chain`;R5 在真樹上的實測值寫進報告。
+  - **對 `features/README.md` 的一個例外**:phase-1 原則 3「只吃 `contracts/fixtures/`」,本功能的輸入是一整棵 `features/` + `docs/tickets/` 的樹,不是契約定義的資料格式,fixture 放在 `features/13-work-dag/fixtures/`。這條就是 README 要求的「記一筆」。
+  - `features/13-work-dag/FEATURE.md` 的七條解讀(R5 的深度算法、R4/R5 只 `WARN`、R4 的 3 只數 `dispatched`、R2 只比 `dispatched`、`dropped` 永遠不算滿足、`START` 的固定排序、無檔頭工單不紅)是草擬者推論,**ADR 定案前由顧問逐條確認**。
+  - **已知不處理**:優先權(哪張先做)屬於協調者(ADR-052);圖只給固定、可重現的排序。進行中的 phase 不參與 R2(沒有 `touches`)。
+  - **誠實記下**:規則只約束「圖裡有的東西」。一張沒有檔頭的新工單不在圖裡(第一版印 `NOTE untracked-ticket`,不紅);是否改成紅見 FEATURE.md「開放問題」。
+- **Related**: ADR-025(NEXT.md 管 gate)、ADR-052(排序原則)、ADR-064(刻意不守的義務與「不放進登記表」的理由)、`features/13-work-dag/`、`.claude/skills/autopilot/SKILL.md`
