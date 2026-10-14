@@ -465,11 +465,15 @@ NUL 與其他控制字元(不在字元集合)、反斜線(不在字元集合,所
 - **§1 的 `CategoryId` 比這份白名單寬**(只禁空白與分隔符),所以 ingest 可能建出邊界讀不了的分類(例如 `C++`,`+` 不在集合)。
   **這裡不修。** 後續:ingest 建分類時要用邊界同一個規則檢查並給清楚的錯誤;§1 是否要收窄,走 decision-record,可能要問使用者。
 
-**`raw/` 不服務。** `relPath` 的第一段(固定 ASCII 不分大小寫)等於 `raw` 時,`read` 與 `write` 都拒絕
-(1.3.0 只拒絕 `write`,1.3.1 擴大到 `read`,見上「字元集合與長度」第 3 點)。這是執行既有的硬約定
-(§12 `raw/<category>/` 唯讀;`CLAUDE.md` 硬規則 2「不改 `raw/`,那是使用者的素材」),不是修改它。
-在不分大小寫的檔案系統上 `Raw/x.md` 與 `raw/x.md` 是同一個檔,所以比對不依賴字元集合的結論。
-`list`、`exists`、`assetUrl` 對 `raw/` 的處理:**本節未裁**,不要自行假設。
+**`raw/` 不服務。** `relPath` 的第一段(固定 ASCII 不分大小寫)等於 `raw` 時,**`LearningFs` 的五個方法
+(`read`、`write`、`list`、`exists`、`assetUrl`)全部拒絕**(1.3.0 只拒絕 `write`,1.3.1 擴大,見上「字元集合與長度」
+第 3 點)。這是執行既有的硬約定(§12 `raw/<category>/` 唯讀;`CLAUDE.md` 硬規則 2「不改 `raw/`,那是使用者的素材」),
+不是修改它。在不分大小寫的檔案系統上 `Raw/x.md` 與 `raw/x.md` 是同一個檔,所以比對不依賴字元集合的結論。
+為什麼不只拒絕 `read` 與 `write`:
+1. `assetUrl` 是讀取路徑。它若不拒絕,webview 就能拿到 `raw/` 檔案的 URL 再載入,繞過「`read` 拒絕 `raw`」——
+   這正是「全綠但有旁路」。
+2. `exists` 與 `list` 會洩漏使用者素材存不存在、叫什麼名字。
+`list` 本身要求至少一段,所以列根目錄時 `raw` 不會出現(根目錄本來就拒絕),但 `list("raw")` 要拒絕。
 
 **`list(relDir)`**:`relDir` 用**同一份白名單**,**至少一段**,不開「空字串代表根」的例外(審查時查到
 `.list(` 在 `apps`、`packages`、`scripts` 的非測試程式碼零呼叫,沒有人列根目錄;沒有使用者就不開例外。
@@ -483,6 +487,9 @@ NUL 與其他控制字元(不在字元集合)、反斜線(不在字元集合,所
 |---|---|---|---|
 | `write` | `"raw/security/x.md"` | 拒絕 | `raw/` 不服務 |
 | `read` | `"raw/security/x.md"`、`"Raw/security/x.md"` | 拒絕 | `raw/` 不服務;第一段固定 ASCII 不分大小寫 |
+| `exists` | `"raw/security/x.md"` | 拒絕 | `raw/` 不服務(不洩漏素材存在與否) |
+| `list` | `"raw"` | 拒絕 | `raw/` 不服務(不洩漏素材名字) |
+| `assetUrl` | `"raw/security/x.md"` | 拒絕 | `raw/` 不服務(否則 webview 能繞過 `read`) |
 | `read` | `"cards/a."` | 拒絕 | 第 5 條:段不得以 `.` 結尾 |
 | `read` | `"cards/"` | 拒絕 | 第 1 條:沒有結尾的 `/` |
 | `read` | `""`(空字串) | 拒絕 | 第 1、2 條:至少一段、每段非空 |
