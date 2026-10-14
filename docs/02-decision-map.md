@@ -1255,3 +1255,57 @@ graph TD
     所以落點是 `infra` 的 `touches` 項目,**逐字相同,或一個是另一個的目錄前綴**才算重疊;其他落點照舊用落點比對。
     **不拆落點表**:拆開 `infra` 會改變 boundaries 的 import 規則(`scripts/` 底下互相 import 會突然變成跨落點違規),代價比收益大。
 - **Related**: ADR-025(NEXT.md 管 gate)、ADR-052(排序原則)、ADR-064(刻意不守的義務與「不放進登記表」的理由)、`features/13-work-dag/`、`.claude/skills/autopilot/SKILL.md`
+
+## ADR-066 · `learning/` 的位置由使用者層指標決定,加帳本身分;鎖改成機器範圍。取代 ADR-051 用 git 位置解析的那一半
+
+- **Status**: proposed · 2026-10-15(內容是技術顧問的裁決,依 T0 報告 A3 的 (a)+(c);統籌·契約草擬。使用者 2026-10-15 在顧問 session 裁決「帳本 A、push 維持顧問」,依顧問轉述;待顧問定案。動到硬約定 §12,契約 1.3.1 → 1.4.0)
+- **Context**: ADR-050 讓 `call()` 沒有 log 就硬錯;ADR-051 讓帳本跨 **worktree** 共用(`git rev-parse --git-common-dir` 的上一層)。T0 量到並用合成 repo 證實:同一招在 **clone** 之間算出各自的位置——三個 clone 就是三本帳本、三個互不相通的 `LLM_DAILY_CAP_USD`(`docs/reviews/T0-repo-root-shared-resources-2026-10-01.md` A1;特徵測試 `packages/core/src/llm/vault-clone-ledger.characterization.test.ts`)。這是 ADR-050 / ADR-051 修過的同一個洞第三次出現:煞車接上了,但接的是「這個簽出自己的帳本」,而且**靜默**。
+  另外三處「沒有帳本就當零」的路:`readDailySpend` 讀不到就回 `{ usd: 0 }`、`GatewayLlmRouter` 沒有 `logPath` 就回 `{ usd: 0 }`、`resolveVaultLearningDir` 解析不到就用 git 的位置。`scripts/llm-spend.ts` 的煞車路徑已經正確(讀不到就 exit 2)。
+  同一個機制也讓 `.stryker.lock` 每個 clone 一把(T0 證實),所以變異測試與整鏈在不同 clone 之間不互斥,而它們搶的是同一台 8 核機器(`docs/reviews/T3-phase-a-2026-10-14.md`)。
+- **Decision**:
+  1. **使用者層指標檔**,固定位置 `${XDG_CONFIG_HOME:-~/.config}/llm-learning-cards/vault.json`,內容 `{ "learning_dir": "<絕對路徑>", "vault_id": "<uuid>" }`。
+  2. **帳本身分標記** `learning/config/vault-id`,內容是同一個 uuid。**不是隱藏檔**(§13 擋以 `.` 開頭的段,而且使用者要看得到)。
+  3. **解析順序**(所有會花錢、或判斷花了多少錢的呼叫端):明確參數優先,其次指標檔。**拿掉退回 git-common-dir 的那條路。** 指標檔不存在、讀不到、`learning_dir` 不存在、標記不符,四種都拒絕,錯誤訊息寫出 `npx tsx scripts/vault.ts init` / `show`;`llm-spend` 一律 exit 2。
+  4. **花錢的帳本只能是驗證過的那一本。** 型別拆兩種:`VerifiedLedger`(只能由指標解析器產生)與 `ExplicitLedger`(明確參數;建構子名字要一眼看出未驗證,例如 `ExplicitLedger.unverified(path, reason)`,grep 找得到所有用到的地方)。**真呼叫(打網路、花錢)的 router 只收 `VerifiedLedger`**,假的 adapter 兩種都收。明確參數可以改**輸出**位置(`--out`、`learningDir`),不能改**帳本**位置;否則 `--log /tmp/x --live` 會把錢記進另一本帳,又裂開。`readDailySpend` 與 `GatewayLlmRouter` 不再接受裸字串——裸字串編譯不報錯、只在花錢時出事,把手讓型別檢查抓得到(ADR-061 的硬/軟判準:型別抓得到的才不用靠紀律)。
+  5. `readDailySpend`:身分驗證過的帳本,檔案不存在 = 全新安裝 = 0,合法;**沒有驗證過就丟錯,永遠不回 0**。
+  6. `scripts/vault.ts init --learning-dir <abs>` 明確 bootstrap(建立標記與指標;指標已存在且指向別處時拒絕,除非 `--force`——明示的丟棄可以,ADR-050);`show` 印出位置與身分是否相符。
+  7. **`.stryker.lock` 改成機器範圍**:`${XDG_RUNTIME_DIR}/llm-learning-cards/stryker.lock`;沒有 `XDG_RUNTIME_DIR` 時用 `~/.cache/llm-learning-cards/stryker.lock`。鎖不牽涉錢,不需要身分標記。這同時回答了 T3 的 B2(鎖要不要跨 clone)。
+  8. **桌面程式也讀同一個指標檔**(T2c 的「根目錄只能有一個來源」):Rust 端讀 `vault.json`,不再另有環境變數與 JSON 設定檔兩個來源。
+  9. 契約 §12 加 `config/vault-id` 並寫明位置由指標決定(1.4.0)。
+- **Alternatives**:
+  - **(a) 只有使用者範圍的固定路徑,沒有身分**(T0 A3):所有 clone 的預設位置唯一,但「指到了正確的那本」沒有證明;帳本被搬、被換,仍然靜默。**單獨不採用,併入本案。**
+  - **(b) 每 repo 一份,以環境變數共用**:缺省(沒設)時退回舊行為,等於把靜默分裂留成預設。**否決。**
+  - **(c) 只有身分標記,位置仍用 git 解析**:能發現「這本帳本不是你以為的那本」,但三個 clone 仍各解出各的位置,每個都「合法」。**單獨不採用,併入本案。**
+  - **讀取時加總多本帳本**:ADR-051 已否決(清掉一個簽出,總數悄悄變小)。仍然是單一帳本、仍然不加總。
+- **Consequences**:
+  - **新機器 / 新 clone 的第一步是 `vault.ts init`**;沒做之前真呼叫被拒絕——這是設計(失敗方向是拒絕)。協調者的 SKILL.md 要補這一步。
+  - 真實 `learning/` 在合併後由協調者跑一次 `init`:預期檔案數 167 → 168(只多 `config/vault-id`),帳本行數不變;這是工單 T5 寫明的**預期變化**。
+  - **已知限制,這次不修**:`.env` 的憑證與 `LLM_DAILY_CAP_USD` 仍然每個簽出各一份。帳本共用之後,差別只剩「上限的數字可能不同」。
+  - Windows / macOS 的使用者層設定位置(`%APPDATA%`、`~/Library/Application Support`)留給 phase-4/5。
+  - ADR-051 的後半(單一帳本、不加總)仍然成立;被取代的是「用 `git rev-parse --git-common-dir` 解析 `learning/` 位置」的那一半,以及 `vault.ts` 的 `resolveVaultRoot` / `resolveVaultLearningDir`。
+  - T2b 的驗收 E 第 10 條寫「`.stryker.lock` 每個 clone 一把」,本案合併後過時,由統籌·契約改文。
+  - 工單 T5 實作本案;T3 因此 `deps: [T5]`。
+- **Related**: ADR-050、ADR-051、ADR-061(硬/軟判準)、`contracts/types.md` §12、`docs/tickets/T5-vault-pointer-and-machine-lock.md`、`docs/reviews/T0-repo-root-shared-resources-2026-10-01.md`、`docs/reviews/T3-phase-a-2026-10-14.md`
+
+## ADR-067 · §1 的 `CategoryId` 收窄成 §13 的一個合法段,加 64 位元組上限;兩份實作共用同一份向量檔,Rust 是權威
+
+- **Status**: proposed · 2026-10-15(內容是技術顧問的裁決;統籌·契約草擬。使用者 2026-10-15 在顧問 session 批准「§1 收窄 A」,依顧問轉述;待顧問定案。動到硬約定 §1,契約 1.3.1 → 1.4.0,與 ADR-066 同一次升版)
+- **Context**: ADR-063 記下一個沒解決的問題:§1 的 `CategoryId` 只寫「非空,無路徑分隔符與空白」,比 §13 的路徑白名單寬,所以 ingest 可以建出邊界讀不了的分類(例如 `C++`,`+` 不在集合)。今天沒有人撞到:2026-10-15 重量,`learning/` 的 `cards/` 與 `raw/` 底下各有同一個分類(共 2 個資料夾、1 個分類),用 §13 的規則檢查,不合法 0 個(只量數量,不記名字)。**現在收窄不需要搬任何資料;分類越多,以後收窄越貴。**
+- **Decision**:
+  1. §1:`type CategoryId = string; // 必須是 §13 的一個合法段,且 UTF-8 位元組 ≤ 64`。合法段的全文在 §13(字元集合、已是 NFC、不以 `.` 開頭或結尾、第一個 `.` 之前不是 Windows 保留裝置名;非空、無 `/`),§1 引用、不重寫。
+  2. **長度上限 64 位元組**(顧問加):分類名會出現在 `cards/<cat>/<id>.short.md`、`graph/order-<cat>.json`;分類名太長,它底下每個路徑都會超過 §13 的 240。64 遠超過正常名字,而且一刀切掉所有長度邊界的情況。
+  3. **執行的地方**:01 的 zod schema(卡片 frontmatter 的 `category`、`categories.yaml` 的 `id`)、ingest 建分類時(raw 資料夾名不合法就拒絕,**錯誤要說是哪一條規則、不建出任何東西**)、09 lint 回報既有資料裡的違規。
+  4. **兩份實作共用同一份機器可讀的向量檔** `contracts/fixtures/path-segment-vectors.json`(51 列,真碼位,以 JSON 轉義寫、附 `rule` 與 `why`;含 64 通過 / 65 拒絕的長度列)。TS(schema、ingest、lint)與 Rust(`LearningFs` 邊界)都載同一份,不各自抄 §13 的表。**Rust 是權威**(邊界在 Rust command),TS 那份是同一規則的第二份實作。
+  5. 契約 §1 與 §13 都註明:**§13 第 2、3、5、6 條被 §1 引用,今後改動等於改 §1。**
+- **Alternatives**:
+  - **維持寬鬆、只在 ingest 補檢查**:§1 與邊界仍然不一致,schema 與 lint 放行的分類邊界會拒絕;兩個地方各自記得同一條規則,正是 ADR-060 / ADR-063 看到的漂移形狀。**否決。**
+  - **收窄成只准小寫 ASCII**:ADR-063 已經因為 `raw/Security/` 這類使用者自己的資料夾名而推翻同樣的建議。**否決。**
+  - **放寬 §13 去容納 `C++` 這類名字**:白名單放寬的方向雖然安全,但 `+`、括號等在 URL、shell、Windows 上各有各的問題;沒有任何一個現存分類需要它們。**否決,保留為將來有真實需求時的另一次硬約定修改。**
+  - **不設長度上限**:「邊界讀不了的分類」仍會出現在路徑超長的情況。**否決。**
+- **Consequences**:
+  - **硬約定 §1 現在引用一條軟約定 §13**:§13 的段規則今後的任何改動都要走 ADR 與使用者。這個耦合是刻意的(一份規則兩個入口),但要記得——§13 的標題與 §1 都加了註記。
+  - 現有資料 0 個不合法;ingest 對既有的使用者 `raw/` 資料夾名,若不合法會拒絕建立分類(錯誤訊息說明規則),使用者要自己改資料夾名——素材從不被改(CLAUDE.md 硬規則 2)。
+  - 向量檔是**單一事實來源**,但契約 §13 的 markdown 表仍存在;兩者可能漂。向量檔的每一列有 `rule` 欄,對得到 §13 的條目;markdown 表是給人讀的說明,不是測試來源。
+  - Unicode 版本:向量檔以 Unicode 15.0.0(Python `unicodedata`)驗證;Rust 與 TS 的 Unicode 版本可能不同,所以類別邊界上的字元兩邊都要跑同一份。
+  - 工單 T6 實作本案;依賴 T7(把 `schema/atomic-write.ts` 與 `ingest/state.ts` 的 §11b 實作統一成一份),因為兩者動的 `schema/`、`ingest/` 在 R2 上重疊。
+- **Related**: ADR-060、ADR-061(硬/軟判準)、ADR-062、ADR-063(留下這個問題)、ADR-066(同一次升版)、`contracts/types.md` §1 §13、`contracts/fixtures/path-segment-vectors.json`、`docs/tickets/T6-category-id-narrowing.md`
