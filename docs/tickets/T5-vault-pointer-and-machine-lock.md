@@ -186,8 +186,10 @@ T0 量到並由合成 repo 證實:`learning/` 的位置現在是「`git rev-pars
 
 ## 與其他工單的關係
 
-- **T7**(§11b 兩份實作統一,前端起草):動 `schema/`、`ingest/`、`scripts/lint.ts`、`scripts/degraded-report.ts`。落點表的 `infra` 是一個大桶——本張的
-  `scripts/mutate.ts` 與 T7 的 `scripts/degraded-report.ts` 都落在 `infra`,R2 會判重疊;若要並行,先把 `infra` 的落點拆細(落點表是我們自己的檔,顧問裁)。
+- **T7**(§11b 兩份實作統一,前端起草):動 `schema/`、`ingest/`、`scripts/lint.ts`、`scripts/degraded-report.ts`。R2 對落點 `infra` 的部分用**檔案層級**比對
+  (ADR-065 的 2026-10-15 補,顧問裁決):本張的 `scripts/mutate.ts`、`scripts/run-tests.ts`、`scripts/check-ledger-pollution.ts` 與 T7 的
+  `scripts/degraded-report.ts` 是不同檔案,**不重疊,可以並行**。唯一要注意的是兩張都可能碰 `packages/core/src/schema/atomic-write.ts` 的呼叫端:
+  本張**不改 `schema/`**(見前置),只在需要原子寫入時引用它。
 - **T3**(測試逾時與整鏈鎖):它的 B2 在問「鎖要不要跨 clone」。本張(裁決 6)直接回答了:**要**,而且改位置。T3 的 header 因此 `deps: [T5]`:
   兩張都動 `scripts/mutate.ts`、`scripts/run-tests.ts`,R2 不能並行;T3 階段 B 開工前要重讀本張合併後的鎖。
 - **T2b**:驗收 E 第 10 條寫「`.stryker.lock` 每個 clone 一把」,本張合併後這句過時;T2b 合併後由統籌·契約改文。
