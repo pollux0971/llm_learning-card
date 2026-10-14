@@ -512,6 +512,9 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
      for p in $(ls /proc | grep -E '^[0-9]+$'); do c=$(readlink /proc/$p/cwd 2>/dev/null); case "$c" in "<worktree 路徑>"*) echo "pid $p keys:[$(tr '\0' '\n' < /proc/$p/environ 2>/dev/null | grep -oE '^(OPENAI|ANTHROPIC|XAI|GOOGLE|GEMINI)[A-Z_]*=' | tr -d '=' | tr '\n' ',')]";; esac; done
      ```
      這是**這一次、這個 Orca 行程環境**的事實,不是保證 —— 每次派工都量,不沿用。(2026-10-14 顧問批准;理由:`env -u` 對不存在的變數也靜默成功,「我 unset 了」是斷言,「量到沒有」是證據。)
+   - **opencode worker(2026-10-15)**:opencode 用**登入檔**(`opencode auth list` 看有哪些)取 xAI 憑證,**不是環境變數**。所以行程環境量到 0 個 provider key 是**預期**,不是漏洞;
+     這一條對 opencode 的意義只剩「Orca 沒有把我們的 key 變數帶進去」。實際測得的鍵名只有 Orca 自己的 `ORCA_AGENT_LAUNCH_TOKEN`、`ORCA_AGENT_HOOK_TOKEN`。
+     **opencode 的派前檢查改為:worktree 內 `opencode.json` 存在,且 `permission.skill` 全 deny**(`jq -c .permission.skill <worktree>/opencode.json` 應為 `{"*":"deny"}`;只印這一個鍵,不貼全文)。
 2. **worker 第一步回報原始輸出**:`echo "${OPENAI_API_KEY:-UNSET}"; echo "${ANTHROPIC_API_KEY:-UNSET}"`,兩個都要是 `UNSET`。
    收的人要輸出,不收「我 unset 了」(`env -u` 對不存在的變數也會靜默成功)。
 3. **派工前量檔案**:`ls <worktree>/.env` 必須回 `No such file`,輸出貼進回報。**這步才是真的在保護的那層。**
@@ -572,6 +575,7 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent grok -
 - **prompt 長度**:15.7KB 直接塞命令列,2026-10-14 實測可行(grok 正常啟動並開工);**上限沒量過**。更長就改成「prompt 只放一句指向工單檔的絕對路徑」,工單本體放 worktree 外的檔(工單唯一正本、一字不改)。
 - **使用者要求不加限制**:不開 `--sandbox`(顧問說這台起不來,使用者也不要);除了 §4e 的三件零成本防護,不加新規則。
 - **第一次在新 clone 開 grok** 會問「信任這個目錄嗎」(顧問答 y)。在 workers clone 開第二個 worktree 沒有再問(協調者 2026-10-14 實測);新 clone 沒量。
+  (這與 Claude worker 同形:信任記在 git repo 根,見下方「Claude worker」。)
 - 畫面底下的 `Help improve Grok [Opt out] [Opt in]` 預設 Off,**不要 opt in**。
 
 **派工後的三件量測(缺一不算派好;都要貼原始輸出)**
@@ -590,6 +594,8 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent grok -
 
 **用量(每張工單收工都記)**
 - `grok usage <SESSION_ID>`(`SESSION_ID` 在 worker 行程環境的 `GROK_SESSION_ID`,是 id 不是機密)印 JSON:`totalTokens`、`modelCalls`、`costUsdTicks`。
+  **要在回合結束後才查**(畫面出現 `Worked for …` 之後)。worker 在回合中自己查會回「No usage recorded」,所以這個數字由協調者補。
+- 每張都記:ticks 原值、換算美元、模型、回合數、session id。**不要自己改模型或推理強度——那是使用者的決定。**
 - **換算:1 美元 = 1e10 `costUsdTicks`**(顧問用 `total_cost_usd 0.147148` ↔ `costUsdTicks 1471480000` 驗過)。回報**同時寫 ticks 原值與換算後的美元**,加上 session id。
 - 例:2026-10-14 探針兩回合 `totalTokens 62741`、`costUsdTicks 767500000` = 約 0.0768 美元。
 
@@ -605,6 +611,52 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent grok -
 三件都成立,才執行 `orca-ide worktree rm --worktree path:<路徑> --force --json`(此時 `--force` 只是因為 Orca 要求,不是用來蓋過檢查)。
 之後四邊都要量:目錄不在、`git worktree list` 與 branch 無殘留、`orca-ide worktree ps` 零命中、`/proc/*/cwd` 無殘留行程。
 (協調者 2026-10-14 清掉的 grok 探針符合這三件:沒有改動、`HEAD` 就是 origin/main、終端已閒置;但當時是憑「我剛開、什麼都沒做」判斷,沒有逐件量 —— 下次照上面逐件量。)
+
+**清理的範圍(2026-10-15,T3 階段 A 的教訓)**:不管是 worktree 還是 `/tmp` 的暫存,**只刪「自己登記過的清單」**(自己建立時記下的路徑),
+**不用「樣式比對 + owner 判斷」去掃**。T3 階段 A 的 worker 用「空目錄、owner 是自己」去清 `run-tests-partial-*-sibling`,誤刪了別人那個時間點剛建的空目錄
+(`/tmp/run-tests-partial-NaEr1F-sibling`,不是它的;空的、沒損失,但同形狀的清理遇到非空的就會出事)。
+另外 `scripts/run-tests.test.ts` 約 259 行的 `${d}-sibling` 沒登記清理、每跑一次漏一個空目錄,已記為後續小票。
+
+**T3 類(整套測試)工單的收工多量兩件**:workers clone 根有沒有被建出 `learning/`(`ls -d /data/python/llm_learning-cards-workers/learning`,應為 No such file);`/tmp` 與 worktree 的 `.stryker-tmp` 有沒有殘留(只看收工當下新於派工時間的)。
+
+### Claude worker(2026-10-14 起,可用;`orca-ide worktree create … --agent claude`)
+- Orca 起的是 `claude '--dangerously-skip-permissions' '<prompt>'`(Opus 5.5 xhigh,Claude Max 訂閱)。
+- **信任記在 git repo 根**(`~/.claude.json`),不是每個 worktree 路徑:`/data/python/llm_learning-cards` 與 `/data/python/llm_learning-cards-workers` 都已信任,所以 workers clone 底下新開的 worktree **不會再問**。
+  **新 clone 才會問一次,預設選 `No, exit`**:要先送下鍵 `$'\x1b[B'`、讀畫面確認 ❯ 在 `Yes, I trust this folder`,再 `--text "" --enter`。**不可盲按 Enter。**
+- 畫面:工作中 `✻ <動詞>… (<秒>s · ↓ <N> tokens · thinking with xhigh effort)`;狀態列 `[Opus 5.5] <名> | ctx N% | in:/out: | $x | 0m<N>s | 5h: N% | 7d: N%`;完成 `✻ <動詞> for 6s · done <時間>`。
+  **動詞是隨機的(Caramelizing、Cogitated…),不可當訊號**;穩定的是 `✻ <動詞>… (<秒>s` 的格式與狀態列的計時在走。
+- Claude worker **會載入專案 `.claude/skills`,包含協調者專用的 `autopilot`**:工單補充一定要寫「不要使用 autopilot、decision-record 等 skill」。
+- 額度與所有 Claude session(含協調者與顧問)**共用**:每張開工、收工各記狀態列的 `$` 與 `5h`/`7d`。狀態列的 `5h` 欄收工時可能不顯示,沒量到就寫沒量到。
+
+### opencode worker(2026-10-15 起;使用者選的 worker:xAI 帳號的 grok 4.7,不是 OpenRouter 金鑰)
+**模型與 skill 隔離來自專案根的 `opencode.json`**(`model=xai/grok-4.7`、`permission.skill` 全 deny)。worktree 必須從含 `opencode.json` 的 main 開。
+```bash
+orca-ide worktree create --repo id:<workers repo id> --name <名> --agent opencode --prompt "<工單>" --setup skip --no-parent --json
+```
+- Orca 實際起的命令列(量 `/proc/<pid>/cmdline`):`opencode --prompt <整段 prompt>`。**沒有 `--auto`、沒有 `--model`**;模型來自 `opencode.json`。
+  3.4KB 的 prompt 直接塞命令列可行。**不要改 `opencode.json`、不要登入或登出、不要讓 worker 改模型**(使用者的決定)。
+- **沒有信任提示**,開機直接開工;bash 工具呼叫不彈權限詢問。
+- 畫面:模型列 `Build · Grok 4.7 xAI · high`(確認模型與推理強度);工作中左側 `⠸ Thinking` 轉圈、底列 `esc interrupt   <N>K (<p>%) · $<累計>`(token 數、context 百分比、累計美元);工具呼叫顯示 `$ <指令>`、`→ Explored: …`。
+  完成:底列沒有 `esc interrupt`,改成 `… · $<累計>  ctrl+p commands`,回覆結尾一行 `Build · Grok 4.7 · 18m 53s · 82.4 tok/s`。
+- **畫面可能停在首頁、看不到 `esc interrupt`,但 session 其實已在跑**(2026-10-15 審核者遇過)。**判斷以 `opencode session export <id> --sanitize | jq` 的 messages 數與 `info.cost` 為準,不要連按 Enter**(連按會多送)。
+  找 id:`opencode session list --format json -n 5`(最新的在最前面)。
+- **用量**:`opencode session export <id> --sanitize | jq -c '.info|{model,cost,tokens,outcome}'`。`cost` 單位是**美元**(與畫面底列一致),**不是 ticks**,不要套 grok 的 1e10;
+  `tokens` 有 input/output/reasoning/cache.read。回報寫原值、模型(含 variant)、耗時(`time.idle - time.created`)、session id。
+  `--sanitize` 會把文字內容遮成 `[redacted…]`;要看審核者的文字就**去掉 `--sanitize`**(內容只有它自己的輸出,不含使用者資料;仍不進版控)。
+- **TUI 換模型用 `ctrl+x m`**(Switch model)。`ctrl+p` 選單在新 session 的第一項是 Switch session,別用 Enter 盲選。`--model` 旗標只有 `opencode run` 認,TUI 啟動不認。
+- **審核者**(使用者 2026-10-15 指定由 opencode 做第一輪審):`xai/grok-4.20-0309-reasoning`(選單裡的 `Grok 4.20 (Reasoning) xAI`;**不要選 OpenRouter 的同名項**)。
+  這個模型**沒有可切的 effort 檔**(`ctrl+t` 的 variant cycle 按多次底列不變;4.7 才有 `high`)。審核者 worktree 另開(不在 worker 自己的 worktree 裡審),從 worker 的分支開。
+  **審核者的 worktree 沒有 `node_modules`,它會只讀檔不跑測試(2026-10-15 第一輪就這樣)**:提示詞要明寫「先用 tar 複製 node_modules(不要用 symlink),跑 vitest 並貼 `Test Files`/`Tests` 原文;沒貼輸出,審核不算數」。
+  審核者的結論**不是放行**:協調者自己重跑測試與突變,顧問再對照原始檔下判斷。
+
+### 成本表(給使用者選 worker 用;2026-10-14/15 實際量到)
+| worker | 一張的例子 | 帳面 |
+|---|---|---|
+| grok(grok CLI,1.0.52) | T0-3/4 驗收測試 | $1.76(2 回合,約 257 萬 token,主因每回合背約 8 萬 token 上下文) |
+| opencode grok-4.7 high | T4b 小票;T4b 退回修正 | $2.56(18m53s);$0.91(7m) |
+| opencode grok-4.20 reasoning(審核) | T4b 兩輪審核 | $0.26;$0.26(約 3 分鐘) |
+| Claude(Opus 5.5 xhigh) | T3 階段 A(大量測) | 帳面約 $16.26;7d 額度約 +1 個百分點;5h 沒量到 |
+一張小票約 $0.9–2.6;審核約 $0.26;Claude 的大張約 $16。**用哪個 worker 是使用者的決定**,這張表只給選擇用。
 
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
