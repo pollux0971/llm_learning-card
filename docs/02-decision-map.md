@@ -1215,3 +1215,28 @@ graph TD
   - `raw_type != commit` 那個子條件實際上多餘(型別不是 commit 時 raw 物件 sha 不可能等於 commit sha);突變實驗證實拿掉它測試仍綠。留著無害。
   - 上游(dev-paradigm)可以考慮:`check:gates` 不應該讓沒改過的舊 consumer 變紅。這是給上游的提案素材,**待 T3 的整鏈量測之後一起送**,現在不送。
 - **Related**: `docs/tickets/T4-pin-template-for-check-gates.md`、`docs/tickets/T4b-pin-template-phase-b.md`、`docs/reviews/T4-pin-template-phase-a-2026-10-01.md`、`docs/reviews/T4b-2026-10-15.md`、`scripts/check-gates-pinned.sh`、`scripts/check-gates-pinned.test.ts`
+
+## ADR-070 · §11b 在 TS 只留一份:`writeFileAtomic` 照本文做,`atomicWriteJson` 與 `appendLogEvent` 改成轉呼叫
+
+- **Status**: accepted · 2026-10-15(技術顧問判定。§11b 本文不改,是實作追上本文)
+- **Context**: 2026-10-15 起草 T2c 時讀 main @ `f2f7d76`,TS 有三份 §11b 寫入、兩份 log append,而且不一樣(技術顧問同日打開檔案核對):
+  1. `packages/core/src/schema/atomic-write.ts:42` `writeFileAtomic`:暫存檔名 `.<name>.<pid>.<ts>.tmp`(§11b 寫「固定是 `<name>.tmp`」)、**沒有 fsync(目錄)**、`renameSync` 在 try 外面所以 rename 失敗會留下 tmp。**`session/io.ts:55` 寫 `state/reviews.json` 用的就是它**。
+  2. `packages/core/src/ingest/state.ts:36` `atomicWriteJson`:跟 §11b 一致(ADR-040 的四步、EINVAL 例外、清理在 finally 不遮錯)。
+  3. `packages/core/src/lint/atomic-write.ts:40` `atomicWriteFileSync`:`<name>.tmp` 對,但沒有 fsync(目錄);寫 `state/lint-report-<日期>.md`。
+  4. log:`appendLineAtomic`(O_APPEND、一次寫、fsync)與 `appendLogEvent`(`appendFileSync`,沒有 fsync)。
+  幾個月的記憶資料是用少了第 4 步的那一份寫的,違反硬約定 §11b 與 CLAUDE.md 硬規則 5。這是 ADR-060(字數四份實作)的同一個形狀。
+- **Decision**:
+  1. `writeFileAtomic`(01 data-layer)是 TS 唯一一份 §11b 實作,照 `atomicWriteJson` 的做法改:固定 `<name>.tmp`、fsync(fd)、rename、fsync(目錄)(只有 EINVAL 算成功)、清理在 `finally` 且不遮蔽原本的錯誤。
+  2. 舊樣式 `.<name>.<pid>.<ts>.tmp` 的殘檔照樣在下一次寫入時清掉(01 phase-2 已 done 的場景要繼續綠,`.feature` 不改)。
+  3. `atomicWriteJson` 與 `appendLogEvent` 改成轉呼叫 `writeFileAtomic` / `appendLineAtomic`。
+  4. `state.test.ts:141` 那組 §11b 測試對統一後的實作跑;抽成 `packages/core/src/schema/atomic-write.vectors.json`,Rust(ADR-069)用 `include_str!` 讀同一份。不放 `contracts/fixtures/`:落點在 contracts 的工作和任何工作都互斥,會讓 T7 不能與 T2b 修補輪、T5 並行;要不要提升,等契約 1.4.0 那一批由統籌·契約決定。
+  6. `lint/atomic-write.ts` 的 `atomicWriteFileSync` 也併進來:`scripts/lint.ts` 改呼叫 01 的 `writeFileAtomic`(09→01;守門紅就加例外,理由「§11b 只留一份實作」),不為了避開守門在 lint 留一份。
+  5. §11b 對 log 只要求「每次寫入是完整的一行」,不要求 fsync;`appendLineAtomic` 的 fsync 保留(多做無害)。
+- **Alternatives**:
+  - **以 `atomicWriteJson` 為正主** —— 不採用。它住在 02 ingest,而 `state/` 的格式與寫入歸 01;讓 01 依賴 02 方向反了。
+  - **維持多份,各加測試** —— 不採用。ADR-060 的教訓:每一份都自認照契約做,漂移是在沒人看的時候發生的。
+- **Consequences**:
+  - `state/reviews.json` 的寫入補上第 4 步。
+  - TS 的 §11b 寫入從三份變一份(`state/reviews.json`、ingest 的 state 與 deps、lint 報告都走 `writeFileAtomic`)。
+  - 建目錄:`atomicWriteJson` 與 `appendLogEvent` 保留各自的 `mkdirSync` 加一行轉呼叫,因為既有測試對「`writeFileAtomic` 建不建目錄」要求相反;「一行」指的是不留第二份邏輯。
+- **Related**: ADR-040、ADR-060、ADR-069、`docs/tickets/T7-single-atomic-write.md`、`contracts/types.md` §11b
