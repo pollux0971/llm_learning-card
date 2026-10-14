@@ -26,10 +26,11 @@
 5. **不新增獨立的完整性 gate。** 「標頭同版」這一半已內建在條件 1 的唯一性檢查。
    「新增檔忘了標頭」(`sync-gates.sh --check` 比每個檔的 sha,不會發現有人新增一個該帶標頭卻沒有的檔)
    這一半:**接受並登記為刻意不做**。
-   > ⚠️ **登記格式待顧問裁**:顧問說用 ADR-053 的 `deliberately-absent` 格式。我打開 `scripts/deliberately-absent.json`:
-   > 條目是 `{path, reason, adr}`,主鍵 `path` 是「刻意不存在於檔案系統上的**路徑**」(現有一筆 `.git/hooks/pre-commit`)。
-   > 「刻意不守的一項義務」不是一個路徑,裝不進去(同「先打開登記表看主鍵」的通則)。
-   > 本張**不自行選地方**,預設只在 T4b 報告與 ADR 的 Consequences 寫明「刻意不做」,等顧問指定落點。
+   **落點(技術顧問 2026-10-14 裁決)**:**ADR,不加登記表條目。** T4b 做完時顧問寫 ADR-064,Consequences 寫明
+   「新增檔忘了標頭,這個義務刻意不守」、理由、以及誰會發現(沒人,這就是代價);T4b 的報告也寫一句指向它。
+   理由:`scripts/deliberately-absent.json` 的欄位是 `{adr, path, reason}`,主鍵是「刻意不存在的**路徑**」;
+   `scripts/gates.config.json` 的 `unwired` 欄位是 `{file, reason}`,主鍵是「**守門腳本檔名**」;
+   「刻意不守的一項義務」兩個都不是。
 6. **上游提案**(`sync-gates.sh --check` 不該因模板自己新增需求而對舊版消費端變紅)**等本張做完再送**,
    要帶 T4 的 2×2 證據與本張實作後的結果。
 
@@ -41,9 +42,11 @@
 3. **紅燈對照(三個,都要非零退出碼,都用合成 fixture,不要動真的標頭,不要動模板 repo)**:
    - 不存在的 commit(標頭寫一個模板 repo 裡沒有的 sha);
    - 不存在的 repo(模板 repo 路徑指向不存在的目錄);
-   - 混版標頭(合成 fixture 裡兩個檔的 (版本, commit) 不同)。
+   - 混版標頭(合成 fixture 裡兩個檔的 (版本, commit) 不同)。**兩個 commit 必須是兩個不同的、都存在於模板 repo 的合法 commit**,
+     才算測到「唯一性」,不是只測到「commit 不存在」(那是第一個對照)。
    三個都要有「把對應檢查拿掉,測試必須變紅」的對照。
-4. `TEMPLATE_DIR` 明確設定時維持現行行為(直接用,不經 `git archive`),有測試。
+4. `TEMPLATE_DIR` 明確設定時維持現行行為(直接用,不經 `git archive`),有測試;**包裝腳本在這種情況要印一行
+   「TEMPLATE_DIR 明設,未驗證釘版本」**(不印的話,人會以為釘版本已經被檢查過),測試要斷言這一行存在。
 5. 取 tag 要比 **commit**,不是 tag 物件(`v1.6.8` 是 annotated tag:`git rev-parse v1.6.8` 是 tag 物件,
    `git rev-parse 'v1.6.8^{commit}'` 才是 `88a3e11`)。有測試。
 6. 沒有修改任何帶 `SOURCE` 標頭的檔,也沒有動 `/data/python/dev-paradigm`(只讀;不 checkout、不改 index、不建 tag):

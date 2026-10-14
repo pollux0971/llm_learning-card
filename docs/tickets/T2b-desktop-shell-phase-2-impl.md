@@ -26,7 +26,7 @@
 ## 前置
 
 - **§13 的 1.3.1 已在 main**(分支 `contracts-1.3.1`,待顧問審、協調者合併)。**測試 agent 要等它進 main 才開始。**
-- `features/10-desktop-shell/phase-2.feature` 要先對齊 1.3.1:`raw/` 的 `read` 也拒絕、NFC 與字元集合的向量用真碼位、
+- `features/10-desktop-shell/phase-2.feature` 要先對齊 1.3.1:`raw/` 的五個方法全拒、NFC 與字元集合的向量用真碼位、
   大寫與 `ー` 通過、保留名清單(含 `COM¹`–`COM³`、不含 `COM0`)。**這由統籌·契約更新、顧問審過再交測試 agent**
   (測試 agent 不寫 gherkin)。
 - `features/10-desktop-shell/FEATURE.md` 的 phase 表目前 phase-2 是 `todo`;狀態更新歸 phase-done 流程,不在本張手動改。
@@ -46,10 +46,14 @@
 
 驗收:**內建 `asset:` 協定關閉,或其 scope 為空;並有測試證明直接用 `asset:` URL 讀 `learning/` 內的檔會被拒絕。**
 asset handler 的拒絕只進 Rust log、不寫 §10 事件(已登記的已知限制,T2 第 6 條)。
+**asset handler 要有一列 `raw` 的 `assetUrl` 被拒**(除了 `..%252f` 雙重編碼):`LearningFs` 的五個方法
+(`read`、`write`、`list`、`exists`、`assetUrl`)對第一段是 `raw` 的路徑**全部拒絕**(§13 1.3.1),`assetUrl` 若不拒絕,
+webview 就能拿到 `raw/` 檔案的 URL 繞過 `read`。
 
 ### B. 白名單檢查(§13 1.3.1,Rust 為權威)
 
 3. 拒絕與通過的向量用 `phase-2.feature` 與 §13 向量表(**真碼位**,不是佔位)。
+   **`raw` 的五個方法全拒要各有場景**:`read`、`write`、`exists`、`list("raw")`、`assetUrl`(對第一段不分大小寫:`Raw/` 也拒)。
 4. **NFC 檢查要新增 Rust 相依**(例如 `unicode-normalization`):**工單回報要寫出名稱、版本、用途**,
    並記下它帶的 Unicode 版本(§13 已知限制:Rust 與 TypeScript 的 Unicode 版本可能不同,Rust 是權威)。
 5. 對照:把實作改成「先檢查、後轉換」,`..\..\etc\passwd` 與拒絕 Examples 的反斜線列必須變紅(沿用 T2 第 4 條);
