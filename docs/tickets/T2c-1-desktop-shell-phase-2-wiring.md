@@ -129,7 +129,7 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
 
 ### C. §11b 原子寫入對齊 T7 的共用向量
 
-9. Rust 的原子寫入(T2b 修補輪寫的)讀 T7 產出的向量檔,**逐列**跑過;Rust 用 trait 包 fs 呼叫來注入錯誤。
+9. Rust 的原子寫入(T2b 修補輪寫的)用 `include_str!` 讀 T7 產出的 **`packages/core/src/schema/atomic-write.vectors.json`**(從 `apps/desktop/src-tauri/` 用相對路徑),**逐列**跑過;Rust 用 trait 包 fs 呼叫來注入錯誤。Rust harness 也要斷言列數與列名,跟 TS harness 用同一份清單。
    向量的「注入」與「預期」兩欄 Rust 與 TS 必須逐列相同;Rust 不得自己新增或略過任何一列(要加就回報,改向量檔)。
 10. Rust 的 `write` command 對 `learning/` 底下**所有**路徑都走這份原子寫入(不只 `state/`):同一個函式、少一條分支、少一個變異點。
 
