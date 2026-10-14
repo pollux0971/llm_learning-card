@@ -85,6 +85,14 @@
       "03-llm-router"
     ],
     [
+      "scripts/vault.ts",
+      "03-llm-router"
+    ],
+    [
+      "scripts/vault.test.ts",
+      "03-llm-router"
+    ],
+    [
       "scripts/due.ts",
       "04-scheduler"
     ],
