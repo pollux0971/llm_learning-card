@@ -21,7 +21,7 @@
     "check:steps": "tsx scripts/check-step-dup.ts",
     "check:gherkin-dup": "tsx scripts/check-gherkin-dup.ts",
     "accept:coverage": "tsx scripts/check-phase-coverage.ts",
-    "check:gates": "\"${TEMPLATE_DIR:-/data/python/dev-paradigm}/scripts/sync-gates.sh\" \"$(git rev-parse --show-toplevel)\" scripts --check",
+    "check:gates": "bash scripts/check-gates-pinned.sh",
     "check:template-freshness": "tsx scripts/check-template-freshness.ts",
     "check:all": "tsx scripts/check-all.ts",
     "check:deliberately-absent": "tsx scripts/check-deliberately-absent.ts",
