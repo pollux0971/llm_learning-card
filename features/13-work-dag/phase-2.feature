@@ -189,6 +189,43 @@ Feature: Tickets join the graph and the parallel rules turn it into a start list
     Then it exits with status 1
     And the report has the line "PROBLEM r2-overlap T1 T2 on 10-desktop-shell"
 
+  Scenario: Two dispatched tickets that both land in infra but touch different files do not collide
+    Given the fake tree has these tickets:
+      | id | deps | touches         | cpu   | status     |
+      | T1 |      | scripts/mutate.ts | light | dispatched |
+      | T2 |      | scripts/dag.ts  | light | dispatched |
+    When the dag check runs on the fake tree
+    Then it exits with status 0
+    And the report has the line "LANDING T1 infra"
+    And the report has the line "LANDING T2 infra"
+    And the report has no line starting with "PROBLEM r2-overlap"
+
+  Scenario Outline: Two dispatched tickets in infra collide only when the files are the same or one is a directory above the other
+    Given the fake tree has these tickets:
+      | id | deps | touches   | cpu   | status     |
+      | T1 |      | <first>   | light | dispatched |
+      | T2 |      | <second>  | light | dispatched |
+    When the dag check runs on the fake tree
+    Then it exits with status 1
+    And the report has the line "PROBLEM r2-overlap T1 T2 on infra:<shared>"
+
+    Examples:
+      | first             | second            | shared            |
+      | scripts/mutate.ts | scripts/mutate.ts | scripts/mutate.ts |
+      | scripts/          | scripts/mutate.ts | scripts/          |
+      | scripts/mutate.ts | scripts/          | scripts/          |
+
+  Scenario: A ready ticket in infra is held only by a ticket on the same file
+    Given the fake tree has these tickets:
+      | id | deps | touches           | cpu   | status     |
+      | T1 |      | scripts/mutate.ts | light | dispatched |
+      | T2 |      | scripts/mutate.ts | light | todo       |
+      | T3 |      | scripts/dag.ts    | light | todo       |
+    When the dag tool runs on the fake tree
+    Then the report has the line "HELD T2 by R2 with T1"
+    And the report has the line "START T3"
+    And the report has no HELD line for "T3"
+
   Scenario: Two dispatched tickets that land in different places are fine
     Given the fake tree has these tickets:
       | id | deps | touches                    | cpu   | status     |

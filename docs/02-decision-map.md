@@ -1249,5 +1249,9 @@ graph TD
   - **已知不處理**:優先權(哪張先做)屬於協調者(ADR-052);圖只給固定、可重現的排序。進行中的 phase 不參與 R2(沒有 `touches`)。
   - **誠實記下**:規則只約束「圖裡有的東西」,所以每張工單檔都必須有檔頭,沒有的算紅;舊工單(T0 T2 T2b T3 T4 T4b)已補。`owner` 的清單含歷史值 `worker-codex`;`budget_usd: 0` 只准 `merged` / `dropped` 的歷史工單用。
   - `--orca` 印的是可直接執行的 bash(每張 `todo` 工單一行,deps 用前面建好的變數,已 `merged` 的依賴不列),task id 欄位名由 phase-2 實作者開工前用一次真的 `--json` 量出來。
-  - ADR 號碼:本號與 066–068 由統籌·契約保留;前端的 T2c / T7 從 069 起。
+  - ADR 號碼:本號與 066–067 由統籌·契約使用(068 不用,斷號不守,ADR-052);前端的 T2c / T7 從 069 起。
+  - **2026-10-15 補(技術顧問裁決):R2 對落點 `infra` 的部分改用檔案層級比對。** 落點表的 `infra` 是一個大桶,`scripts/` 底下大多數守門與工具都落在它;
+    用落點比對,動不同檔案的兩張工單(例如 T5 的 `scripts/mutate.ts` 與 T7 的 `scripts/degraded-report.ts`)會假性重疊而不能並行。
+    所以落點是 `infra` 的 `touches` 項目,**逐字相同,或一個是另一個的目錄前綴**才算重疊;其他落點照舊用落點比對。
+    **不拆落點表**:拆開 `infra` 會改變 boundaries 的 import 規則(`scripts/` 底下互相 import 會突然變成跨落點違規),代價比收益大。
 - **Related**: ADR-025(NEXT.md 管 gate)、ADR-052(排序原則)、ADR-064(刻意不守的義務與「不放進登記表」的理由)、`features/13-work-dag/`、`.claude/skills/autopilot/SKILL.md`

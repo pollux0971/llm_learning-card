@@ -113,7 +113,7 @@ HELD <node> by <R2|R3|R4> with <node>[,...]   # 能開工(R1)但被規則擋住;
 LANDING <ticket> <landing>                # 每張 status 不是 merged / dropped 的工單,touches 最長前綴對到的落點
 NOTE <kind> <detail>                      # 資訊,永不紅(目前沒有必須印的 NOTE)
 WARN <kind> <detail>                      # R4 / R5 違反:WARN r5-depth <id> <深度>、WARN r4-dispatched <數量>
-PROBLEM bad-header <id|檔名> missing|invalid <欄位>   # 另有 missing-header <檔名>、unresolved-ref、duplicate-id、cycle、r2-overlap <id> <id> on <落點>、r3-heavy <id> <id>、no-landing <id> <前綴>
+PROBLEM bad-header <id|檔名> missing|invalid <欄位>   # 另有 missing-header <檔名>、unresolved-ref、duplicate-id、cycle、r2-overlap <id> <id> on <落點>(落點是 infra 時寫 on infra:<重疊的那個項目,目錄前綴取較短的那個>)、r3-heavy <id> <id>、no-landing <id> <前綴>
 ```
 
 工單缺 `id` 時用檔名當名字。`id` 必須符合 `^[A-Za-z][A-Za-z0-9_]*$`(它會當 bash 變數名)。
@@ -199,7 +199,14 @@ must_catch: [ … ]                       # 驗收必須證明測試抓得到的
    (`scripts/` 會涵蓋 `scripts/due.ts` 所屬的落點;這是保守的:寧可誤擋,不要漏擋);
 3. 兩者都沒有 → `PROBLEM no-landing`。
 
-一張工單的落點是它所有項目落點的聯集;R2 比的是兩張工單的聯集有沒有交集。
+一張工單的落點是它所有項目落點的聯集。R2 比兩張工單有沒有重疊,**分兩種比法**(顧問 2026-10-15 補):
+
+- **落點不是 `infra` 的部分:用落點比對**——兩張工單的非 `infra` 落點有交集就重疊;落點是 `contracts` 的,和任何工作都互斥。
+- **落點是 `infra` 的部分:改用檔案層級比對**——`infra` 是一個大桶(`scripts/` 底下大多數守門與工具都落在它),用落點比對會讓動不同檔案的兩張工單假性重疊。
+  所以兩個落在 `infra` 的 `touches` 項目,**逐字相同,或其中一個是另一個的目錄前綴(以 `/` 結尾)**,才算重疊。
+  不改落點表本身(拆開 `infra` 會改變 boundaries 的 import 規則:`scripts/` 底下互相 import 會變成跨落點違規,代價比收益大)。
+
+兩張工單重疊 = 非 `infra` 落點有交集,**或**有一對 `infra` 項目按上面的規則重疊。
 **新增檔還沒登記在落點表時**(例如即將新增的 `scripts/vault.ts`),要嘛 `touches` 寫它所在的目錄,
 要嘛工單把「登記落點」列為第一步並先合併那一列;`dag:check` 不替沒登記的檔猜落點。
 
