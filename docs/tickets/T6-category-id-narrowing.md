@@ -42,7 +42,7 @@ type CategoryId = string;    // 必須是 §13 的一個合法段,且 UTF-8 位�
 
 合法段的全文在 §13(字元集合、已是 NFC、不以 `.` 開頭或結尾、第一個 `.` 之前不是 Windows 保留裝置名;非空、無 `/`)。
 **Rust 是權威**(邊界在 Rust command);TS 這份是同一規則的第二份實作,兩份載入同一個向量檔
-`contracts/fixtures/path-segment-vectors.json`(51 列,真碼位,附 `rule` 與 `why`)。
+`contracts/fixtures/path-segment-vectors.json`(51 列,真碼位,每列附 `applies_to`、`rule`、`why`)。
 
 ## 範圍
 
@@ -71,7 +71,8 @@ type CategoryId = string;    // 必須是 §13 的一個合法段,且 UTF-8 位�
 ## 驗收條件
 
 1. **向量檔是真的被載入**:測試在執行時讀 `contracts/fixtures/path-segment-vectors.json` 本身,對**每一列**呼叫驗證函式,斷言結果等於 `expect`。
-   不得把向量複製成測試裡的常數。另加一個測試:檔案裡出現過的每一個 `rule` 值(`charset`、`nfc`、`leading-dot`、`trailing-dot`、
+   **用 `applies_to` 選列**:對 `applies_to` 含 `category` 的每一列斷言 `expect`(長度那四列只適用於 `category`;對 §13 的路徑段,65 位元組是合法的)。
+   不得用 `rule` 欄分,也不得把向量複製成測試裡的常數。另加一個測試:檔案裡出現過的每一個 `rule` 值(`charset`、`nfc`、`leading-dot`、`trailing-dot`、
    `reserved`、`empty`、`separator`、`length`),都至少有一列被跑到(防止某類向量被刪光而沒人發現)。
    對照:把驗證函式改成放行 `C++`,該測試必須變紅。
 2. **schema**:卡片 frontmatter 的 `category` 與 `categories.yaml` 的 `id` 兩處都用同一個驗證函式;不合法時的錯誤訊息含 `rule` 名。
