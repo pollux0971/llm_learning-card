@@ -13,10 +13,6 @@
 #   不給 consumer-root 時用 git rev-parse --show-toplevel(npm run check:gates 走這條)。
 set -euo pipefail
 
-if [ -z "${TMPDIR:-}" ] && [ -d /tmp/opencode ]; then
-  export TMPDIR=/tmp/opencode
-fi
-
 if [ $# -gt 1 ]; then
   printf '%s\n' "✗ 用法: check-gates-pinned.sh [consumer-root]"
   exit 1

@@ -13,6 +13,9 @@
  * - 缺 repo:`✗ 模板 repo 不存在: <path>`
  * - 缺 commit:`✗ commit 不存在於模板 repo: <標頭裡的 sha>`
  * - tag 物件:`✗ tag <version> 要比 commit,不是 tag 物件: 標頭=<sha>`
+ * - archive 解不出 sync-gates.sh:`✗ archive 解不出 sync-gates.sh`
+ * - 零個 SOURCE 標頭:非零,並印 `✗ SOURCE 標頭的 (版本, commit) 不是恰好一種,不准多數決`
+ *   (零組走同一條「不是恰好一種」;只斷言非零的話,拿掉該檢查後 `read`/`set -e` 仍非零,突變不會變紅)
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -255,6 +258,51 @@ describe('T4b 驗收 5:取 tag 要比 commit,不是 tag 物件', () => {
 
     expect(code).not.toBe(0);
     expect(output).toContain(`✗ tag v9.9.9 要比 commit,不是 tag 物件: 標頭=${tagObj}`);
+    expect(output).not.toContain('STUB_SYNC_GATES_CALLED');
+    expect(output).not.toContain(SUCCESS);
+  });
+});
+
+describe('T4b 退回修正:缺席紅燈(合成 fixture)', () => {
+  it('archive 解不出 sync-gates.sh:非零,並印 archive 解不出 sync-gates.sh', () => {
+    const repo = initRepo();
+    mkdirSync(join(repo, 'scripts'));
+    writeFileSync(join(repo, 'scripts', 'other.sh'), '#!/usr/bin/env bash\necho OTHER\n', 'utf8');
+    const commit = commitAll(repo, 'no-sync-gates');
+    git(repo, ['tag', '-a', 'v1.2.3', commit, '-m', 'no sync-gates']);
+    expect(git(repo, ['cat-file', '-t', commit])).toBe('commit');
+    expect(git(repo, ['rev-parse', 'v1.2.3^{commit}'])).toBe(commit);
+
+    const consumer = writeConsumer({
+      'scripts/only.ts': `// SOURCE: template v1.2.3 (${commit}) sha256=000\nexport {}\n`,
+    });
+
+    const { code, output } = runWrapper(consumer, { TEMPLATE_REPO: repo });
+
+    expect(code).not.toBe(0);
+    expect(output).toContain('archive 解不出 sync-gates.sh');
+    expect(output).not.toContain('git archive 失敗');
+    expect(output).not.toContain('OTHER');
+    expect(output).not.toContain('STUB_SYNC_GATES_CALLED');
+    expect(output).not.toContain(SUCCESS);
+  });
+
+  it('scripts 底下零個 SOURCE 標頭:非零', () => {
+    const repo = initRepo();
+    const consumer = writeConsumer({
+      'scripts/plain.ts': 'export const x = 1;\n',
+      // 正文才有 SOURCE。head -1 必須忽略;算進去就不是「零個標頭」。
+      'scripts/body-only.ts': `export const y = 2;\n// SOURCE: template v9.9.9 (${MISSING_COMMIT})\n`,
+    });
+
+    const { code, output } = runWrapper(consumer, { TEMPLATE_REPO: repo });
+
+    expect(code).not.toBe(0);
+    expect(output).toContain(MIXED_LINE);
+    expect(output).not.toContain('scripts/plain.ts');
+    expect(output).not.toContain('scripts/body-only.ts');
+    expect(output).not.toContain(MISSING_COMMIT);
+    expect(output).not.toContain('模板 repo 不存在');
     expect(output).not.toContain('STUB_SYNC_GATES_CALLED');
     expect(output).not.toContain(SUCCESS);
   });
