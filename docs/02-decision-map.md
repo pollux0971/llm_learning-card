@@ -1193,3 +1193,25 @@ graph TD
   - NFC 檢查需要 Rust 端的相依(例如 `unicode-normalization`),階段 1 的工單要寫出名稱、版本與用途。
   - 向量要用**真的碼位**。我用 Python 的 `unicodedata` 驗過:`가`(U+AC00)通過、`ᄀ`+`ᅡ`(U+1100 U+1161)拒絕、U+F900 拒絕(NFC 後變 U+8C48)、`é`(U+00E9)通過而 `e`+U+0301 拒絕、`ー` 通過、`COM¹.txt` 拒絕、`com0.md` 通過。
 - **Related**: ADR-062(白名單與原則)、ADR-060(§2 字數的 Script 定義)、`contracts/types.md` §1 §12 §13、`docs/reviews/T2-phase0-charset.md`(在分支 `pollux0971/t2-phase0-charset`,尚未進 main)、`packages/core/src/ingest/ingest.ts`
+
+## ADR-064 · `check:gates` 釘住 SOURCE 標頭寫的模板 commit:每次執行期取那份,不跟活的 HEAD
+
+- **Status**: accepted · 2026-10-15(技術顧問判定。守門的取用方式不是 `contracts/` 的約定,不需要問使用者)
+- **Context**: `check:gates` 原本呼叫 `${TEMPLATE_DIR:-/data/python/dev-paradigm}/scripts/sync-gates.sh`,也就是「拿模板此刻的活 HEAD 去比對 25 支守門腳本」。2026-10-01 實測:模板上游在 2026-09-19(0d02c74)開始要求 `.npx-init-manifest.json`,於是**沒改過的舊 commit 也會讓 `check:gates` 變紅**——紅的原因在模板,不在本 repo。模板是另一個 repo、有多個 session 在動,它的 HEAD 不是本 repo 能控制的輸入。本 repo 的 25 支腳本第一行都有 `// SOURCE: template v1.6.8 (88a3e11) …`(2026-10-15 在 `pollux0971/t4b-fix` 量:25 支,全是同一組 (版本, commit))。比對的基準應該是標頭自己宣告的那個 commit。
+- **Decision**:
+  1. `package.json` 的 `check:gates` 改呼叫 consumer 自己的包裝 `scripts/check-gates-pinned.sh`(**沒有 SOURCE 標頭**,是本 repo 的檔)。
+  2. 包裝每次執行:讀 `scripts/` 底下**第一行**的 SOURCE 標頭(不用 `grep -l` 掃全檔,正文裡的同一串字不是標頭),恰好一組 (版本, commit) 才繼續;零組或多於一組一律紅並列出全部檔名與值,**不准多數決**。
+  3. 標頭 commit 必須存在於模板 repo,且 `<版本>^{commit}` 解出來要等於它(比 commit,不比 annotated tag 的物件)。然後 `git archive` 那個 commit 到暫存目錄,用**那份**的 `sync-gates.sh scripts --check`。暫存目錄用 `trap EXIT` 清掉。
+  4. 任何一步取不到(模板 repo 不存在、不是 git repo、commit 不存在、archive 失敗、archive 裡沒有 `sync-gates.sh`):**紅,不准退回活的 HEAD**。
+  5. `TEMPLATE_DIR` 有設(非空)維持舊行為,直接用那個目錄,但**必須印「TEMPLATE_DIR 明設,未驗證釘版本」**。這是留給驗證時想用別版的人的逃生口,不是預設路徑。模板 repo 的位置另用 `TEMPLATE_REPO`(預設 `/data/python/dev-paradigm`),不與 `TEMPLATE_DIR` 混用。
+  6. 紅色對照用合成 fixture(不存在的 commit、不存在的 repo、混用兩個**都存在**的 commit 的標頭、archive 解不出 sync-gates.sh、零個標頭、annotated tag 物件 sha),不碰模板 repo,也不碰真的 `learning/`。
+- **Alternatives**:
+  - (a) 把模板那份複製進本 repo:會有第二份「勿手改」的副本,日後和標頭互相漂移。**否決**。
+  - (c) git submodule:給了版本釘住,但把模板的歷史、授權、更新流程一起拖進來,對一個只要「比對 25 個檔」的需求太重。**否決**。
+- **Consequences**:
+  - 新增一個前提:**模板 repo 在本機必須存在,且握有標頭那個 commit。** 沒有就紅。這是設計:寧可紅也不要悄悄比對錯的版本。換機器或乾淨 CI 要先把模板 clone 下來。
+  - ⚠️ **刻意沒有守的義務,記在這裡,不放進任何登記表**:「新增一支守門腳本卻忘了加 SOURCE 標頭」不會被抓到——沒有標頭的檔不在 25 支裡,包裝根本看不到它。我們考慮過再加一支完整性守門(列舉 `scripts/` 並要求每支「有標頭」或「在例外清單」),**決定不做**:(i) 本 repo 自己的腳本(如這支包裝)本來就合法地沒有標頭,例外清單會變成要維護的第二份真相;(ii) 這個漏洞的後果只是「那支腳本沒有被模板同步比對」,不是靜默毀資料。登記表放不下這種義務:`deliberately-absent.json` 的主鍵是路徑、`gates.config.json` 的 `unwired` 主鍵是腳本檔名,兩者描述的都是「某個檔」,而這裡缺的是「一條規則」。所以只記在本條。
+  - 升版流程不變:用 `sync-gates.sh` 升版會把所有標頭改成新 (版本, commit),之後包裝自然改用新的那份。**本 ADR 不升版。**
+  - `raw_type != commit` 那個子條件實際上多餘(型別不是 commit 時 raw 物件 sha 不可能等於 commit sha);突變實驗證實拿掉它測試仍綠。留著無害。
+  - 上游(dev-paradigm)可以考慮:`check:gates` 不應該讓沒改過的舊 consumer 變紅。這是給上游的提案素材,**待 T3 的整鏈量測之後一起送**,現在不送。
+- **Related**: `docs/tickets/T4-pin-template-for-check-gates.md`、`docs/tickets/T4b-pin-template-phase-b.md`、`docs/reviews/T4-pin-template-phase-a-2026-10-01.md`、`docs/reviews/T4b-2026-10-15.md`、`scripts/check-gates-pinned.sh`、`scripts/check-gates-pinned.test.ts`
