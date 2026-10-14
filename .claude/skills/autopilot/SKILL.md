@@ -349,6 +349,10 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 
 ## 4b. 平台操作備忘(Orca,實際踩過的)
 
+> ⚠️ **2026-10-14 起 worker 改用 grok(Codex 訂閱停了)。** 本節標「Codex」或 `claude` 的畫面字樣、`worker-start`、
+> `claude --dangerously-skip-permissions` 的做法是**歷史紀錄**;**教訓保留**(送出回執 ≠ 對方收到、探針要先證明能回「有」),
+> **字面不能照搬到 grok**。現行派工與 grok 的畫面見 §4f。
+
 - `worker-start --worktree new-top-level` **一定要帶 `--name`**,不帶會 `invalid_argument`
 - `worker-start` 只用在一個 worktree 的**第一輪**。同一 worktree 的第二、三輪(debug / 再審):
   `terminal create` → `terminal send 'claude --dangerously-skip-permissions' --enter` → `terminal wait --for tui-idle` → `dispatch --inject`。
@@ -371,7 +375,7 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
    —— 跟我一小時前抓到技術顧問「量了 A 推廣到 B」是同一個形狀,這次是我。)
   卡住的草稿用 `--interrupt` 清掉(他們實測有效)。
 
-  ⚠️ **`pgrep -f claude` 看不到 worker,因為 worker 不是 claude。**(2026-09-13 實測)
+  ⚠️ **`pgrep -f claude` 看不到 worker,因為 worker 不是 claude。**(2026-09-13 實測;當時 worker 是 Codex。現在換 grok,同樣看不到 —— 探針改用 `/proc/*/cwd` 在 worktree 路徑下的行程,見 §4f)
   我想判斷三個 worktree 的 agent 還活著沒,跑
   `for p in $(pgrep -f claude); do readlink /proc/$p/cwd; done` —— **三個 worker worktree
   一個都沒有**,六個 claude 程序全在主簽出。差點下的結論:「agent 都死了,而其中一個
@@ -384,7 +388,7 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
   **這條跟「沒紅過的守門不算接上」是同一句話,只是換到了臨時敲的一行診斷指令上** ——
   守門我們要求「先弄壞讓它紅一次」,**臨時查詢沒有這道要求,而誤判正是從那裡來的。**
 
-  ⚠️ **`stage: input_accepted` 也會騙人;`100% context left` 才是最好的開工偵測。**(2026-09-13 實測)
+  ⚠️ **`stage: input_accepted` 也會騙人;`100% context left` 才是最好的開工偵測。**(2026-09-13 實測;**Codex 的畫面**,grok 沒有這個字樣,見 §4f。教訓仍成立:送出的回執不等於對方開工。)
   同一批派三個 worker,三個都回 `{"state":"ready","stage":"input_accepted"}`,
   **其中一個的工單卡在草稿框裡一個字都沒送出,閒置約 40 分鐘。** 螢幕上是:
   ```
@@ -483,10 +487,11 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 2. **選張的依據不是排隊順序。** 依據是「現在做它的成本與收益」,而成本要算進
    **「我自己背景還欠多少」**(沒收的合併、沒回的驗推、沒清的 worktree)。排隊順序只是紀錄,不是理由。
 
-3. **`100% context left` 是派工的固定一步,不是坑清單裡的提醒。** 貼完工單後,
-   **等 25 秒再看終端**:還是 `100% context left` → 它沒開工,要重送;變成 `Working` → 才算開工。
-   §4b 已記載 `input_accepted` 會騙人、`100% context left` 才是最好的偵測,這裡只是把它升成固定步驟。
-   > ⚠️ **「25 秒」是當初量出來的值,依據已遺失。** 不要替它補理由;需要時重量。
+3. **派工後的開工確認是固定一步,不是坑清單裡的提醒。** 派工後讀 worker 的畫面,看到「它在做事」的訊號才算開工;
+   沒看到就當作沒送到。**訊號是哪個字樣取決於 worker 用什麼 agent:**
+   - Codex(已停用):`100% context left` = 沒開工;變成 `Working` = 開工。等 25 秒再看。
+   - grok(現行):`Waiting for response…` 或 `Worked for <N>s` = 開工/做完;見 §4f。
+   > ⚠️ **Codex 的「25 秒」是當初量出來的值,依據已遺失;grok 沒量過等待時間,我們沒有 grok 的門檻。** 不要替它補理由;需要時重量。
 
 4. **判斷 load 看趨勢,不看絕對值。** `uptime` 的三個數字:**1min < 5min < 15min = 退潮**(在降);
    **1min > 5min > 15min = 還在漲**。同一個 30 在退潮時可以開工,在上升時不行。
@@ -499,7 +504,14 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 
 ### 派 worker 的前置(四件,缺一不算派好)
 
-1. **env -u 啟動**:`env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY <agent 指令>`(所有 provider key)。
+1. **worker 手上沒有 provider key,且要量,不是宣稱。**
+   - 自己起的行程(例如 `terminal create --command`)可以加 `env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY <agent 指令>`。
+   - **`orca worktree create --agent grok --prompt …` 起的行程是 Orca 起的,我們加不了 `env -u`。**
+     改成**派後量 worker 行程環境的鍵名**(只比鍵名,不印值),0 命中才算過:
+     ```bash
+     for p in $(ls /proc | grep -E '^[0-9]+$'); do c=$(readlink /proc/$p/cwd 2>/dev/null); case "$c" in "<worktree 路徑>"*) echo "pid $p keys:[$(tr '\0' '\n' < /proc/$p/environ 2>/dev/null | grep -oE '^(OPENAI|ANTHROPIC|XAI|GOOGLE|GEMINI)[A-Z_]*=' | tr -d '=' | tr '\n' ',')]";; esac; done
+     ```
+     這是**這一次、這個 Orca 行程環境**的事實,不是保證 —— 每次派工都量,不沿用。(2026-10-14 顧問批准;理由:`env -u` 對不存在的變數也靜默成功,「我 unset 了」是斷言,「量到沒有」是證據。)
 2. **worker 第一步回報原始輸出**:`echo "${OPENAI_API_KEY:-UNSET}"; echo "${ANTHROPIC_API_KEY:-UNSET}"`,兩個都要是 `UNSET`。
    收的人要輸出,不收「我 unset 了」(`env -u` 對不存在的變數也會靜默成功)。
 3. **派工前量檔案**:`ls <worktree>/.env` 必須回 `No such file`,輸出貼進回報。**這步才是真的在保護的那層。**
@@ -512,6 +524,7 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 ⚠️ 但帳本(`resolveVaultLearningDir`,用 `git rev-parse --git-common-dir`)與 `.stryker.lock` 只解 worktree 不解 clone:
 三個 clone = 三份日上限。**開 clone 之前先列「還有什麼東西的範圍是從 repo 根算出來的」。**
 **煞車(2026-10-01 顧問):帳本範圍修好之前,任何 clone、任何 worktree 都不准 `--live` 或任何會打真 provider 的東西。**
+(2026-10-14 顧問確認解讀:**grok worker 自己的模型呼叫是 agent 的成本,不是專案的 LLM 呼叫**;專案程式碼的 `--live`、golden run 真模型仍禁止。)
 
 ### 非作者反向驗證(§2 第 1 步)要加的
 
@@ -540,13 +553,47 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 
 - workers clone 登記進了 Orca(`orca-ide repo add`);撤銷 `orca-ide repo remove`。環境副作用要登記。
 - §4d 第 4 條的 load 判準是**紀律不是機制**:擋不住整條鏈同時跑。等 T3。`cargo-mutants` 也要拿 `.stryker.lock`。
-- Codex 啟動坑:更新提示(加 `-c check_for_update_on_startup=false`;**別按 Enter**,選項 1 會 `curl | sh`)、
+- Codex 啟動坑(**Codex 已停用,保留為歷史**):更新提示(加 `-c check_for_update_on_startup=false`;**別按 Enter**,選項 1 會 `curl | sh`)、
   信任目錄提示(新 clone 第一次會問)、`codegraph init` 會問(小範圍回「不要」)、`terminal send` 要加 `--enter` 才送出。
 - **停一棵測試樹**:用 `/proc/*/cwd` 找「工作目錄在某路徑底下」的所有 pid,逐一停。
   **不用行程組**(`run-tests` 把 vitest 放在另一個組,對行程組發訊號殺不到;實例:殺過一次,13 個行程還活著、
   `.stryker.lock` 還被持有),**不用 `pkill -f`**(下一條)。停完要再列一次確認沒有剩的、鎖也釋放了。
 - **`pgrep -f` / `pkill -f` 會比中自己的命令字串。** 撈到的行先排除自己再當證據;比對完整 argv 並排除自己的 PID。
 - **輸出的結論行必須依賴量測結果。** 無條件 `echo "(以上為空 = 沒有…)"` 看起來跟有條件的一模一樣;要嘛 `if` 判命中數,要嘛不印結論只印原始輸出。
+
+## 4f. 派工(grok 版,2026-10-14 起;依據是 2026-10-14 協調者與顧問自己量到的)
+
+**現行派工指令**(從 workers clone 開,先 `git -C /data/python/llm_learning-cards-workers fetch origin`,base 是 origin/main):
+```bash
+orca-ide worktree create --repo id:<workers repo id> --name <名> --agent grok --prompt "<工單>" --setup skip --no-parent --json
+```
+- **一定用 `--agent grok --prompt`**:這樣 worker 才會出現在 Orca 側邊 worktree 卡片(使用者要求看得到)。**不要在背景用 `grok -p` 無人值守跑**(不會出現在卡片)。
+- 回傳的 `startupTerminal.handle` 就是 worker 的終端機。Orca 起的指令列是 `grok --permission-mode bypassPermissions -- <prompt>`。
+- **prompt 長度**:15.7KB 直接塞命令列,2026-10-14 實測可行(grok 正常啟動並開工);**上限沒量過**。更長就改成「prompt 只放一句指向工單檔的絕對路徑」,工單本體放 worktree 外的檔(工單唯一正本、一字不改)。
+- **使用者要求不加限制**:不開 `--sandbox`(顧問說這台起不來,使用者也不要);除了 §4e 的三件零成本防護,不加新規則。
+- **第一次在新 clone 開 grok** 會問「信任這個目錄嗎」(顧問答 y)。在 workers clone 開第二個 worktree 沒有再問(協調者 2026-10-14 實測);新 clone 沒量。
+- 畫面底下的 `Help improve Grok [Opt out] [Opt in]` 預設 Off,**不要 opt in**。
+
+**派工後的三件量測(缺一不算派好;都要貼原始輸出)**
+1. `ls <worktree>/.env` 必須 `No such file`(§4e 第 3 條)。
+2. worker 行程環境的 provider key 鍵名 0 命中(§4e 第 1 條的指令)。
+3. 讀 worker 的畫面(`orca-ide terminal read --terminal <handle> --json`):看到下面「工作中」或「完成」才算開工。
+
+**grok 的畫面(2026-10-14 協調者實測,grok 1.0.52)**
+- 頂列:`<branch> worktree <path> 31K / 256K │ [Dashboard]`(`31K / 256K` 是 context 用量,**開機就有**,不是「沒開工」的訊號);底框 `Grok 4.7 (high) · always-approve`。
+- 工作中:`⠦ Waiting for response… 10s ⇣31.3k [stop]`。
+- 做完:答案後一行 `Worked for 16s`。
+- **沒量到的**:「剛開工那一幀」(create 後 8 秒內就做完了)、`terminal send` 不帶 `--enter` 時草稿框的樣子。**不要替這兩個編字樣。** 送訊息仍要帶 `--enter`(帶了之後 1~2 秒內進入 `Waiting for response…`)。
+
+**判斷 worker 還活著**:`/proc/*/cwd` 在 worktree 路徑底下的行程(不是 `pgrep -f claude`、不是 `ListAgents`)。
+**注意**:grok 行程會連帶載入 `agent-bridge`(`bridge.py --name claude`)、codegraph、pencil MCP,所以 worker 可能出現在 agent-bridge 上;與 Codex 在 `ListAgents` 隱形的情況不同,**沒量**。顧問:低優先,看到 bridge 上出現 claude 名字的流量再回報。
+
+**用量(每張工單收工都記)**
+- `grok usage <SESSION_ID>`(`SESSION_ID` 在 worker 行程環境的 `GROK_SESSION_ID`,是 id 不是機密)印 JSON:`totalTokens`、`modelCalls`、`costUsdTicks`。
+- **換算:1 美元 = 1e10 `costUsdTicks`**(顧問用 `total_cost_usd 0.147148` ↔ `costUsdTicks 1471480000` 驗過)。回報**同時寫 ticks 原值與換算後的美元**,加上 session id。
+- 例:2026-10-14 探針兩回合 `totalTokens 62741`、`costUsdTicks 767500000` = 約 0.0768 美元。
+
+**清理一個 worker**:`orca-ide worktree rm --worktree path:<路徑> --force --json`,之後四邊都要量:目錄不在、`git worktree list` 與 branch 無殘留、`orca-ide worktree ps` 零命中、`/proc/*/cwd` 無殘留行程。
 
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
