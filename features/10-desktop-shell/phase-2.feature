@@ -226,9 +226,13 @@ Feature: The file boundary and the learning directory
   # read-only (section 12, hard rule 2), and its existence and names are not revealed either.
   # All five LearningFs methods refuse. assetUrl refuses because it is a read path: if it
   # did not, the web view could obtain a URL for a raw file and bypass the refusal of read.
+  # This outline covers the four methods that are Rust commands, whose refusal travels back to
+  # the TypeScript caller. assetUrl has a synchronous signature (it returns a string), so it is
+  # its own scenario below: the refusal on that side is a hint, and the authority is the asset
+  # protocol handler refusing when the web view actually requests the URL (the asset table above).
   # The first segment is compared with fixed ASCII case folding, because on a case-insensitive
   # file system Raw/ and raw/ are one directory.
-  Scenario Outline: The raw directory is not served by any of the five LearningFs methods
+  Scenario Outline: The raw directory is not served by the four command-backed LearningFs methods
     When the front end calls <operation> with the JSON-encoded path <path>
     Then the request is refused
     And the refusal is returned to the TypeScript caller
@@ -244,7 +248,12 @@ Feature: The file boundary and the learning directory
       | exists    | "raw/security/x.md" |
       | list      | "raw" |
       | list      | "Raw/security" |
-      | assetUrl  | "raw/security/x.md" |
+
+  Scenario: The raw directory is not served by assetUrl either
+    Given the boundary sits in front of a file system that records every call it receives
+    When the front end calls assetUrl with the JSON-encoded path "raw/security/x.md"
+    Then the call is refused and returns no url
+    And the file system behind the boundary received no call
 
   Scenario: Listing the root is refused
     When the front end lists the JSON-encoded directory ""
