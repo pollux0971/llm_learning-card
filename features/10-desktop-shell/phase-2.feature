@@ -56,7 +56,7 @@ Feature: The file boundary and the learning directory
   # features/10-desktop-shell/PATH-GUARD-EVIDENCE.md.
   #
   # Escape rule, measured with @cucumber/gherkin: step text is NOT backslash-decoded, a table
-  # cell is. So a JSON string written in a step needs ONE backslash (for example é),
+  # cell is. So a JSON string written in a step needs ONE backslash (for example \u00e9),
   # and the same JSON string written in a table cell needs TWO backslashes (\\u00e9).
 
   Scenario Outline: Paths that are not clean relative paths are refused through the read command
