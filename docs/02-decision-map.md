@@ -1258,7 +1258,7 @@ graph TD
 
 ## ADR-066 · `learning/` 的位置由使用者層指標決定,加帳本身分;鎖改成機器範圍。取代 ADR-051 用 git 位置解析的那一半
 
-- **Status**: proposed · 2026-10-15(內容是技術顧問的裁決,依 T0 報告 A3 的 (a)+(c);統籌·契約草擬。使用者 2026-10-15 在顧問 session 裁決「帳本 A、push 維持顧問」,依顧問轉述;待顧問定案。動到硬約定 §12,契約 1.3.1 → 1.4.0)
+- **Status**: accepted · 2026-10-15(技術顧問定案,逐行讀過 `contracts/types.md` 的 diff;內容是顧問的裁決,依 T0 報告 A3 的 (a)+(c);統籌·契約草擬。使用者 2026-10-15 在顧問 session 親口裁決「帳本 A、push 維持顧問」,依顧問轉述。動到硬約定 §12,契約 1.3.1 → 1.4.0)
 - **Context**: ADR-050 讓 `call()` 沒有 log 就硬錯;ADR-051 讓帳本跨 **worktree** 共用(`git rev-parse --git-common-dir` 的上一層)。T0 量到並用合成 repo 證實:同一招在 **clone** 之間算出各自的位置——三個 clone 就是三本帳本、三個互不相通的 `LLM_DAILY_CAP_USD`(`docs/reviews/T0-repo-root-shared-resources-2026-10-01.md` A1;特徵測試 `packages/core/src/llm/vault-clone-ledger.characterization.test.ts`)。這是 ADR-050 / ADR-051 修過的同一個洞第三次出現:煞車接上了,但接的是「這個簽出自己的帳本」,而且**靜默**。
   另外三處「沒有帳本就當零」的路:`readDailySpend` 讀不到就回 `{ usd: 0 }`、`GatewayLlmRouter` 沒有 `logPath` 就回 `{ usd: 0 }`、`resolveVaultLearningDir` 解析不到就用 git 的位置。`scripts/llm-spend.ts` 的煞車路徑已經正確(讀不到就 exit 2)。
   同一個機制也讓 `.stryker.lock` 每個 clone 一把(T0 證實),所以變異測試與整鏈在不同 clone 之間不互斥,而它們搶的是同一台 8 核機器(`docs/reviews/T3-phase-a-2026-10-14.md`)。
@@ -1289,7 +1289,7 @@ graph TD
 
 ## ADR-067 · §1 的 `CategoryId` 收窄成 §13 的一個合法段,加 64 位元組上限;兩份實作共用同一份向量檔,Rust 是權威
 
-- **Status**: proposed · 2026-10-15(內容是技術顧問的裁決;統籌·契約草擬。使用者 2026-10-15 在顧問 session 批准「§1 收窄 A」,依顧問轉述;待顧問定案。動到硬約定 §1,契約 1.3.1 → 1.4.0,與 ADR-066 同一次升版)
+- **Status**: accepted · 2026-10-15(技術顧問定案,逐行讀過 `contracts/types.md` 的 diff;內容是顧問的裁決;統籌·契約草擬。使用者 2026-10-15 在顧問 session 親口批准「§1 收窄 A」,依顧問轉述。動到硬約定 §1,契約 1.3.1 → 1.4.0,與 ADR-066 同一次升版)
 - **Context**: ADR-063 記下一個沒解決的問題:§1 的 `CategoryId` 只寫「非空,無路徑分隔符與空白」,比 §13 的路徑白名單寬,所以 ingest 可以建出邊界讀不了的分類(例如 `C++`,`+` 不在集合)。今天沒有人撞到:2026-10-15 重量,`learning/` 的 `cards/` 與 `raw/` 底下各有同一個分類(共 2 個資料夾、1 個分類),用 §13 的規則檢查,不合法 0 個(只量數量,不記名字)。**現在收窄不需要搬任何資料;分類越多,以後收窄越貴。**
 - **Decision**:
   1. §1:`type CategoryId = string; // 必須是 §13 的一個合法段,且 UTF-8 位元組 ≤ 64`。合法段的全文在 §13(字元集合、已是 NFC、不以 `.` 開頭或結尾、第一個 `.` 之前不是 Windows 保留裝置名;非空、無 `/`),§1 引用、不重寫。
