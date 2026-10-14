@@ -1167,3 +1167,29 @@ graph TD
   - **⚠️ asset protocol 的已知限制(刻意留的缺口)**:透過 asset protocol 的路徑拒絕**不會**產生 §10 的 warning 事件;只有經過 read command 的拒絕會,因為 asset protocol 沒有 TS 呼叫端可以回傳。寧可留一個有紀錄的缺口,也不讓 Rust 自己寫第二份 §10 事件:§11b 經 ADR-040 已補成四步(寫 tmp、fsync、rename、fsync 目錄),一份獨立的 Rust 實作要重現那四步而沒有任何東西會檢查它有沒有重現;缺口是靜態的不會惡化,第二份實作會漂移,漂移那天沒有人會知道。
   - **⚠️ 本 ADR 沒解決**:`raw/` 讀取、大小寫政策、CJK 與 NFC、保留名清單核實,見上方 Decision 最後一條。四件都在 phase-2 階段 0,工單必須各給決定,不能只回答「允不允許中文」。
 - **Related**: ADR-040(§11b 四步原子寫入)、ADR-060(§2 本文與實作漂移)、ADR-061(硬約定索引缺口與硬/軟判準)、`contracts/types.md` §12 §13、`features/10-desktop-shell/PATH-GUARD-EVIDENCE.md`、`CLAUDE.md` 硬規則 2 與 5
+
+## ADR-063 · §13 路徑檢查的字元集合、大小寫、長度與 `raw/`:填 ADR-062 留給階段 0 的空,並推翻報告的兩條建議
+
+- **Status**: accepted · 2026-10-14(技術顧問判定。§13 是軟約定,不需要問使用者)
+- **Context**: ADR-062 把 §13 的路徑檢查定成白名單,但「字元集合與長度上限」留給 10 phase-2 的階段 0 從 §1 與現存名字推導,並要求對四件事各給有依據的決定:大小寫政策、`raw/` 的讀取、CJK 與 Unicode 正規化、Windows 保留名清單核實。階段 0 的報告(`pollux0971/t2-phase0-charset`,ddf8651)已交回。本 ADR 是對它的裁決。報告的量測我重量了(2026-10-14):真實 `learning/`(排除其 `.git/`)72 個項目,最長 25 UTF-8 位元組,**沒有大寫**;`contracts/fixtures/` 93 個項目,最長 37 位元組,含大寫(`README` 之類,是 repo 自己的 fixture,不經 `LearningFs`);兩邊的字元全落在 `[A-Za-z0-9._-]`;`learning/` 只有一個分類。**樣本小,所以不拿它來收窄 §1 容許的字元。** UI 的 `fs.read` 呼叫我也重 grep 了:4 處,路徑樣式是卡片路徑、`questions/<id>.yaml`、`state/reviews.json`、`config/settings.yaml`,`apps/` 裡沒有 `raw/` 字面。
+- **Decision**:
+  1. **字元集合**:每一段的每個字元必須是 ASCII `A–Z a–z 0–9 _ - .`,或 Unicode 一般類別為 **L(字母)、N(數字)、M(組合記號)** 的字元。整個 `relPath` 必須已經是 **NFC**;不是就拒絕,**不轉換**(沿用 ADR-062 的原則:被檢查的字串與被使用的字串逐位元相同)。
+  2. **大小寫:允許大寫。** 推翻報告的「只收小寫」。見下方「推翻」。
+  3. **長度**:UTF-8 位元組 ≤ **240**。採納報告。已知限制:Windows 的 `MAX_PATH` 260 算的是絕對路徑,含 learning 根目錄本身,所以這個上限不保證任意使用者所選的根目錄;Windows 階段(phase-5)要加根目錄長度檢查。
+  4. **`raw/`**:`LearningFs` 不服務 `raw/`,`read` 與 `write` 都拒絕(第一段以固定 ASCII 不分大小寫比對)。採納報告。依據:UI source 的 `git grep` 沒有 `raw/` 的讀取,`fs.read` 只讀 `cards/<分類>/<id>.md`、`questions/<id>.yaml`、`state/<檔名>.json`、`config/<檔名>.yaml`;CLI ingest 讀 raw 用的是 Node 的 fs,不經 `LearningFs`。若以後 UI 要顯示 raw 素材,先另訂讀取需求,不放寬這個邊界。
+  5. **Windows 保留名**:第一個 `.` 之前的部分,以固定 ASCII 不分大小寫比對,不得等於 `CON PRN AUX NUL`、`COM1–COM9`、`COM¹–COM³`、`LPT1–LPT9`、`LPT¹–LPT³`。**不含 `COM0`、`LPT0`。** 已按 Microsoft Learn〈Naming Files, Paths, and Namespaces〉(頁面日期 2024-08-28)原文核實:我自己抓了該頁,列表就是上面這些;`COM0` 在該頁只出現在講 NT 命名空間裝置符號連結的段落,不是保留名清單。因為字元集合現在允許 `¹²³`(一般類別 No),這一層不再是備援,是真的在擋。
+  6. 契約版本 1.3.0 → 1.3.1(補上 ADR-062 留白的規則;實作尚未開始,沒有呼叫端受影響)。
+- **推翻報告的兩條建議**:
+  - **「禁止 ASCII 大寫」**。報告的理由是不分大小寫的檔案系統(Windows、macOS 預設)上 `Sec` 與 `sec` 是同一個檔。這個顧慮是真的,但我查了程式:`ingest.ts` 用 `raw/${category}` 與 `cards/<category>` 組路徑,分類名就是使用者 raw 資料夾的名字**原樣**,沒有任何轉小寫(`ids.ts` 的 `toLowerCase` 只用在卡片編號的字母前綴);§1 的 `CategoryId` 也只禁空白與路徑分隔符。所以禁大寫會讓 `raw/Security/` 這種分類產生的 `cards/Security/<id>.md` 被邊界整個擋掉。**這是功能退步,而它防的別名問題不會造成逃逸,只會造成重複。** 保護前綴 `raw` 已經用 ASCII 不分大小寫比對,不依賴字元集合。
+  - **「只收 Han、Hiragana、Katakana、Hangul 四個文字系統」**。我用 Unicode 資料量了:`ー`(U+30FC,片假名長音)的一般類別是 Lm(字母),但它的 Script 是 Common,四系統清單會把「セキュリティー」這類名字擋掉;注音符號、帶重音的拉丁字母也同樣。類別式(L/N/M)一句話講完,不用維護清單。對照 §2:字數規則用 Script 屬性是因為要把字元分成 CJK 與非 CJK 來**計數**;這裡是要決定**哪些字元可以出現在檔名裡**,是不同的問題,不必沿用同一個定義。
+- **Alternatives**:
+  - **採納報告原文(小寫 ASCII + 四個文字系統)** —— 不採用,理由如上。
+  - **允許大寫,但邊界額外拒絕與既有名字只差大小寫的路徑** —— 不採用。需要每次列目錄或查檔,比對象大得多,而且防的是重複不是逃逸。
+  - **只收 Han(使用者是繁體中文)** —— 不採用。那是產品政策,不能由單一分類的樣本判定;放寬方向本來就是安全的,收窄之後想放回來要再改一次契約。
+- **Consequences**:
+  - **已知問題,這條 ADR 沒解決**:§1 的 `CategoryId` 比這個白名單寬。ingest 可以建出邊界讀不了的分類,例如 `C++`(`+` 不在字元集合)或含括號的名字。今天只有一個分類 `security`,沒有人撞到。後續:ingest 建分類時要用邊界同一個規則檢查並給清楚的錯誤,而且是**呼叫同一個函式**,不是另寫一份(否則就是第五份字數實作的形狀)。§1 是否要收窄成同一個字元類別,動的是硬約定,要走 decision-record,可能要問使用者。
+  - **Unicode 版本漂移**:L/N/M 的成員會隨 Unicode 版本變。Rust 與 TypeScript 兩邊的表可能差一版。**Rust 是權威(邊界在 Rust command),TypeScript 那一側只是提示,不是執行。** 向量要包含類別邊界上的字元,兩邊都跑同一份向量。
+  - **別名**:允許大寫之後,在不分大小寫的檔案系統上同一個檔可能有兩種拼法(`Sec`、`sec`)。邊界不處理;若 ingest 允許兩個只差大小寫的分類同時存在,在這類檔案系統上會互相覆蓋。記為後續,與上一條同一張工單。
+  - NFC 檢查需要 Rust 端的相依(例如 `unicode-normalization`),階段 1 的工單要寫出名稱、版本與用途。
+  - 向量要用**真的碼位**。我用 Python 的 `unicodedata` 驗過:`가`(U+AC00)通過、`ᄀ`+`ᅡ`(U+1100 U+1161)拒絕、U+F900 拒絕(NFC 後變 U+8C48)、`é`(U+00E9)通過而 `e`+U+0301 拒絕、`ー` 通過、`COM¹.txt` 拒絕、`com0.md` 通過。
+- **Related**: ADR-062(白名單與原則)、ADR-060(§2 字數的 Script 定義)、`contracts/types.md` §1 §12 §13、`docs/reviews/T2-phase0-charset.md`(在分支 `pollux0971/t2-phase0-charset`,尚未進 main)、`packages/core/src/ingest/ingest.ts`
