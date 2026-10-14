@@ -119,7 +119,7 @@ done
 
 - **可刪候選**:1 全空(含 ignored 裡沒有有價值的筆記)、**(2 有 upstream 且 0 未推,或 3 為 YES)二擇一**、4 無行程、5 夠舊、6 已收件審完。**六項都要符合**(2 與 3 合算一項)。第 3 項為 YES 代表 HEAD 是 origin/main 的祖先,所有 commit 都已在 main 裡。
 - **使用中**:有行程在裡面,或 5 很新。標「使用中」,不動。
-- **不可刪**:有未提交/untracked 內容、有 main 沒有的 commit(含無 upstream)、無法確認。分支只存在 worktree 時,刪 worktree 前先確認分支另有保存。
+- **不可刪**:有未提交/untracked 內容、有 main 沒有的 commit(沒有 upstream,而且 HEAD 不是 origin/main 的祖先)、無法確認。分支只存在 worktree 時,刪 worktree 前先確認分支另有保存。
 - **看起來空其實不空**:HEAD 等於 main 不代表空;分支名、記憶檔都不是依據。
 - 刪完要**兩邊核對**:`git worktree list` 與 Orca。
 - 顧問另行宣告不可刪的清單,優先於我的判斷;清單會過期,每次重量。
