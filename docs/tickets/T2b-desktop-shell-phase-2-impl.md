@@ -49,11 +49,16 @@ asset handler 的拒絕只進 Rust log、不寫 §10 事件(已登記的已知�
 **asset handler 要有一列 `raw` 的 `assetUrl` 被拒**(除了 `..%252f` 雙重編碼):`LearningFs` 的五個方法
 (`read`、`write`、`list`、`exists`、`assetUrl`)對第一段是 `raw` 的路徑**全部拒絕**(§13 1.3.1),`assetUrl` 若不拒絕,
 webview 就能拿到 `raw/` 檔案的 URL 繞過 `read`。
+**`assetUrl` 是同步簽名**(§13:`assetUrl(relPath: string): string`),不可能往返 Rust command:TS 側的拒絕只是**提示**
+(函式自己丟錯、不呼叫 `recordEvent`),**權威是 asset handler 在 webview 真的請求該 URL 時拒絕**。
+所以 `phase-2.feature` 把 `assetUrl` 放在獨立場景,不放進另四個方法的 Outline。
+**第一步驗證 `register_uri_scheme_protocol` 時,一併回報 `assetUrl` 要怎麼產生 URL**(例如用 `convertFileSrc` 還是自訂協定的 URL 形式),
+以及 TS 側提示用的是哪一份檢查(§13 已說 Rust 為權威、TS 只是提示)。
 
 ### B. 白名單檢查(§13 1.3.1,Rust 為權威)
 
 3. 拒絕與通過的向量用 `phase-2.feature` 與 §13 向量表(**真碼位**,不是佔位)。
-   **`raw` 的五個方法全拒要各有場景**:`read`、`write`、`exists`、`list("raw")`、`assetUrl`(對第一段不分大小寫:`Raw/` 也拒)。
+   **`raw` 的五個方法全拒要各有場景**:`read`、`write`、`exists`、`list("raw")` 在同一個 Outline(拒絕往返 TS、記 `recordEvent`);`assetUrl` 在獨立場景(同步簽名,見驗收 A)。對第一段不分大小寫:`Raw/` 也拒。
 4. **NFC 檢查要新增 Rust 相依**(例如 `unicode-normalization`):**工單回報要寫出名稱、版本、用途**,
    並記下它帶的 Unicode 版本(§13 已知限制:Rust 與 TypeScript 的 Unicode 版本可能不同,Rust 是權威)。
 5. 對照:把實作改成「先檢查、後轉換」,`..\..\etc\passwd` 與拒絕 Examples 的反斜線列必須變紅(沿用 T2 第 4 條);
