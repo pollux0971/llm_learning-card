@@ -17,6 +17,8 @@ must_catch:
   - §11b 吞錯範圍擴大:目錄 fsync 的 EIO 也當成功,T7 共用向量的 EIO 列必須紅
   - asset 限流失效:拿掉 60 秒視窗(每次拒絕都寫一行),或寫出的那一行少了 count、count 少算,限流向量必須紅
   - SVG 裡的 script 被執行:拿掉 .svg 回應的 Content-Security-Policy: script-src 'none',或把 tauri.conf.json 的 csp 改回 null,header 與設定測試必須紅(另有 @manual 實機確認)
+  - Rust 自己抄一份段向量、和向量檔脫鉤:path_guard 的段測試不從 contracts/fixtures/path-segment-vectors.json 讀(改成寫死在測試裡),或向量檔改了(加/刪/改一列)而 Rust 測試仍綠,列數、各 rule 列數與檔案 sha256 的斷言必須紅
+  - 段規則誤套 CategoryId 的 64 位元組上限:path_guard 對單一段加上 ≤ 64 位元組的檢查,`rule: length` 的 65 位元組列在 check_segment 必須仍然通過的斷言必須紅
   - 真前端沒載入:frontendDist 的 html 引用一個 frontendDist 裡不存在的檔(T2b 的 /teach-card/src/main.ts),靜態檢查必須紅
 ---
 
@@ -62,7 +64,8 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
    - 新增:io 錯誤與拒絕分得出來(驗收 D)、圖片位元組往返(驗收 E)、SVG 不執行 script(驗收 E)、真前端靜態檢查(驗收 F)。
 4. 鎖:cargo-mutants 與完整 `cargo test` 要拿協調者指定的那一把(T5 之後是 `$XDG_RUNTIME_DIR/llm-learning-cards/stryker.lock`;
    T5 未合併前照 T2b 的做法,由協調者排,不和別的重活同時跑)。
-5. learning 根目錄在本張**沿用 T2b 的來源**(`LC_LEARNING_ROOT`),只當測試與開發用;換成單一來源是 T2c-2 的事。本張不得再新增任何根目錄來源。
+5. **契約 1.4.0 已在 main**(含 `contracts/fixtures/path-segment-vectors.json`,51 列;目前在 contracts clone 的 `contracts-1.4.0` @ `4ec8e62`,檔案 sha256 `767f7322…4131`)。驗收 B'(段向量)要讀它。
+6. learning 根目錄在本張**沿用 T2b 的來源**(`LC_LEARNING_ROOT`),只當測試與開發用;換成單一來源是 T2c-2 的事。本張不得再新增任何根目錄來源。
 
 ## 驗收條件
 
@@ -94,6 +97,20 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
    import 的所有檔,`node:` 與 `@core/schema/log` 零命中。
    probe(`boundary.ts`、`shell-config.ts`)可以留給 cucumber 用,但要搬到測試支援的位置或檔名標明 probe;
    webview 端不再用 10→01 的話,刪掉 T2b 在 `scripts/boundaries.allow.json` 加的那一筆,`npm run boundaries` 要綠。
+
+### A'. path_guard 讀契約的段向量(技術顧問 2026-10-15,契約 1.4.0 / ADR-067)
+
+4a. `path_guard.rs` 把每一段的規則抽成一個公開函式 `check_segment(seg: &str) -> Result<(), Refusal>`(非空、不含 `/`、字元集合、不以 `.` 開頭或結尾、保留名;段層級的 NFC),`check_rel_path` 對每一段呼叫它,再做整條路徑的規則(結構、NFC、240 位元組、`raw/`)。**行為不變**:T2b 的既有 path_guard 測試全綠、不改。
+4b. Rust 測試用 `include_str!` 從 `apps/desktop/src-tauri/` 以相對路徑載入 **`contracts/fixtures/path-segment-vectors.json`**(只讀,不寫;不算 R2 的 contracts 落點),逐列斷言:
+
+   | 列 | 斷言 |
+   |---|---|
+   | `rule` 不是 `length` 的每一列(47 列) | `check_segment(segment).is_ok() == (expect == "accept")` |
+   | `rule: length`、`expect: accept`(64 位元組,2 列) | `check_segment` 通過 |
+   | `rule: length`、`expect: refuse`(65 位元組,2 列) | `check_segment` **也通過**:64 位元組是 §1 `CategoryId` 的上限,§13 的段沒有這條(向量檔 `description` 自己寫明),桌面程式不建分類,不實作 `CategoryId` 檢查;**這條斷言防的是有人把 64 的上限誤套到所有路徑段**(會擋掉長的圖片檔名) |
+
+4c. **脫鉤防護**:斷言總列數 = 51、各 `rule` 的列數(charset 21、reserved 15、nfc 5、length 4、leading-dot 3、empty 1、separator 1、trailing-dot 1),以及檔案內容的 sha256 = `767f73222efca30a70aacdff92599f0af9245143424e2cdce93ab9c729b84131`。向量檔一改,這三條至少一條紅,改的人必須同時更新這三個數字,也就會看到 Rust 的段測試。**向量檔沒有「列名」欄位**,所以不用逐列名稱清單(那等於把 51 個段在測試裡再抄一次,正是要防的事)。
+4d. 向量檔的 `unicode_version_used_to_verify` 是 `15.0.0`;回報 `unicode-properties`、`unicode-normalization` 帶的 Unicode 版本。兩邊不同而某列結果不一致時,**不改向量**,停下回報(§13 已知限制:Rust 是權威,但向量是契約)。
 
 ### B. Rust 寫 warning 事件(技術顧問裁決 A)
 
