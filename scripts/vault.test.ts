@@ -845,6 +845,51 @@ describe('T8 B:標記檔內容不是合法 uuid —— 不加 --force 拒絕,加
     expect(ctrl.stdout).toContain('\\x1b');
   });
 
+  it('驗收補測:可列印的邊界 —— 空白(0x20)與 ~(0x7e)原樣,0x1f 與 0x7f 才轉義', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, ' ~\x7f\x1f!');
+    const r = run(box, a, { force: true, randomUUID: () => UUID_B });
+    expect(r.stdout.startsWith('舊標記(將被丟棄):\n ~\\x7f\\x1f!\n')).toBe(true);
+  });
+
+  it('驗收補測:剛好 200 位元組不加註,201 位元組才加「共 N 位元組」', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, 'y'.repeat(200));
+    const exact = run(box, a, { force: true, randomUUID: () => UUID_B });
+    expect(exact.stdout).not.toContain('共 ');
+    expect(exact.stdout.startsWith(`舊標記(將被丟棄):\n${'y'.repeat(200)}\n`)).toBe(true);
+
+    const box2 = sandbox();
+    const b = learningDir(box2.root, 'B');
+    writeMarker(b, 'y'.repeat(201));
+    const over = run(box2, b, { force: true, randomUUID: () => UUID_B });
+    expect(over.stdout).toContain('…(共 201 位元組,只印前 200 位元組)');
+  });
+
+  it('驗收補測:--force 成功時 stdout 整段、stderr 空 —— 沿用指標 id 與產生新 id 各一條', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, `${UUID_A}\n`);
+    expect(run(box, a).exitCode).toBe(0);
+    writeMarker(a, 'bad');
+    const reuse = run(box, a, { force: true });
+    expect(reuse.stderr).toBe('');
+    expect(reuse.stdout).toBe(
+      `舊標記(將被丟棄):\nbad\n已用 --force 重建帳本身分標記 ${join(a, 'config', 'vault-id')}(沿用指標的帳本身分 ${UUID_A.slice(0, 8)},指標沒有改)\n`,
+    );
+
+    const box2 = sandbox();
+    const b = learningDir(box2.root, 'B');
+    writeMarker(b, 'bad');
+    const fresh = run(box2, b, { force: true, randomUUID: () => UUID_B });
+    expect(fresh.stderr).toBe('');
+    expect(fresh.stdout).toBe(
+      `舊標記(將被丟棄):\nbad\n已用 --force 重建帳本身分標記 ${join(b, 'config', 'vault-id')} 與指標 ${pointerPathOf(box2)}(新的帳本身分 ${UUID_B.slice(0, 8)})\n`,
+    );
+  });
+
   it('驗收補測:反斜線也要轉義(\\x5c)—— 否則舊內容裡的 `\\x07` 文字和真的 0x07 分不出來', () => {
     const box = sandbox();
     const a = learningDir(box.root, 'A');
