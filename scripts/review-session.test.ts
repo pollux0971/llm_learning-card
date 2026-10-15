@@ -398,7 +398,7 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
       // 批改失敗的題沒有 history:不算 passed / returned,另列「Retry later: 1 question(s).」
       expect(first.stdout).toMatch(/1 passed, 0 returned\./);
       expect(first.stdout).toMatch(/Retry later: 1 question\(s\)\./);
-      expect(first.stdout).toMatch(/Answered this run: 2\./);
+      expect(first.stdout, '一次跑完、沒有續答的 session 不印 Answered 那行').not.toMatch(/Answered this run/);
 
       const second = await runToEnd(v, { applyText: 'PASSALL' });
       expect(second.asked.map((a) => a.card), '沒有結果的卡要再問,已經答完的不再問').toEqual(['sec-0001']);
@@ -744,6 +744,18 @@ describe('結束時 snapshot(驗收 4,ADR-042)', () => {
     writeReviews(v, reviews);
     return v;
   }
+
+  it(
+    '一次跑完、沒有續答的 session:小結跟 phase-1 位元組相同,不印「Answered this run」那行(續答才印,見「續答 0 題」那條)',
+    async () => {
+      const v = repoVault(3);
+      const out = await runToEnd(v);
+      expect(out.status, out.output).toBe(0);
+      expect(out.stdout).not.toMatch(/Answered this run/);
+      expect(out.stdout.endsWith('\n3 passed, 0 returned.\nTomorrow: 0 due.\n'), `小結應該跟 phase-1 一樣:\n${out.stdout}`).toBe(true);
+    },
+    TEST_TIMEOUT_MS,
+  );
 
   it(
     '答完一題以上:結束時剛好一個 commit(只有 state/ 底下的檔案,commit 訊息 snapshot <日期>),快取不在 learning/ 的 git 裡',
