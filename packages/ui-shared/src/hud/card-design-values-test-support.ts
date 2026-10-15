@@ -53,8 +53,19 @@ export const RESULT_SYMBOL = { pass: String.fromCodePoint(0x2713), fail: String.
 export const ERROR_TEXT = '評分失敗,請再試一次';
 
 // ── 第二輪(顧問看過 @manual 的四個觀察,2026-10-16) ───────────────────────
-/** O1:作答欄內底的亮度比面板暗超過這個值(0–255)就算「看起來像停用」 */
-export const FIELD_INNER_MAX_DARKER_LUMA = 12;
+/**
+ * O1(第三輪改嚴):作答欄與 HUD 按鈕的內部,每個取樣像素都等於「--hud-panel 疊在它後面那個像素上」(跟 T14 G1 同一套公式)。
+ * 為了讓「不透明白 / 灰 230 / 半透明疊在黑底上」都分得出來:量的時候在頁面上疊一個測試用的覆寫——
+ * `--hud-panel` 換成明顯的半透明紅、頁面背景換成深色。真正跟著 --hud-panel 走的內部會變紅,寫死的白或灰不會。
+ */
+export const FACE_TEST_PANEL = { r: 255, g: 0, b: 0, a: 0.5 } as const;
+export const FACE_TEST_BACKDROP = '#202020';
+/** 每個通道容許的誤差(同 T14 G1 的 3,再放寬 1 給抗鋸齒) */
+export const FACE_CHANNEL_TOLERANCE = 4;
+/** hover / focus 還在用橘色:按鈕或作答欄外擴 6 像素的範圍裡,接近 --hud-accent 的像素至少這麼多 */
+export const ACCENT_MIN_PIXELS = 20;
+export const ACCENT_CHANNEL_TOLERANCE = 32;
+
 /** O2:應用題 textarea 不能讓使用者拖縮放把手(把手會壓在切角線上),高度固定、捲動在裡面 */
 export const TEXTAREA_RESIZE = 'none';
 export const TEXTAREA_MIN_ROWS = 5;

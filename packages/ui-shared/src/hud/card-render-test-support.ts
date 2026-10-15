@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  CARD_DIRS, CARD_VIEWPORT, EXAMPLE_BORDER_LEFT_PX, EXAMPLE_MIN_MARGIN_PX, FIELD_INNER_MAX_DARKER_LUMA, HP_FILL_TOLERANCE_PX, HP_PERCENT_ONE_THIRD, NEXT_LABEL,
+  CARD_DIRS, CARD_VIEWPORT, EXAMPLE_BORDER_LEFT_PX, EXAMPLE_MIN_MARGIN_PX, FACE_CHANNEL_TOLERANCE, FACE_TEST_BACKDROP, FACE_TEST_PANEL, HP_FILL_TOLERANCE_PX, HP_PERCENT_ONE_THIRD, NEXT_LABEL,
   PANEL_FILL_TOLERANCE_PX, RESULT_TEXT, SUBMIT_FIELD_MIN_GAP_PX, SUBMIT_HIDDEN_AFTER_RESULT, SUBMIT_LABEL, TEXTAREA_MIN_ROWS,
   TEXTAREA_RESIZE, type CardName,
 } from './card-design-values-test-support.js';
@@ -340,32 +340,74 @@ export async function gotoApply(page: GalleryPage): Promise<void> {
   throw new Error('答了 8 次還沒有出現應用題');
 }
 
-const lumaOf = ([r, g, b]: [number, number, number]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+/** 量內部像素的目標:一組元素(運算式回傳陣列)與說明 */
+interface FaceTarget { label: string; elements: string }
+const FIELDS: FaceTarget = { label: '作答欄', elements: `[...document.querySelectorAll('[data-hud="field"]')]` };
+const buttonNamed = (label: string): FaceTarget => ({ label: `「${label}」鍵`, elements: `[${BUTTON_BY_TEXT(label)}].filter(Boolean)` });
 
 /**
- * O1:作答欄內底(輸入框裡沒字的地方)的顏色跟面板一樣——不能比面板暗到像停用(灰 230 那種)。
- * 面板色取同一列、作答欄左邊的面板內距(面板上沒有字也沒有框的地方)。填空與應用題各量一次。
+ * O1(第三輪):目標元素的內部(取樣點避開字)每個像素 = 測試用的半透明 --hud-panel 疊在「把目標藏起來之後」同一點的像素上。
+ * 做法:疊測試覆寫(--hud-panel 換半透明紅、頁面背景換深色)→ 截圖 → 目標設 visibility: hidden 再截一次當「後面」→ 逐點比對。
+ * 寫死的白(#fff)、灰 230、或半透明疊在黑底上都會對不上;跟著 --hud-panel 走的內部才對得上。
  */
-export async function fieldInnerColourProblems(page: GalleryPage): Promise<string[]> {
+async function faceProblems(page: GalleryPage, what: string, targets: FaceTarget[]): Promise<string[]> {
+  const T = FACE_TEST_PANEL;
+  await page.evaluate(`(() => { document.activeElement?.blur?.(); const s = document.createElement('style');
+    s.textContent = ':root { --hud-panel: rgba(${T.r}, ${T.g}, ${T.b}, ${T.a}) !important; } html { background: ${FACE_TEST_BACKDROP} !important; }';
+    document.head.append(s); return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))); })()`);
+  const probes = await page.evaluate<{ label: string; points: [number, number][] }[]>(`(() => {
+    const out = [];
+    for (const t of ${JSON.stringify(targets.map((t) => ({ label: t.label })))}) out.push({ label: t.label, points: [] });
+    const lists = [${targets.map((t) => t.elements).join(', ')}];
+    for (const els of lists) for (const e of els) e.scrollIntoView({ block: 'nearest' }); // 在捲動區下面的鍵(教學卡的「下一個」)先捲進來
+    lists.forEach((els, i) => {
+      for (const e of els) {
+        e.setAttribute('data-zz-face', '');
+        const b = e.getBoundingClientRect(); const cy = b.y + b.height / 2;
+        const isField = e.getAttribute('data-hud') === 'field';
+        const xs = isField ? [0.3, 0.5, 0.7].map((f) => b.x + b.width * f) : [b.x + 6, b.x + 8, b.x + b.width - 8, b.x + b.width - 6];
+        for (const x of xs) out[i].points.push([x, cy]);
+      }
+    });
+    return out;
+  })()`);
+  await page.evaluate('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))'); // 捲動之後等畫面更新
+  const withTargets = await page.screenshot();
+  await page.evaluate(`(() => { const s = document.createElement('style'); s.id = 'zz-hide'; s.textContent = '[data-zz-face] { visibility: hidden !important; }'; document.head.append(s);
+    return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))); })()`);
+  const behind = await page.screenshot();
+  await page.evaluate(`(() => { document.getElementById('zz-hide')?.remove(); document.querySelectorAll('[data-zz-face]').forEach((e) => e.removeAttribute('data-zz-face')); return true; })()`);
   const problems: string[] = [];
-  const measure = async (what: string): Promise<void> => {
-    // 第一格有焦點(橘色框會染色),所以先讓焦點離開,量最後一個作答欄
-    const r = await page.evaluate<Rect | null>(`(() => { document.activeElement?.blur?.(); const all = document.querySelectorAll('[data-hud="field"]'); const f = all[all.length - 1]; if (!f) return null;
-      const b = f.getBoundingClientRect(); return { x: b.x, y: b.y, width: b.width, height: b.height }; })()`);
-    if (!r) { problems.push(`${what}:畫面上沒有 [data-hud="field"]`); return; }
-    const img = await page.screenshot();
-    const y = Math.round(r.y + r.height / 2);
-    const inner = px(img, Math.round(r.x + r.width * 0.75), y);
-    const panel = px(img, 8, y);
-    const darker = lumaOf(panel) - lumaOf(inner);
-    if (darker > FIELD_INNER_MAX_DARKER_LUMA) {
-      problems.push(`${what}:作答欄內底 rgb(${inner.join(',')}) 比面板 rgb(${panel.join(',')}) 暗 ${darker.toFixed(0)}(> ${FIELD_INNER_MAX_DARKER_LUMA}),看起來像停用`);
+  for (const pr of probes) {
+    if (pr.points.length === 0) { problems.push(`${what}:畫面上找不到${pr.label}`); continue; }
+    let bad = 0;
+    for (const [x, y] of pr.points) {
+      const got = px(withTargets, x, y); const bg = px(behind, x, y);
+      const want = [T.r, T.g, T.b].map((c, i) => Math.round(c * T.a + bg[i]! * (1 - T.a)));
+      if (got.some((v, i) => Math.abs(v - want[i]!) > FACE_CHANNEL_TOLERANCE)) {
+        bad += 1;
+        if (bad === 1) problems.push(`${what}:${pr.label}內部 (${Math.round(x)},${Math.round(y)}) 是 rgb(${got.join(',')}),半透明 --hud-panel 疊在後面 rgb(${bg.join(',')}) 上應該約 rgb(${want.join(',')})`);
+      }
     }
-  };
-  await measure('填空題');
-  await gotoApply(page);
-  await measure('應用題');
+  }
   return problems;
+}
+
+/** 考試卡:填空題的每個作答欄與「送出」鍵、應用題的作答欄與「送出」鍵、看到結果後的「下一題」鍵 */
+export async function testCardFaceProblems(page: GalleryPage): Promise<string[]> {
+  const problems: string[] = [];
+  // 每個階段都用同一個頁面;覆寫疊在頁面上,之後的步驟仍然看得到
+  problems.push(...(await faceProblems(page, '填空題', [FIELDS, buttonNamed(SUBMIT_LABEL)])));
+  await gotoApply(page);
+  problems.push(...(await faceProblems(page, '應用題', [FIELDS, buttonNamed(SUBMIT_LABEL)])));
+  await submitCurrent(page);
+  problems.push(...(await faceProblems(page, '看到結果後', [buttonNamed(NEXT_LABEL)])));
+  return problems;
+}
+
+/** 教學卡:「下一個」鍵 */
+export async function teachCardFaceProblems(page: GalleryPage): Promise<string[]> {
+  return faceProblems(page, '教學卡', [buttonNamed('下一個')]);
 }
 
 /** O2:應用題 textarea 的 resize 是 none,至少五行高(06 phase-1「應用題至少五行高」不退步) */
@@ -398,12 +440,16 @@ export async function submitGapProblems(page: GalleryPage): Promise<string[]> {
 
 /** O4:教學卡例子框左邊那條線是 1 像素(跟面板的細黑線一致) */
 export async function exampleBorderProblems(page: GalleryPage): Promise<string[]> {
-  const m = await page.evaluate<{ width: string; style: string }[]>(`[...document.querySelectorAll('.lc-example')].map((e) => { const s = getComputedStyle(e); return { width: s.borderLeftWidth, style: s.borderLeftStyle }; })`);
+  const m = await page.evaluate<{ width: string; style: string; colour: string }[]>(`[...document.querySelectorAll('.lc-example')].map((e) => { const s = getComputedStyle(e); return { width: s.borderLeftWidth, style: s.borderLeftStyle, colour: s.borderLeftColor }; })`);
+  const line = parseColor(await page.evaluate<string>(`getComputedStyle(document.documentElement).getPropertyValue('--hud-line')`));
   if (m.length === 0) return ['第一張卡裡沒有 .lc-example'];
   const problems: string[] = [];
   m.forEach((e, i) => {
     if (e.width !== `${EXAMPLE_BORDER_LEFT_PX}px`) problems.push(`第 ${i + 1} 個例子框的 border-left-width 是 ${e.width},要 ${EXAMPLE_BORDER_LEFT_PX}px`);
     if (e.style === 'none') problems.push(`第 ${i + 1} 個例子框的 border-left-style 是 none(線不見了)`);
+    // 線要看得見而且是黑線(--hud-line):transparent 的線寬度與樣式都對,但畫面上沒有線
+    const c = parseColor(e.colour);
+    if (c.a !== 1 || c.r !== line.r || c.g !== line.g || c.b !== line.b) problems.push(`第 ${i + 1} 個例子框的 border-left-color 是 ${e.colour},要是不透明的 --hud-line(rgb(${line.r}, ${line.g}, ${line.b}))`);
   });
   return problems;
 }

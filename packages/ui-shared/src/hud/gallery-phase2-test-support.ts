@@ -9,13 +9,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  FIELD_FOCUS_MIN_DIFF_PIXELS, FIELD_MIN_HEIGHT_PX, FIELD_WIDTH_TOLERANCE_PX, HEAD_MIN_CONTRAST, PASS_FAIL_MIN_CONTRAST,
+  ACCENT_CHANNEL_TOLERANCE, ACCENT_MIN_PIXELS, FIELD_FOCUS_MIN_DIFF_PIXELS, FIELD_MIN_HEIGHT_PX, FIELD_WIDTH_TOLERANCE_PX, HEAD_MIN_CONTRAST, PASS_FAIL_MIN_CONTRAST,
 } from './card-design-values-test-support.js';
 import { attrOf, allEls, hasAncestor, parseMarkup, textOf, type El } from './card-static-test-support.js';
 import {
   DIAGONAL_INK, ONE_PIXEL_INK, differingPixels, edgeInk, inkAcross, px, type GalleryPage, type Image, type Rect,
 } from './render-test-support.js';
-import { HUD_DIR, contrast, cssVar, flattenRules, parseColor, readHudCss, worstContrast } from './test-support.js';
+import { CARD_DIRS } from './card-design-values-test-support.js';
+import { HUD_DIR, contrast, cssVar, flattenRules, parseColor, parseCss, readHudCss, worstContrast } from './test-support.js';
 
 // ───────────────────────────── hud.css 的新設計值
 /** `--hud-pass` / `--hud-fail` 對面板的最差對比(算法同內文) */
@@ -289,4 +290,108 @@ export async function panelFitsViewportProblems(page: GalleryPage): Promise<stri
   const H = 900;
   const bottom = r.y + r.height;
   return bottom <= H - 4 ? [] : [`展示頁的面板下緣在 y=${bottom.toFixed(0)},視窗只有 ${H}:T14 的量尺要整個面板都在視窗裡(要 ≤ ${H - 4})。用緊湊排版`];
+}
+
+
+// ───────────────────────────── 第三輪:作答欄與按鈕的底色只來自 --hud-panel(靜態)
+const FACE_SELECTOR = /data-hud\s*=\s*["'](field|button)["']|hud-button-label|hud-field-face|hud-field\b/;
+const STATE_SELECTOR = /:(hover|focus|focus-visible|focus-within|active|disabled|has\()/;
+const PSEUDO_SELECTOR = /::?(before|after)/;
+/** 一般狀態只准面板色;畫黑線用的偽元素可以再加黑線色;hover / focus / disabled 可以用橘色與實心色 */
+const ALLOWED_VARS = {
+  base: ['--hud-panel'],
+  pseudo: ['--hud-panel', '--hud-line'],
+  state: ['--hud-panel', '--hud-line', '--hud-accent', '--hud-accent-wash', '--hud-solid'],
+} as const;
+const NAMED_COLOUR = /\b(white|black|gray|grey|silver|red|green|blue|orange|yellow|whitesmoke|gainsboro|lightgray|lightgrey)\b/i;
+const KEEP_WORDS = /^(transparent|none|inherit|initial|unset|currentcolor)$/i;
+
+/**
+ * 作答欄(HudField)與 HUD 按鈕的底色:一般狀態只能來自 var(--hud-panel)(或 transparent / none);
+ * 不准寫死不透明底色(#fff、rgb(255,255,255)、rgb(230,…)、具名色),也不准用 --hud-field 這類專用變數當底。
+ * 範圍:hud.css、HudField.svelte、HudButton.svelte 的 <style>、兩張卡 App.svelte 的 <style>(只看選到 data-hud / .hud- 的規則)。
+ */
+export function faceBackgroundProblems(): string[] {
+  const sources: { name: string; text: string; cardRule: boolean }[] = [{ name: 'hud.css', text: readHudCss().text, cardRule: false }];
+  for (const f of ['HudField.svelte', 'HudButton.svelte']) {
+    const p = join(HUD_DIR, f);
+    if (existsSync(p)) sources.push({ name: f, text: (readFileSync(p, 'utf8').match(/<style[^>]*>([\s\S]*?)<\/style>/gi) ?? []).join('\n').replace(/<\/?style[^>]*>/gi, ''), cardRule: false });
+  }
+  for (const [card, dir] of Object.entries(CARD_DIRS)) {
+    const p = join(dir, 'src/App.svelte');
+    if (existsSync(p)) sources.push({ name: `${card}/App.svelte`, text: (readFileSync(p, 'utf8').match(/<style[^>]*>([\s\S]*?)<\/style>/gi) ?? []).join('\n').replace(/<\/?style[^>]*>/gi, ''), cardRule: true });
+  }
+  const problems: string[] = [];
+  let seen = 0;
+  for (const src of sources) {
+    for (const { rule } of flattenRules(parseCss(src.text))) {
+      const sel = rule.selector;
+      const hit = src.cardRule ? /data-hud|\.hud-/.test(sel) : FACE_SELECTOR.test(sel);
+      if (!hit) continue;
+      for (const key of ['background', 'background-color', 'background-image']) {
+        const v = rule.decls[key];
+        if (v === undefined) continue;
+        seen += 1;
+        const kind = STATE_SELECTOR.test(sel) ? 'state' : PSEUDO_SELECTOR.test(sel) ? 'pseudo' : 'base';
+        const noVars = v.replace(/var\(\s*--[a-z0-9-]+\s*\)/gi, '').replace(/url\([^)]*\)/gi, '');
+        if (/#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/.test(noVars) || NAMED_COLOUR.test(noVars)) {
+          problems.push(`${src.name}: ${sel} { ${key}: ${v} } 寫死了顏色(底色只能來自 var(--hud-panel))`);
+          continue;
+        }
+        for (const m of v.matchAll(/var\(\s*(--[a-z0-9-]+)/gi)) {
+          if (!(ALLOWED_VARS[kind] as readonly string[]).includes(m[1]!)) problems.push(`${src.name}: ${sel} { ${key}: ${v} } 用了 ${m[1]}(${kind === 'base' ? '一般狀態' : kind === 'pseudo' ? '偽元素' : 'hover/focus'}只准 ${ALLOWED_VARS[kind].join('、')})`);
+        }
+        if (kind === 'base' && !/var\(\s*--hud-panel/.test(v) && !KEEP_WORDS.test(v.replace(/!important/i, '').trim())) {
+          problems.push(`${src.name}: ${sel} { ${key}: ${v} } 一般狀態的底色要是 var(--hud-panel) 或 transparent`);
+        }
+      }
+    }
+  }
+  if (seen === 0) problems.push('沒有掃到任何作答欄或按鈕的背景規則(選擇器對不上?)');
+  return problems;
+}
+
+// ───────────────────────────── 第三輪:hover / focus 還是橘色,而且 focus 與 hover 分得出來
+function accentPixels(img: Image, accent: { r: number; g: number; b: number }): number {
+  let n = 0;
+  for (let i = 0; i < img.data.length; i += 4) {
+    if (Math.abs(img.data[i]! - accent.r) <= ACCENT_CHANNEL_TOLERANCE && Math.abs(img.data[i + 1]! - accent.g) <= ACCENT_CHANNEL_TOLERANCE && Math.abs(img.data[i + 2]! - accent.b) <= ACCENT_CHANNEL_TOLERANCE) n += 1;
+  }
+  return n;
+}
+
+export async function accentProblems(page: GalleryPage): Promise<string[]> {
+  await page.reset();
+  const accent = parseColor(await page.evaluate<string>(`getComputedStyle(document.documentElement).getPropertyValue('--hud-accent')`));
+  const problems: string[] = [];
+  const shot = async (selector: string, index: number, states: { sel: string; idx: number; list: string[] }[]) => {
+    const r = await viewRect(page, selector, index);
+    for (const st of states) await page.forceState(st.sel, st.idx, st.list);
+    return { img: crop(await page.screenshot(), grow(r, 6)) };
+  };
+  const clear = async (list: { sel: string; idx: number }[]) => { for (const c of list) await page.forceState(c.sel, c.idx, []); };
+
+  // 按鈕:一般狀態沒有橘色,hover 有,focus 有,而且兩者不同
+  const normalB = await shot('[data-hud="button"]', 1, []);
+  const hoverB = await shot('[data-hud="button"]', 1, [{ sel: '[data-hud="button"]', idx: 1, list: ['hover'] }]);
+  await clear([{ sel: '[data-hud="button"]', idx: 1 }]);
+  const focusB = await shot('[data-hud="button"]', 1, [{ sel: '[data-hud="button"]', idx: 1, list: ['focus', 'focus-visible'] }]);
+  await clear([{ sel: '[data-hud="button"]', idx: 1 }]);
+  const n0 = accentPixels(normalB.img, accent); const nh = accentPixels(hoverB.img, accent); const nf = accentPixels(focusB.img, accent);
+  if (n0 >= ACCENT_MIN_PIXELS) problems.push(`按鈕一般狀態就有 ${n0} 個橘色像素(橘色只給 hover / focus)`);
+  if (nh < ACCENT_MIN_PIXELS) problems.push(`按鈕 hover 只有 ${nh} 個橘色像素,要 ≥ ${ACCENT_MIN_PIXELS}`);
+  if (nf < ACCENT_MIN_PIXELS) problems.push(`按鈕 focus-visible 只有 ${nf} 個橘色像素,要 ≥ ${ACCENT_MIN_PIXELS}`);
+  if (differingPixels(hoverB.img, focusB.img) < FIELD_FOCUS_MIN_DIFF_PIXELS) problems.push('按鈕 focus-visible 與 hover 看不出不同(T14 G5)');
+
+  // 作答欄:focus-within 有橘色,平常沒有
+  const single = await page.evaluate<number>(`[...document.querySelectorAll('[data-hud="field"]')].findIndex((f) => f.querySelector('input'))`);
+  if (single < 0) return [...problems, '展示頁沒有單行作答欄'];
+  const normalF = await shot('[data-hud="field"]', single, []);
+  const focusF = await shot('[data-hud="field"]', single, [
+    { sel: '[data-hud="field"] input', idx: 0, list: ['focus', 'focus-visible'] }, { sel: '[data-hud="field"]', idx: single, list: ['focus-within'] }]);
+  await clear([{ sel: '[data-hud="field"] input', idx: 0 }, { sel: '[data-hud="field"]', idx: single }]);
+  const f0 = accentPixels(normalF.img, accent); const f1 = accentPixels(focusF.img, accent);
+  if (f0 >= ACCENT_MIN_PIXELS) problems.push(`作答欄一般狀態就有 ${f0} 個橘色像素`);
+  if (f1 < ACCENT_MIN_PIXELS) problems.push(`作答欄 focus-within 只有 ${f1} 個橘色像素,要 ≥ ${ACCENT_MIN_PIXELS}(框線變橘)`);
+  return problems;
 }

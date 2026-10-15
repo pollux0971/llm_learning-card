@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  darkSwitchReachableProblems, fieldCssProblems, fieldRenderProblems, galleryStaticProblems, gallerySlotsProblems,
+  accentProblems, darkSwitchReachableProblems, faceBackgroundProblems, fieldCssProblems, fieldRenderProblems, galleryStaticProblems, gallerySlotsProblems,
   headContrastProblems, panelFitsViewportProblems, passFailContrastProblems,
 } from './gallery-phase2-test-support.js';
 import { openGallery, type GalleryPage } from './render-test-support.js';
@@ -19,6 +19,12 @@ describe('hud.css 的新設計值(驗收 2、4)', () => {
 
   it('HudField 的樣式寫在 hud.css:有 :focus-within 規則,只引用 var(--hud-*),橘色不印字', () => {
     expect(fieldCssProblems()).toEqual([]);
+  });
+});
+
+describe('作答欄與按鈕的底色(第三輪)', () => {
+  it('底色只來自 var(--hud-panel):沒有寫死的不透明色,沒有 --hud-field 這類專用變數;一般狀態不墊黑底', () => {
+    expect(faceBackgroundProblems()).toEqual([]);
   });
 });
 
@@ -65,6 +71,10 @@ describe('展示頁的渲染(headless Chrome,720 × 900)', () => {
   it('驗收 8 / D1:深色背景的開關在頁首裡,而且點得到', async () => {
     expect(await darkSwitchReachableProblems(p())).toEqual([]);
   }, 60_000);
+
+  it('第三輪:hover 與 focus 還是橘色,focus 與 hover 分得出來;作答欄 focus-within 框線變橘', async () => {
+    expect(await accentProblems(p())).toEqual([]);
+  }, 90_000);
 
   it('驗收 9:加了頁首與作答欄之後,面板整個還在 720 × 900 的視窗裡(T14 的量尺才量得到)', async () => {
     expect(await panelFitsViewportProblems(p())).toEqual([]);
