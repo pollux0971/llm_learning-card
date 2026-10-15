@@ -79,7 +79,7 @@ JSON 合法、卻會讓花費算少的行,還是能混進帳本(我自己重現�
 
 ## 驗收條件
 
-1. 上面的 L、C1–C3,逐列由 `packages/core/src/llm/ledger-line-schema.test.ts` 的合規表(16 列)與壞行表(41 列)釘住,**測試已經寫好**。
+1. 上面的 L、C1–C3,逐列由 `packages/core/src/llm/ledger-line-schema.test.ts` 的合規表(16 列)與壞行表(43 列)釘住,**測試已經寫好**。
 2. 壞行讓 `readDailySpend` 丟 `UnknownSpendError`(行號在 `lineNumber` 與訊息裡)、`llm-spend` exit 2 且報告裡有行號與欄位、router 在打任何 adapter 之前拒絕(`scripts/llm-spend.test.ts` 的 T9 區塊、同檔的 router 區塊)。
 3. 寫入端的每一種 `llm_call` 形狀(成功、閘道成功、備援、逾時、截斷、重試)過規則;router 真的呼叫後寫進帳本的行馬上被接受。
 4. 既有測試的假資料不合規的,**測試 agent 已經改**(`review_done` 不是契約的事件類型,改 `reviewed`;`event()` 的預設補 `tokens_in/out: 0`;「沒有 ts 的物件照常算」改成壞行)。開發 worker 不改測試。
