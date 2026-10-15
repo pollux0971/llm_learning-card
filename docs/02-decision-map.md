@@ -1413,3 +1413,25 @@ graph TD
   - 之後遇到「自動場景全綠、人工確認缺前置條件」的整合點,先套這個處理:延後並寫進 roadmap,不為了湊 tag 補一條臨時入口。
 - **Related**: `docs/integration/i2-review-loop-headless.feature`、`docs/integration/i4-two-card-system.feature`、`docs/00-design.md` 4.1、`docs/05-parallel-and-integration.md`、
   `docs/01-roadmap.md`、`features/07-teach-card/`(phase-2)、ADR-060、ADR-070
+
+## ADR-074 · 當日 session 快取放在 XDG cache,不放在 `learning/`:可丟棄、不是使用者資料、不動 §12、以 vault_id 分開
+
+- **Status**: accepted · 2026-10-16(技術顧問裁決;T17 的待決 Q1)
+- **Context**: 11-review-cli phase-2 的續答、跨日、暫停需要一份「今天的題目名單」(第一次建好之後固定,當天新到期的卡不加進來)。
+  `features/11-review-cli/FEATURE.md` 原本寫 `state/session-<date>.json`,但 `contracts/types.md` §12(硬約定)的 `state/` 清單沒有這個檔;新增檔名是改硬約定,要問使用者(CLAUDE.md 硬規則 1)。
+  而這份快取壞了就丟掉重建,不是「幾個月累積的記憶資料」;放進 `learning/` 還會被每天的 snapshot(ADR-042)commit 進使用者的版本歷史,裡面全是不需要的雜訊。
+- **Decision**:
+  1. 快取放在 `${XDG_CACHE_HOME:-~/.cache}/llm-learning-cards/<vault_id>/session-<YYYY-MM-DD>.json`(`XDG_CACHE_HOME` 為空字串視同未設)。**§12 不動,`learning/` 底下不新增任何檔案。**
+  2. `<vault_id>` 取自 `<learning 目錄>/config/vault-id`;複習不需要帳本身分(契約 §12 後段),所以沒有或格式不對時改用 `path-` 加 `--dir` 的真實絕對路徑 sha256 前 16 個十六進位字元。換一本帳本不會讀到別本的快取。
+  3. 寫入照樣走 `writeFileAtomic`(對快取沒有壞處,也不用另造一套);讀不到或壞掉 → 丟棄、重建、在 `state/log.jsonl` 記一筆 `warning`(不寫絕對路徑)。
+  4. 「已答」以 `reviews.json` 的 `history` 為準(有一筆 `date` 等於今天),不看快取;快取只記今天的題目名單,不存答案與分數。批改失敗的卡沒有 history,續答時會再問一次。
+  5. 跨日:建好今天的快取後,刪掉同一個 `<vault_id>` 資料夾裡其他日期的檔案。
+- **Alternatives**:
+  - **`learning/state/session-<date>.json`**(FEATURE.md 原案)—— 不採用:要改 §12 硬約定(問使用者),而且會被 snapshot 收進版本歷史。
+  - **`learning/.cache/`** —— 不採用:§12 一樣要加目錄,snapshot 一樣要另外 ignore。
+  - **不存快取,每次重算** —— 不採用:phase-2 場景 1(題目集合當天固定)重算做不到。
+- **Consequences**:
+  - 換一台機器、清掉 `~/.cache`,只會讓當天的題目集合被重建一次;使用者的資料不受影響。
+  - 測試一律用 `mkdtemp` 當 `XDG_CACHE_HOME` 與 `HOME`,不碰真的 `~/.cache`。
+  - 桌面版(06 的複習視窗)之後若要共用同一份快取,讀同一個位置、同一個格式(`SessionCacheSchema`);那是 06 phase-2 的事。
+- **Related**: ADR-042(snapshot)、ADR-066(vault 指標檔與 vault-id)、ADR-073、`contracts/types.md` §11b、§12、`features/11-review-cli/FEATURE.md`、`docs/tickets/T17-review-cli-phase-2.md`

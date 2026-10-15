@@ -17,7 +17,8 @@ must_catch:
   - --dry-run 建立或修改了快取檔,或列出的不是「剩下的題目」
   - 複習結束沒有呼叫 snapshot;--dry-run 或 --pause 卻呼叫了
   - snapshot 失敗(not-a-repo、git 錯誤)時退出碼變了,或沒有印出提示,或 not-a-repo 的提示沒說「跑 cli.ts init」
-  - 快取寫入不是原子的(沒走 writeFileAtomic),或寫在 state/ 以外
+  - 快取寫進 learning/ 底下(含 state/),或被 snapshot commit 進 learning/ 的 git;或寫入不是原子的(沒走 writeFileAtomic)
+  - 快取沒有用 vault_id 分開(換一本帳本讀到別本的快取),或 XDG_CACHE_HOME 為空字串時沒當成未設
   - 見證訊號(witness)或 boundaries 例外沒補,npm run boundaries 紅
 ---
 
@@ -31,22 +32,18 @@ must_catch:
 > **gate 的解讀**:`features/11-review-cli/NEXT.md` 寫「I2 通過」,依 **ADR-073**(I2 不打 tag,自動驗收通過、人工確認延到 I4)要讀成「I2 自動驗收通過」。
 > 這是 I3 的第一張工單(I3 在 I2 自動驗收通過的基礎上開工)。
 
-## 待決(開工前要有答案;工單不替顧問決定)
+## 已裁決的取捨(技術顧問 2026-10-16)
 
-**Q1(阻擋開工)· 當日快取檔要放進契約嗎?** `features/11-review-cli/FEATURE.md` 早就寫了「當日快取 `state/session-<date>.json`」,
-但 `contracts/types.md` §12 的目錄結構(硬約定)沒有這個檔。新增一個 `state/` 底下的檔案名是改 §12 的目錄結構,**屬硬約定變更**
-(CLAUDE.md 硬規則 1:要停下來走 decision-record;「改 `contracts/` 硬約定」是只問使用者的三件事之一,請顧問判斷這一條算不算)。我的建議:
+**Q1(顧問 2026-10-16 已裁決)· 當日快取放哪裡?** 放在 **`${XDG_CACHE_HOME:-~/.cache}/llm-learning-cards/<vault_id>/session-<YYYY-MM-DD>.json`**,
+**不放在 `learning/` 裡**(不是使用者的資料、可以丟掉重建,也不該被 snapshot commit 進去)。契約 §12 不動,不必問使用者;理由記在 ADR-074。
+`XDG_CACHE_HOME` 為空字串視同未設(跟 `XDG_CONFIG_HOME` 的規則一樣)。寫入照樣走 `writeFileAtomic`(對快取沒有壞處);讀不到或壞掉就丟棄重建並記一筆 warning 事件。
+`<vault_id>` 的來源(我的決定,請審):讀 `<learning 目錄>/config/vault-id`(契約 §12 的身分標記,內容是 uuid、容許一個結尾換行);**複習不需要帳本身分**(契約:沒有 `vault-id` 的目錄複習不受影響,
+`standalone.json` 與 fixture 目錄也沒有),所以沒有或格式不對時,改用 `path-` 加上「`--dir` 解析成絕對真實路徑後 sha256 的前 16 個十六進位字元」當資料夾名。
 
-- 把快取檔寫進 §12 的 `state/` 清單與一小節(格式見下「快取格式(草案)」),ADR-074 記理由。它是**可丟棄、可重建**的檔案(壞了丟掉重建,不是「幾個月的記憶資料」),
-  但仍然走 §11b 的原子寫入(同一個 `writeFileAtomic`,不另造)。
-- 替代:放在 `state/` 以外(例如 `learning/.cache/`)—— 不建議:§12 一樣要加目錄,而且 `learning/` 自成 git repo,snapshot 會把它 commit 進去,要另外 ignore。
-
-**Q2 · 因錯誤而沒有結果的卡,續答時要再問嗎?**(批改失敗時卡片不動,見 phase-1「A grading error leaves the card alone」)我的建議:**再問**。
+**Q2(顧問已同意)· 因錯誤而沒有結果的卡,續答時要再問。**(批改失敗時卡片不動,見 phase-1「A grading error leaves the card alone」)
 「已答」= 這張卡在 `reviews.json` 的 `history` 裡有一筆 `date` 等於今天;錯誤沒有寫 history,所以續答時會再出現一次。
 
 **Q3 · 編號。** 協調者配。
-
-在 Q1 有答案之前,工單內容照「草案」寫;答案改變格式時,只改下面「快取格式」一節與紅測試,其他驗收條件不變。
 
 ## 為什麼有這張
 
@@ -61,18 +58,18 @@ phase-1(I2)做好了「建 session → 逐題作答 → 立即落地 → 小結�
 
 ## 驗收條件
 
-### 1. 當日快取 `state/session-<YYYY-MM-DD>.json`
+### 1. 當日快取 `${XDG_CACHE_HOME:-~/.cache}/llm-learning-cards/<vault_id>/session-<YYYY-MM-DD>.json`
 
-- **建立**:當天第一次執行(互動或 `--pause`)時,在 `buildTodaySession` 算出題目集合之後、問第一題之前,用 `writeFileAtomic` 寫入。**`--dry-run` 永遠不建立、不修改。**
+- **建立**:當天第一次執行(互動或 `--pause`)時,在 `buildTodaySession` 算出題目集合之後、問第一題之前,用 `writeFileAtomic` 寫入(目錄不存在就先建,權限預設即可)。**`--dry-run` 永遠不建立、不修改。** 快取的位置只來自環境(`XDG_CACHE_HOME`、`HOME`)與 `--dir` 底下的 `config/vault-id`;`learning/` 底下不新增任何檔案。
 - **之後同一天執行**:讀快取,**題目集合與順序用快取裡那一份**(`queue`、`reteach`、`total_due`、`deferred`),不再呼叫 `selectSession` 重新選;
   當天新到期的卡不加進來(等明天,NEXT.md 已定案)。
 - **已答的不再問**:快取的 `queue` 裡,`reviews.json` 該卡的 `history` 有一筆 `date === today` 者視為已答,略過。進度分子 = 已略過 + 目前題號,分母 = `total_due`
   (例:5 題答了 2 題,續答時顯示「3/5」,小結仍是 5 題的結果)。續答時 `passed`/`failed` 的計數只算本次執行答的,與 phase-1 一致。
-- **跨日**:快取的 `date` 不等於今天(或檔名日期不等於今天)→ 用 `reviews.json` 重新建;**建好今天的之後**刪掉所有其他日期的 `state/session-*.json`。
+- **跨日**:快取的 `date` 不等於今天(或檔名日期不等於今天)→ 用 `reviews.json` 重新建;**建好今天的之後**刪掉這個 `<vault_id>` 資料夾裡所有其他日期的 `session-*.json`(別的帳本的資料夾不動)。
   昨天沒答的卡仍然到期,所以自然多逾期一天(04 的 `overdue_days` 由 `reviews.json` 算,不是從快取抄)。
-- **快取壞掉**(不是合法 JSON、或欄位不合第 1 點的格式):丟掉、重建、**寫一筆 `warning` 事件**到 `state/log.jsonl`(`reason: "session-cache-invalid"`,`path` 是快取檔的相對路徑;
+- **快取讀不到或壞掉**(不是合法 JSON、或欄位不合下面的格式):丟掉、重建、**寫一筆 `warning` 事件**到 `state/log.jsonl`(`reason: "session-cache-invalid"`,`path` 是快取檔的檔名,不寫絕對路徑;
   事件欄位照契約 §10 與既有 warning 事件,不新增欄位),不當掉。重建時「已答的不再問」照常成立(它看 `reviews.json`,不看快取)。
-- **快取格式(草案,Q1 定案前以此為準)**:
+- **快取格式**:
 
   ```json
   { "version": 1, "date": "2026-10-16", "paused": false, "total_due": 5, "deferred": 0,
@@ -122,15 +119,15 @@ phase-1(I2)做好了「建 session → 逐題作答 → 立即落地 → 小結�
 
 | 驗收 | 量什麼 | 怎麼量 |
 |---|---|---|
-| 1 | 當日集合固定、續答、已答不再問、跨日、壞快取 | `phase-2.feature` 場景 1–4、7 的步驟定義(`features/steps/review-cli-phase2.steps.ts`),在暫存的 learning 目錄上跑真的 `scripts/review.ts`(輸入用 stdin),查 `reviews.json`、快取檔、`log.jsonl` |
-| 1 | 快取格式 | `session/cache.test.ts`:`SessionCacheSchema` 接受草案格式、拒絕未知 version / 缺欄位 / 多餘的 `learned_at`;寫入走 `writeFileAtomic`(殘檔 `.tmp` 不留) |
+| 1 | 當日集合固定、續答、已答不再問、跨日、壞快取 | `phase-2.feature` 場景 1–4、7 的步驟定義(`features/steps/review-cli-phase2.steps.ts`),在暫存的 learning 目錄上跑真的 `scripts/review.ts`(輸入用 stdin,環境變數 `XDG_CACHE_HOME`、`HOME` 指向暫存目錄),查 `reviews.json`、快取檔、`log.jsonl` |
+| 1 | 快取格式與位置 | `session/cache.test.ts`:`SessionCacheSchema` 接受上面的格式、拒絕未知 version / 缺欄位 / 多餘的 `learned_at`;路徑在 `XDG_CACHE_HOME` 底下(測試一律 `mkdtemp` 當 `XDG_CACHE_HOME`;空字串視同未設 → `$HOME/.cache`,`HOME` 也用暫存目錄);`<vault_id>` 分開(兩本帳本互不看見);沒有 vault-id 時用 `path-<16 hex>`;寫入走 `writeFileAtomic`(殘檔 `.tmp` 不留);`learning/` 底下沒有多出任何檔案 |
 | 2 | 暫停 | 場景 5、6;另測 `reviews.json` 位元組不變、`--pause`+`--unpause` 同時給 → 1 |
 | 3 | dry-run | 場景 8;快取位元組與 mtime 不變;沒有快取時不建立 |
-| 4 | snapshot | 新增的 3 個場景(結束時 snapshot、dry-run 不 snapshot、失敗不影響退出碼與 not-a-repo 的提示);用暫存 git repo 驗 commit 真的出現,用非 repo 目錄驗提示 |
+| 4 | snapshot | 新增的 3 個場景(結束時 snapshot、dry-run 不 snapshot、失敗不影響退出碼與 not-a-repo 的提示);用暫存 git repo 驗 commit 真的出現(且 commit 裡沒有快取),用非 repo 目錄驗提示 |
 | 5 | 檢查順序 | 暫停日不需要指標檔;0 張卡仍是 1 |
 | 6 | 不退步 | phase-1 場景、既有單元測試照跑 |
 
-- 紅測試用**暫存的 learning 目錄**(`mkdtemp`),不碰真的 `learning/`;不呼叫真的 LLM(應用題用 T13 之後的注入 router 或只用填空題)。
+- 紅測試用**暫存的 learning 目錄與暫存的 `XDG_CACHE_HOME`、`HOME`**(`mkdtemp`),不碰真的 `learning/` 與真的 `~/.cache`;不呼叫真的 LLM(應用題用 T13 之後的注入 router 或只用填空題)。
 - 基底上預期:場景 1–8 與 snapshot 場景紅(功能還沒有);phase-1 綠。
 
 ## 怎麼跑
@@ -149,8 +146,8 @@ npm run boundaries
 
 - 不改 `.feature` 與任何測試檔(`*.test.ts`、`features/steps/`);覺得測試錯了就停下回報協調者。
 - 不加 CLI 的學新卡指令(ADR-073)。不做桌面視窗版(06 的兩個 phase 是另一張,前端起草)。
-- 不改 04 的排程邏輯、不改 05 的審核;不新增 `state/` 底下除了 `session-<date>.json` 以外的檔案。
-- 不改 `contracts/types.md`:Q1 定案後由契約負責人(統籌)改 §12 與 ADR-074,不在這張工單裡。
+- 不改 04 的排程邏輯、不改 05 的審核;不在 `learning/` 底下新增任何檔案(快取在 XDG cache)。
+- 不改 `contracts/types.md`(§12 不動,ADR-074)。
 
 ## 預算
 

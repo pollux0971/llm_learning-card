@@ -60,7 +60,7 @@ npx tsx scripts/review.ts --dir contracts/fixtures/learning-minimal --dry-run --
 |---|---|---|
 | 語言 | TypeScript | `scripts/review.ts` + `packages/core/src/session/` |
 | 互動 | Node readline,不引入 TUI 框架 | 保持薄 |
-| 當日快取 | `state/session-<date>.json` | 中斷續答靠它 |
+| 當日快取 | `${XDG_CACHE_HOME:-~/.cache}/llm-learning-cards/<vault_id>/session-<date>.json` | 中斷續答靠它;可丟棄、可重建,不在 `learning/` 裡(ADR-074) |
 | 變異門檻 | **標準 80%** | session 邊界邏輯要測到,IO 不用 |
 
 ## Phase
