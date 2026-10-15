@@ -7,7 +7,7 @@
  * 型別測試(工單第 8 條):`// @ts-expect-error` 那幾行是由 `npx tsc --noEmit` 驗的——
  * 拿掉型別限制,那幾行的 expect-error 就「沒有錯誤可以期待」,tsc 會報 TS2578 變紅。
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -592,5 +592,39 @@ describe('驗收補測(T5 測試 agent):讀檔丟錯時的拒絕說明', () => {
       expect(result.message).toContain('讀不到');
       expect(result.message).toContain('EIO: simulated');
     }
+  });
+});
+
+describe('驗收補測(T5 測試 agent):ExplicitLedger.unverified 只准出現在核可的兩個入口', () => {
+  // 型別只能分「有沒有注入完整 adapter」,分不出 adapter 是真是假:有人用 ExplicitLedger 加真的 adapter
+  // 照樣編得過。所以用到 ExplicitLedger.unverified( 的地方要靠這份清單釘死——新增一處就紅,逼人來看。
+  // features/steps/ 是測試的步驟定義(假閘道的 cucumber 場景用),跟 *.test.ts 一樣不算正式程式,不在掃描範圍。
+  const APPROVED = ['scripts/llm-spend.ts', 'scripts/llm.ts'];
+  const ROOT = join(import.meta.dirname, '../../../..');
+
+  function walk(dir: string, out: string[]): void {
+    for (const name of readdirSync(dir)) {
+      if (name === 'node_modules' || name === 'target' || name === 'reports' || name === '.git') continue;
+      const abs = join(dir, name);
+      if (statSync(abs).isDirectory()) walk(abs, out);
+      else if (name.endsWith('.ts') && !name.endsWith('.test.ts')) out.push(abs);
+    }
+  }
+
+  it('非測試的正式程式裡,呼叫 ExplicitLedger.unverified( 的檔案恰好是核可的兩個', () => {
+    const files: string[] = [];
+    for (const top of ['packages', 'scripts', 'apps']) walk(join(ROOT, top), files);
+    const users = files
+      .filter((file) =>
+        readFileSync(file, 'utf8')
+          .split('\n')
+          .some((line) => {
+            const t = line.trim();
+            return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/*') && line.includes('ExplicitLedger.unverified(');
+          }),
+      )
+      .map((file) => relative(ROOT, file))
+      .sort();
+    expect(users).toEqual(APPROVED);
   });
 });
