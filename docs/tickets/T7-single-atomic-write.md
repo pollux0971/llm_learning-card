@@ -32,12 +32,12 @@ must_catch:
 
 | 實作 | 位置 | 跟 §11b 的差別 | 誰在用 |
 |---|---|---|---|
-| `writeFileAtomic` | `packages/core/src/schema/atomic-write.ts:42` | 暫存檔名是 `.<name>.<pid>.<ts>.tmp`(§11b:「固定是 `<name>.tmp`」);**沒有 fsync(目錄)**(第 4 步);`renameSync`(:60)在 try 外面,**rename 失敗會留下 tmp** | `session/io.ts:55`(**寫 `state/reviews.json`**)、`schema/init.ts:76`、`schema/graph.ts:262`、`features/steps/data-layer.steps.ts:663` |
-| `atomicWriteJson` | `packages/core/src/ingest/state.ts:36` | 跟 §11b 一致:`<path>.tmp`、fsync(fd)、rename、fsync(目錄)、只有 EINVAL 算成功、清理在 finally 且不遮錯 | `ingest/ingest.ts`、`ingest/deps.ts` |
-| `atomicWriteFileSync` | `packages/core/src/lint/atomic-write.ts:40` | `<name>.tmp` 對,但**沒有 fsync(目錄)**(檔頭自己寫「三步」) | `scripts/lint.ts:85`(寫 `state/lint-report-<日期>.md`) |
+| `writeFileAtomic` | `../../packages/core/src/schema/atomic-write.ts:42` | 暫存檔名是 `.<name>.<pid>.<ts>.tmp`(§11b:「固定是 `<name>.tmp`」);**沒有 fsync(目錄)**(第 4 步);`renameSync`(:60)在 try 外面,**rename 失敗會留下 tmp** | `../../packages/core/src/session/io.ts:55`(**寫 `state/reviews.json`**)、`../../packages/core/src/schema/init.ts:76`、`../../packages/core/src/schema/graph.ts:262`、`../../features/steps/data-layer.steps.ts:663` |
+| `atomicWriteJson` | `../../packages/core/src/ingest/state.ts:36` | 跟 §11b 一致:`<path>.tmp`、fsync(fd)、rename、fsync(目錄)、只有 EINVAL 算成功、清理在 finally 且不遮錯 | `ingest/ingest.ts`、`ingest/deps.ts` |
+| `atomicWriteFileSync` | `../../packages/core/src/lint/atomic-write.ts:40` | `<name>.tmp` 對,但**沒有 fsync(目錄)**(檔頭自己寫「三步」) | `../../scripts/lint.ts:85`(寫 `state/lint-report-<日期>.md`) |
 
-log 也有兩份:`schema/atomic-write.ts:72` `appendLineAtomic`(O_APPEND、一次 `writeSync`、fsync)與
-`ingest/state.ts:90` `appendLogEvent`(`appendFileSync`,沒有 fsync)。§11b 對 log 只要求「每次寫入是完整的一行」,
+log 也有兩份:`../../packages/core/src/schema/atomic-write.ts:72` `appendLineAtomic`(O_APPEND、一次 `writeSync`、fsync)與
+`../../packages/core/src/ingest/state.ts:90` `appendLogEvent`(`appendFileSync`,沒有 fsync)。§11b 對 log 只要求「每次寫入是完整的一行」,
 兩份都做到,但仍是兩份。
 
 **最重的一筆:幾個月的記憶資料 `state/reviews.json`,現在是用少了第 4 步的那一份寫的。** 這違反硬約定 §11b 與 CLAUDE.md 硬規則 5。
@@ -62,7 +62,7 @@ log 也有兩份:`schema/atomic-write.ts:72` `appendLineAtomic`(O_APPEND、一�
 
 ## 起草時已查的兩件事(開工前不用再查,但要知道)
 
-1. **01 phase-2 的步驟定義寫死了舊樣式。** `features/steps/data-layer.steps.ts:650` 造的殘檔是
+1. **01 phase-2 的步驟定義寫死了舊樣式。** `../../features/steps/data-layer.steps.ts:650` 造的殘檔是
    `` `.reviews.json.${process.pid}.${Date.now()}.tmp` ``,:660-666 斷言下一次 `writeFileAtomic` 之後 `state/` 只剩 `reviews.json`。
    **照裁決保留「清舊樣式殘檔」,這個場景不改步驟也會繼續綠**,所以不用停。
    但它從此只證明「舊樣式會被清」,不證明「新樣式 `<name>.tmp` 的殘檔會被處理」。新樣式那條由驗收 4 的單元測試補(測試 agent 寫)。
@@ -107,7 +107,7 @@ log 也有兩份:`schema/atomic-write.ts:72` `appendLineAtomic`(O_APPEND、一�
 6. `appendLogEvent`:`mkdirSync` + 一行呼叫 `appendLineAtomic(logPath, JSON.stringify(event))`。寫出的位元組不變
    (`JSON.stringify(event) + '\n'`),`readLogEvents` 讀回來一樣。
 7. 寫入位元組不變:`atomicWriteJson(p, {a: 1})` 寫出的仍是 `"{\n  \"a\": 1\n}\n"`(2 空格縮排 + 結尾換行,`state.test.ts:339`)。
-8. **lint 的第三份拿掉**:`scripts/lint.ts:85` 改呼叫 01 的 `writeFileAtomic`(寫 `state/lint-report-<日期>.md`,位元組不變);`packages/core/src/lint/atomic-write.ts` 刪掉,`packages/core/src/lint/index.ts:6` 的 `export * from './atomic-write.js'` 一併拿掉。`lint/atomic-write.test.ts` 由測試 agent 刪掉或改成測 `writeFileAtomic`(開發 agent 不碰)。`scripts/lint.ts` 歸 09-lint(`scripts/boundaries.owners.json:108`),所以這是 09→01 的 import。
+8. **lint 的第三份拿掉**:`../../scripts/lint.ts:85` 改呼叫 01 的 `writeFileAtomic`(寫 `state/lint-report-<日期>.md`,位元組不變);`packages/core/src/lint/atomic-write.ts` 刪掉,`../../packages/core/src/lint/index.ts:6` 的 `export * from './atomic-write.js'` 一併拿掉。`lint/atomic-write.test.ts` 由測試 agent 刪掉或改成測 `writeFileAtomic`(開發 agent 不碰)。`scripts/lint.ts` 歸 09-lint(`../../scripts/boundaries.owners.json:108`),所以這是 09→01 的 import。
    **靜態檢查**:`packages/core/src/lint/` 與 `scripts/lint.ts` 的非測試程式碼裡 `renameSync`、`fsyncSync` 零命中。
 9. **`scripts/degraded-report.ts` 的登記跟著改**:它的「沒有計數的退化分支」登記表(`:115-117`)指名了三個清理點:`ingest/state.ts` 的 `rmSync(tmp, { force: true });`、`schema/atomic-write.ts` 的 `unlinkSync(tmp);`、`lint/atomic-write.ts` 的 `ops.unlinkSync(tmp);`。統一之後前兩筆的位置或片段會變、第三筆的檔不存在。改成只剩 `schema/atomic-write.ts` 一筆,片段對上新的清理那一行;`npm run witness:degraded` 的輸出裡這幾個檔不得出現「片段已搬走」。
 10. `npm run boundaries` 綠。`02-ingest-pipeline → 01-data-layer` 的邊已經在 `scripts/boundaries.allow.json`(第一筆),
