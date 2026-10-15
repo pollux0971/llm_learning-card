@@ -4,7 +4,7 @@ deps: [10-desktop-shell/phase-1]
 touches: [apps/desktop/, features/steps/]
 cpu: heavy                             # cargo-mutants、完整 cargo test
 budget_usd: 8                          # 這一輪修補的預算;第一輪沒有預算,實際花了 $29.08
-status: dispatched                     # 退回 worker 修補中;回來驗收時才是 review(檔頭由協調者收批時維護)
+status: merged
 owner: worker-grok
 must_catch:
   - 白名單漏掉 Unicode Mark(M)類別(含組合記號)
