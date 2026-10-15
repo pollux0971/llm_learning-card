@@ -7,36 +7,58 @@
 //!
 //! 都是同步 command(Tauri 在主執行緒跑);一次讀寫一個學習卡大小的檔,不值得多一條執行緒。
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde_json::Value;
 use tauri::ipc::Invoke;
 use tauri::{Runtime, State};
 
-use crate::learning_fs::{self, FsError, Outcome};
+use crate::learning_fs::{self, FsError, NotConfigured, Outcome};
+use crate::learning_root::Resolved;
 
-/// command 用的 learning 根(Tauri managed state)。本張沿用 T2b 的來源 `LC_LEARNING_ROOT`;
-/// 換成單一來源是 T2c-2 的事。
-pub struct LearningRoot(pub PathBuf);
+/// learning 根(Tauri managed state)。T2c-2 起只有一個來源:啟動時解析一次的指標檔(`learning_root::resolve`)。
+/// 四個 command 與 `lc` 協定都讀這一份,不各自讀環境或指標檔。
+#[derive(Debug, Clone)]
+pub struct LearningRoot {
+    resolved: Resolved,
+}
+
+impl LearningRoot {
+    pub fn new(resolved: Resolved) -> Self {
+        Self { resolved }
+    }
+
+    pub fn resolved(&self) -> &Resolved {
+        &self.resolved
+    }
+
+    /// 啟動狀態是 ok 才有根(canonical);四種失敗一律「未設定」,不是拒絕、不寫 warning。
+    pub fn dir(&self) -> Result<&Path, FsError> {
+        self.resolved
+            .root
+            .as_deref()
+            .ok_or(FsError::NotConfigured(NotConfigured {}))
+    }
+}
 
 #[tauri::command]
 pub fn read(root: State<'_, LearningRoot>, rel_path: String) -> Result<Value, FsError> {
-    learning_fs::read(&root.0, &rel_path).map(Outcome::into_value)
+    learning_fs::read(root.dir()?, &rel_path).map(Outcome::into_value)
 }
 
 #[tauri::command]
 pub fn write(root: State<'_, LearningRoot>, rel_path: String, content: String) -> Result<Value, FsError> {
-    learning_fs::write(&root.0, &rel_path, &content).map(Outcome::into_value)
+    learning_fs::write(root.dir()?, &rel_path, &content).map(Outcome::into_value)
 }
 
 #[tauri::command]
 pub fn list(root: State<'_, LearningRoot>, rel_dir: String) -> Result<Value, FsError> {
-    learning_fs::list(&root.0, &rel_dir).map(Outcome::into_value)
+    learning_fs::list(root.dir()?, &rel_dir).map(Outcome::into_value)
 }
 
 #[tauri::command]
 pub fn exists(root: State<'_, LearningRoot>, rel_path: String) -> Result<Value, FsError> {
-    learning_fs::exists(&root.0, &rel_path).map(Outcome::into_value)
+    learning_fs::exists(root.dir()?, &rel_path).map(Outcome::into_value)
 }
 
 /// main.rs 與 tests/commands.rs 用的同一個 handler。

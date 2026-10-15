@@ -4,11 +4,14 @@
 //! `check`(`Refusal` 的 reason),asset 的限流行再加 `count`。順序靠 serde_json 的 `preserve_order`。
 //!
 //! 寫法(§11b 的 log 例外):`O_APPEND` 開 `<learning 根>/state/log.jsonl`,「JSON + `\n`」用**一次**
-//! `write_all` 寫完,再 `fsync`。不建目錄:`state/` 不在就寫不進去,呼叫端記到 Rust log,
+//! `write_all` 寫完,再 `fsync`。開檔之前先建 `<根>/state` 這一層(T2c-2 驗收 10:`scripts/vault.ts init`
+//! 只建 `config/`,剛初始化的根沒有 `state/`,warning 不能因此消失;TS 的 `appendLogEvent` 也自己建,ADR-070)。
+//! 只建這一層、只在要寫的時候建:根本身不建(呼叫端先 canonicalize 根,根不在就走不到這裡),啟動時不建。
+//! 還是寫不進去(例如 `state` 是一般檔案)就交給呼叫端記到 Rust log(`init_logging` 印到 stderr),
 //! 拒絕照樣是拒絕。log 檔最後一行原本沒有 `\n` 的情況不處理(TS 版同樣不處理,已知限制)。
 
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -31,11 +34,21 @@ pub fn log_path(root: &Path) -> PathBuf {
     root.join("state").join("log.jsonl")
 }
 
-/// `O_APPEND` 開檔(不存在就建檔,不建目錄)、一次寫一整行、`fsync`。
+/// 先確定 `<根>/state` 在(已經存在不算錯),再 `O_APPEND` 開檔(不存在就建檔)、一次寫一整行、`fsync`。
 pub fn append_to_log(root: &Path, event: &Value) -> io::Result<()> {
+    ensure_state_dir(root)?;
     let mut file = OpenOptions::new().append(true).create(true).open(log_path(root))?;
     append_line(&mut file, event)?;
     file.sync_all()
+}
+
+/// 只建 `state` 這一層,不往上建(`create_dir`,不是 `create_dir_all`)。`state` 已經在——不論是目錄還是
+/// 一般檔案——都不算錯;是一般檔案的話,接下來的開檔會失敗,錯誤交給 `record` 記下來。
+fn ensure_state_dir(root: &Path) -> io::Result<()> {
+    match fs::create_dir(root.join("state")) {
+        Err(err) if err.kind() != io::ErrorKind::AlreadyExists => Err(err),
+        _ => Ok(()),
+    }
 }
 
 /// 寫一行;寫不進去只記到 Rust log,不改變呼叫端的結果(拒絕照樣是拒絕)。

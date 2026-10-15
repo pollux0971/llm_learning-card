@@ -4,6 +4,8 @@ version = "0.0.0"
 description = "Tauri 2 桌面殼(10-desktop-shell,phase-1、phase-2)"
 edition = "2021"
 publish = false
+# 兩個 bin(app 與 probe `lc-fs`):`cargo run` / `npm run tauri dev` / `tauri build` 要選 app(T2c-2 驗收 9)。
+default-run = "learning-cards-desktop"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -13,6 +15,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-window-state = "2"
 http = "1"
 log = "0.4"
+# log::error! 寫到 stderr(T2c-2 驗收 10;main.rs 與 lc-fs 共用 lib 的 init_logging)。
+# 不要顏色與 regex 過濾;humantime 只帶時間戳(jiff 已經在依賴樹裡)。
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }
 # preserve_order:warning 事件要照 T2b 的 TS 版欄位順序(ts、type、path、reason)寫出,
