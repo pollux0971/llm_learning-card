@@ -36,7 +36,7 @@
 
 <main class="page">
   <h1 class="hud-num">HUD</h1>
-  <p class="lead">亮色半透明切角框、HUD 按鈕、HP 條。兩個開關切換根元素的 class。</p>
+  <p class="lead">亮色半透明切角框、HUD 按鈕、HP 條。無框與實心底切換根元素的 class;深色背景只影響這一頁。</p>
   <div class="switches">
     <label>
       <input type="checkbox" onchange={onFramelessChange} />
@@ -45,6 +45,10 @@
     <label>
       <input type="checkbox" onchange={onSolidChange} />
       實心底(切角外面填實色)
+    </label>
+    <label>
+      <input type="checkbox" data-gallery="dark-backdrop" />
+      深色背景(看半透明)
     </label>
   </div>
   <HudPanel title={card.title} {frameless} {solid} {controls}>
@@ -67,6 +71,35 @@
 </main>
 
 <style>
+  /* 格線是展示頁假裝桌面用的,不放進共用的 hud.css。 */
+  :global(html) {
+    background-color: var(--hud-page);
+    background-image:
+      linear-gradient(var(--hud-page-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--hud-page-line) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+
+  /* 深色底加粗格線。橫線每條垂直取樣線都會穿過;直線做成斷線,壓在直線上也不會整條發亮。 */
+  :global(html:has([data-gallery="dark-backdrop"]:checked)) {
+    isolation: isolate;
+    background-color: var(--hud-text);
+    background-image: linear-gradient(var(--hud-solid) 4px, transparent 4px);
+    background-size: 28px 28px;
+  }
+
+  :global(html:has([data-gallery="dark-backdrop"]:checked)::before) {
+    content: "";
+    position: fixed;
+    z-index: -1;
+    inset: 0;
+    pointer-events: none;
+    background-image: linear-gradient(90deg, var(--hud-solid) 4px, transparent 4px);
+    background-size: 28px 28px;
+    mask-image: linear-gradient(transparent 0 6px, black 6px 22px, transparent 22px);
+    mask-size: 28px 28px;
+  }
+
   .page {
     max-width: 42rem;
     margin: 0 auto;

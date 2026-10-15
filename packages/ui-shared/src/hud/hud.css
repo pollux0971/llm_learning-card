@@ -6,6 +6,8 @@
   font-weight: 500;
   font-style: normal;
   font-display: swap;
+  /* 沒放大時大寫約是中文的 0.72;112% 對到中文字型自己的「H」約 0.81。 */
+  size-adjust: 112%;
 }
 
 :root {
@@ -26,11 +28,6 @@
 }
 
 html {
-  background-color: var(--hud-page);
-  background-image:
-    linear-gradient(var(--hud-page-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--hud-page-line) 1px, transparent 1px);
-  background-size: 28px 28px;
   color: var(--hud-text);
   font-family: var(--hud-font-body);
   min-height: 100%;
@@ -59,8 +56,9 @@ body {
 }
 
 .hud-cut {
-  background: var(--hud-line);
+  position: relative;
   padding: var(--hud-line-width);
+  /* 外八角形只負責裁內容;黑底不再整片墊在半透明面板底下。 */
   clip-path: polygon(
     var(--hud-cut) 0,
     calc(100% - var(--hud-cut)) 0,
@@ -70,6 +68,37 @@ body {
     var(--hud-cut) 100%,
     0 calc(100% - var(--hud-cut)),
     0 var(--hud-cut)
+  );
+}
+
+/* 黑線只剩一圈:evenodd 把內八角形挖空,直邊 1px、斜邊沿用原本的內縮。 */
+.hud-cut::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--hud-line);
+  clip-path: polygon(
+    evenodd,
+    var(--hud-cut) 0,
+    calc(100% - var(--hud-cut)) 0,
+    100% var(--hud-cut),
+    100% calc(100% - var(--hud-cut)),
+    calc(100% - var(--hud-cut)) 100%,
+    var(--hud-cut) 100%,
+    0 calc(100% - var(--hud-cut)),
+    0 var(--hud-cut),
+    var(--hud-cut) 0,
+    var(--hud-cut) var(--hud-line-width),
+    calc(100% - var(--hud-cut)) var(--hud-line-width),
+    calc(100% - var(--hud-line-width)) var(--hud-cut),
+    calc(100% - var(--hud-line-width)) calc(100% - var(--hud-cut)),
+    calc(100% - var(--hud-cut)) calc(100% - var(--hud-line-width)),
+    var(--hud-cut) calc(100% - var(--hud-line-width)),
+    var(--hud-line-width) calc(100% - var(--hud-cut)),
+    var(--hud-line-width) var(--hud-cut),
+    var(--hud-cut) var(--hud-line-width)
   );
 }
 
@@ -129,6 +158,8 @@ body {
 }
 
 [data-hud="button"] {
+  display: flex;
+  align-items: stretch;
   font-family: var(--hud-font-display);
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -149,7 +180,11 @@ body {
 }
 
 .hud-button-label {
-  display: block;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
   padding: 0.38rem 0.85rem;
   background: var(--hud-panel);
   clip-path: polygon(
@@ -175,7 +210,19 @@ body {
 
 [data-hud="button"]:hover .hud-button-label,
 [data-hud="button"]:focus-visible .hud-button-label {
-  background: var(--hud-accent-wash);
+  background-color: var(--hud-accent-wash);
+}
+
+/* 內框畫在標籤上、縮進切角裡面。不用 accent:hover 時按鈕已是整片 accent,再畫同色看不出來。 */
+[data-hud="button"]:focus-visible .hud-button-label {
+  background-image:
+    linear-gradient(var(--hud-solid), var(--hud-solid)),
+    linear-gradient(var(--hud-solid), var(--hud-solid)),
+    linear-gradient(var(--hud-solid), var(--hud-solid)),
+    linear-gradient(var(--hud-solid), var(--hud-solid));
+  background-repeat: no-repeat;
+  background-size: calc(100% - 12px) 2px, calc(100% - 12px) 2px, 2px calc(100% - 12px), 2px calc(100% - 12px);
+  background-position: center top 3px, center bottom 3px, left 3px center, right 3px center;
 }
 
 [data-hud="button"]:disabled {
