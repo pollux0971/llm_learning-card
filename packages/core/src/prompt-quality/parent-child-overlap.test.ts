@@ -133,22 +133,22 @@ describe('overlapCoefficient', () => {
 });
 
 describe('checkParentChildOverlap:門檻邊界', () => {
-  // 子卡 'abcdefghijkl' 有 10 個 3-gram。父卡 'abcdeqqqqqqq' 與它共有 abc、bcd、cde 三個 → 3/10 = 0.3。
+  // 分母是兩邊較少的那個 3-gram 數。子卡 'abcdefghijkl'、父卡 'abcdeqrstuvw' 各有 10 個 3-gram,共有 abc、bcd、cde 三個 → 3/10 = 0.3。
   it('剛好 0.3 算一對(>=)', async () => {
     const { checkParentChildOverlap } = await mod();
     const r = checkParentChildOverlap(
-      [card('p0', '父', 'abcdeqqqqqqq')],
+      [card('p0', '父', 'abcdeqrstuvw')],
       [card('c0', '子', 'abcdefghijkl')],
     );
     expect(r.pairs).toHaveLength(1);
     expect(r.pairs[0]).toMatchObject({ parent: 'p0', child: 'c0', reason: 'body' });
     expect(r.pairs[0]!.overlap).toBe(0.3);
   });
-  // 子卡 'abcdefghijklm' 有 11 個 3-gram,共有 3 個 → 3/11 = 0.2727…,差一格。
+  // 子卡 'abcdefghijklm'、父卡 'abcdeqrstuvwx' 各 11 個 3-gram,共有 3 個 → 3/11 = 0.2727…,差一格。
   it('差一格(3/11)不算', async () => {
     const { checkParentChildOverlap } = await mod();
     const r = checkParentChildOverlap(
-      [card('p0', '父', 'abcdeqqqqqqq')],
+      [card('p0', '父', 'abcdeqrstuvwx')],
       [card('c0', '子', 'abcdefghijklm')],
     );
     expect(r.pairs).toEqual([]);
@@ -156,7 +156,7 @@ describe('checkParentChildOverlap:門檻邊界', () => {
   it('opts.threshold 可覆寫:門檻降到 0.27 時 3/11 成立', async () => {
     const { checkParentChildOverlap } = await mod();
     const r = checkParentChildOverlap(
-      [card('p0', '父', 'abcdeqqqqqqq')],
+      [card('p0', '父', 'abcdeqrstuvwx')],
       [card('c0', '子', 'abcdefghijklm')],
       { threshold: 0.27 },
     );
@@ -331,7 +331,7 @@ describe('runParentChildChecks:進既有的 StructuralIssue 體系', () => {
   it('每一對一筆 parent-child-overlap,detail 點名兩邊 id 與三位小數,note 是 QUALITY_NOTE', async () => {
     const { runParentChildChecks } = await mod();
     const r = runParentChildChecks(
-      [card('p0', '父', 'abcdeqqqqqqq')],
+      [card('p0', '父', 'abcdeqrstuvw')],
       [card('c0', '子', 'abcdefghijkl')],
     );
     expect(r.note).toBe(QUALITY_NOTE);
@@ -377,9 +377,9 @@ describe('基準(fixtures/golden-2026-10-15):目前有 0 對超過門檻', () =>
       opts: { threshold: 0.074 },
     });
     const hit = only.inputs.find((i) => i.key === 'preflight')!.report.pairs.find((p) => p.child === 'c2' && p.parent === 'p2');
-    // 門檻降到 0.074 才抓得到它 —— 而同一個門檻會多抓 5 對人判沒問題的(誤報)。這就是「不要為了抓它降門檻」的證據。
+    // 門檻降到 0.074 才抓得到它 —— 而同一個門檻會多抓 6 對人判沒問題的(誤報)。這就是「不要為了抓它降門檻」的證據。
     expect(hit?.overlap).toBeCloseTo(0.074, 3);
-    expect(only.totalPairs).toBe(6);
+    expect(only.totalPairs).toBe(7); // 它自己加 6 對人判沒問題的
   });
   it('把門檻拉到基準最高值以下就會有報(證明 0 對是「真的量過」,不是「檢查壞了」)', async () => {
     const { checkGoldenParentChild } = await mod();
@@ -410,12 +410,12 @@ describe('checkGoldenParentChild:載入與配對', () => {
     }
     return d;
   }
-  const cardsText = (...bodies: string[]) => bodies.map((b, i) => ({ title: `標題${i}`, body: b, examples: [] }));
+  const cardsText = (prefix: string, ...bodies: string[]) => bodies.map((b, i) => ({ title: `${prefix}${i}`, body: b, examples: [] }));
 
   it('照抄父卡的子卡被抓到,id 是 p<序號> / c<序號>', async () => {
     const { checkGoldenParentChild } = await mod();
-    const parents = dirWith({ 'cards-x': cardsText('abcdefghijklmnop', SENTENCE) });
-    const children = dirWith({ 'children-x': cardsText('qrstuvwxyzqrstuv', SENTENCE_SLICE) });
+    const parents = dirWith({ 'cards-x': cardsText('父', 'abcdefghijklmnop', SENTENCE) });
+    const children = dirWith({ 'children-x': cardsText('子', 'qrstuvwxyzqrstuv', SENTENCE_SLICE) });
     const r = checkGoldenParentChild({ childrenDir: children, parentsDir: parents });
     expect(r.totalPairs).toBe(1);
     expect(r.inputs[0]!.key).toBe('x');
@@ -424,25 +424,25 @@ describe('checkGoldenParentChild:載入與配對', () => {
   });
   it('key 只在一邊有 → 丟錯,訊息有那個 key(不靜靜略過)', async () => {
     const { checkGoldenParentChild } = await mod();
-    const parents = dirWith({ 'cards-x': cardsText('abcdefghijklmnop') });
-    const children = dirWith({ 'children-x': cardsText('abcdefghijklmnop'), 'children-y': cardsText('abcdefghijklmnop') });
+    const parents = dirWith({ 'cards-x': cardsText('父', 'abcdefghijklmnop') });
+    const children = dirWith({ 'children-x': cardsText('子', 'abcdefghijklmnop'), 'children-y': cardsText('子', 'abcdefghijklmnop') });
     expect(() => checkGoldenParentChild({ childrenDir: children, parentsDir: parents })).toThrow(/y/);
   });
   it('父卡那邊多出來的 key 同樣丟錯', async () => {
     const { checkGoldenParentChild } = await mod();
-    const parents = dirWith({ 'cards-x': cardsText('abcdefghijklmnop'), 'cards-z': cardsText('abcdefghijklmnop') });
-    const children = dirWith({ 'children-x': cardsText('abcdefghijklmnop') });
+    const parents = dirWith({ 'cards-x': cardsText('父', 'abcdefghijklmnop'), 'cards-z': cardsText('父', 'abcdefghijklmnop') });
+    const children = dirWith({ 'children-x': cardsText('子', 'abcdefghijklmnop') });
     expect(() => checkGoldenParentChild({ childrenDir: children, parentsDir: parents })).toThrow(/z/);
   });
   it('text 不是 JSON 陣列 → 丟錯,訊息有檔名', async () => {
     const { checkGoldenParentChild } = await mod();
-    const parents = dirWith({ 'cards-x': cardsText('abcdefghijklmnop') });
+    const parents = dirWith({ 'cards-x': cardsText('父', 'abcdefghijklmnop') });
     const children = dirWith({ 'children-x': 'not json at all' });
     expect(() => checkGoldenParentChild({ childrenDir: children, parentsDir: parents })).toThrow(/children-x/);
   });
   it('text 是 JSON 但不是陣列、或元素沒有 body → 丟錯', async () => {
     const { checkGoldenParentChild } = await mod();
-    const parents = dirWith({ 'cards-x': cardsText('abcdefghijklmnop') });
+    const parents = dirWith({ 'cards-x': cardsText('父', 'abcdefghijklmnop') });
     const notArray = dirWith({ 'children-x': { title: 't', body: 'b' } });
     expect(() => checkGoldenParentChild({ childrenDir: notArray, parentsDir: parents })).toThrow(/children-x/);
     const noBody = dirWith({ 'children-x': [{ title: 't' }] });
@@ -452,13 +452,13 @@ describe('checkGoldenParentChild:載入與配對', () => {
     const { checkGoldenParentChild } = await mod();
     const empty = mkdtempSync(join(tmpdir(), 't12-empty-'));
     made.push(empty);
-    const parents = dirWith({ 'cards-x': cardsText('abcdefghijklmnop') });
+    const parents = dirWith({ 'cards-x': cardsText('父', 'abcdefghijklmnop') });
     expect(() => checkGoldenParentChild({ childrenDir: empty, parentsDir: parents })).toThrow();
     expect(() => checkGoldenParentChild({ childrenDir: parents, parentsDir: empty })).toThrow();
   });
   it('目錄不存在 → 丟錯', async () => {
     const { checkGoldenParentChild } = await mod();
-    const parents = dirWith({ 'cards-x': cardsText('abcdefghijklmnop') });
+    const parents = dirWith({ 'cards-x': cardsText('父', 'abcdefghijklmnop') });
     const missing = join(parents, 'no-such-dir');
     mkdirSync(join(parents, 'sub'));
     expect(() => checkGoldenParentChild({ childrenDir: missing, parentsDir: parents })).toThrow();
