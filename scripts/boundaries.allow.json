@@ -2,7 +2,7 @@
   {
     "from": "02-ingest-pipeline",
     "to": "01-data-layer",
-    "reason": "phase-2 的依賴圖(§8)重用 01 的 graph.ts(readCategoryGraph/validateGraphEdges/detectCycle/topologicalSort/writeCategoryOrder/computeAndSaveCategoryOrder),考題(§3)重用 01 的 validate-question.ts,不重新發明拓樸排序與 zod 驗證"
+    "reason": "phase-2 的依賴圖(§8)重用 01 的 graph.ts(readCategoryGraph/validateGraphEdges/detectCycle/topologicalSort/writeCategoryOrder/computeAndSaveCategoryOrder),考題(§3)重用 01 的 validate-question.ts,不重新發明拓樸排序與 zod 驗證。§11b 寫入與 log append 用 01 的 writeFileAtomic / appendLineAtomic(T7)"
   },
   {
     "from": "02-ingest-pipeline",
@@ -59,6 +59,11 @@
     "to": "01-data-layer",
     "symbols": ["recordEvent"],
     "reason": "phase-2 的 read/write/list/exists 拒絕回給 TS 呼叫端,由 apps/desktop 呼叫 01 的 recordEvent()(§10)。只 import recordEvent,不拉 LearningFs 型別。檢查器沒有 symbols 欄、整邊放行;呼叫端只准這個 symbol"
+  },
+  {
+    "from": "09-lint",
+    "to": "01-data-layer",
+    "reason": "§11b 只留一份實作(T7):scripts/lint.ts 寫 state/lint-report 用 01 的 writeFileAtomic"
   },
   {
     "from": "12-prompt-quality",
