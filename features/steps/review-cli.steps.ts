@@ -30,6 +30,7 @@ import { joinApplyLines, submitAnswer } from '../../packages/core/src/session/an
 import { estimateTomorrow, renderDryRun, renderSummary } from '../../packages/core/src/session/summary.js';
 import type { AnswerOutcome, CardPresentation, CurrentQuestion, EstimateResult, Session } from '../../packages/core/src/session/types.js';
 import type { LearningWorld, RunResult } from './_world.js';
+import { phase2RunDryRun, phase2RunReviewCommand } from './review-cli-phase2.steps.js';
 import { assertI2GradingFailedReported, isI2Loop } from './i2-review-loop.steps.js';
 
 const LLM_FIXTURES_DIR = resolve(import.meta.dirname, '../../contracts/fixtures/llm');
@@ -150,6 +151,8 @@ Given('the current card has failed three times in a row', function (this: Learni
 // ---------------------------------------------------------------- When/Then:scenario 1(dry run)
 
 When('the review command is run in dry run mode', async function (this: LearningWorld) {
+  // phase-2(T17)的場景跑真的 scripts/review.ts,見 review-cli-phase2.steps.ts
+  if (this.tags.includes('@phase-2')) return phase2RunDryRun(this);
   const reviews: Record<CardId, Review> = {
     'sec-0001': baseReview({ stage: 1, learned_at: '2026-09-05', next_due: '2026-09-07' }), // overdue_ratio 3.0
     'sec-0002': baseReview({ stage: 2, learned_at: '2026-09-01', next_due: '2026-09-09', history: [{ date: '2026-09-02', stage: 1, type: 'fill', pass: true, grader: 'exact' }] }), // overdue_ratio 1/7
@@ -196,6 +199,7 @@ Then('no file is written', function (this: LearningWorld) {
 // ---------------------------------------------------------------- When/Then:scenario 2/3/13(互動 session)
 
 When('the review command is run', async function (this: LearningWorld) {
+  if (this.tags.includes('@phase-2')) return phase2RunReviewCommand(this);
   await runReviewCommand(this);
 });
 
