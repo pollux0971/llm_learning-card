@@ -64,7 +64,7 @@ T5 驗收(`docs/reviews/acceptance-T5.md`)找到四件事,顧問裁決全部收�
 ### A. 壞行 = 不知道
 
 1. **什麼叫壞行(單一定義,只留一份)**:內容不是空白的一行,而且 `JSON.parse` 失敗,或解析出來不是物件,或 `ts` 欄位存在卻不是字串。這個判定目前在 `scripts/llm-spend.ts`(`buildSpendReport` 一帶)與 `packages/core/src/llm/spend.ts` 的 `readDailySpend` 各有一份邏輯;改成**一個共用的純函式**,放在 `packages/core/src/llm/spend.ts`,兩處都引用。靜態檢查(測試 agent 寫):`scripts/llm-spend.ts` 與 `spend.ts` 裡,`JSON.parse` 對帳本行的呼叫恰好一處。
-2. **`readDailySpend` 遇到任何壞行就丟錯**(新錯誤類別,名字由開發 agent 取,要和 `MissingLedgerError` 一樣從 `spend.ts` 匯出),**不回任何數字**。壞行**不分哪一天**(壞行讀不到 `ts`,證明不了它不是今天的)。空白行不是壞行。
+2. **`readDailySpend` 遇到任何壞行就丟錯**(新錯誤類別,**名字固定為 `UnknownSpendError`**,和 `MissingLedgerError` 一樣從 `spend.ts` 匯出,`name` 屬性也是 `UnknownSpendError`;紅測試依這個名字寫),**不回任何數字**。壞行**不分哪一天**(壞行讀不到 `ts`,證明不了它不是今天的)。空白行不是壞行。
 3. 錯誤訊息必須含:帳本路徑、**行號**、該行前 80 個字元、一句怎麼修,並明確指示 **`npx tsx scripts/llm-spend.ts`**(用它看是哪幾行壞了;`--log` 指到未驗證的帳本時它也看得到)。訊息裡**不得**出現完整的行內容(只有前 80 字)。帳本路徑與前 80 字屬於使用者資料,**不進任何會被提交的報告**(測試與報告只用合成樣本)。
 4. **拒絕發生在打 adapter 之前**:`GatewayLlmRouter.call()` 在帳本有壞行時,雲端 adapter 0 次、閘道 0 次,錯誤原樣往外丟(不被吞成備援、不被當成 `isCloudFailure`)。`dailySpend()` 與 `budgetExhausted()` 每一次都丟錯,沒有任何一次回數字。對 `VerifiedLedger` 與 `ExplicitLedger`(假 adapter)兩種把手行為相同。
 5. `scripts/llm-spend.ts` 的既有行為**不退步**:壞行 → `算不出來`、exit 2、訊息帶行號 / 前 80 字 / 怎麼修(`badLineReason`);`ts` 不是字串的行同樣算壞行。共用判定之後,既有的 `llm-spend.test.ts` 壞行測試**不改**也要綠。
@@ -133,3 +133,17 @@ T5 驗收(`docs/reviews/acceptance-T5.md`)找到四件事,顧問裁決全部收�
 - 共用壞行判定時,`llm-spend` 的 `badLineReason` 與 `spend.ts` 的錯誤訊息要用同一份文字來源,否則兩邊各自漂移。
 - 把 `readDailySpend` 改成遇壞行就丟錯後,**所有**用它的呼叫端都會受影響(router 的日上限、`createDefaultLiveRouter` 的路徑);派工前先 `git grep readDailySpend` 列清單,測試 agent 寫紅測試時逐一覆蓋。
 - 帳本被一行壞資料卡死 = 使用者要自己修帳本(ADR-050:修帳本是明示的動作)。訊息要寫清楚怎麼修,不要自動刪行。
+
+## 紅測試清單(測試 agent 寫的檔——之後驗收比對「測試檔只能來自測試 agent」的基準)
+
+分支 `pollux0971/t8-red`(基底 T5 合併後的 `origin/main`,加上本工單):
+
+| 檔 | 內容 |
+|---|---|
+| `packages/core/src/llm/ledger-bad-lines.test.ts`(新檔) | 驗收 A:壞行、錯誤訊息、router 在打 adapter 之前拒絕、單一定義、witness 訊號隨程式消失 |
+| `scripts/llm-spend.test.ts`(改既有一條、加一個 describe) | 驗收 C(含驗收 12 要求改的那一條) |
+| `scripts/vault.test.ts`(加 describe) | 驗收 B、驗收 D 的 init 部分(symlink、同時 init)、驗收 E |
+| `packages/core/src/llm/vault-pointer.test.ts`(加 describe) | 驗收 D 的解析器部分(symlink) |
+| `packages/core/src/prompt-quality/live-run.test.ts`(加一條) | 驗收 F |
+
+說明:驗收 D 的 symlink 與同時 init 測試是**記錄現行行為**的測試,在 T5 合併後的實作上本來就綠,不是紅的;它們的作用是之後有人改動時會紅。其餘測試在現行實作上都是紅的。
