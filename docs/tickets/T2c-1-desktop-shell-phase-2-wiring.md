@@ -7,7 +7,7 @@ budget_usd: 20
 status: todo
 owner: worker-grok
 must_catch:
-  - command 繞過 guard:任一個 #[tauri::command](read/write/list/exists)改成不經 check_rel_path 直接碰 fs,直接呼叫 command 的拒絕測試必須紅
+  - command 繞過 guard:任一個 `#[tauri::command]`(read、write、list、exists)改成不經 check_rel_path 直接碰 fs,直接呼叫 command 的拒絕測試必須紅
   - Rust 寫 log 不是一整行:warning 事件拆成兩次寫入(JSON 與換行分開寫),或拿掉結尾換行,測試必須紅
   - read 讀不到檔回空字串:read 對 NotFound 改回 Ok("")(T2b 的 unwrap_or_default),測試必須紅
   - io 錯誤被歸成拒絕:read 的 NotFound 改成回 Refusal,測試必須紅(拒絕會寫 warning、io 錯誤不寫,兩邊都要斷言)
@@ -40,10 +40,10 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
 
 | 審查發現(T2b @ 51355fd) | 在本張 |
 |---|---|
-| P0-2 沒有 command:`src-tauri/src` 裡 `invoke_handler`、`#[tauri::command]` 零個;`apps/desktop/src/boundary.ts:7`、`:50` 用 `node:child_process` 的 `spawnSync` 叫 probe | 驗收 A |
-| P1-4 10-01 裁決 b(TS 呼叫 `recordEvent`)在 webview 做不到:`recordEvent` → `appendLineAtomic` 用 `node:fs`(`packages/core/src/schema/atomic-write.ts:1`);T2b 在 Node 的 `ProbeBoundary` 裡呼叫(`boundary.ts:127-136`) | 驗收 B |
+| P0-2 沒有 command:`src-tauri/src` 裡 `invoke_handler`、`#[tauri::command]` 零個;`../../apps/desktop/src/boundary.ts:7`、`:50` 用 `node:child_process` 的 `spawnSync` 叫 probe | 驗收 A |
+| P1-4 10-01 裁決 b(TS 呼叫 `recordEvent`)在 webview 做不到:`recordEvent` → `appendLineAtomic` 用 `node:fs`(`../../packages/core/src/schema/atomic-write.ts:1`);T2b 在 Node 的 `ProbeBoundary` 裡呼叫(`boundary.ts:127-136`) | 驗收 B |
 | P1-5 read 吞錯、圖片當文字:`learning_fs.rs:67` 的 `read_to_string(...).unwrap_or_default()`;`main.rs:52-56` 回 200、沒有 Content-Type | 驗收 D、E |
-| P1-6 真前端沒載入:`tauri.conf.json:7` `frontendDist: "frontend"`;`frontend/teach.html:10`、`test.html` 同位置引用 `/teach-card/src/main.ts`(不在 frontendDist,沒有 build);測試 `shell-config.ts:77` `frontEndStatus` 只比對字樣 | 驗收 F |
+| P1-6 真前端沒載入:`tauri.conf.json:7` `frontendDist: "frontend"`;`../../apps/desktop/src-tauri/frontend/teach.html:10`、`test.html` 同位置引用 `/teach-card/src/main.ts`(不在 frontendDist,沒有 build);測試 `shell-config.ts:77` `frontEndStatus` 只比對字樣 | 驗收 F |
 | P1-7 根目錄兩個來源 | **T2c-2** |
 
 ## 推翻的舊條款

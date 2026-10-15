@@ -1245,7 +1245,7 @@ graph TD
 
 - **Status**: accepted · 2026-10-15(技術顧問判定。§13 是軟約定;§10、§11b 本文不改,只是多一個照本文做的實作)
 - **Context**: 2026-10-01 對 10 phase-2 的裁決 b 是「Rust 把拒絕回給 TS,由 TS 呼叫 01 的 `recordEvent` 寫 warning」,理由是不要讓 Rust 再寫一份 §11b(見 ADR-062 Consequences 的 asset protocol 已知限制)。2026-10-15 前端只讀審查 T2b(`pollux0971/t2b-impl @ 51355fd`)時查到這個前提在桌面程式裡不成立:
-  1. `recordEvent` 經 `appendLineAtomic` 用 `node:fs`(`packages/core/src/schema/atomic-write.ts:1`);webview 裡沒有 `node:fs`。
+  1. `recordEvent` 經 `appendLineAtomic` 用 `node:fs`(`../packages/core/src/schema/atomic-write.ts:1`);webview 裡沒有 `node:fs`。
   2. T2b 是在 Node 的測試用 `ProbeBoundary` 裡呼叫 `recordEvent`(`apps/desktop/src/boundary.ts:127-136`),所以只有測試裡成立;app 裡**沒有任何 Tauri command**,前端根本拿不到 `LearningFs`。
   3. 同一次審查也查到 Rust 的 `write` 是 `fs::write` 直接覆蓋,不是 §11b 的原子寫入。
 - **Decision**:
