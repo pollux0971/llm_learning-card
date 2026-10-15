@@ -1043,12 +1043,22 @@ describe('T8 E:init 寫出的指標檔是 0600', () => {
     return initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: realVaultIo(), force, randomUUID: () => UUID_A });
   }
 
+  /**
+   * 換 umask 跑一段。Stryker 的 vitest runner 固定用 worker threads(pool: 'threads'),
+   * worker 裡 `process.umask(mask)` 會丟 ERR_WORKER_UNSUPPORTED_OPERATION —— 那時候沒辦法換,
+   * 用當下的 umask 跑(一般是 022,仍然分得出 0600 和 0644)。一般的 vitest(forks)照指定的 mask 跑。
+   */
   function withUmask<T>(mask: number, fn: () => T): T {
-    const old = process.umask(mask);
+    let old: number | undefined;
+    try {
+      old = process.umask(mask);
+    } catch {
+      old = undefined;
+    }
     try {
       return fn();
     } finally {
-      process.umask(old);
+      if (old !== undefined) process.umask(old);
     }
   }
 
