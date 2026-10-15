@@ -339,7 +339,7 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
   );
 
   it(
-    '小結的 passed / returned 從 reviews.json 算(今天這一輪):stage 2 的兩筆合成一張卡,有效結果 = revised_to ?? pass,每張卡只算一次;沒有今天 history 的卡是待重試,不算進去',
+    '小結的 passed / returned 從 reviews.json 算(今天這一輪):stage 2 的兩筆合成一張卡,有效結果 = revised_to ?? pass(改判成過、改判成沒過兩個方向都要對),每張卡只算一次;沒有今天 history 的卡是待重試,不算進去;明日預估的回退數用同一個 R',
     async () => {
       const v = vault({ cards: 6 });
       const todays = (over: Partial<{ stage: number; type: 'fill' | 'apply'; pass: boolean; revised_to: boolean }>): { date: string; stage: number; type: 'fill' | 'apply'; pass: boolean; grader: string; revised_by?: 'cloud'; revised_to?: boolean } => ({
@@ -355,27 +355,32 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
       writeReviews(v, {
         // 0001:stage 2,填空過、應用原本沒過但雲端改判為過 → 通過
         'sec-0001': reviewRecord({ stage: 3, next_due: far, history: [todays({}), todays({ type: 'apply', pass: false, revised_to: true })] }),
-        // 0002:單筆應用題,原本過、雲端改判為沒過 → 回退
-        'sec-0002': reviewRecord({ stage: 1, next_due: addDays(TODAY, 1), history: [todays({ stage: 3, type: 'apply', pass: true, revised_to: false })] }),
+        // 0002:單筆應用題,原本沒過、雲端改判為過 → 通過
+        'sec-0002': reviewRecord({ stage: 3, next_due: far, history: [todays({ stage: 3, type: 'apply', pass: false, revised_to: true })] }),
         // 0003:stage 2,填空過、應用沒過(沒改判)→ 回退(兩筆只算一張卡)
-        'sec-0003': reviewRecord({ stage: 1, next_due: addDays(TODAY, 1), history: [todays({}), todays({ type: 'apply', pass: false })] }),
+        'sec-0003': reviewRecord({ stage: 1, next_due: far, history: [todays({}), todays({ type: 'apply', pass: false })] }),
         // 0004:今天還沒答、到期 → 這一次執行答(填空答對)
         'sec-0004': reviewRecord({ next_due: addDays(TODAY, -2) }),
         // 0005:stage 3 應用題,這一次執行回答 GARBAGE → 批改失敗,卡片不動、沒有今天的 history → 待重試
         'sec-0005': reviewRecord({ stage: 3, next_due: addDays(TODAY, -1) }),
+        // 0006:單筆應用題,原本過、雲端改判為沒過 → 回退
+        'sec-0006': reviewRecord({ stage: 1, next_due: far, history: [todays({ stage: 3, type: 'apply', pass: true, revised_to: false })] }),
       });
       writeCacheFile(
         v,
         cacheOf({
-          queue: ids(5).map((card, i) => ({ card, stage: 1, overdue_days: 5 - i, overdue_ratio: 5 - i })),
+          queue: ids(6).map((card, i) => ({ card, stage: 1, overdue_days: 6 - i, overdue_ratio: 6 - i })),
         }),
       );
       const out = await runToEnd(v, { applyText: 'GARBAGE' });
       expect(out.status, out.output).toBe(0);
       expect(out.asked.map((a) => a.card).sort()).toEqual(['sec-0004', 'sec-0005']);
-      expect(out.stdout).toMatch(/2 passed, 2 returned\./);
+      expect(out.stdout).toMatch(/3 passed, 2 returned\./);
       expect(out.stdout).toMatch(/Answered this run: 2\./);
       expect(out.stdout).toMatch(/Retry later: 1 question\(s\)\./);
+      // 明日預估:到期在明天的只有 0005(1 張),今天這一輪回退 R=2 張 → 沒有被重複算的 → 2 張。
+      // 若回退數用「本次執行」的計數器(0)就會變成 1。
+      expect(out.stdout).toMatch(/Tomorrow: 2 due\./);
     },
     TEST_TIMEOUT_MS,
   );
@@ -472,6 +477,27 @@ describe('壞快取:丟掉、重建、記一筆 warning,不當掉(驗收 1)', ()
       expect(rebuilt.queue.map((q) => q.card)).toEqual(ids(3));
       expect(readFileSync(reviewsPath(v), 'utf8')).not.toBe(reviewsBefore);
       expect(sessionFiles(v)).toEqual([`session-${TODAY}.json`]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    '壞快取重建後,今天已答過的卡(有今天的 history、next_due 仍 ≤ 今天)不再問,而且它的紀錄原封不動',
+    async () => {
+      const v = dueVault(3);
+      const reviews = readReviews(v);
+      reviews['sec-0006'] = reviewRecord({
+        next_due: addDays(TODAY, -20),
+        history: [{ date: TODAY, stage: 1, type: 'fill', pass: true, grader: 'exact' }],
+      });
+      writeReviews(v, reviews);
+      const before = readReviews(v)['sec-0006'];
+      writeCacheFile(v, '{"version": 1, <<< broken');
+      const out = await runToEnd(v);
+      expect(out.asked.map((a) => a.card)).not.toContain('sec-0006');
+      expect(out.asked.map((a) => a.card).sort()).toEqual(ids(3));
+      expect(readReviews(v)['sec-0006']).toEqual(before);
+      expect(warnings(v)).toHaveLength(1);
     },
     TEST_TIMEOUT_MS,
   );
@@ -657,6 +683,30 @@ describe('--dry-run 反映真實 session、永遠不寫(驗收 3)', () => {
       expect(fileBytes(reviewsPath(v))).toBe(before.reviews);
       expect(logBytes(v)).toBe(before.log);
       expect(sessionFiles(v)).toEqual([`session-${TODAY}.json`]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    '列的是快取裡「剩下的」那一份,不是重算:手寫兩張卡、順序相反的快取(磁碟上其實有三張到期),dry-run 照快取的順序列、不列不在快取裡的卡,標題行「已答 0 / 共 2」',
+    async () => {
+      const v = dueVault(3);
+      writeCacheFile(
+        v,
+        cacheOf({
+          queue: [
+            { card: 'sec-0003', stage: 1, overdue_days: 1, overdue_ratio: 1 },
+            { card: 'sec-0001', stage: 1, overdue_days: 3, overdue_ratio: 3 },
+          ],
+          total_due: 2,
+        }),
+      );
+      const out = await runReview(v, { args: ['--dry-run'] });
+      expect(out.status, out.output).toBe(0);
+      expect(out.stdout).toMatch(/已答\s*0\s*\/\s*共\s*2/);
+      expect(out.stdout.indexOf('sec-0003')).toBeGreaterThanOrEqual(0);
+      expect(out.stdout.indexOf('sec-0001')).toBeGreaterThan(out.stdout.indexOf('sec-0003'));
+      expect(out.stdout).not.toContain('sec-0002');
     },
     TEST_TIMEOUT_MS,
   );
