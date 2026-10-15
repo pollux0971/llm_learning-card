@@ -60,8 +60,8 @@ export const ERROR_TEXT = '評分失敗,請再試一次';
  */
 export const FACE_TEST_PANEL = { r: 255, g: 0, b: 0, a: 0.5 } as const;
 export const FACE_TEST_BACKDROP = '#202020';
-/** 每個通道容許的誤差(同 T14 G1 的 3,再放寬 1 給抗鋸齒) */
-export const FACE_CHANNEL_TOLERANCE = 4;
+/** 每個通道容許的誤差(跟 T14 G1 同為 3;顧問 2026-10-16) */
+export const FACE_CHANNEL_TOLERANCE = 3;
 /** hover / focus 還在用橘色:按鈕或作答欄外擴 6 像素的範圍裡,接近 --hud-accent 的像素至少這麼多 */
 export const ACCENT_MIN_PIXELS = 20;
 export const ACCENT_CHANNEL_TOLERANCE = 32;
