@@ -188,3 +188,46 @@ describe('assetUrl(E16)', () => {
     },
   );
 });
+
+// ---------------------------------------------------------------- 驗收補測(測試 agent,T2c-1 驗收時加)
+
+describe('acceptance: TS never rewrites the path it hands to invoke (whitespace, NUL, dots)', () => {
+  // 突變:read 先 trim 再送出,既有的「原樣」測試沒有任何帶空白的路徑,所以綠。
+  const ODD = [' cards/a.md', 'cards/a.md ', '\tcards/a.md\n', 'cards/a.md\u0000.png', 'cards//a.md', './cards/a.md', 'cards/a.md.'];
+
+  it.each(ODD)('read(%j) reaches invoke bit-for-bit', async (path) => {
+    const m = await mod();
+    invoke.mockResolvedValueOnce('x');
+    await m.createLearningFs({ os: 'linux' }).read(path);
+    expect((invoke.mock.calls[0] as [string, { relPath: string }])[1].relPath).toBe(path);
+  });
+
+  it.each(ODD)('write(%j) reaches invoke bit-for-bit', async (path) => {
+    const m = await mod();
+    invoke.mockResolvedValueOnce(null);
+    await m.createLearningFs({ os: 'linux' }).write(path, 'c');
+    expect((invoke.mock.calls[0] as [string, { relPath: string }])[1].relPath).toBe(path);
+  });
+
+  it.each(ODD)('exists(%j) reaches invoke bit-for-bit', async (path) => {
+    const m = await mod();
+    invoke.mockResolvedValueOnce(false);
+    await m.createLearningFs({ os: 'linux' }).exists(path);
+    expect((invoke.mock.calls[0] as [string, { relPath: string }])[1].relPath).toBe(path);
+  });
+
+  it.each(ODD)('list(%j) reaches invoke bit-for-bit', async (path) => {
+    const m = await mod();
+    invoke.mockResolvedValueOnce([]);
+    await m.createLearningFs({ os: 'linux' }).list(path);
+    expect((invoke.mock.calls[0] as [string, { relDir: string }])[1].relDir).toBe(path);
+  });
+
+  it('write passes the content bit-for-bit too (no trailing newline added, no trimming)', async () => {
+    const m = await mod();
+    invoke.mockResolvedValueOnce(null);
+    const content = '  spaced  \r\n\u0000tail';
+    await m.createLearningFs({ os: 'linux' }).write('cards/a.md', content);
+    expect((invoke.mock.calls[0] as [string, { content: string }])[1].content).toBe(content);
+  });
+});

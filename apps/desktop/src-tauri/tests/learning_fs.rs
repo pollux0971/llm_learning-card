@@ -255,3 +255,45 @@ fn temp_dirs_are_distinct() {
     let b = TempDir::new("distinct");
     assert_ne!(a.path(), b.path());
 }
+
+// ---------------------------------------------------------------- 驗收補測(測試 agent,T2c-1 驗收時加)
+
+/// worker 報告 §6 第 4 點:`guard` 只檢查 `rel`,不檢查 `rel.tmp`。有人在 learning/ 裡放一個指向根外的
+/// `cards/a.md.tmp` symlink,`write("cards/a.md")` 如果跟著 symlink 開檔,內容就寫到根外。實作用 `O_NOFOLLOW`
+/// 開暫存檔;原本沒有任何測試蓋到,拿掉它不會紅。
+#[test]
+fn write_does_not_follow_a_planted_tmp_symlink_out_of_the_root() {
+    let l = Learning::new("tmp-symlink-new");
+    l.plant("cards/a.md", b"old");
+    let target = l.outside.join("escaped");
+    symlink(&target, l.root.join("cards/a.md.tmp")).unwrap();
+    assert!(!target.exists(), "fixture target must not exist yet");
+
+    let err = write(&l.root, "cards/a.md", "new").expect_err("writing through a planted .tmp symlink must fail");
+
+    assert!(!target.exists(), "the content was written outside the root through the .tmp symlink");
+    assert_eq!(fs::read_to_string(l.root.join("cards/a.md")).unwrap(), "old", "the destination must be untouched");
+    assert!(
+        fs::symlink_metadata(l.root.join("cards/a.md.tmp")).is_err(),
+        "cleanup must remove the planted symlink itself"
+    );
+    assert!(l.log_lines().is_empty(), "an io error is not a refusal: no warning event");
+    assert_ne!(wire(&err)["kind"], "refused", "this is an io failure, not a path refusal");
+
+    // 清掉之後同一個寫入就成功
+    write(&l.root, "cards/a.md", "new").unwrap();
+    assert_eq!(fs::read_to_string(l.root.join("cards/a.md")).unwrap(), "new");
+}
+
+#[test]
+fn write_does_not_overwrite_an_existing_outside_file_through_a_planted_tmp_symlink() {
+    let l = Learning::new("tmp-symlink-existing");
+    l.plant("cards/a.md", b"old");
+    let secret = l.outside.join("secret");
+    symlink(&secret, l.root.join("cards/a.md.tmp")).unwrap();
+
+    assert!(write(&l.root, "cards/a.md", "PWNED").is_err());
+
+    assert_eq!(fs::read_to_string(&secret).unwrap(), "OUTSIDE-SENTINEL", "the outside file must keep its content");
+    assert_eq!(fs::read_to_string(l.root.join("cards/a.md")).unwrap(), "old");
+}
