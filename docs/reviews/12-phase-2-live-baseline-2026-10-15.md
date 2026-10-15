@@ -9,7 +9,7 @@
 - 模型 `openai/gpt-5.6-luna`。輸入是 `contracts/fixtures/raw/security-basics.md` 的三個小節(測試素材,不是使用者資料)。沒有改動 `prompts/` 任何檔(硬規則 4 不觸發)。
 - 輸出存在 `packages/core/src/prompt-quality/golden/<set>/2026-10-15/`(進 git):每組有 `meta.json`、`prompt.snapshot.md`、三個 `*.output.json`、`SCORES.md`。
 - 花費(`llm-spend --today` 前後):$0.0000 → $0.0919(15 次呼叫);上限 $1.0000。各組估計:cards 0.0253、children 0.0246、regenerate 0.0132、questions 0.0235、deps 0.0053,加總與帳本一致。token 進 7241、出 7377。
-- 帳本 `learning/state/log.jsonl`:52 → 67 行,只在尾端追加,0 行被刪或改。learning/ 檔數 64 不變。
+- 帳本 `learning/state/log.jsonl`:golden run 結束時 52 → 67 行,只在尾端追加,0 行被刪或改。learning/ 檔數 64 不變。(第 3 節的實驗之後是 70 行、雜湊 ee37f9e1fa9193c6;這一節的 15 次 / $0.0919 只含 golden run 本身。)
 
 ## 2. 人工評分(技術顧問,15 份輸出逐份讀過)
 
@@ -38,7 +38,7 @@
 - 做法(主簽出):把 `packages/core/prompts/ingest/cards.md` 暫時改壞——標題句「拆成數張『一張卡一個概念』的教學卡」改成「拆成數張教學卡」,並刪掉「一張卡只講一個概念,不要把整節內容塞進一張卡」那一行。**只跑 `ingest.cards` 一組**:`prompt-check.ts --golden --set ingest.cards --live --out <暫存目錄>`。
   用 `--out` 是因為 live run 預設寫進 `golden/<set>/<日期>`,同一天會覆蓋剛 commit 的基準;帳本不跟著 `--out`(T5 / ADR-066),花費照樣記進同一本。
 - 做完立刻 `git checkout -- packages/core/prompts/ingest/cards.md`;還原後 porcelain 0、`git diff` 與 `git diff --cached` 都是 0 行。壞掉的 prompt **沒有 commit**。暫存目錄的 `prompt.snapshot.md` 留有壞掉那一版,可對照。
-- 花費:$0.0919 → $0.1157(+$0.0238,3 次呼叫)。
+- 花費:$0.0919 → $0.1157(+$0.0238,3 次呼叫)。**當日合計 18 次、US$0.1157**;帳本最後 18 行:前 15 行 ts 11:19:40–11:21:19 UTC 是 golden run,後 3 行 11:24:05–11:24:20 UTC 是這個實驗(tokens 進 1606 出 1979,與實驗輸出的 meta 一致),沒有重跑、逾時或截斷。
 - 結果(基準 vs 壞掉的 prompt,卡數 / 平均 body 字數 / 最長 body / examples 數):
 
 | 輸入 | 基準 | 壞掉 |
