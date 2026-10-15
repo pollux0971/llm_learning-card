@@ -19,7 +19,7 @@ worker 4 個 commit:`bd2289a` 實作、`209a0f8` 工單兩處純文字、`2d7f48
 | F-2 | 缺口,已補 | TS 端 `read` 先 `trim` 路徑再送出:既有「原樣」測試沒有帶空白的路徑,全綠 | 補測 29 條(四個方法 × 七種怪路徑加內容原樣),四個突變全紅 |
 | F-3 | 缺口,已補 | cargo-mutants 存活 38 條裡的 9 條非等價(分類表、list 在檔案上、經過一般檔案的路徑、舊樣式殘檔的精確判斷、`flush_refusals`) | 補測 5 條,存活降到 29,其餘逐條分類見 §6 |
 | F-4 | 設計限制 | 狀態回報函式 `same_checks_as_read`、`scope_is_learning_root`(T2b 遺留)回傳常數 `true` 的版本沒有測試會紅(cucumber 只斷言它們回 true)。真正的行為由 `tests/asset_protocol.rs` 的 symlink 與解碼測試守住 | 不擋;建議之後刪掉這兩個自我回報函式或改成斷言行為 |
-| F-5 | 工單前提不成立 | `must_catch` 第 14 條「Rust 段測試改成按 `rule` 過濾,47 列斷言必須紅」:`rule != "length"` 與 `applies_to` 含 `segment` **選出同一批 47 列**(那 4 列只適用於 `category` 的列恰好就是 4 列 `length`),所以按 rule 過濾與現況不可區分;「不過濾」變體則紅 | 記錄;要能區分,向量檔需要一列 rule 為 `length` 而 `applies_to` 含 `segment` 的列(契約變更,不在本張) |
+| F-5 | 工單前提不成立 | `must_catch` 第 14 條「Rust 段測試改成按 `rule` 過濾,47 列斷言必須紅」:`rule != "length"` 與 `applies_to` 含 `segment` **選出同一批 47 列**(那 4 列只適用於 `category` 的列恰好就是 4 列 `length`),所以按 rule 過濾與現況不可區分;「不過濾」變體則紅 | 顧問裁決:**等價突變,接受**,不開新票。要分得出來,需要向量檔多一列 rule 為 `length` 而 `applies_to` 含 `segment` 的列,屬於契約變更,這張不做 |
 | F-6 | 流程 | 全程沒有碰 `@manual` 的 E15、F19(SVG script 不執行的截圖、兩個視窗看得到卡片與題目、devtools console 沒有 CSP 違規) | 前端與顧問 |
 | F-7 | 備註 | `apps/desktop/src-tauri/placeholder/` 是 phase-1 的殘留,`tauri.conf.json` 已不引用,無害;`frontend/` 已刪 | 可之後清 |
 
@@ -97,7 +97,7 @@ grok 的六項檢查要點都沒有找到真缺陷;我自己找到的缺口都�
 | 第二次(補測後) | 127 | 29 | 42 | 127/156 = **81.4%** | 24 分 |
 | T2b 地板 | 36 | 17 | 9 | 36/53 = 67.9% | |
 
-**地板棘輪(只准升不准降)通過**:`127 × 53 = 6731 ≥ 36 × 156 = 5616`。建議把 `mutants.toml` 的地板升到 127/156;`unviable` 不進分母。
+**地板棘輪(只准升不准降)通過**:`127 × 53 = 6731 ≥ 36 × 156 = 5616`。地板已由我升到 127/156(`apps/desktop/src-tauri/.cargo/mutants.toml`,顧問同意);`unviable` 不進分母。
 
 ### 6.1 存活的 29 條逐條分類
 

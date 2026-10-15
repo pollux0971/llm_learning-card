@@ -3,8 +3,15 @@
 # 第一次實測(2026-10-15,cargo-mutants 27.1.0,host pollux-IdeaPad):
 #   62 tested, 36 caught, 17 missed, 9 unviable。
 #   地板 = caught / (caught + missed) = 36/53。
-#   以後的跑法:new_caught * 53 >= 36 * (new_caught + new_missed)。不准降。
+#   (T2b 的舊地板,已被下面的新地板取代。)
+# 第二次實測(2026-10-15,T2c-1 驗收,cargo-mutants 27.1.0,-j 2,CARGO_BUILD_JOBS=2):
+#   198 tested, 127 caught, 29 missed, 42 unviable。
+#   地板 = caught / (caught + missed) = 127/156(81.4%)。
+#   以後的跑法:new_caught * 156 >= 127 * (new_caught + new_missed)。不准降。
 #   unviable 不進分母(沒編成,不是測試没抓到)。
+#   存活的 29 條逐條分類見 docs/reviews/acceptance-T2c-1.md 第 6.1 節:全部是等價、走不到、cucumber 殺掉,
+#   或 T2b 遺留的自我回報函式(same_checks_as_read、scope_is_learning_root,T2c-2 處理)。
+#   跑法需要 TMPDIR=<repo>/dist/mutants-tmp(兩層深)與 --copy-target false:測試用 include_str! 讀 crate 外的向量檔。
 # 取 .stryker.lock 的包裝見 run-mutants.mjs。
 # 射程:解決變異測試之間的互斥;不解決整條鏈之間的互斥,見另案(T3)。
 
