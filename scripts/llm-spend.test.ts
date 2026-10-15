@@ -99,7 +99,7 @@ function openaiCall(tokensIn: number, tokensOut: number, day = DAY): string {
 
 /** 今天的一筆「不是 OpenAI 呼叫」的條目——證明 log 活著,但今天沒花錢。 */
 function otherEvent(day = DAY): string {
-  return JSON.stringify({ ts: `${day}T09:00:00.000Z`, type: 'review_done', card: 'sec-0001' });
+  return JSON.stringify({ ts: `${day}T09:00:00.000Z`, type: 'reviewed', card: 'sec-0001' });
 }
 
 const tmpDirs: string[] = [];
@@ -311,11 +311,10 @@ describe('buildSpendReport:上限與今日條目的邊界', () => {
     expect(report.reason).toContain('LLM_DAILY_CAP_USD');
   });
 
-  it('今日條目只算今天的:別天的條目與沒有 ts 的條目都不算', () => {
+  it('今日條目只算今天的:別天的條目不算(沒有 ts 的條目在 T9 之後是壞行,見 ledger-line-schema.test.ts)', () => {
     const log = writeLog([
       openaiCall(1000, 2000, '2026-09-03'),
       otherEvent('2026-09-03'),
-      JSON.stringify({ type: 'review_done', card: 'sec-0002' }),
       otherEvent(),
       openaiCall(1000, 2000),
     ]);
@@ -387,7 +386,8 @@ describe('buildSpendReport:整份檔都不是 JSONL,也是算不出來', () => {
     ['整份是一段 HTML', '<html><body>login</body></html>\n<p>please sign in</p>\n', '不是合法的 JSON'],
     // ts 存在卻是數字(不是字串也不是 undefined):isLogEvent 最後一行專門擋這種,漏接會
     // 讓這行悄悄混進 events,變成低估花費(審核輪 Stryker:isLogEvent 的型別檢查改成 `return true` 曾存活)。
-    ['整份是一個物件,但 ts 是數字不是字串', '{"ts":20260901}\n', '不是 log 事件'],
+    // T9:物件但不符合 LogEventSchema(ts 是數字、也沒有 type)→ 訊息要點名 LogEventSchema。
+    ['整份是一個物件,但 ts 是數字不是字串', '{"ts":20260901}\n', 'LogEventSchema'],
   ];
 
   for (const [name, content, what] of cases) {
@@ -837,4 +837,57 @@ describe('T8 C:驗證過的帳本、log 不存在 = 全新安裝 = $0、exit 0',
     expect(code).toBe(2);
     expect(stderr).toContain('算不出來');
   }, SPAWN_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------- T9:不合規的行(JSON 合法但會讓花費算少)
+
+describe('T9:llm-spend 對不合規的行 exit 2,點名行號與欄位', () => {
+  const t = `${DAY}T10:00:00.000Z`;
+  const cases: [string, string, RegExp][] = [
+    ['負的 tokens_in(把別的花費抵掉)', JSON.stringify({ ts: t, type: 'llm_call', provider: 'openai', tokens_in: -1_000_000, tokens_out: 0 }), /tokens_in/],
+    ['字串 tokens_out', JSON.stringify({ ts: t, type: 'llm_call', provider: 'openai', tokens_in: 5, tokens_out: '7' }), /tokens_out/],
+    ['計價行缺 tokens', JSON.stringify({ ts: t, type: 'llm_call', provider: 'openai' }), /tokens_in/],
+    ['缺 ts', JSON.stringify({ type: 'llm_call', provider: 'openai', tokens_in: 5, tokens_out: 5 }), /LogEventSchema/],
+    ['ts 不是 ISO', JSON.stringify({ ts: 'yesterday', type: 'llm_call', provider: 'openai', tokens_in: 5, tokens_out: 5 }), /ts/],
+    ['type 不在契約裡', JSON.stringify({ ts: t, type: 'review_done' }), /LogEventSchema/],
+  ];
+
+  for (const [name, bad, mention] of cases) {
+    it(`${name}:buildSpendReport 是 unknown,原因帶第 2 行、欄位名、LogEventSchema 或欄位,而且不說還有預算`, () => {
+      const log = writeLog([openaiCall(1000, 2000), bad]);
+      const report = buildSpendReport(goodEnv(), at(log), DAY);
+      expect(report.kind).toBe('unknown');
+      if (report.kind !== 'unknown') return;
+      expect(report.reason).toMatch(/第\s*2\s*行/);
+      expect(report.reason).toMatch(mention);
+      expect(report.reason).toContain(bad.slice(0, 80));
+      expect(report.reason).toContain('不會自動跳過');
+      expect(exitCodeFor(report)).toBe(EXIT_CANNOT_COMPUTE);
+    });
+  }
+
+  it('CLI(子程序)負的 tokens:exit 2,不是用負數抵掉後說「還有預算」', () => {
+    const log = writeLog([openaiCall(1_000_000, 0), openaiCall(1_000_000, 0), JSON.stringify({ ts: t, type: 'llm_call', provider: 'openai', tokens_in: -2_000_000, tokens_out: 0 })]);
+    const { code, output } = runCli(['--day', DAY, '--log', log]);
+    expect(code).toBe(2);
+    expect(output).toContain('算不出來');
+    expect(output).toMatch(/第\s*3\s*行/);
+    expect(output).not.toMatch(BUDGET_SENTENCE);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('對照:合規的帳本(含逾時標記行與 ollama 呼叫)照常算,不被誤傷', () => {
+    const log = writeLog([
+      openaiCall(1000, 2000),
+      JSON.stringify({ ts: t, type: 'llm_call', provider: 'openai', timeout: true }),
+      JSON.stringify({ ts: t, type: 'llm_call', provider: 'ollama', model: 'm' }),
+    ]);
+    const report = buildSpendReport(goodEnv(), at(log), DAY);
+    expect(report.kind).toBe('computed');
+  });
+
+  it('scripts/llm-spend.ts 沒有自己的壞行判定(只經過 spend.ts 的 parseLedger)', () => {
+    const src = readFileSync(join(REPO_ROOT, 'scripts/llm-spend.ts'), 'utf8');
+    expect(src).not.toMatch(/JSON\.parse\(/);
+    expect(src).not.toMatch(/LogEventSchema/);
+  });
 });

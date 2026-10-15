@@ -107,8 +107,8 @@ describe('T8 A:readDailySpend 遇到壞行就丟錯,不回任何數字', () => {
     }
   });
 
-  it('不是壞行的:空白行、只有空白的行、沒有 ts 的物件——照常算,不丟錯', () => {
-    const path = writeLog([call(), '', '   ', '\t', JSON.stringify({ type: 'other' }), call()]);
+  it('不是壞行的:空白行、只有空白的行、合法的非 llm_call 事件——照常算,不丟錯(沒有 ts 的物件在 T9 之後是壞行,見 ledger-line-schema.test.ts)', () => {
+    const path = writeLog([call(), '', '   ', '\t', JSON.stringify({ ts: `${DAY}T09:00:00Z`, type: 'reviewed' }), call()]);
     expect(readDailySpend(explicit(path), DAY, PRICES)).toEqual({ usd: 5, calls: 2 });
   });
 
