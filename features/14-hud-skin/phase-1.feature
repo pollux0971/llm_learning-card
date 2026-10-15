@@ -1,4 +1,4 @@
-@wave0 @hud-skin @phase-1
+@standalone @wave0 @hud-skin @phase-1
 Feature: The HUD kit and its gallery
   One shared SAO style look for both windows: light, slightly see-through panels,
   a very thin black frame that follows cut corners, a drawn title bar, resize
