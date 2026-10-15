@@ -5,9 +5,11 @@
  * (warning 事件由 Rust 寫,ADR-069)。四個方法經 `@tauri-apps/api/core` 的 `invoke` 叫 Rust command
  * (`apps/desktop/src-tauri/src/commands.rs`),參數**原樣**交出去:TS 不先檢查、不轉換,權威在 Rust。
  *
- * command 的錯誤 JSON 轉成兩個不同的錯誤類別:
+ * command 的錯誤 JSON 轉成三個不同的錯誤類別:
  *   `{ kind: 'refused', reason }`     → `PathRefusedError`(白名單或 symlink 不過;Rust 已寫 warning)
  *   `{ kind: 'io', code, errno? }`    → `LearningIoError`(路徑合法、檔案系統出錯;不是攻擊)
+ *   `{ kind: 'not-configured' }`      → `LearningNotConfiguredError`(T2c-2:啟動狀態不是 ok,learning 根沒設好;
+ *                                        不是拒絕、不是 io 錯誤。畫面怎麼呈現由前端決定,這裡只給形狀)
  *
  * `assetUrl` 是同步的(回傳字串):先做 TS 端的提示檢查,不過就丟 `PathRefusedError`、不呼叫 invoke;
  * 過了就回 `assetUrlPrefix(os)` + 逐段 `encodeURIComponent`。真正擋人的是 `lc` 協定的 handler。
@@ -59,6 +61,20 @@ export class LearningIoError extends Error {
   }
 }
 
+/**
+ * learning 根沒設好:指標檔不存在、讀不到、learning 資料夾不存在、或身分不符(T2c-2)。
+ * Rust 沒碰檔案、沒寫 warning;要使用者跑 `npx tsx scripts/vault.ts init`,桌面程式不替人設定。
+ */
+export class LearningNotConfiguredError extends Error {
+  readonly relPath: string;
+
+  constructor(relPath: string) {
+    super(`learning directory is not configured: ${JSON.stringify(relPath)}`);
+    this.name = 'LearningNotConfiguredError';
+    this.relPath = relPath;
+  }
+}
+
 /** `lc` 協定在各平台上的 URL 前綴。Windows 與 Android 的 webview 只認 `http://<scheme>.localhost/`(phase-5)。 */
 export function assetUrlPrefix(os: string): string {
   return os === 'windows' || os === 'android' ? 'http://lc.localhost/' : 'lc://localhost/';
@@ -83,6 +99,9 @@ function toBoundaryError(raw: unknown, relPath: string): unknown {
   }
   if (isRecord(raw) && raw.kind === 'io' && typeof raw.code === 'string') {
     return new LearningIoError(raw.code, relPath, typeof raw.errno === 'number' ? raw.errno : undefined);
+  }
+  if (isRecord(raw) && raw.kind === 'not-configured') {
+    return new LearningNotConfiguredError(relPath);
   }
   return raw;
 }

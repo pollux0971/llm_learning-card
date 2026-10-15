@@ -22,7 +22,8 @@
         "x": 100,
         "y": 100,
         "resizable": true,
-        "visible": true
+        "visible": true,
+        "create": false
       },
       {
         "label": "test",
@@ -33,7 +34,8 @@
         "x": 520,
         "y": 100,
         "resizable": true,
-        "visible": true
+        "visible": true,
+        "create": false
       }
     ],
     "security": {

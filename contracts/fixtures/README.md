@@ -8,6 +8,8 @@
 ```
 learning-minimal/     一個合法的最小 learning/,3 張卡、1 個類別。lint 應該回報 0 個問題
 learning-broken/      刻意壞掉的,附 EXPECTED.md 列出每一個問題
+path-segment-vectors.json   路徑段向量(契約 §13、§1 CategoryId),TS 與 Rust 共用
+vault-pointer-vectors.json  使用者層指標檔與帳本身分標記的向量(契約 §12),TS(T5)與 Rust(桌面程式)共用;47 列:路徑 3、標記比對 19、指標內容 11、解析狀態 14
 learning-broken-category/  不合法的分類名(契約 1.4.0 §1),附 EXPECTED.md;lint 應回報恰好 3 個 invalid_category
 cards/                單張卡的合法與非法樣本,檔名說明錯在哪
 reviews/              各種複習狀態

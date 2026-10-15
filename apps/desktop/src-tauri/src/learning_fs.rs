@@ -6,6 +6,8 @@
 //!   - **拒絕**:白名單或 symlink 不過,還沒碰到檔案;往 `<learning 根>/state/log.jsonl` 寫一行 warning
 //!     (每一次都寫,不限流);
 //!   - **io 錯誤**:路徑合法、檔案系統出錯(不存在、是目錄、權限、不是 UTF-8……);不寫 warning。
+//! 另外,啟動狀態不是 ok(指標檔不存在、讀不到、learning 資料夾不存在、身分不符;T2c-2)時,
+//! command 根本不呼叫這裡,直接回 `FsError::NotConfigured`(見 `commands::LearningRoot::dir`)。
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -54,19 +56,27 @@ impl IoFailure {
     }
 }
 
-/// command 的錯誤。拒絕序列化成 `{"kind":"refused","reason":...}`,io 錯誤見 `IoFailure`。
+/// learning 根沒設好(啟動狀態不是 ok,T2c-2 驗收 3):`{"kind":"not-configured"}`。
+/// 不是拒絕、不是 io 錯誤;不碰檔案、不寫 warning(沒有可以寫的根)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename = "not-configured")]
+pub struct NotConfigured {}
+
+/// command 的錯誤。拒絕序列化成 `{"kind":"refused","reason":...}`,io 錯誤見 `IoFailure`,
+/// 根沒設好見 `NotConfigured`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum FsError {
     Refused(Refusal),
     Io(IoFailure),
+    NotConfigured(NotConfigured),
 }
 
 impl FsError {
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {
             FsError::Refused(refusal) => Some(refusal),
-            FsError::Io(_) => None,
+            FsError::Io(_) | FsError::NotConfigured(_) => None,
         }
     }
 }

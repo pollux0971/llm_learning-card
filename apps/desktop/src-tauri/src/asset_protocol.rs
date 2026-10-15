@@ -5,7 +5,11 @@
 //!   - 圖片是位元組:`fs::read`,不轉成文字;`Content-Type` 依副檔名;
 //!   - 每個回應都帶 `X-Content-Type-Options: nosniff`;`.svg` 另帶 `Content-Security-Policy: script-src 'none'`;
 //!   - 拒絕 → 403,照限流往 `<learning 根>/state/log.jsonl` 寫 warning;
-//!   - 路徑合法但讀不到(不存在、是目錄)→ 404,其他 io 錯誤 → 500;io 錯誤不寫 warning。
+//!   - 路徑合法但讀不到(不存在、是目錄)→ 404,其他 io 錯誤 → 500;io 錯誤不寫 warning;
+//!   - learning 根沒設好(啟動狀態不是 ok,T2c-2 驗收 3)→ 403(`refuse_response`),不解碼、不開檔、不寫 warning。
+//!
+//! 「scope 只在 learning 根」與「跟 read 同一份檢查」不由 app 自己回報(T2c-2 驗收 8 刪掉了兩個自我回報函式),
+//! 由真的請求證明:`tests/asset_protocol.rs` 與 phase-2 的 cucumber 經 probe 的 `asset` op 送 symlink 與編碼過的路徑。
 
 use std::fs;
 use std::io;
@@ -18,7 +22,7 @@ use percent_encoding::percent_decode_str;
 
 use crate::event_log::{self, AssetRefusalLimiter};
 use crate::learning_fs::{self, FsCall};
-use crate::path_guard::{self, Refusal};
+use crate::path_guard::Refusal;
 
 pub const SCHEME: &str = "lc";
 
@@ -47,7 +51,8 @@ pub struct AssetReply {
     pub refusal: Option<Refusal>,
 }
 
-/// main.rs 的 lc handler 與 probe 的 asset op 都走這裡。`encoded_rel` 是 URL path 拿掉一個 `/`、還沒解碼的字串。
+/// main.rs 的 lc handler 與 probe 的 asset op 都走這裡。`root` 是 `commands::LearningRoot::dir` 給的那一份;
+/// 根沒設好時兩邊都不呼叫這裡,直接回 `refuse_response()`。`encoded_rel` 是 URL path 拿掉一個 `/`、還沒解碼的字串。
 pub fn respond(root: &Path, encoded_rel: &str, limiter: &mut AssetRefusalLimiter, now: SystemTime) -> AssetReply {
     let checked = match decode_once(encoded_rel) {
         Ok(decoded) => decoded,
@@ -150,7 +155,7 @@ fn plain(status: StatusCode, text: &str) -> Response<Vec<u8>> {
         .unwrap_or_else(|_| fallback(status))
 }
 
-/// 403。main.rs 在沒有 learning 根、或內建 `asset:` 被呼叫時也回這個。
+/// 403。learning 根沒設好、或內建 `asset:` 被呼叫時也回這個。
 pub fn refuse_response() -> Response<Vec<u8>> {
     plain(StatusCode::FORBIDDEN, "refused")
 }
@@ -178,52 +183,4 @@ pub fn reject_builtin() -> AssetOutcome {
         fs_calls: Vec::new(),
         rust_log: vec!["refused builtin asset: protocol".into()],
     }
-}
-
-/// 解一次之後跑跟 read 同一份 `check_rel_path`。沒有 `%` 的樣本兩邊必須同拒同放。
-pub fn same_checks_as_read() -> bool {
-    let samples = [
-        "../etc/passwd",
-        "cards/a.",
-        "nul.md",
-        "raw/x",
-        "cards/a.md",
-        "cards/\u{AC00}.md",
-    ];
-    samples.iter().all(|p| {
-        let via_read = path_guard::check_rel_path(p).is_err();
-        let via_asset = match decode_once(p) {
-            Ok(s) => path_guard::check_rel_path(&s).is_err(),
-            Err(_) => true,
-        };
-        via_read == via_asset
-    })
-}
-
-/// 自訂 handler 的 scope 是呼叫端給的 learning 根,不是整顆磁碟。
-/// 用暫存目錄自測:指向根外的 symlink 必須拒絕,而且不回傳根外的內容。
-pub fn scope_is_learning_root() -> bool {
-    let parent = std::env::temp_dir().join(format!(
-        "lc-scope-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    let root = parent.join("learning");
-    let outside = parent.join("outside");
-    let ok = (|| {
-        std::fs::create_dir_all(root.join("cards")).ok()?;
-        std::fs::create_dir_all(&outside).ok()?;
-        std::fs::write(outside.join("secret"), "OUTSIDE").ok()?;
-        std::os::unix::fs::symlink(outside.join("secret"), root.join("cards/link.md")).ok()?;
-        let mut limiter = AssetRefusalLimiter::new();
-        let reply = respond(&root, "cards/link.md", &mut limiter, SystemTime::now());
-        let refused = reply.refusal.is_some() && reply.response.status() == StatusCode::FORBIDDEN;
-        let leaked = reply.response.body().windows(b"OUTSIDE".len()).any(|w| w == b"OUTSIDE");
-        Some(refused && !leaked)
-    })();
-    let _ = std::fs::remove_dir_all(&parent);
-    ok == Some(true)
 }
