@@ -113,8 +113,8 @@ grok 的六條裡,我能證實的只有 F3 一條(而且是我借它的方向另
 | `npm run witness:degraded` | 退出碼 1:未標記 154 > 基準 152(多 2) | **同樣退出碼 1:未標記 154 > 基準 152** |
 
 **B1 細節**:
-- `docs/02-decision-map.md:1347` → `../packages/core/src/lint/atomic-write.ts:40`
-- `docs/tickets/T7-single-atomic-write.md:37` → `../../packages/core/src/lint/atomic-write.ts:40`
+- docs/02-decision-map.md 第 1347 行 → packages/core/src/lint/atomic-write.ts 第 40 行(原寫成相對連結)
+- docs/tickets/T7-single-atomic-write.md 第 37 行 → packages/core/src/lint/atomic-write.ts 第 40 行(原寫成相對連結)
 - 這兩處是已在 main 的文字;T7 刪掉了被指的檔,連結就斷。連帶紅的三個測試:`check-doc-links.local.test.ts` 的「沒有 --root 就掃這個 repo:連結數 > 0、退出碼 0」與「--verbose 之類不認得的參數不會被當成 root」,以及 `zero-input-guard.test.ts` 的 `check-doc-links.ts · 基線 healthy:exit 0、沒有裸錯誤`。
 - worker 報告只跑了 `tsc`、`boundaries`、`check:steps`、cucumber 與 vitest 四個目錄,沒跑 `lint:docs`,所以沒看到。協調者已回覆:併批時另開獨立 docs commit,把這兩處連結改成純文字。我不改。
 
