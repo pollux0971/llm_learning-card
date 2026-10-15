@@ -1,0 +1,105 @@
+<script lang="ts">
+  import cardRaw from '../../../../../contracts/fixtures/cards/valid-basic.md?raw';
+  import '../hud.css';
+  import HpBar from '../HpBar.svelte';
+  import HudButton from '../HudButton.svelte';
+  import HudPanel from '../HudPanel.svelte';
+  import { FRAMELESS_CLASS, SOLID_CLASS } from '../layout.js';
+  import { createWindowControls } from '../window-controls.js';
+
+  const controls = createWindowControls();
+
+  function cardFromFixture(raw: string): { title: string; body: string } {
+    const matched = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(raw);
+    if (!matched) return { title: 'HUD', body: raw };
+    const front = matched[1] ?? '';
+    const title = /^title:\s*(.+)\s*$/m.exec(front)?.[1]?.trim() ?? 'HUD';
+    return { title, body: (matched[2] ?? '').trim() };
+  }
+
+  const card = cardFromFixture(cardRaw);
+  let frameless = $state(false);
+  let solid = $state(false);
+
+  function onFramelessChange(event: Event): void {
+    const on = (event.currentTarget as HTMLInputElement).checked;
+    frameless = on;
+    document.documentElement.classList.toggle(FRAMELESS_CLASS, on);
+  }
+
+  function onSolidChange(event: Event): void {
+    const on = (event.currentTarget as HTMLInputElement).checked;
+    solid = on;
+    document.documentElement.classList.toggle(SOLID_CLASS, on);
+  }
+</script>
+
+<main class="page">
+  <h1 class="hud-num">HUD</h1>
+  <p class="lead">亮色半透明切角框、HUD 按鈕、HP 條。兩個開關切換根元素的 class。</p>
+  <div class="switches">
+    <label>
+      <input type="checkbox" onchange={onFramelessChange} />
+      無框(標題列與縮放把手;瀏覽器裡沒有縮小與關閉鈕)
+    </label>
+    <label>
+      <input type="checkbox" onchange={onSolidChange} />
+      實心底(切角外面填實色)
+    </label>
+  </div>
+  <HudPanel title={card.title} {frameless} {solid} {controls}>
+    <p class="kicker">教學卡 · fixture</p>
+    <p class="copy">{card.body}</p>
+    <div class="actions">
+      <HudButton>上一張</HudButton>
+      <HudButton>記住了</HudButton>
+      <HudButton>下一張</HudButton>
+    </div>
+    <div class="meters">
+      <p class="hud-num">0 / 3</p>
+      <HpBar done={0} total={3} />
+      <p class="hud-num">2 / 3</p>
+      <HpBar done={2} total={3} />
+      <p class="hud-num">3 / 3</p>
+      <HpBar done={3} total={3} />
+    </div>
+  </HudPanel>
+</main>
+
+<style>
+  .page {
+    max-width: 42rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 2.5rem;
+  }
+  .lead {
+    margin: 0.35rem 0 0;
+    line-height: 1.5;
+  }
+  .switches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 1.5rem;
+    margin: 1rem 0 1.25rem;
+  }
+  .kicker {
+    margin: 0;
+    font-size: 0.85rem;
+  }
+  .copy {
+    white-space: pre-wrap;
+    line-height: 1.55;
+    margin: 0.6rem 0 0;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 1rem;
+  }
+  .meters {
+    display: grid;
+    gap: 0.2rem;
+    margin-top: 0.4rem;
+  }
+</style>
