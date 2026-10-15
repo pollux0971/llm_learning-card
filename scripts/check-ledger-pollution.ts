@@ -7,8 +7,9 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { resolveVaultLearningDir } from '../packages/core/src/llm/vault.js';
+import { resolveVerifiedLedger, type VaultResolveDeps } from '../packages/core/src/llm/ledger.js';
 
 export const GATE_NAME = 'ledger-pollution';
 
@@ -69,9 +70,21 @@ export function runLedgerGuard({ logPath, runTests, print = console.log }: Ledge
   return 0;
 }
 
+export function resolvePollutionLogPath(deps: VaultResolveDeps): { resolved: boolean; logPath: string } {
+  const result = resolveVerifiedLedger(deps);
+  if (!result.ok) return { resolved: false, logPath: '' };
+  return { resolved: true, logPath: result.ledger.logPath };
+}
+
 function main(): void {
   const root = resolve(import.meta.dirname, '..');
-  const logPath = join(resolveVaultLearningDir(root), 'state/log.jsonl');
+  const resolved = resolvePollutionLogPath({
+    env: process.env,
+    homedir: () => homedir(),
+    readFile: (path) => readFileSync(path, 'utf8'),
+    exists: existsSync,
+  });
+  const logPath = resolved.resolved ? resolved.logPath : join(root, '.vault-unresolved-ledger.jsonl');
   const args = process.argv.slice(2);
   const runner = resolve(root, 'scripts/run-tests.ts');
   const result = spawnSync('npx', ['tsx', runner, '--', ...args], {

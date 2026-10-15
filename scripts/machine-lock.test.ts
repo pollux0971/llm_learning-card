@@ -2,11 +2,11 @@
  * T5:鎖改成機器範圍。路徑函式注入 env / homedir,不碰真的 XDG_RUNTIME_DIR。
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { ensureLockDir, strykerLockPath, tryAcquire } from './mutate.ts';
+import { ensureLockDir, strykerLockPath, tryAcquire } from './mutate.js';
 
 const REAL_HOME = homedir();
 const REAL_XDG = process.env.XDG_CONFIG_HOME;
@@ -115,6 +115,9 @@ describe('must_catch: 鎖路徑不得退回每個 clone 一把', () => {
     git(main, ['commit', '-q', '--allow-empty', '-m', 'init']);
     git(main, ['worktree', 'add', '-q', '-b', 'wt', worktree]);
     git(box.root, ['clone', '-q', main, clone]);
+    symlinkSync(join(REPO, 'node_modules'), join(main, 'node_modules'));
+    symlinkSync(join(REPO, 'node_modules'), join(worktree, 'node_modules'));
+    symlinkSync(join(REPO, 'node_modules'), join(clone, 'node_modules'));
 
     const runner = join(box.root, 'hold-lock.ts');
     writeFileSync(
@@ -145,12 +148,17 @@ describe('must_catch: 鎖路徑不得退回每個 clone 一把', () => {
     };
     const hold = spawn(process.execPath, ['--import=tsx', runner, 'hold'], { cwd: main, env });
     let acquired = '';
+    let holderErr = '';
     hold.stdout?.setEncoding('utf8');
+    hold.stderr?.setEncoding('utf8');
     hold.stdout?.on('data', (chunk: string) => {
       acquired += chunk;
     });
+    hold.stderr?.on('data', (chunk: string) => {
+      holderErr += chunk;
+    });
     const ready = await new Promise<void>((resolvePromise, reject) => {
-      const timer = setTimeout(() => reject(new Error(`holder did not acquire: ${acquired}`)), 20_000);
+      const timer = setTimeout(() => reject(new Error(`holder did not acquire: ${acquired}\n${holderErr}`)), 20_000);
       hold.stdout?.on('data', () => {
         if (acquired.includes('ACQUIRED')) {
           clearTimeout(timer);
@@ -159,7 +167,7 @@ describe('must_catch: 鎖路徑不得退回每個 clone 一把', () => {
       });
       hold.on('exit', (code) => {
         clearTimeout(timer);
-        reject(new Error(`holder exited ${code} before acquire: ${acquired}`));
+        reject(new Error(`holder exited ${code} before acquire: ${acquired}\n${holderErr}`));
       });
     });
     expect(ready).toBeUndefined();

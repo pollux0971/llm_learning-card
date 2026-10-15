@@ -65,7 +65,7 @@ import { LlmRouterImpl, type LlmRouterImplOptions } from './router-impl.js';
 import { GatewayClient, createGatewayClient } from './adapters/gateway.js';
 import { GatewayCallError, NoModelError, UnaccountableLlmCallError } from './errors.js';
 import { FALLBACK_TABLE, decideFallback, type CloudStatus, type FallbackDecision, type FallbackGroup, type FallbackReason } from './fallback.js';
-import { witness, witnessed, type DegradedSignal } from '@contracts/witness.js';
+import { witness, type DegradedSignal } from '@contracts/witness.js';
 import {
   dayOf,
   isBudgetExhausted,
@@ -75,6 +75,7 @@ import {
   type DailySpend,
   type SpendPrices,
 } from './spend.js';
+import type { LedgerHandle, VerifiedLedger } from './ledger.js';
 import type { LogAppender } from './router.js';
 
 /**
@@ -104,7 +105,7 @@ const FALLBACK_SIGNAL: Readonly<Record<FallbackReason, DegradedSignal>> = {
   budget_exhausted: 'llm.fallback.budget-exhausted',
 };
 
-export interface GatewayLlmRouterOptions extends LlmRouterImplOptions {
+export interface GatewayLlmRouterOptions extends Omit<LlmRouterImplOptions, 'logPath'> {
   /** 不給就用 createGatewayClient(env) */
   gateway?: GatewayClient;
   /** ADR-039 的備援表,預設 FALLBACK_TABLE */
@@ -113,7 +114,9 @@ export interface GatewayLlmRouterOptions extends LlmRouterImplOptions {
   dailyCapUsd?: number;
   /** 預設 readSpendPrices(env) */
   prices?: SpendPrices;
-  /** 測試注入;預設從 logPath 讀 log.jsonl 算 */
+  /** 帳本把手。不給、也沒注入 spendReader 時,查花費就丟錯,不再回 0。 */
+  ledger?: LedgerHandle;
+  /** 測試注入;預設從 ledger 讀 log.jsonl 算 */
   spendReader?: (day: string) => DailySpend;
   /** 「今天」是哪一天,預設本地日期 */
   today?: () => string;
@@ -124,6 +127,15 @@ export interface GatewayLlmRouterOptions extends LlmRouterImplOptions {
  * log 寫入,不是委派給底層 LlmRouterImpl 的那份。 */
 function createFileLogAppender(path: string): LogAppender {
   return (event) => recordEvent(path, event);
+}
+
+/** 真呼叫(打網路、花錢)的建構。型別上只收 VerifiedLedger。 */
+export interface LiveGatewayRouterOptions extends Omit<GatewayLlmRouterOptions, 'ledger'> {
+  ledger: VerifiedLedger;
+}
+
+export function createLiveGatewayRouter(opts: LiveGatewayRouterOptions): GatewayLlmRouter {
+  return new GatewayLlmRouter(opts);
 }
 
 export class GatewayLlmRouter implements LlmRouter {
@@ -142,19 +154,16 @@ export class GatewayLlmRouter implements LlmRouter {
 
   constructor(opts: GatewayLlmRouterOptions = {}) {
     this.opts = opts;
-    this.inner = new LlmRouterImpl(opts);
+    const innerOpts: LlmRouterImplOptions = { ...opts };
+    if (opts.ledger !== undefined) innerOpts.logPath = opts.ledger.logPath;
+    this.inner = new LlmRouterImpl(innerOpts);
     this.fallbackTable = opts.fallbackTable ?? FALLBACK_TABLE;
     this.env = opts.env ?? process.env;
-    this.log = opts.logAppender ?? (opts.logPath === undefined ? undefined : createFileLogAppender(opts.logPath));
+    this.log = opts.logAppender ?? (opts.ledger === undefined ? undefined : createFileLogAppender(opts.ledger.logPath));
     this.capUsd = opts.dailyCapUsd ?? readDailyCapUsd(this.env);
     this.prices = opts.prices ?? readSpendPrices(this.env);
     this.today = opts.today ?? (() => dayOf(new Date().toISOString()));
-    this.spendReader =
-      opts.spendReader ??
-      ((day) =>
-        opts.logPath
-          ? readDailySpend(opts.logPath, day, this.prices)
-          : witnessed('llm.gateway-router.spend-no-log-zero', { usd: 0, calls: 0 }));
+    this.spendReader = opts.spendReader ?? ((day) => readDailySpend(opts.ledger, day, this.prices));
     this.gatewayClient = opts.gateway;
   }
 

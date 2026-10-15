@@ -26,7 +26,7 @@
  */
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
@@ -746,8 +746,8 @@ describe('runTests 全套時拿鎖', () => {
       log: () => {},
     });
     // 兩把不同的鎖 = 沒有互斥。這條是整張工單的地基。
-    expect(seen).toBe(strykerLockPath());
-    expect(seen?.endsWith('.stryker.lock')).toBe(true);
+    expect(seen).toBe(strykerLockPath({ env: process.env, homedir }));
+    expect(seen?.endsWith('stryker.lock')).toBe(true);
   });
 
   it('把 signal 清理掛上去,結束時再拆掉', async () => {

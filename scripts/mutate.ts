@@ -19,7 +19,10 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import {
+  accessSync,
+  chmodSync,
   closeSync,
+  constants,
   existsSync,
   fsyncSync,
   mkdirSync,
@@ -30,6 +33,7 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -144,19 +148,43 @@ function errnoCode(err: unknown): string | undefined {
   return (err as { code?: string } | null | undefined)?.code;
 }
 
+export interface LockPathDeps {
+  env: NodeJS.ProcessEnv;
+  homedir: () => string;
+}
+
 /**
- * 算鎖的路徑。
- *
- * **這條最容易寫錯**:每個 worktree 有自己的根,鎖放在自己的根等於沒鎖。
- * `git rev-parse --git-common-dir` 在任何 worktree 裡都指向**主 repo 的 `.git/`**,
- * 取它的上一層就是主 repo 的工作目錄——所有 worktree 算出來會是同一個路徑。
- *
- * 主 repo 裡 git 可能回相對路徑(`.git`),所以先 resolve 再 dirname。
+ * 機器範圍的鎖。不看 git、不看 cwd:clone 與 worktree 算出同一把。
+ * XDG_RUNTIME_DIR 空字串視同未設。
  */
-export function strykerLockPath(cwd: string = process.cwd()): string {
-  // Stryker disable next-line MethodExpression: `.trim()` 拿掉,尾巴的 `\n` 落在最後一段、被下一行的 dirname() 整段吃掉,輸出位元組完全相同(P-29 審核輪判定)
-  const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd, encoding: 'utf8' }).trim();
-  return join(dirname(resolve(cwd, common)), LOCK_FILENAME);
+export function strykerLockPath(deps: LockPathDeps): string {
+  const runtime = deps.env.XDG_RUNTIME_DIR;
+  if (runtime !== undefined && runtime !== '') return join(runtime, 'llm-learning-cards', 'stryker.lock');
+  return join(deps.homedir(), '.cache', 'llm-learning-cards', 'stryker.lock');
+}
+
+export interface LockDirFs {
+  mkdirSync: (path: string, opts: { recursive: boolean; mode: number }) => void;
+  chmodSync: (path: string, mode: number) => void;
+  accessSync: (path: string, mode: number) => void;
+}
+
+/** 目錄不存在就建(0700)。建不出來或寫不進去就丟錯——呼叫端不得沒鎖繼續跑。 */
+export function ensureLockDir(lockPath: string, fsImpl?: LockDirFs): void {
+  const fs = fsImpl ?? { mkdirSync, chmodSync, accessSync };
+  const dir = dirname(lockPath);
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    fs.accessSync(dir, constants.W_OK);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`鎖目錄建不出來或寫不進去:${dir}:${message}`);
+  }
+}
+
+export function defaultLockPath(): string {
+  return strykerLockPath({ env: process.env, homedir: () => homedir() });
 }
 
 /**
@@ -859,7 +887,15 @@ export async function runMutate(deps: RunDeps = {}): Promise<number> {
   // 它們測的是鎖與退出碼透傳,不該被這層加料(見 withReportEnforcement 上面的說明)。
   const runStryker = deps.runStryker ?? withReportEnforcement(spawnStryker, log);
   const install = deps.installCleanup ?? ((release: () => void) => installCleanup(release));
-  const lockPath = deps.lockPath ?? strykerLockPath();
+  const lockPath = deps.lockPath ?? defaultLockPath();
+  if (deps.acquire === undefined) {
+    try {
+      ensureLockDir(lockPath);
+    } catch (err) {
+      log(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
+  }
 
   let held: HeldLock;
   try {

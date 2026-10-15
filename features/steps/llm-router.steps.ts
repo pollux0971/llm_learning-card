@@ -484,6 +484,7 @@ Then('no other change was needed to make that happen', function () {
 
 import {
   DailyBudgetExceededError,
+  ExplicitLedger,
   GatewayLlmRouter,
   GatewayModelRejectedError,
   computeDailySpend,
@@ -691,7 +692,7 @@ function materializeLog(): string {
 function buildGatewayRouter(): GatewayLlmRouter {
   return new GatewayLlmRouter({
     env: gatewayEnv(),
-    logPath: materializeLog(),
+    ledger: ExplicitLedger.unverified(materializeLog(), 'cucumber fake adapter'),
     defaultTimeoutMs: 5_000,
     onlineProber: async () => !gw.offline,
     dailyCapUsd: CAP_USD,

@@ -40,11 +40,16 @@
  * 與 features/03-llm-router/phase-4.feature 的 budget 場景。
  */
 import './_env.js';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { computeDailySpend, dayOf, isBudgetExhausted, resolveVaultLearningDir } from '../packages/core/src/llm/index.js';
+import { computeDailySpend, dayOf, isBudgetExhausted } from '../packages/core/src/llm/index.js';
 import type { SpendPrices } from '../packages/core/src/llm/index.js';
+import {
+  ExplicitLedger,
+  resolveVerifiedLedger,
+  type LedgerHandle,
+} from '../packages/core/src/llm/ledger.js';
 
 /**
  * `computeDailySpend` 收的事件型別。直接寫 `LogEvent` 要從 @contracts import,
@@ -121,8 +126,26 @@ export function parseSpendArgs(argv: string[]): SpendCliArgs {
  * 不蓋過去。`vaultLearningDir` 可注入——測試不必真的 shell 出去、真的在 git repo
  * 裡跑,傳一個假的回傳值就測得到「有沒有解析、解析了什麼」。
  */
-export function resolveLogPath(args: SpendCliArgs, vaultLearningDir: () => string = resolveVaultLearningDir): string {
-  return args.logPath === DEFAULT_LOG_PATH ? join(vaultLearningDir(), 'state/log.jsonl') : args.logPath;
+export interface SpendLedgerInput {
+  explicitLog: string | undefined;
+  env: NodeJS.ProcessEnv;
+  homedir: () => string;
+  readFile: (path: string) => string;
+  exists: (path: string) => boolean;
+}
+
+export type SpendLedgerResult =
+  | { ok: true; ledger: LedgerHandle }
+  | { ok: false; exitCode: 2; message: string };
+
+/** 明確 --log 不讀指標檔,得到未驗證把手。沒有 --log 才解析指標。 */
+export function resolveSpendLedger(input: SpendLedgerInput): SpendLedgerResult {
+  if (input.explicitLog !== undefined) {
+    return { ok: true, ledger: ExplicitLedger.unverified(input.explicitLog, 'llm-spend --log') };
+  }
+  const resolved = resolveVerifiedLedger(input);
+  if (!resolved.ok) return { ok: false, exitCode: 2, message: resolved.message };
+  return { ok: true, ledger: resolved.ledger };
 }
 
 /**
@@ -137,6 +160,8 @@ export interface ComputedSpend {
   entriesToday: number;
   capUsd: number;
   logPath: string;
+  /** 未驗證的報告不能當煞車。缺省視同 verified,給舊的純函式夾具。 */
+  ledger?: 'verified' | 'unverified';
 }
 
 /** 算不出來。`reason` 是給人看的完整原因,`formatSpendReport` 只在前面加「算不出來:」。 */
@@ -217,7 +242,9 @@ function isLogEvent(value: unknown): value is SpendEvents[number] {
   return ts === undefined || typeof ts === 'string';
 }
 
-export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: string): SpendReport {
+export function buildSpendReport(env: NodeJS.ProcessEnv, ledger: string | LedgerHandle, day: string): SpendReport {
+  const logPath = typeof ledger === 'string' ? ledger : ledger.logPath;
+  const ledgerStatus = typeof ledger === 'string' || ledger.kind === 'explicit' ? 'unverified' : 'verified';
   // 先讀環境變數:沒有上限與價格就算把 log 讀完也換算不出金額。
   const capUsd = strictNumberEnv(env, 'LLM_DAILY_CAP_USD');
   if (typeof capUsd !== 'number') return { kind: 'unknown', reason: capUsd.reason };
@@ -287,11 +314,12 @@ export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: s
   // 守著這個 typeof 是給型別(dayOf 收 string),不是給行為。
   const entriesToday = events.filter((e) => typeof e.ts === 'string' && dayOf(e.ts) === day).length;
 
-  return { kind: 'computed', usd, calls, entriesToday, capUsd, logPath };
+  return { kind: 'computed', usd, calls, entriesToday, capUsd, logPath, ledger: ledgerStatus };
 }
 
 export function formatSpendReport(report: SpendReport): string {
   if (report.kind === 'unknown') return `算不出來:${report.reason}`;
+  const prefix = report.ledger === 'unverified' ? 'ledger=unverified\n' : '';
 
   // 上限跟花費用同樣的四位小數,兩個數字才直接比得起來。舊的兩位小數會把
   // `cap = 0.0225` 印成 `$0.02`,於是「剛好用完」那一行看起來像「超支了一截」。
@@ -300,18 +328,33 @@ export function formatSpendReport(report: SpendReport): string {
     `今日 OpenAI 花費 $${report.usd.toFixed(4)}` +
     `(${report.calls} 次呼叫,log: ${report.logPath},今日條目 ${report.entriesToday} 筆)` +
     `,上限 ${cap}`;
-  return isBudgetExhausted(report.usd, report.capUsd) ? `${line} — 今日預算已用完` : line;
+  const body = isBudgetExhausted(report.usd, report.capUsd) ? `${line} — 今日預算已用完` : line;
+  return `${prefix}${body}`;
 }
 
 export function exitCodeFor(report: SpendReport): number {
   if (report.kind === 'unknown') return EXIT_CANNOT_COMPUTE;
+  if (report.ledger === 'unverified') return EXIT_CANNOT_COMPUTE;
   return isBudgetExhausted(report.usd, report.capUsd) ? EXIT_AT_OR_OVER_CAP : EXIT_UNDER_CAP;
 }
 
 async function main(): Promise<void> {
   const args = parseSpendArgs(process.argv.slice(2));
   const day = args.day ?? dayOf(new Date().toISOString());
-  const report = buildSpendReport(process.env, resolveLogPath(args), day);
+  const explicitLog = args.logPath === DEFAULT_LOG_PATH ? undefined : args.logPath;
+  const resolved = resolveSpendLedger({
+    explicitLog,
+    env: process.env,
+    homedir: () => homedir(),
+    readFile: (path) => readFileSync(path, 'utf8'),
+    exists: existsSync,
+  });
+  if (!resolved.ok) {
+    console.error(`算不出來:${resolved.message}`);
+    process.exitCode = resolved.exitCode;
+    return;
+  }
+  const report = buildSpendReport(process.env, resolved.ledger, day);
 
   if (args.json) {
     // 算不出來時**不吐 usd / cap_usd**:下游拿 `.usd` 要拿到 `undefined`,不是 0。
@@ -326,6 +369,7 @@ async function main(): Promise<void> {
               entries_today: report.entriesToday,
               log: report.logPath,
               cap_usd: report.capUsd,
+              ledger: report.ledger ?? 'verified',
             }
           : { day, error: report.reason },
         null,

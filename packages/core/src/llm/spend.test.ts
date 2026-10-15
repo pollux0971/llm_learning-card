@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LogEvent } from '@contracts/index.js';
+import { ExplicitLedger } from './ledger.js';
 import {
   DEFAULT_DAILY_CAP_USD,
   DEFAULT_SPEND_PRICES,
@@ -223,7 +224,7 @@ describe('readDailySpend', () => {
           .map((e) => JSON.stringify(e))
           .join('\n') + '\n',
       );
-      const spend = readDailySpend(logPath, TODAY, PRICES);
+      const spend = readDailySpend(ExplicitLedger.unverified(logPath, 'spend test'), TODAY, PRICES);
       expect(spend.usd).toBeCloseTo(1, 10);
       expect(spend.calls).toBe(1);
     } finally {
@@ -248,7 +249,7 @@ describe('readDailySpend', () => {
           JSON.stringify(event({ tokens_out: 500_000 })),
         ].join('\n') + '\n',
       );
-      const spend = readDailySpend(logPath, TODAY, PRICES);
+      const spend = readDailySpend(ExplicitLedger.unverified(logPath, 'spend test'), TODAY, PRICES);
       expect(spend.calls).toBe(2);
       expect(spend.usd).toBeCloseTo(10, 10);
     } finally {
@@ -257,7 +258,7 @@ describe('readDailySpend', () => {
   });
 
   it('log 檔不存在就是還沒花錢,不丟錯', () => {
-    expect(readDailySpend(join(tmpdir(), 'definitely-not-there', 'log.jsonl'), TODAY, PRICES)).toEqual({
+    expect(readDailySpend(ExplicitLedger.unverified(join(tmpdir(), 'definitely-not-there', 'log.jsonl'), 'missing file'), TODAY, PRICES)).toEqual({
       usd: 0,
       calls: 0,
     });

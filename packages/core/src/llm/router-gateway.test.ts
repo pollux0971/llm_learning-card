@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LogEvent } from '@contracts/index.js';
 import { parseLogLines } from '@core/schema/log.js';
+import { ExplicitLedger } from './ledger.js';
 import {
   CloudRequiredError,
   DailyBudgetExceededError,
@@ -366,7 +367,7 @@ describe('GatewayLlmRouter.call — T1 日上限的檔案帳本煞車', () => {
       adapters: { openai: adapter },
       onlineProber: async () => true,
       localProber: async () => ({ available: false, models: [] }),
-      logPath,
+      ledger: ExplicitLedger.unverified(logPath, 'gateway test'),
       today: () => TODAY,
     });
   }
@@ -846,7 +847,7 @@ describe('GatewayLlmRouter — probeLocal 的 catch 與檔案 log', () => {
     try {
       const logPath = join(dir, 'log.jsonl');
       const h = timeoutHarness();
-      await h.make({ logAppender: undefined, logPath }).call('grade.fill.llm', '填空題');
+      await h.make({ logAppender: undefined, ledger: ExplicitLedger.unverified(logPath, 'file log') }).call('grade.fill.llm', '填空題');
 
       const events = parseLogLines(readFileSync(logPath, 'utf8')) as unknown as Record<string, unknown>[];
       expect(events).toHaveLength(1);
@@ -918,7 +919,9 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
       gateway: new GatewayClient({ config: { baseUrl: BASE, apiKey: 'gk', model: LOCAL_MODEL }, fetchImpl }),
       dailyCapUsd: CAP,
       prices: PRICES,
-      ...(opts.logPath === undefined ? { logAppender: () => {} } : { logPath: opts.logPath }),
+      ...(opts.logPath === undefined
+        ? { logAppender: () => {} }
+        : { ledger: ExplicitLedger.unverified(opts.logPath, 'gateway spend test') }),
     });
     return h;
   }
@@ -930,12 +933,8 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
 
   it('cloud-only 任務:沒 log 時打了三次、花了 7.5 美元,仍然一次也沒被 1 美元的預算擋下', async () => {
     const h = spendHarness();
-    for (let i = 0; i < 3; i++) {
-      const result = await h.router.call('ingest.cards', `第 ${i + 1} 次`);
-      expect(result.provider).toBe('openai');
-      expect(result.provisional).toBe(false);
-    }
-    expect(h.cloudCalls).toBe(3);
+    await expect(h.router.call('ingest.cards', '第 1 次')).rejects.toThrow(/不知道/);
+    expect(h.cloudCalls).toBe(0);
     expect(h.gatewayChats).toBe(0);
   });
 
@@ -956,11 +955,8 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
 
   it('gateway-fallback 任務:沒 log 時三次都走雲端、都不是暫定,閘道一次都沒被打到', async () => {
     const h = spendHarness();
-    const results = [];
-    for (let i = 0; i < 3; i++) results.push(await h.router.call('deepen', `同源政策 ${i + 1}`));
-    expect(results.map((r) => r.provider)).toEqual(['openai', 'openai', 'openai']);
-    expect(results.map((r) => r.provisional)).toEqual([false, false, false]);
-    expect(h.cloudCalls).toBe(3);
+    await expect(h.router.call('deepen', '同源政策 1')).rejects.toThrow(/不知道/);
+    expect(h.cloudCalls).toBe(0);
     expect(h.gatewayChats).toBe(0);
   });
 
@@ -983,8 +979,8 @@ describe('GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一
 
   it('沒 log 時 spend 被當 0 是「每次呼叫都重新當 0」,不是只有第一次:第 10 次仍打雲端', async () => {
     const h = spendHarness();
-    for (let i = 0; i < 10; i++) await h.router.call('ingest.questions', `第 ${i + 1} 次`);
-    expect(h.cloudCalls).toBe(10);
+    expect(() => h.router.dailySpend()).toThrow(/不知道/);
+    expect(h.cloudCalls).toBe(0);
   });
 });
 

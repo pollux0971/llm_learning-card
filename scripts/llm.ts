@@ -1,14 +1,22 @@
 /**
  * CLI 入口:scripts/llm.ts。見 features/03-llm-router/FEATURE.md「單獨執行」。
  *
- *   npx tsx scripts/llm.ts --task deepen --prompt "..."   # 印出 LlmResult 的 JSON
- *   npx tsx scripts/llm.ts --probe                        # 印出線上與本機(閘道)狀態,不呼叫模型
+ *   npx tsx scripts/llm.ts --task deepen --prompt "..."
+ *   npx tsx scripts/llm.ts --probe
+ *   npx tsx scripts/llm.ts --fake --log <path> --probe
  *
- * ADR-034:.env 只在 CLI 入口用 Node 內建的 process.loadEnvFile 載入,檔案不存在時吞掉錯誤;
- * library 程式碼(router.ts 等)只讀 process.env,不碰檔案。
+ * 真呼叫的帳本只能來自指標檔。--log 在真呼叫模式被拒絕;假 adapter 才可用。
  */
-import { join } from 'node:path';
-import { GatewayLlmRouter, isLlmTask, resolveVaultLearningDir, type LlmTask } from '../packages/core/src/llm/index.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { pathToFileURL } from 'node:url';
+import {
+  ExplicitLedger,
+  createLiveGatewayRouter,
+  resolveVerifiedLedger,
+  type LedgerHandle,
+} from '../packages/core/src/llm/ledger.js';
+import { isLlmTask, type LlmTask } from '../packages/core/src/llm/index.js';
 
 try {
   process.loadEnvFile(new URL('../.env', import.meta.url));
@@ -16,43 +24,86 @@ try {
   // 沒有 .env 就用現有的 process.env,例如 CI 直接注入變數
 }
 
-function parseArgs(argv: string[]): Record<string, string | boolean> {
-  const out: Record<string, string | boolean> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg?.startsWith('--')) continue;
-    const key = arg.slice(2);
-    const next = argv[i + 1];
-    if (next !== undefined && !next.startsWith('--')) {
-      out[key] = next;
-      i++;
-    } else {
-      out[key] = true;
-    }
+export interface LlmLedgerInput {
+  argv: string[];
+  env: NodeJS.ProcessEnv;
+  homedir: () => string;
+  readFile: (path: string) => string;
+  exists: (path: string) => boolean;
+}
+
+export type LlmLedgerResult =
+  | { ok: true; ledger: LedgerHandle; fake: boolean }
+  | { ok: false; exitCode: 2; message: string };
+
+function hasFlag(argv: string[], flag: string): boolean {
+  return argv.includes(flag);
+}
+
+function flagValue(argv: string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  if (index < 0) return undefined;
+  const value = argv[index + 1];
+  if (value === undefined || value.startsWith('--')) return undefined;
+  return value;
+}
+
+export function resolveLlmLedger(input: LlmLedgerInput): LlmLedgerResult {
+  const fake = hasFlag(input.argv, '--fake');
+  const log = flagValue(input.argv, '--log');
+  if (!fake && log !== undefined) {
+    return {
+      ok: false,
+      exitCode: 2,
+      message:
+        '真呼叫的帳本位置只能由指標檔決定,不能用 --log。請執行 npx tsx scripts/vault.ts init 或 npx tsx scripts/vault.ts show。',
+    };
   }
-  return out;
+  if (fake && log !== undefined) {
+    return { ok: true, fake: true, ledger: ExplicitLedger.unverified(log, 'scripts/llm.ts --fake --log') };
+  }
+  const resolved = resolveVerifiedLedger(input);
+  if (!resolved.ok) return { ok: false, exitCode: 2, message: resolved.message };
+  return { ok: true, fake, ledger: resolved.ledger };
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  // ADR-051:沒有明講 --log 時指回主簽出的 learning/,不是這個 git worktree 自己
-  // 的複本——理由見 packages/core/src/llm/vault.ts。
-  const logPath = typeof args.log === 'string' ? args.log : join(resolveVaultLearningDir(), 'state/log.jsonl');
-  // phase-4(ADR-039):走 GatewayLlmRouter,--probe 才會真的去問閘道有哪些模型,
-  // call 才會有預算備援。閘道沒設定時 probeLocal() 一樣回 unavailable,不會爆炸。
-  const router = new GatewayLlmRouter({ logPath });
+  const argv = process.argv.slice(2);
+  const resolved = resolveLlmLedger({
+    argv,
+    env: process.env,
+    homedir: () => homedir(),
+    readFile: (path) => readFileSync(path, 'utf8'),
+    exists: existsSync,
+  });
+  if (!resolved.ok) {
+    console.error(resolved.message);
+    process.exitCode = resolved.exitCode;
+    return;
+  }
+  if (resolved.ledger.kind !== 'verified') {
+    if (hasFlag(argv, '--probe')) {
+      console.log(JSON.stringify({ online: 'offline', local: { available: false, models: [] }, ledger: 'unverified' }));
+      return;
+    }
+    console.error('假 adapter 的 --log 不能拿來打真的網路。');
+    process.exitCode = 2;
+    return;
+  }
 
-  if (args.probe) {
+  const router = createLiveGatewayRouter({ ledger: resolved.ledger });
+  if (hasFlag(argv, '--probe')) {
     const [online, local] = await Promise.all([router.probeOnline(), router.probeLocal()]);
     console.log(JSON.stringify({ online: online ? 'online' : 'offline', local }, null, 2));
     return;
   }
 
-  const task = args.task;
-  const prompt = args.prompt;
-  if (typeof task !== 'string' || typeof prompt !== 'string') {
-    console.error('用法:llm.ts --task <task> --prompt "<text>" [--timeout-ms <ms>] [--log <path>]');
+  const task = flagValue(argv, '--task');
+  const prompt = flagValue(argv, '--prompt');
+  if (task === undefined || prompt === undefined) {
+    console.error('用法:llm.ts --task <task> --prompt "<text>" [--timeout-ms <ms>]');
     console.error('     llm.ts --probe');
+    console.error('     llm.ts --fake --log <path> --probe');
     process.exitCode = 1;
     return;
   }
@@ -61,13 +112,15 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-
-  const timeoutMs = typeof args['timeout-ms'] === 'string' ? Number(args['timeout-ms']) : undefined;
+  const timeoutRaw = flagValue(argv, '--timeout-ms');
+  const timeoutMs = timeoutRaw === undefined ? undefined : Number(timeoutRaw);
   const result = await router.call(task as LlmTask, prompt, timeoutMs !== undefined ? { timeoutMs } : {});
   console.log(JSON.stringify(result, null, 2));
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exitCode = 1;
-});
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  main().catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+  });
+}

@@ -5,7 +5,16 @@ export { anthropicAdapter } from './adapters/anthropic.js';
 export { openaiAdapter } from './adapters/openai.js';
 export { decideRoute, ROUTING_TABLE, type RouteGroup, type RouteInput, type RouteDecision } from './routing.js';
 export { TASK_MAX_TOKENS } from './token-limits.js';
-export { resolveVaultRoot, resolveVaultLearningDir } from './vault.js';
+export {
+  ExplicitLedger,
+  VerifiedLedger,
+  resolveVerifiedLedger,
+  vaultPointerPath,
+  type LedgerHandle,
+  type VaultRejectReason,
+  type VaultResolveDeps,
+  type VaultResolveResult,
+} from './ledger.js';
 export {
   LlmRouterImpl,
   type LlmRouterImplOptions,

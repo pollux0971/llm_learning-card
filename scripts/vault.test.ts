@@ -15,10 +15,10 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { initVault, showVault, type VaultIo } from './vault.ts';
-import { resolveLlmLedger } from './llm.ts';
-import { buildSpendReport, formatSpendReport, exitCodeFor, resolveSpendLedger } from './llm-spend.ts';
-import { resolvePollutionLogPath } from './check-ledger-pollution.ts';
+import { initVault, showVault, type VaultIo } from './vault.js';
+import { resolveLlmLedger } from './llm.js';
+import { buildSpendReport, formatSpendReport, exitCodeFor, resolveSpendLedger } from './llm-spend.js';
+import { resolvePollutionLogPath } from './check-ledger-pollution.js';
 
 const REAL_HOME = homedir();
 const REAL_XDG = process.env.XDG_CONFIG_HOME;
@@ -387,7 +387,11 @@ describe('scripts/llm-spend.ts', () => {
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) return;
     expect(resolved.ledger.kind).toBe('explicit');
-    const report = buildSpendReport(childEnv(box), resolved.ledger, '2026-10-15');
+    const report = buildSpendReport(
+      { ...childEnv(box), LLM_DAILY_CAP_USD: '1', LLM_PRICE_IN_PER_M: '2.5', LLM_PRICE_OUT_PER_M: '10' },
+      resolved.ledger,
+      '2026-10-15',
+    );
     expect(report.kind).toBe('computed');
     if (report.kind !== 'computed') return;
     expect(report.ledger).toBe('unverified');

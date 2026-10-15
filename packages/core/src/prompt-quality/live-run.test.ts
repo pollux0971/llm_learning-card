@@ -407,7 +407,17 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
     process.env.LLM_CLOUD_PROVIDER = 'anthropic';
     process.env.LLM_CLOUD_MODEL = MODEL;
     process.env.ANTHROPIC_API_KEY = 'test-key';
-    const learningDir = tmpLearningDir();
+    const root = tmpLearningDir();
+    const learningDir = join(root, 'learning');
+    const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    mkdirSync(join(learningDir, 'config'), { recursive: true });
+    writeFileSync(join(learningDir, 'config', 'vault-id'), `${id}\n`);
+    const config = join(root, 'xdg');
+    mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+    writeFileSync(join(config, 'llm-learning-cards', 'vault.json'), JSON.stringify({ learning_dir: learningDir, vault_id: id }));
+    process.env.HOME = root;
+    process.env.XDG_CONFIG_HOME = config;
+    process.env.XDG_RUNTIME_DIR = join(root, 'runtime');
 
     const router = createDefaultLiveRouter(learningDir);
     const result = await router.call('grade.apply', '同源政策是什麼?');
@@ -458,6 +468,17 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
       git(main, 'commit', '-q', '-m', 'synthetic source');
       git(main, 'worktree', 'add', '-q', '-b', 'synthetic-worktree', worktree);
       symlinkSync(join(ROOT, 'node_modules'), join(worktree, 'node_modules'));
+      const shared = join(sandbox, 'shared-learning');
+      const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+      mkdirSync(join(shared, 'config'), { recursive: true });
+      writeFileSync(join(shared, 'config', 'vault-id'), `${id}\n`);
+      const config = join(sandbox, 'xdg-config');
+      const home = join(sandbox, 'home');
+      const runtime = join(sandbox, 'xdg-runtime');
+      mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+      mkdirSync(home, { recursive: true });
+      mkdirSync(runtime, { recursive: true });
+      writeFileSync(join(config, 'llm-learning-cards', 'vault.json'), JSON.stringify({ learning_dir: shared, vault_id: id }));
 
       const runner = join(worktree, '.t1-create-live-router.ts');
       writeFileSync(
@@ -478,14 +499,20 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
         cwd: worktree,
         encoding: 'utf8',
         timeout: 60_000,
-        env: { PATH: process.env.PATH ?? '' },
+        env: {
+          PATH: process.env.PATH ?? '',
+          HOME: home,
+          XDG_CONFIG_HOME: config,
+          XDG_RUNTIME_DIR: runtime,
+        },
       });
       expect(child.status, child.stderr).toBe(0);
 
-      const mainLogPath = join(main, 'learning/state/log.jsonl');
-      expect(existsSync(mainLogPath)).toBe(true);
-      expect(readFileSync(mainLogPath, 'utf8')).toContain('"type":"llm_call"');
+      const sharedLog = join(shared, 'state/log.jsonl');
+      expect(existsSync(sharedLog)).toBe(true);
+      expect(readFileSync(sharedLog, 'utf8')).toContain('"type":"llm_call"');
       expect(existsSync(join(worktree, 'learning/state/log.jsonl'))).toBe(false);
+      expect(existsSync(join(main, 'learning/state/log.jsonl'))).toBe(false);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

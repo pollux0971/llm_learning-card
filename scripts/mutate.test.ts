@@ -27,7 +27,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it, vi } from 'vitest';
@@ -132,34 +132,12 @@ function gitRepoWithWorktrees(): { main: string; wtA: string; wtB: string } {
 }
 
 describe('strykerLockPath', () => {
-  it('兩個不同 worktree 算出來是同一個鎖路徑', () => {
-    const { wtA, wtB } = gitRepoWithWorktrees();
-    // 這條是整個功能的地基。鎖放在各自的 worktree 根等於沒鎖——
-    // 三個 worktree 會各拿到一把自己的鎖,然後照樣同時跑 Stryker。
-    expect(strykerLockPath(wtA)).toBe(strykerLockPath(wtB));
-  });
-
-  it('worktree 與主 repo 算出來也是同一個', () => {
-    const { main, wtA } = gitRepoWithWorktrees();
-    expect(strykerLockPath(wtA)).toBe(strykerLockPath(main));
-  });
-
-  it('鎖就在主 repo 的 .git 旁邊,檔名 .stryker.lock', () => {
-    const { main, wtA } = gitRepoWithWorktrees();
-    expect(strykerLockPath(wtA)).toBe(join(main, '.stryker.lock'));
-  });
-
-  it('回的是絕對路徑(主 repo 裡 git 會回相對的 .git,不 resolve 就會算錯)', () => {
-    const { main } = gitRepoWithWorktrees();
-    const p = strykerLockPath(main);
-    expect(p).toBe(resolve(p));
-  });
-
-  it('worktree 的子目錄算出來還是同一個', () => {
-    const { main, wtA } = gitRepoWithWorktrees();
-    const sub = join(wtA, 'packages', 'core');
-    mkdirSync(sub, { recursive: true });
-    expect(strykerLockPath(sub)).toBe(join(main, '.stryker.lock'));
+  it('不再用 git cwd:同一組 env 算出同一把機器鎖', () => {
+    const home = tmp('lock-home');
+    const runtime = tmp('lock-runtime');
+    const deps = { env: { XDG_RUNTIME_DIR: runtime }, homedir: () => home };
+    expect(strykerLockPath(deps)).toBe(join(runtime, 'llm-learning-cards', 'stryker.lock'));
+    expect(strykerLockPath(deps)).toBe(strykerLockPath(deps));
   });
 });
 
@@ -1072,8 +1050,7 @@ describe('runMutate 的預設值與例外', () => {
       log: () => {},
     });
     expect(code).toBe(0);
-    expect(seen).toBe(strykerLockPath());
-    expect(seen).toBe(strykerLockPath(process.cwd()));
+    expect(seen).toBe(strykerLockPath({ env: process.env, homedir }));
     // 「鎖在主 repo 的根,不是 worktree 自己的根」**不在這裡**用「套件現在跑在哪」推。
     // 這裡曾寫成 `if (inWorktree) expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'))`,
     // 而 inWorktree 是拿被測的 strykerLockPath() 自己算的:函式算錯成 worktree 本地時,
@@ -1526,18 +1503,27 @@ describe('SIGTERM 只收自己的 Stryker group,別的 worktree 的 worker 不�
 
 describe('鎖的位置不看測試套件自己在哪裡跑', () => {
   it(
-    '從 worktree 裡起跑、不給 lockPath:鎖落在主 repo 的根,不是那個 worktree 的根',
+    '從 worktree 裡起跑、不給 lockPath:鎖在機器範圍,不是 worktree 也不是主 repo 的根',
     async () => {
-      // 不靠「套件現在是在 main 還是在某個 worktree 裡跑」:自己 git init 一個主 repo、掛一個 worktree,
-      // 子行程的 cwd 就是那個 worktree。原本這件事是靠「套件正好在 worktree 裡跑」才測得到,
-      // 套件在 main 上跑就變成永遠紅(或加了守衛之後永遠綠)。這裡兩種位置都測到同一件事。
       const dir = tmp('mutate-lock-from-wt');
       const { main, wtA } = gitRepoWithWorktrees();
       const { runner, pidFile } = sandboxWithFakeStryker(dir);
+      const home = join(dir, 'home');
+      const runtime = join(dir, 'runtime');
+      mkdirSync(home, { recursive: true });
+      mkdirSync(runtime, { recursive: true });
+      const lock = join(runtime, 'llm-learning-cards', 'stryker.lock');
 
-      // 不傳 lockPath → runMutate 走 strykerLockPath(),用子行程的 cwd(= 那個 worktree)算。
-      // 用絕對路徑叫 tsx:cwd 在 /tmp 底下,bare specifier 找不到 node_modules。
-      const child = spawn(TSX_BIN, [runner], { cwd: wtA });
+      // 不傳 lockPath → runMutate 走機器範圍的 strykerLockPath(),不看 cwd。
+      const child = spawn(TSX_BIN, [runner], {
+        cwd: wtA,
+        env: {
+          PATH: process.env.PATH ?? '',
+          HOME: home,
+          XDG_CONFIG_HOME: join(dir, 'xdg'),
+          XDG_RUNTIME_DIR: runtime,
+        },
+      });
       let out = '';
       child.stdout.on('data', (c) => (out += String(c)));
       child.stderr.on('data', (c) => (out += String(c)));
@@ -1548,9 +1534,9 @@ describe('鎖的位置不看測試套件自己在哪裡跑', () => {
           await new Promise((r) => setTimeout(r, 100));
         }
         expect(existsSync(pidFile), `假 stryker 沒被叫起來:${out}`).toBe(true);
-        // 拿到鎖之後才會 spawn stryker,所以此刻鎖一定在。它必須在主 repo 的根,worktree 自己的根不能有。
-        expect(existsSync(join(main, '.stryker.lock')), `主 repo 的根沒有鎖:${out}`).toBe(true);
-        expect(existsSync(join(wtA, '.stryker.lock')), `鎖落在 worktree 自己的根:${out}`).toBe(false);
+        expect(existsSync(lock), `機器範圍沒有鎖:${out}`).toBe(true);
+        expect(existsSync(join(main, '.stryker.lock')), `鎖不該落在主 repo 根:${out}`).toBe(false);
+        expect(existsSync(join(wtA, '.stryker.lock')), `鎖不該落在 worktree 根:${out}`).toBe(false);
       } finally {
         child.kill('SIGTERM');
         await exited;

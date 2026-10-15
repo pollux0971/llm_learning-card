@@ -7,7 +7,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { parse as yamlParse } from 'yaml';
-import { DEFAULT_SPEND_PRICES, LlmRouterImpl, resolveVaultLearningDir, type RouterSettings } from '@core/llm/index.js';
+import { DEFAULT_SPEND_PRICES, LlmRouterImpl, type RouterSettings } from '@core/llm/index.js';
+import { defaultVaultDeps, resolveVerifiedLedger, type VaultResolveDeps } from '@core/llm/ledger.js';
 import { FakeLlmRouter } from './fake-llm.js';
 import { getGoldenSet, GOLDEN_SET_REGISTRY_FILE } from './golden-sets/registry.js';
 import { runStructuralChecks } from './structural-checks.js';
@@ -305,20 +306,18 @@ function readLlmSettings(learningDir: string): RouterSettings {
  * `createDefaultLiveRouter()`(那會真的 `mkdirSync` 一次)就能斷言「沒給的話
  * 退回哪裡」,跟 scripts/llm-spend.ts 的 `resolveLogPath()` 同一個理由。
  */
-export function resolveLiveLearningDir(learningDir?: string): string {
-  return learningDir ?? resolveVaultLearningDir(ROOT);
-}
-
-export function createDefaultLiveRouter(learningDir?: string): LlmRouter {
-  const dir = resolveLiveLearningDir(learningDir);
-  const logPath = join(dir, 'state/log.jsonl');
-  // learning/ 整個目錄是 gitignored(使用者的資料),第一次跑在這台機器上可能
-  // 還不存在——append-only 的 log 寫入(atomic-write.ts 的 appendLineAtomic())
-  // 只開檔不建目錄,建不起來就先建好,不要讓「目錄不存在」偽裝成別的錯誤。
-  mkdirSync(join(dir, 'state'), { recursive: true });
+/**
+ * learningDir 只管輸出(settings)位置,不管帳本。帳本只來自驗證過的指標。
+ * 解析失敗就丟錯,不建目錄、不建 router。
+ */
+export function createDefaultLiveRouter(learningDir?: string, deps: VaultResolveDeps = defaultVaultDeps()): LlmRouter {
+  const resolved = resolveVerifiedLedger(deps);
+  if (!resolved.ok) throw new Error(resolved.message);
+  const outputDir = learningDir ?? resolved.ledger.learningDir;
+  mkdirSync(join(resolved.ledger.learningDir, 'state'), { recursive: true });
   return new LlmRouterImpl({
-    settings: readLlmSettings(dir),
-    logPath,
+    settings: readLlmSettings(outputDir),
+    logPath: resolved.ledger.logPath,
   });
 }
 

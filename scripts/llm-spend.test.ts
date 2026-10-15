@@ -36,7 +36,7 @@
  *   - CLI 層(spawn 真的跑一次):盯的是協調者實際看到的那一行與退出碼。
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
@@ -44,7 +44,7 @@ import {
   formatSpendReport,
   exitCodeFor,
   parseSpendArgs,
-  resolveLogPath,
+  resolveSpendLedger,
   DEFAULT_LOG_PATH,
   EXIT_UNDER_CAP,
   EXIT_AT_OR_OVER_CAP,
@@ -116,12 +116,19 @@ function runCli(
   args: string[],
   env: Record<string, string | undefined> = {},
 ): { code: number; output: string; stdout: string; stderr: string } {
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...goodEnv() };
+  const isolated = tmpDir();
+  const childEnv: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH ?? '',
+    HOME: isolated,
+    XDG_CONFIG_HOME: join(isolated, 'xdg-config'),
+    XDG_RUNTIME_DIR: join(isolated, 'xdg-runtime'),
+    ...goodEnv(),
+  };
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) delete childEnv[k];
     else childEnv[k] = v;
   }
-  const r = spawnSync('npx', ['tsx', 'scripts/llm-spend.ts', ...args], {
+  const r = spawnSync(process.execPath, ['--import=tsx', join(REPO_ROOT, 'scripts/llm-spend.ts'), ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: childEnv,
@@ -485,7 +492,8 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     const log = writeLog([otherEvent(), otherEvent()]);
     const { code, output, stdout, stderr } = runCli(['--day', DAY, '--log', log]);
 
-    expect(code).toBe(0);
+    expect(code).toBe(2);
+    expect(output).toContain('ledger=unverified');
     expect(output).toContain(log);
     expect(output).toMatch(/今日條目\s*2\s*筆/);
     // 算得出來的那一行走 stdout;stderr 乾淨。協調者接 stdout 就拿得到數字。
@@ -506,8 +514,9 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     const log = writeLog([otherEvent(), openaiCall(1000, 2000)]);
     const { code, output } = runCli(['--day', DAY, '--log', log, '--json']);
 
-    expect(code).toBe(0);
+    expect(code).toBe(2);
     const parsed = JSON.parse(output) as Record<string, unknown>;
+    expect(parsed.ledger).toBe('unverified');
     expect(parsed.day).toBe(DAY);
     expect(parsed.usd).toBeCloseTo(0.0225, 10);
     expect(parsed.calls).toBe(1);
@@ -522,7 +531,7 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     const log = writeLog([openaiCall(1000, 2000)]);
     const { code } = runCli(['--day', DAY, '--log', log], { LLM_DAILY_CAP_USD: '0.0225' });
 
-    expect(code).toBe(1);
+    expect(code).toBe(2);
   }, SPAWN_TIMEOUT_MS);
 
   it('--json 在算不出來時不吐 usd / cap_usd,只吐 error', () => {
@@ -550,7 +559,9 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     expect(missingMsg.trim()).not.toBe('');
     expect(emptyMsg.trim()).not.toBe('');
     expect(missingMsg).not.toBe(emptyMsg);
-    expect(missing.code).not.toBe(empty.code);
+    // 兩者都不能當煞車:缺檔是 unknown,空檔是未驗證報告,退出碼都是 2。差別在訊息。
+    expect(missing.code).toBe(2);
+    expect(empty.code).toBe(2);
   }, SPAWN_TIMEOUT_MS);
 
   it('整份 log 是 "hello"(合法 JSON,但不是 JSONL 事件)→ exit 2,不是「有 log 但沒花」', () => {
@@ -594,23 +605,45 @@ it('測試本身不碰 learning/', () => {
  * 全新的臨時 git repo 當「假 worktree」裝不出這個環境;真的跨 worktree 證據見
  * ADR-051 交接的陽性對照,不是這裡)。
  */
-describe('scripts/llm-spend.ts — resolveLogPath (ADR-051)', () => {
-  it('sentinel(使用者沒給 --log)時,解析成 vaultLearningDir()/state/log.jsonl', () => {
-    const args: SpendCliArgs = { logPath: DEFAULT_LOG_PATH, json: false };
-    expect(resolveLogPath(args, () => '/fake/vault/learning')).toBe('/fake/vault/learning/state/log.jsonl');
+describe('scripts/llm-spend.ts — resolveSpendLedger', () => {
+  it('must_catch: 正式程式預設路徑不走 ExplicitLedger', () => {
+    const home = tmpDir();
+    const learning = join(home, 'learning');
+    mkdirSync(join(learning, 'config'), { recursive: true });
+    writeFileSync(join(learning, 'config', 'vault-id'), 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n');
+    const config = join(home, 'xdg');
+    mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+    writeFileSync(
+      join(config, 'llm-learning-cards', 'vault.json'),
+      JSON.stringify({ learning_dir: learning, vault_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }),
+    );
+    const resolved = resolveSpendLedger({
+      explicitLog: undefined,
+      env: { XDG_CONFIG_HOME: config, HOME: home },
+      homedir: () => home,
+      readFile: (path) => readFileSync(path, 'utf8'),
+      exists: (path) => existsSync(path),
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.ledger.kind).toBe('verified');
   });
 
-  it('使用者明講 --log 時,原樣用,不被 vault 解析蓋過去', () => {
-    const args: SpendCliArgs = { logPath: '/custom/log.jsonl', json: false };
-    const vaultLearningDir = vi.fn(() => '/fake/vault/learning');
-    expect(resolveLogPath(args, vaultLearningDir)).toBe('/custom/log.jsonl');
-    // 明講的路徑優先到「連 vault 解析都不用做」——不只是「算出來又被丟掉」。
-    expect(vaultLearningDir).not.toHaveBeenCalled();
-  });
-
-  it('不注入 vaultLearningDir 時,預設用真的 resolveVaultLearningDir()(這個 repo 本身也是一個 git repo/worktree,解析得出一個字串)', () => {
-    const args: SpendCliArgs = { logPath: DEFAULT_LOG_PATH, json: false };
-    const result = resolveLogPath(args);
-    expect(result.endsWith(join('learning', 'state', 'log.jsonl'))).toBe(true);
+  it('使用者明講 --log 時不讀指標檔', () => {
+    const resolved = resolveSpendLedger({
+      explicitLog: '/custom/log.jsonl',
+      env: {},
+      homedir: () => '/home/unused',
+      readFile: () => {
+        throw new Error('不該讀');
+      },
+      exists: () => {
+        throw new Error('不該探測');
+      },
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.ledger.kind).toBe('explicit');
+    expect(resolved.ledger.logPath).toBe('/custom/log.jsonl');
   });
 });
