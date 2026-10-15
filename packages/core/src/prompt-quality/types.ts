@@ -85,7 +85,13 @@ export interface GoldenRunMeta {
   date: string;
   model: string;
   provider: string;
-  /** promptFile 當下的 git commit(短 sha),檔案未追蹤或無 commit 時是 'uncommitted' */
+  /**
+   * promptFile 當下的 git commit(短 sha)。
+   * 未追蹤、還沒有 commit、或不是 git repo:『uncommitted』(不加後綴)。
+   * 已追蹤且有 commit,但工作區或暫存區相對 HEAD 有未提交修改
+   * (git diff --quiet 或 git diff --cached --quiet 任一不為 0):『<短 sha>-dirty』。
+   * -dirty 不等於任何乾淨的 sha,不能當成回歸基準的出處。
+   */
   promptFileGitCommit: string;
   mode: 'fake' | 'live';
   /** phase-2:整次 run 的 token 合計。fake run 的 fixture 沒有 token 資訊時是 0。 */
