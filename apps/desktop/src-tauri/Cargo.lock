@@ -1680,10 +1680,12 @@ name = "learning-cards-desktop"
 version = "0.0.0"
 dependencies = [
  "http",
+ "libc",
  "log",
  "percent-encoding",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-window-state",

@@ -63,7 +63,7 @@ Feature: The file boundary and the learning directory
     When the front end requests the JSON-encoded path <path> through the read command
     Then the request is refused
     And the refusal is returned to the TypeScript caller
-    And the TypeScript caller records a warning event through recordEvent
+    And the Rust side appends one warning event line to the learning log
     And no file outside the learning directory is read
 
     Examples:
@@ -110,7 +110,7 @@ Feature: The file boundary and the learning directory
     When the front end requests the path "cards/a.md", then a NUL character, then ".png" through the read command
     Then the request is refused
     And the refusal is returned to the TypeScript caller
-    And the TypeScript caller records a warning event through recordEvent
+    And the Rust side appends one warning event line to the learning log
 
   # The invariant is "nothing sits between the check and the use". For a refused request
   # there is no "string that would have been used", so it is observed through what the
@@ -135,15 +135,16 @@ Feature: The file boundary and the learning directory
     And the file system behind the boundary received exactly one call
     And the string it received is byte-identical to "state/reviews.json"
 
-  # Known limitation: a refusal on the asset protocol path has no TypeScript caller
-  # to return to, so it is written to the Rust log only. It does not produce a
-  # contract section 10 warning event. Reimplementing the section 11b four-step
-  # write in Rust was rejected because nothing would check that it stayed identical.
+  # ADR-069 (2026-10-15) replaces the 2026-10-01 known limitation: the web view has no node:fs,
+  # so the Rust side writes the section 10 warning events itself, for the commands and for the
+  # asset protocol. A refusal on the asset protocol path has no TypeScript caller, so there it is
+  # rate limited (see the limiter scenarios below). Every line written passes LogEventSchema.
   Scenario Outline: Paths that escape through the asset protocol are refused without going through the read command
+    Given the asset refusal limiter has no earlier refusals
     When the web view requests the asset url for the JSON-encoded path <path> directly
     Then the request is refused
-    And the refusal is written to the Rust log only
-    And no warning event is written to the learning log
+    And the Rust side appends one warning event line to the learning log
+    And the warning line passes the LogEventSchema check
 
     Examples:
       | path                          |
@@ -156,6 +157,61 @@ Feature: The file boundary and the learning directory
       | "raw/security/x.md"            |
       | "Raw/security/x.md"            |
       | "cards/%E1%84%80%E1%85%A1.md"  |
+
+  # Rate limit: at most one line per refusal reason per 60 seconds. The line carries a count field
+  # = how many refusals of that reason happened since the previous line for that reason, this one
+  # included. The path in the line is the path of the refusal that triggered the write. The clock is injected.
+  Scenario: Repeated asset refusals of one reason write one line per 60 seconds with a count
+    Given the asset refusal limiter has no earlier refusals
+    When the web view is refused with reason structure at seconds 0, 10, 20 and 61
+    And the web view is refused with reason raw at second 5
+    Then the learning log gets exactly three warning lines
+    And the structure line written at second 0 has count 1
+    And the raw line written at second 5 has count 1
+    And the structure line written at second 61 has count 3
+    And every written line passes the LogEventSchema check
+
+  Scenario: Refusals not yet written are flushed as one last line when the application ends normally
+    Given the asset refusal limiter has no earlier refusals
+    When the web view is refused with reason structure at seconds 0, 10 and 20
+    And the application ends normally at second 30
+    Then the learning log gets exactly two warning lines
+    And the last line has count 2
+
+  # Boundary: a line is written when at least 60 seconds have passed since the previous line for that
+  # reason (greater than or equal, not greater than). Both implementations must use the same comparison.
+  Scenario: A refusal exactly 60 seconds after the last written line is written
+    Given the asset refusal limiter has no earlier refusals
+    When the web view is refused with reason structure at seconds 0 and 60
+    Then the learning log gets exactly two warning lines
+    And the structure line written at second 60 has count 1
+
+  Scenario: A refusal 59 seconds after the last written line is not written
+    Given the asset refusal limiter has no earlier refusals
+    When the web view is refused with reason structure at seconds 0 and 59
+    Then the learning log gets exactly one warning line
+
+  # Refusals on the four commands are not rate limited: each one is a person's own action
+  # and has a caller that sees the refusal.
+  Scenario: Refusals through the commands are never rate limited
+    When the front end requests the JSON-encoded path "raw/x.md" through the read command 3 times
+    Then the learning log gets exactly three warning lines
+
+  Scenario: A warning line is one write of one complete line
+    When the front end requests the JSON-encoded path "raw/x.md" through the read command
+    Then the Rust side wrote the line with exactly one write call
+    And the line ends with a newline
+    And the line was flushed to disk before the command returned
+
+  Scenario: A path with a NUL character is written as one line with the NUL escaped
+    When the front end requests the path "cards/a.md", then a NUL character, then ".png" through the read command
+    Then the learning log gets exactly one warning line
+    And the line parses as JSON
+    And the path in the parsed line is byte-identical to the requested path
+
+  Scenario: The TypeScript and the Rust warning events have the same shape
+    When the same refused path is recorded by the TypeScript recordEvent and by the Rust side
+    Then after removing ts and the Rust-only fields op, check and count the two parsed events are deeply equal
 
   Scenario: The asset protocol is scoped to the learning directory
     Given the application configuration
@@ -240,7 +296,7 @@ Feature: The file boundary and the learning directory
     When the front end calls <operation> with the JSON-encoded path <path>
     Then the request is refused
     And the refusal is returned to the TypeScript caller
-    And the TypeScript caller records a warning event through recordEvent
+    And the Rust side appends one warning event line to the learning log
     And no file under raw is read, created or changed
 
     Examples:
@@ -283,7 +339,156 @@ Feature: The file boundary and the learning directory
     Then a url the web view can load is returned
     And the same path checks apply
 
+  # ADR-069. A refusal (the whitelist or a symlink check said no) writes a warning event.
+  # An io error (the path is legal but the file system failed) does not: it is not an attack,
+  # and the TypeScript caller must be able to tell the two apart, by the error class it receives.
+  Scenario Outline: A read that fails in the file system is an io error, not a refusal
+    Given the learning directory is in the state: <state>
+    When the front end requests the JSON-encoded path <path> through the read command
+    Then the request fails with an io error whose code is <code>
+    And the error is not a refusal
+    And the learning log has no new line
+
+    Examples:
+      | state                                  | path           | code       |
+      | no such file                           | "cards/missing.md" | not_found  |
+      | the path is a directory                | "cards"        | is_dir     |
+      | the file is not readable by the caller | "cards/locked.md" | permission |
+      | the file is not valid UTF-8            | "cards/bad.md" | not_utf8   |
+
+  Scenario: A refusal is not an io error
+    When the front end requests the JSON-encoded path "raw/x.md" through the read command
+    Then the request is refused
+    And the error is not an io error
+    And the learning log gets exactly one warning line
+
+  Scenario: Asking whether a legal missing path exists is not an error
+    When the front end asks whether the JSON-encoded path "cards/missing.md" exists
+    Then the answer is false
+    And the learning log has no new line
+
+  Scenario: Listing a directory that does not exist is an io error
+    When the front end lists the JSON-encoded directory "cards/nope"
+    Then the request fails with an io error whose code is not_found
+    And the learning log has no new line
+
+  Scenario: A listing skips an entry whose metadata cannot be read
+    Given a directory with the files "ok.md" and one entry whose metadata cannot be read
+    When the front end lists that directory
+    Then the result is ["ok.md"]
+    And no error is raised
+
+  Scenario: A write to a dangling symbolic link is refused and creates nothing outside
+    Given a symbolic link "cards/evil.md" inside the learning directory points to a path outside it that does not exist
+    When the front end writes to the JSON-encoded path "cards/evil.md" through the write command
+    Then the request is refused
+    And nothing was created at the target outside the learning directory
+
+  # The Rust write command uses one atomic write for every path under the learning directory
+  # (contract section 11b: write a temporary file, fsync it, rename it, fsync the directory).
+  # The vectors are the shared file packages/core/src/schema/atomic-write.vectors.json that the
+  # TypeScript atomic write also runs. Rust may not skip or add a row.
+  Scenario: Every row of the shared atomic write vectors behaves the same in Rust
+    When the Rust atomic write runs every row of the shared atomic write vectors
+    Then every row has the same injected failure and the same expected outcome as in TypeScript
+    And Rust did not add or skip any row
+
+  Scenario Outline: A write outside state also goes through the atomic write
+    When the front end writes to the JSON-encoded path <path> through the write command
+    Then the Rust atomic write is used
+    And the target holds the new content and no temporary file is left
+
+    Examples:
+      | path                |
+      | "state/reviews.json" |
+      | "cards/a.md"        |
+      | "questions/a.yaml"  |
+
+  Scenario Outline: A failed fsync of the directory is told apart from an unsupported one
+    When the directory fsync reports <errno>
+    Then the write <outcome>
+    And the target holds the new content
+
+    Examples:
+      | errno  | outcome                          |
+      | EINVAL | succeeds and leaves no temporary file |
+      | EIO    | fails with that error            |
+      | ENOSPC | fails with that error            |
+
+  # Contract 1.4.0 section 13 and ADR-067. The Rust path check and the TypeScript CategoryId check
+  # load the same file, contracts/fixtures/path-segment-vectors.json. Rows are chosen by their
+  # applies_to list, never by the rule field.
+  Scenario: The Rust segment check agrees with every shared segment vector
+    When the Rust segment check runs every row of the shared segment vectors whose applies_to has segment
+    Then each row is accepted or refused exactly as its expect says
+    And the rows whose applies_to does not have segment are ignored and counted
+    And the file has 51 rows, 47 of them for segment, and its sha256 is the pinned value
+
+  Scenario: A 64 byte limit is not applied to path segments
+    When the front end requests a path with one segment of 234 bytes through the read command
+    Then the request is not refused
+
+  # Images are bytes. The asset protocol reads bytes, sets the content type from the extension
+  # and always says nosniff. SVG can carry script, so it is also given a content security policy
+  # that forbids script.
+  Scenario: An image comes back byte for byte
+    Given the file "assets/x.png" holds a PNG header followed by bytes including 00 and FF
+    When the web view requests the asset url for the JSON-encoded path "assets/x.png" directly
+    Then the response status is 200
+    And the sha256 of the response body equals the sha256 of the file
+    And the content type is image/png
+    And the response has the header X-Content-Type-Options set to nosniff
+
+  Scenario Outline: The content type follows the extension
+    Given a file with the extension <extension> under assets
+    When the web view requests the asset url for that file directly
+    Then the content type is <type>
+    And the response has the header X-Content-Type-Options set to nosniff
+
+    Examples:
+      | extension | type                     |
+      | jpg       | image/jpeg               |
+      | jpeg      | image/jpeg               |
+      | gif       | image/gif                |
+      | webp      | image/webp               |
+      | svg       | image/svg+xml            |
+      | bin       | application/octet-stream |
+
+  Scenario: An SVG response forbids script
+    Given the file "assets/x.svg" exists
+    When the web view requests the asset url for the JSON-encoded path "assets/x.svg" directly
+    Then the response has the header Content-Security-Policy set to "script-src 'none'"
+
+  Scenario: A missing asset is a 404 and writes no warning
+    When the web view requests the asset url for the JSON-encoded path "assets/missing.png" directly
+    Then the response status is 404
+    And the learning log has no new line
+
+  Scenario: A refused asset is a 403
+    When the web view requests the asset url for the JSON-encoded path "raw/x.png" directly
+    Then the response status is 403
+    And the Rust side appends one warning event line to the learning log
+
+  Scenario: The application sets a content security policy
+    Given the application configuration
+    Then the content security policy is a string and not null
+    And it contains the directives default-src, script-src, object-src, frame-src and img-src
+    And script-src does not allow unsafe-inline or unsafe-eval
+
+  # The web view side is TypeScript that runs in a browser engine, so it has no node: modules.
+  Scenario: The web view file system adapter imports nothing from node
+    When the files of the web view LearningFs and everything it imports are scanned
+    Then none of them imports a node: module
+    And none of them imports the schema log module
+
   Scenario: The real front ends are loaded
-    When the application starts
-    Then the teach card and test card front ends are loaded
+    When the application is built
+    Then the teach card and test card windows each point to an html file inside the built front end folder
+    And every script and link in those html files resolves to a file that exists in that folder
+    And no referenced file ends in .ts
     And no placeholder content remains
+
+  Scenario: A page that references TypeScript source directly fails the static check
+    Given a built front end folder whose html references a .ts source file
+    When the static front end check runs
+    Then the check fails and names the file

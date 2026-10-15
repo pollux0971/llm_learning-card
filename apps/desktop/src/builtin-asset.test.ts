@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, describe, it, expect } from 'vitest';
-import { requestBuiltinAsset } from './shell-config.js';
+import { requestBuiltinAsset } from './test-support/probe-shell-config.js';
 import { BUILD_LC_FS_TIMEOUT_MS, buildLcFs } from './test-support/build-lc-fs.js';
 
 const CONF = new URL('../src-tauri/tauri.conf.json', import.meta.url);

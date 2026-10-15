@@ -1,6 +1,7 @@
 /**
- * 殼的設定面:內建 asset: 要關、自訂協定要開、前端不再是 placeholder、
- * fs plugin 沒有權限。
+ * 殼的設定面(cucumber 與 vitest 用的測試支援,T2c-1 起歸測試 agent):內建 asset: 要關、自訂協定要開、
+ * fs plugin 沒有權限。原本是 T2b 的 apps/desktop/src/shell-config.ts(工單 A4:probe 搬到測試支援的位置)。
+ * 「前端載入」改由 frontend-dist.ts 的靜態檢查負責(驗收 F18),這裡的 frontEndStatus 已刪。
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -15,12 +16,6 @@ export interface AssetProtocolStatus {
   sameChecksAsRead: boolean;
 }
 
-export interface FrontEndStatus {
-  teachLoaded: boolean;
-  testLoaded: boolean;
-  placeholderRemains: boolean;
-}
-
 export interface PluginRefusal {
   refused: boolean;
   by: 'plugin' | 'command';
@@ -32,13 +27,11 @@ export interface BuiltinAssetResult {
   fsCalls: { op: string; path: string }[];
 }
 
-const BIN = join(import.meta.dirname, '../src-tauri/target/debug/lc-fs');
+const BIN = join(import.meta.dirname, '../../src-tauri/target/debug/lc-fs');
 
 function readConf(repoRoot: string): {
-  build: { frontendDist: string };
   app: {
     security: { assetProtocol?: { enable: boolean; scope: string[] } };
-    windows: { label: string; url: string }[];
   };
 } {
   return JSON.parse(readFileSync(join(repoRoot, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'));
@@ -71,21 +64,6 @@ export function assetProtocolStatus(repoRoot: string): AssetProtocolStatus {
     builtinEnabled: asset.enable,
     builtinScope: asset.scope,
     sameChecksAsRead: live.sameChecksAsRead,
-  };
-}
-
-export function frontEndStatus(repoRoot: string): FrontEndStatus {
-  const conf = readConf(repoRoot);
-  const dir = join(repoRoot, 'apps/desktop/src-tauri', conf.build.frontendDist);
-  const teachUrl = conf.app.windows.find((w) => w.label === 'teach')?.url ?? '';
-  const testUrl = conf.app.windows.find((w) => w.label === 'test')?.url ?? '';
-  const teach = readFileSync(join(dir, teachUrl), 'utf8');
-  const test = readFileSync(join(dir, testUrl), 'utf8');
-  const blob = `${conf.build.frontendDist}\n${teach}\n${test}`;
-  return {
-    teachLoaded: teach.includes('教學卡'),
-    testLoaded: test.includes('考試卡'),
-    placeholderRemains: /placeholder/i.test(blob),
   };
 }
 
