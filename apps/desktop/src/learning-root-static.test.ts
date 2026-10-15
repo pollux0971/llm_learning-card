@@ -160,3 +160,12 @@ describe('npm run tauri dev 照原文能跑(工單驗收 9,靜態部分)', () =>
     expect(bins).toEqual(['lc-fs', 'learning-cards-desktop']);
   });
 });
+
+describe('tauri dev 下沒有 CSP 是已知限制(工單驗收 11)', () => {
+  it('tauri.conf.json 的 app.security 沒有 devCsp(加了也沒用,實測過),正式的 csp 仍在', () => {
+    const conf = JSON.parse(readFileSync(join(SRC_TAURI, 'tauri.conf.json'), 'utf8')) as { app: { security: Record<string, unknown> } };
+    expect(Object.keys(conf.app.security)).not.toContain('devCsp');
+    expect(typeof conf.app.security.csp).toBe('string');
+    expect((conf.app.security.csp as string).length).toBeGreaterThan(0);
+  });
+});
