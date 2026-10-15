@@ -111,10 +111,8 @@ export const NOT_INSTRUMENTED: readonly NotInstrumented[] = [
   { file: 'packages/core/src/ingest/questions.ts', snippet: 'fill: (candidate.fill ?? []) as FillQuestion[],', reason: '缺 fill/apply 補空陣列之後緊接著 validateQuestionFile(),數量不對會丟錯,不會靜默' },
   { file: 'packages/core/src/grading/grade-apply.ts', snippet: 'return null;', reason: 'parseApplyVerdict 回 null 是給呼叫端判斷用的訊號;呼叫端的兩個分支各自計數(grading.apply.*)' },
   { file: 'packages/core/src/prompt-quality/structural-checks.ts', snippet: "return [{ kind: 'invalid-json'", reason: 'parse 不動變成一條 issue 回報出去,是明確的失敗紀錄' },
-  // 清理用的 catch:吞的是清理自己的錯,不產生任何值(ADR-040)
-  { file: 'packages/core/src/ingest/state.ts', snippet: 'rmSync(tmp, { force: true });', reason: '清理暫存檔失敗不遮蔽原本的錯誤(ADR-040),不產生值' },
-  { file: 'packages/core/src/schema/atomic-write.ts', snippet: 'unlinkSync(tmp);', reason: '同上,清理用' },
-  { file: 'packages/core/src/lint/atomic-write.ts', snippet: 'ops.unlinkSync(tmp);', reason: '同上,清理用' },
+  // 清理用的 catch:吞的是清理自己的錯,不產生任何值(ADR-040)。T7 之後只剩一份。
+  { file: 'packages/core/src/schema/atomic-write.ts', snippet: 'unlinkSync(tmp);', reason: '清理暫存檔失敗不遮蔽原本的錯誤(ADR-040),不產生值' },
   // 形狀補齊:索引越界或缺欄位補空值,不是失敗處理
   { file: 'packages/core/src/grading/grade-fill.ts', snippet: "rawAnswers[i] ?? ''", reason: '作答數少於空格數時補空字串,下一層會判「沒有作答」,是形狀補齊' },
   { file: 'packages/core/src/ingest/generate-cards.ts', snippet: 'examples: regenerated.examples ?? current.examples', reason: 'regenerate 回應沒帶 examples 就沿用舊的——形狀補齊;regenerate 本身有計數(ingest.cards.regenerate-retry)' },

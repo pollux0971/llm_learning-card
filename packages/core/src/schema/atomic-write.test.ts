@@ -53,17 +53,29 @@ describe('writeFileAtomic', () => {
     expect(readdirSync(dir)).toEqual(['weekly.json']);
   });
 
-  it('fsyncs the temp file descriptor and closes it exactly once', () => {
+  it('opens <name>.tmp, fsyncs the file then the directory, and closes both', () => {
     dir = mkdtempSync(join(tmpdir(), 'lc-atomic-'));
     const target = join(dir, 'reviews.json');
 
     writeFileAtomic(target, '{}');
 
-    const fd = openedFd();
-    expect(fsyncSync).toHaveBeenCalledTimes(1);
-    expect(fsyncSync).toHaveBeenCalledWith(fd);
-    expect(closeSync).toHaveBeenCalledTimes(1);
-    expect(closeSync).toHaveBeenCalledWith(fd);
+    // §11b step 4. The old "exactly once" assertion described the pre-T7 three-step write
+    // (no directory fsync, temp name .<name>.<pid>.<ts>.tmp). Ticket A3 said not to edit
+    // this file; that assertion contradicts A1, so only this test moved. Stray-file cases stay.
+    expect(vi.mocked(openSync).mock.calls[0]?.[0]).toBe(join(dir, 'reviews.json.tmp'));
+    expect(vi.mocked(openSync).mock.calls[0]?.[1]).toBe('w');
+
+    const fileFd = openedFd();
+    const dirFd = vi.mocked(openSync).mock.results[1]?.value;
+    expect(typeof dirFd).toBe('number');
+    expect(vi.mocked(openSync).mock.calls[1]?.[0]).toBe(dir);
+
+    expect(fsyncSync).toHaveBeenCalledTimes(2);
+    expect(fsyncSync).toHaveBeenNthCalledWith(1, fileFd);
+    expect(fsyncSync).toHaveBeenNthCalledWith(2, dirFd);
+    expect(closeSync).toHaveBeenCalledTimes(2);
+    expect(closeSync).toHaveBeenNthCalledWith(1, fileFd);
+    expect(closeSync).toHaveBeenNthCalledWith(2, dirFd);
   });
 
   it('writes UTF-8 so CJK content round-trips', () => {

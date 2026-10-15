@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "ticket": "T7",
+  "adr": "ADR-070",
+  "contract": "§11b",
+  "notes": "writeFileAtomic 的共用向量。Rust(T2c-1)用 include_str! 讀這一個檔,逐列跑,不得自行增刪列。inject.call 是 open:tmp | write | fsync:file | close:file | rename | open:dir | fsync:dir | close:dir | unlink;nth 從 1 起算,數的是這次呼叫裡該 call 出現的次數(unlink 含 rm)。code 是 POSIX errno 名。expect.outcome 是 ok 或 error。expect.code 是丟出的 errno,成功為 null。expect.identity 若是某個 inject.call,丟出去的必須是那一次注入的那一顆錯誤本身,不是清理的錯。expect.remaining 是結束後目錄裡的檔名。expect.target_bytes 是目標檔位元組,目標不該存在則為 null。expect.order 只比對列出的那些 syscall,順序必須一致(掃舊殘檔的 readdir 不算進去)。expect.tmp_basename 是以寫入模式開出來的暫存檔 basename,必須是 <name>.tmp。expect.open_count / fds_closed 鎖「開了就要關」。expect.saw_calls 防止「沒做那一步也算成功」。expect.cleanup_attempted 表示失敗路徑有嘗試刪 tmp。本列的 rename-and-cleanup-both-fail 沒有舊殘檔,所以 unlink 的 nth 1 就是失敗後的那次清理。",
+  "vectors": [
+    {
+      "name": "syscall-order",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": []
+      },
+      "inject": [],
+      "expect": {
+        "outcome": "ok",
+        "code": null,
+        "remaining": ["reviews.json"],
+        "target_bytes": "X",
+        "order": ["open:tmp", "write", "fsync:file", "close:file", "rename", "open:dir", "fsync:dir", "close:dir"],
+        "tmp_basename": "reviews.json.tmp",
+        "fds_closed": true,
+        "open_count": 2
+      }
+    },
+    {
+      "name": "stale-tmp-overwritten",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": [{ "name": "reviews.json.tmp", "bytes": "stale" }]
+      },
+      "inject": [],
+      "expect": {
+        "outcome": "ok",
+        "code": null,
+        "remaining": ["reviews.json"],
+        "target_bytes": "X",
+        "absent": ["reviews.json.tmp"]
+      }
+    },
+    {
+      "name": "old-style-stray-cleaned",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": [{ "name": ".reviews.json.1.2.tmp", "bytes": "stale" }]
+      },
+      "inject": [],
+      "expect": {
+        "outcome": "ok",
+        "code": null,
+        "remaining": ["reviews.json"],
+        "target_bytes": "X",
+        "absent": [".reviews.json.1.2.tmp"]
+      }
+    },
+    {
+      "name": "other-tmp-untouched",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": [{ "name": "weekly.json.tmp", "bytes": "keep" }]
+      },
+      "inject": [],
+      "expect": {
+        "outcome": "ok",
+        "code": null,
+        "remaining": ["reviews.json", "weekly.json.tmp"],
+        "target_bytes": "X",
+        "untouched": [{ "name": "weekly.json.tmp", "bytes": "keep" }]
+      }
+    },
+    {
+      "name": "rename-exdev",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": "OLD",
+        "extra_files": []
+      },
+      "inject": [{ "call": "rename", "nth": 1, "code": "EXDEV" }],
+      "expect": {
+        "outcome": "error",
+        "code": "EXDEV",
+        "identity": "rename",
+        "remaining": ["reviews.json"],
+        "target_bytes": "OLD",
+        "absent": ["reviews.json.tmp"]
+      }
+    },
+    {
+      "name": "rename-and-cleanup-both-fail",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": "OLD",
+        "extra_files": []
+      },
+      "inject": [
+        { "call": "rename", "nth": 1, "code": "EXDEV" },
+        { "call": "unlink", "nth": 1, "code": "EPERM" }
+      ],
+      "expect": {
+        "outcome": "error",
+        "code": "EXDEV",
+        "identity": "rename",
+        "remaining": ["reviews.json", "reviews.json.tmp"],
+        "target_bytes": "OLD",
+        "cleanup_attempted": true
+      }
+    },
+    {
+      "name": "dir-fsync-einval",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": []
+      },
+      "inject": [{ "call": "fsync:dir", "nth": 1, "code": "EINVAL" }],
+      "expect": {
+        "outcome": "ok",
+        "code": null,
+        "remaining": ["reviews.json"],
+        "target_bytes": "X",
+        "absent": ["reviews.json.tmp"],
+        "saw_calls": ["fsync:dir"]
+      }
+    },
+    {
+      "name": "dir-fsync-eio",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": []
+      },
+      "inject": [{ "call": "fsync:dir", "nth": 1, "code": "EIO" }],
+      "expect": {
+        "outcome": "error",
+        "code": "EIO",
+        "identity": "fsync:dir",
+        "remaining": ["reviews.json"],
+        "target_bytes": "X",
+        "absent": ["reviews.json.tmp"]
+      }
+    },
+    {
+      "name": "dir-fsync-enospc",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": []
+      },
+      "inject": [{ "call": "fsync:dir", "nth": 1, "code": "ENOSPC" }],
+      "expect": {
+        "outcome": "error",
+        "code": "ENOSPC",
+        "identity": "fsync:dir",
+        "remaining": ["reviews.json"],
+        "target_bytes": "X"
+      }
+    },
+    {
+      "name": "fds-closed-on-success",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": []
+      },
+      "inject": [],
+      "expect": {
+        "outcome": "ok",
+        "code": null,
+        "remaining": ["reviews.json"],
+        "target_bytes": "X",
+        "fds_closed": true,
+        "open_count": 2
+      }
+    },
+    {
+      "name": "fds-closed-on-dir-fsync-error",
+      "setup": {
+        "target": "reviews.json",
+        "content": "X",
+        "prior_target": null,
+        "extra_files": []
+      },
+      "inject": [{ "call": "fsync:dir", "nth": 1, "code": "EIO" }],
+      "expect": {
+        "outcome": "error",
+        "code": "EIO",
+        "remaining": ["reviews.json"],
+        "target_bytes": "X",
+        "fds_closed": true,
+        "open_count": 2
+      }
+    }
+  ]
+}

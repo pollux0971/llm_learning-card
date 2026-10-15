@@ -1,6 +1,6 @@
 /**
  * 09-lint 的 CLI 入口。健檢一個 learning 目錄,列出問題,寫一份報告到
- * <dir>/state/lint-report-<日期>.md(原子寫入:tmp → fsync → rename),同樣內容也印到終端機。不改 cards / questions
+ * <dir>/state/lint-report-<日期>.md(原子寫入走 01 的 writeFileAtomic,§11b),同樣內容也印到終端機。不改 cards / questions
  * / graph / state/reviews.json 等既有檔案——lint 只看不動。
  *
  * P-28:報告與終端機都要說**掃了幾個東西**,而且掃到 0 張卡一律 exit 1。
@@ -15,13 +15,13 @@
  */
 import { mkdirSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { writeFileAtomic } from '../packages/core/src/schema/atomic-write.js';
 import {
   lint,
   formatReport,
   formatScanSummary,
   formatZeroCards,
   inventory,
-  atomicWriteFileSync,
 } from '../packages/core/src/lint/index.js';
 
 function arg(name: string): string | undefined {
@@ -81,8 +81,8 @@ const report = formatReport(result, now.toISOString(), inv);
 const stateDir = join(dir, 'state');
 if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
 const reportPath = join(stateDir, `lint-report-${dateStr}.md`);
-// state/ 的寫入必須是原子的(契約 §11b、CLAUDE.md 硬規則 5):tmp → fsync → rename
-atomicWriteFileSync(reportPath, report);
+// state/ 的寫入必須是原子的(契約 §11b、CLAUDE.md 硬規則 5):只留 01 的 writeFileAtomic
+writeFileAtomic(reportPath, report);
 
 console.log(report);
 console.log(`report written to ${reportPath}`);
