@@ -40,10 +40,10 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
 
 | 審查發現(T2b @ 51355fd) | 在本張 |
 |---|---|
-| P0-2 沒有 command:`src-tauri/src` 裡 `invoke_handler`、`#[tauri::command]` 零個;`../../apps/desktop/src/boundary.ts:7`、`:50` 用 `node:child_process` 的 `spawnSync` 叫 probe | 驗收 A |
+| P0-2 沒有 command:`src-tauri/src` 裡 `invoke_handler`、`#[tauri::command]` 零個;T2b 的 apps/desktop/src/boundary.ts 第 7、50 行(T2c-1 已刪)用 `node:child_process` 的 `spawnSync` 叫 probe | 驗收 A |
 | P1-4 10-01 裁決 b(TS 呼叫 `recordEvent`)在 webview 做不到:`recordEvent` → `appendLineAtomic` 用 `node:fs`(`../../packages/core/src/schema/atomic-write.ts:1`);T2b 在 Node 的 `ProbeBoundary` 裡呼叫(`boundary.ts:127-136`) | 驗收 B |
 | P1-5 read 吞錯、圖片當文字:`learning_fs.rs:67` 的 `read_to_string(...).unwrap_or_default()`;`main.rs:52-56` 回 200、沒有 Content-Type | 驗收 D、E |
-| P1-6 真前端沒載入:`tauri.conf.json:7` `frontendDist: "frontend"`;`../../apps/desktop/src-tauri/frontend/teach.html:10`、`test.html` 同位置引用 `/teach-card/src/main.ts`(不在 frontendDist,沒有 build);測試 `shell-config.ts:77` `frontEndStatus` 只比對字樣 | 驗收 F |
+| P1-6 真前端沒載入:`tauri.conf.json:7` `frontendDist: "frontend"`;T2b 的 apps/desktop/src-tauri/frontend/teach.html 第 10 行、`test.html` 同位置(T2c-1 已刪)引用 `/teach-card/src/main.ts`(不在 frontendDist,沒有 build);測試 `shell-config.ts:77` `frontEndStatus` 只比對字樣 | 驗收 F |
 | P1-7 根目錄兩個來源 | **T2c-2** |
 
 ## 推翻的舊條款
