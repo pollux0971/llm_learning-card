@@ -71,7 +71,7 @@ npx tsx scripts/prompt-check.ts --diff prompts/golden/ingest.cards/2026-09-10 pr
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | golden 框架、結構性檢查、diff(FakeLlm) | Wave 0 | done | 2026-09-02 |
-| 2 | 真模型 golden run、評分表、回歸流程 | I2 | in-progress | |
+| 2 | 真模型 golden run、評分表、回歸流程 | I2 | done | 2026-10-15 |
 
 ## 什麼時候該跑
 
@@ -276,3 +276,12 @@ prompt 檔快照下來卻從來沒送出去——改了 `cards.md` 再 `--diff` 
 `golden-sets/registry.test.ts` 斷言 `packages/core/prompts/**/*.md` 的每一個檔都被某個
 golden set 的 `promptFile` 引用,**掃到 0 個檔也紅**(P-28)。`--list` 是同一個判斷的 CLI 版本。
 反向驗證方式:真的放一個 `packages/core/prompts/ingest/_probe.md`,守門測試與 `--list` 都會紅。
+
+## phase 2 收在哪裡(2026-10-15)
+
+- **第一次真模型基準**:五組 ingest golden set 各 3 個輸入,`openai/gpt-5.6-luna`,15 次呼叫,約 US$0.0919,輸出存在 `packages/core/src/prompt-quality/golden/<set>/2026-10-15/`(進 git)。
+- **人工評分**:技術顧問 15 份輸出逐份評,正確性全 5 分;主要品質問題是父卡與子卡內容重複、regenerate 一張卡塞好幾個概念——這就是之後改 prompt 的回歸基準。
+- **回歸流程實測**:故意把 `ingest/cards.md` 的「一張卡一個概念」拿掉,只跑 `ingest.cards` 一組,`--diff` 標得出差異(預檢請求 3 張變 1 張、同源 4 張變 3 張);限制是每個輸入只跑一次、沒有對照組,`--diff` 只標「不同」不量化。
+- **守門的對象(P-42 三問)**:`packages/core/prompts/` 底下五個真 prompt 檔,每個都恰好被一組 golden set 登記;往 prompts 底下加一個沒登記的檔,`prompt-check.ts --list` 退出碼 1,`registry.test.ts` 與 `cli.test.ts` 共 4 條轉紅(2026-10-15 實測,探針檔已移除)。`grade.apply` 的真實登記仍待 05 提供 prompt 檔——檔案出現的那天這道守門會逼著登記。
+- 已知缺口,另開 T11:golden run 的 meta 對「已追蹤但被改過」的 prompt 仍記乾淨的 commit。
+- 證據全文:`docs/reviews/12-phase-2-live-baseline-2026-10-15.md`。
