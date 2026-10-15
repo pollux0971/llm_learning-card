@@ -13,6 +13,8 @@ use crate::learning_root::{Resolved, StartState};
 /// `scripts/vault.ts` 的實際參數(T5 合併後的版本)。
 pub const INIT_COMMAND: &str = "npx tsx scripts/vault.ts init --learning-dir";
 pub const SHOW_COMMAND: &str = "npx tsx scripts/vault.ts show";
+/// 指標檔讀不到(權限)時先跑的那一行;後面接指標檔路徑(`shell_word` 包過)。
+pub const CHMOD_COMMAND: &str = "chmod u+rw";
 const PATH_PLACEHOLDER: &str = "<絕對路徑>";
 
 /// 啟動畫面用的協定(跟 `lc` 分開:`lc` 只服務 learning/ 的檔案)。
@@ -66,16 +68,20 @@ pub fn text(resolved: &Resolved) -> String {
              {INIT_COMMAND} {PATH_PLACEHOLDER}\n\n\
              桌面程式只讀這個檔,不會自己建立它。"
         ),
+        // 權限不夠時 `show` 與 `init --force` 都會卡在 EACCES(vault.ts 讀不到舊指標就不覆寫),所以先給 chmod 那一行。
         StartState::PointerUnreadable => format!(
             "{title}\n\n\
              桌面程式從這個設定檔讀 learning 資料夾在哪裡,但讀不出來\
              (權限不夠,或內容不是 {{\"learning_dir\": \"<絕對路徑>\", \"vault_id\": \"<uuid>\"}} 這個樣子):\n\
              {pointer_path}\n\n\
+             如果是權限不夠,先執行下面這一行,再執行後面的指令:\n\
+             {CHMOD_COMMAND} {pointer_word}\n\n\
              桌面程式不會改寫這個檔。先看看它哪裡不對:\n\
              {SHOW_COMMAND}\n\n\
              要重新設定,在專案根目錄執行下面這一行(把 {PATH_PLACEHOLDER} 換成 learning 資料夾的絕對路徑;\
              --force 會先印出舊的內容再覆寫):\n\
-             {INIT_COMMAND} {PATH_PLACEHOLDER} --force"
+             {INIT_COMMAND} {PATH_PLACEHOLDER} --force",
+            pointer_word = shell_word(&resolved.pointer_path.display().to_string()),
         ),
         StartState::LearningDirMissing => format!(
             "{title}\n\n\
@@ -121,13 +127,14 @@ fn escape_html(text: &str) -> String {
 }
 
 /// `setup` 視窗的整頁 HTML:第一行當標題,其餘原樣放進 `<pre>`(換行與指令都不動,可以選取複製)。
+/// 折行用 `overflow-wrap: anywhere`:只有整個字放不下(長路徑)才從中間斷,`--force` 這種短字不會被切開。
 pub fn page(resolved: &Resolved) -> String {
     let text = text(resolved);
     let (head, body) = text.split_once('\n').unwrap_or((text.as_str(), ""));
     format!(
         "<!doctype html>\n<html lang=\"zh-Hant\"><head><meta charset=\"utf-8\"><title>{title}</title>\
          <style>body{{font-family:sans-serif;margin:24px;line-height:1.5}}\
-         pre{{white-space:pre-wrap;word-break:break-all;font-family:monospace;user-select:text}}</style>\
+         pre{{white-space:pre-wrap;overflow-wrap:anywhere;font-family:monospace;user-select:text}}</style>\
          </head><body><h1>{title}</h1><pre>{body}</pre></body></html>\n",
         title = escape_html(head),
         body = escape_html(body.trim_start_matches('\n')),

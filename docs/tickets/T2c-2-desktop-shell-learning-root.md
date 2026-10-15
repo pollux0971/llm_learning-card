@@ -10,7 +10,7 @@ must_catch:
   - 根目錄有第二個來源:加回 LC_LEARNING_ROOT 環境變數的退路,「沒有指標檔、但有環境變數」的測試必須紅
   - 身分不符被放行:拿掉 vault_id 與 learning/config/vault-id 的比對,身分不符的測試必須紅
   - 指標檔路徑跟 T5 不同:改用 Tauri 的 app_config_dir(會是 ~/.config/dev.learningcards.desktop/),或忽略 XDG_CONFIG_HOME,路徑測試必須紅
-  - 桌面程式長出第三份 bootstrap:Rust 寫指標檔或 config/vault-id(任何一個),靜態檢查與「首次啟動不寫任何檔」的測試必須紅
+  - 桌面程式長出第三份 bootstrap:Rust 寫指標檔或 config/vault-id(任何一個),靜態檢查與「首次啟動不寫指標檔、標記與 learning/」的測試必須紅
   - 四種失敗混在一起:任兩種失敗回同一個啟動狀態(例如讀不到與不存在都顯示「找不到資料夾」),狀態向量必須紅
   - 自我回報函式改成常數 true:same_checks_as_read、scope_is_learning_root 只要還在,改成永遠回 true 必須有測試紅;照驗收 8 刪掉的話,src-tauri/src 裡兩個名字零命中,而且拿掉 respond 的 symlink 檢查、或拿掉解碼後的 check_rel_path,「The asset protocol is scoped to the learning directory」場景必須紅
   - 開發指令選錯 bin:拿掉 Cargo.toml 的 default-run,驗收 9 的靜態檢查必須紅
@@ -71,8 +71,8 @@ must_catch:
 
    | 狀態 | 預期 |
    |---|---|
-   | 指標檔不存在 | 「還沒有設定 learning 資料夾」畫面,顯示要執行的 `scripts/vault.ts init` 完整指令;**不寫任何檔** |
-   | 指標檔讀不到(權限)或不是合法 JSON | 「設定檔讀不到」畫面,顯示指標檔的絕對路徑;**不寫任何檔**、不覆寫它 |
+   | 指標檔不存在 | 「還沒有設定 learning 資料夾」畫面,顯示要執行的 `scripts/vault.ts init` 完整指令;**不寫指標檔、標記與 learning/** |
+   | 指標檔讀不到(權限)或不是合法 JSON | 「設定檔讀不到」畫面,顯示指標檔的絕對路徑,以及權限不夠時先跑的 `chmod u+rw <指標檔>` 那一行;**不寫指標檔、標記與 learning/**、不覆寫它 |
    | `learning_dir` 不存在 | 「找不到資料夾」畫面,顯示那個路徑與 init 指令 |
    | `vault_id` 與 `<learning_dir>/config/vault-id` 不符(或 `config/vault-id` 不存在) | 「這不是同一個資料夾」畫面;**不自動改寫任何一邊** |
    | 全部正常 | 正常開啟兩個視窗 |
@@ -82,7 +82,10 @@ must_catch:
    不再被 app 使用(刪掉,或搬成測試支援並標明)。測試:沒有指標檔、但設了 `LC_LEARNING_ROOT=/tmp/x`,啟動狀態必須是「指標檔不存在」。
    測試與 probe 要指定根目錄,一律走「指向暫存目錄的 `XDG_CONFIG_HOME` + 暫存指標檔」,不另開後門。
 5. **不寫檔**:靜態檢查 `apps/desktop/src-tauri/src` 的非測試程式碼,對 `vault.json` 與 `vault-id` 只有讀取。
-   行為測試:五種狀態各跑一次啟動,前後 `XDG_CONFIG_HOME` 目錄與 learning 目錄的檔案清單與內容雜湊不變。
+   行為測試:五種狀態各跑一次啟動,前後指標檔、`config/vault-id` 與 learning 目錄的檔案清單與內容雜湊不變,也沒有多出檔案。
+   桌面殼自己的檔不在此列,例如 window-state 外掛在關閉時寫進 Tauri `app_config_dir` 的視窗位置(設計 §4.1)。
+   (技術顧問 2026-10-15 裁決:原文寫「`XDG_CONFIG_HOME` 目錄不變」,但真的 app 一關閉就會寫那個視窗位置檔;
+   這個問題是 UI/Tauri 負責人在 `@manual` 用 build 產物量到的,probe 的自動測試看不到。)
 6. **`@manual`(UI/Tauri 負責人截圖,技術顧問判)**:五種狀態各一張截圖;四種失敗畫面的 init 指令可以直接複製貼上執行。
    截圖與 console 都用 `tauri build` 的產物,不用 `tauri dev`(理由見驗收 11)。
 7. cargo-mutants:本張新增的 Rust(指標檔解析、身分比對、啟動狀態)納入,沿用地板棘輪。**由驗收者在拿到重活位子之後跑**
@@ -135,7 +138,7 @@ must_catch:
     要求:
     - Rust 在 append 之前**自己建 `<根>/state` 這一層**,已經存在不算錯。
     - **learning 根不存在時不建根。** 現在 `learning_fs::note_refusal` 與 `asset_protocol::record_in_root` 先 `canonicalize` 根,根不在就只記 log;這個順序保留。
-    - **只在要寫 warning 的時候才建**,啟動時不建(驗收 5「啟動不寫任何檔」照舊成立)。
+    - **只在要寫 warning 的時候才建**,啟動時不建(驗收 5「啟動不寫指標檔、標記與 learning/」照舊成立)。
     - `scripts/vault.ts` 不動(T8 正在改它)。
     - 裝一個 logger(`env_logger` 或 `tauri-plugin-log`,worker 回報選哪個與版本),`log::error!` 至少寫到 stderr。
       `main.rs` 與 `src/bin/lc-fs.rs` 呼叫 lib 裡**同一個**初始化函式,測試才能從 probe 驗 stderr。
