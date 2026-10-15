@@ -6,6 +6,7 @@ import { Given, When, Then, Before, DataTable } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import type { LearningWorld } from './_world.js';
 import { seedCardsDue } from './review-cli.steps.js';
+import { isI2Loop, seedI2CardsDue } from './i2-review-loop.steps.js';
 import {
   addIsoDays,
   applyFailTransition,
@@ -549,6 +550,11 @@ Given('the daily cap is {int}', function (cap: number) {
 Given(/^(\d+) cards are due(?: today)?$/, function (this: LearningWorld, n: string) {
   if (this.tags.includes('@review-cli')) {
     seedCardsDue(this, Number(n));
+    return;
+  }
+  // I2 整合(docs/integration/i2-review-loop-headless.feature)也用這句:要的是磁碟上真的有卡可以考。
+  if (isI2Loop(this)) {
+    seedI2CardsDue(this, Number(n));
     return;
   }
   selectDueCards = makeDueCards(Number(n));

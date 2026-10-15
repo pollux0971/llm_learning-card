@@ -6,6 +6,12 @@
   import { StubGrader } from './stubs/grader.js';
   import { loadQuestions, loadReviews, loadDailyCap } from './stubs/loader.js';
   import { TestSession, type SessionView } from './session.js';
+  import '@learning/ui-shared/hud/hud.css';
+  import HpBar from '@learning/ui-shared/hud/HpBar.svelte';
+  import HudButton from '@learning/ui-shared/hud/HudButton.svelte';
+  import HudField from '@learning/ui-shared/hud/HudField.svelte';
+  import HudPanel from '@learning/ui-shared/hud/HudPanel.svelte';
+  import { createWindowControls } from '@learning/ui-shared/hud/window-controls';
 
   let session: TestSession | undefined;
   let view = $state<SessionView | undefined>(undefined);
@@ -16,6 +22,7 @@
   let slowTimer: ReturnType<typeof setTimeout> | undefined;
 
   const grader = new StubGrader();
+  const controls = createWindowControls();
 
   async function init(): Promise<void> {
     const fs = new MemoryFs(buildFsSeed());
@@ -97,9 +104,7 @@
   }
 </script>
 
-<main>
-  <h1>考試卡</h1>
-
+<HudPanel title="考試卡" {controls} fill>
   {#if !view}
     <p>載入中…</p>
   {:else if view.isEmpty}
@@ -109,6 +114,7 @@
   {:else if view.current}
     <header class="progress">
       <span>{view.answeredCount} / {view.totalCount}</span>
+      <HpBar done={view.answeredCount} total={view.totalCount} />
     </header>
 
     {#if view.current.type === 'fill' && view.current.fill}
@@ -116,22 +122,38 @@
       <div class="blanks">
         {#each view.current.fill.answers as _blank, i (i)}
           {#if i === 0}
-            <input
-              type="text"
-              bind:value={fillInputs[i]}
-              bind:this={firstInputEl}
-              onkeydown={handleFillKeydown}
-              disabled={view.submitting}
-            />
+            <HudField>
+              <input
+                type="text"
+                bind:value={fillInputs[i]}
+                bind:this={firstInputEl}
+                onkeydown={handleFillKeydown}
+                disabled={view.submitting}
+              />
+            </HudField>
           {:else}
-            <input type="text" bind:value={fillInputs[i]} onkeydown={handleFillKeydown} disabled={view.submitting} />
+            <HudField>
+              <input type="text" bind:value={fillInputs[i]} onkeydown={handleFillKeydown} disabled={view.submitting} />
+            </HudField>
           {/if}
         {/each}
       </div>
+      {#if !(view.result && !view.error)}
+        <div class="submit">
+          <HudButton onclick={submitFill} disabled={view.submitting}>送出</HudButton>
+        </div>
+      {/if}
     {:else if view.current.type === 'apply' && view.current.apply}
       <p class="prompt">{view.current.apply.prompt}</p>
-      <textarea rows="6" bind:value={applyInput} onkeydown={handleApplyKeydown} disabled={view.submitting}
-      ></textarea>
+      <HudField>
+        <textarea rows="6" bind:value={applyInput} onkeydown={handleApplyKeydown} disabled={view.submitting}
+        ></textarea>
+      </HudField>
+      {#if !(view.result && !view.error)}
+        <div class="submit">
+          <HudButton onclick={submitApply} disabled={view.submitting}>送出</HudButton>
+        </div>
+      {/if}
     {/if}
 
     {#if view.submitting}
@@ -143,36 +165,37 @@
     {/if}
 
     {#if view.result && !view.error}
-      <p class={view.result.pass ? 'pass' : 'fail'}>{view.result.pass ? '答對了' : '答錯了'}</p>
+      <p class={view.result.pass ? 'pass' : 'fail'} data-result={view.result.pass ? 'pass' : 'fail'}>{view.result.pass ? '✓ 答對了' : '× 答錯了'}</p>
       <p class="feedback">{view.result.feedback}</p>
       {#if view.correctAnswers}
         <p class="correct">正確答案:{view.correctAnswers.join('、')}</p>
       {/if}
-      <button onclick={next}>下一題</button>
+      <HudButton onclick={next}>下一題</HudButton>
     {/if}
   {/if}
-</main>
+</HudPanel>
 
 <style>
-  main {
-    max-width: 32rem;
-    margin: 2rem auto;
-    font-family: system-ui, sans-serif;
-  }
   .blanks {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
   }
-  textarea {
-    width: 100%;
-    font: inherit;
+  .progress {
+    display: grid;
+    gap: 0.2rem;
+  }
+  .prompt {
+    margin: 0.55rem 0;
+  }
+  .submit {
+    margin-top: 0.75rem;
   }
   .pass {
-    color: #1a7f37;
+    color: var(--hud-pass);
   }
   .fail,
   .error {
-    color: #d1242f;
+    color: var(--hud-fail);
   }
 </style>

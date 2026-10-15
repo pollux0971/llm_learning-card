@@ -6,16 +6,23 @@
  *
  * 印出 GradeResult 的 JSON 到 stdout。
  *
+ * router 是惰性的:第一、二層(exact、fuzzy)從不碰它,沒有指標檔也照常。
+ * 要用到第三層才解析帳本;失敗印 message、退出碼 2。成功則走跟 scripts/llm.ts
+ * 同一條真呼叫路(createLiveGatewayRouter)。
+ *
  * --apply(rubric 應用題審核)是 phase-2 的範圍,這裡先不做,呼叫時明確報錯。
  */
+import './_env.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { FakeLlmRouter, loadFixturesFromDir } from '../packages/core/src/grading/fake-llm.js';
 import { gradeFillQuestion } from '../packages/core/src/grading/grade-fill.js';
-import type { FillQuestion } from '../packages/core/src/grading/types.js';
-
-const ROOT = resolve(import.meta.dirname, '..');
+import type { FillQuestion, LlmResult, LlmRouter, LlmTask } from '../packages/core/src/grading/types.js';
+import {
+  createLiveGatewayRouter,
+  defaultVaultDeps,
+  resolveVerifiedLedger,
+} from '../packages/core/src/llm/index.js';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -26,6 +33,36 @@ function usageError(message: string): never {
   console.error(message);
   console.error('用法:grade.ts --fill --q <questions.yaml> --index <n> --answer "<逗號分隔>"');
   process.exit(1);
+}
+
+/**
+ * 第一次 call/probe 才解析帳本。失敗時 process.exit(2),不丟錯——
+ * gradeFillQuestion 會把 router.call 的例外收成 fallback-strict,那不是這裡要的。
+ */
+function lazyVerifiedRouter(): LlmRouter {
+  let live: LlmRouter | undefined;
+  const ensure = (): LlmRouter => {
+    if (live !== undefined) return live;
+    const resolved = resolveVerifiedLedger(defaultVaultDeps());
+    if (!resolved.ok) {
+      console.error(resolved.message);
+      process.exit(2);
+    }
+    live = createLiveGatewayRouter({ ledger: resolved.ledger });
+    return live;
+  };
+  return {
+    call(task: LlmTask, prompt: string, opts?: { timeoutMs?: number }): Promise<LlmResult> {
+      const router = ensure();
+      return opts === undefined ? router.call(task, prompt) : router.call(task, prompt, opts);
+    },
+    probeOnline() {
+      return ensure().probeOnline();
+    },
+    probeLocal() {
+      return ensure().probeLocal();
+    },
+  };
 }
 
 async function main(): Promise<void> {
@@ -57,8 +94,7 @@ async function main(): Promise<void> {
   }
 
   const answers = answerArg.split(',').map((s) => s.trim());
-  const router = new FakeLlmRouter(loadFixturesFromDir(resolve(ROOT, 'contracts/fixtures/llm')));
-  const result = await gradeFillQuestion(question, answers, router);
+  const result = await gradeFillQuestion(question, answers, lazyVerifiedRouter());
   console.log(JSON.stringify(result));
 }
 

@@ -14,8 +14,10 @@
  * 真 router 打雲端,會花錢,而且離線時直接拒絕、不留下半個空目錄。
  * --out 不給時,fake run 存到 golden-fake/(不進 git),live run 存到 golden/(進 git);
  * 見 golden-run.ts 的 defaultGoldenBaseDir()。測試一律傳暫存目錄,不碰 repo 裡的檔案。
+ * dirty 的 prompt 若解析後的輸出目錄落在 golden/ 底下(沒給 --out 時 live 的預設就是那裡),
+ * 退出碼非 0:先提交,或用 --out 指到 golden/ 以外。不建目錄、不呼叫 router。
  */
-import { runGolden, MissingGoldenSetError, LiveRunOfflineError } from './golden-run.js';
+import { runGolden, MissingGoldenSetError, LiveRunOfflineError, DirtyPromptError } from './golden-run.js';
 import { compareRuns, LegacyRunLayoutError, NotComparableError } from './compare.js';
 import {
   allGoldenSets,
@@ -43,7 +45,7 @@ function arg(argv: string[], name: string): string | undefined {
   return i >= 0 ? argv[i + 1] : undefined;
 }
 
-export async function main(argv: string[]): Promise<CliResult> {
+export async function main(argv: string[], deps?: { root?: string }): Promise<CliResult> {
   const lines: string[] = [];
   const log = (s: string): void => {
     lines.push(s);
@@ -58,7 +60,7 @@ export async function main(argv: string[]): Promise<CliResult> {
   }
 
   if (argv.includes('--golden')) {
-    return runGoldenCommand(argv, log, lines);
+    return runGoldenCommand(argv, log, lines, deps);
   }
 
   log('用法:prompt-check.ts --list  |  --golden [--set <golden set>] [--fake | --live] [--out <存放根目錄>]  |  --diff <run 目錄 A> <run 目錄 B>');
@@ -109,7 +111,12 @@ export function runList(log: (s: string) => void, lines: string[], coverage: Pro
   return { code: failed ? 1 : 0, output: lines.join('\n') };
 }
 
-async function runGoldenCommand(argv: string[], log: (s: string) => void, lines: string[]): Promise<CliResult> {
+async function runGoldenCommand(
+  argv: string[],
+  log: (s: string) => void,
+  lines: string[],
+  deps?: { root?: string },
+): Promise<CliResult> {
   const explicitSet = (arg(argv, '--set') ?? arg(argv, '--task')) as GoldenSetId | undefined;
   const outDir = arg(argv, '--out');
   if (argv.includes('--out') && !outDir) {
@@ -132,7 +139,12 @@ async function runGoldenCommand(argv: string[], log: (s: string) => void, lines:
       // 帳本**不跟著 --out**(T5 / ADR-066):--live 的帳本只來自使用者層指標檔驗證過的那本——
       // `--out /tmp/x --live` 若把錢記進 /tmp/x/state/log.jsonl,日上限又裂成兩本。
       // 測試一律用沙箱的 HOME / XDG_CONFIG_HOME 與合成指標(ADR-032、T5 第 15 條)。
-      const result = await runGolden({ set, mode, ...(outDir ? { baseDir: outDir, learningDir: outDir } : {}) });
+      const result = await runGolden({
+        set,
+        mode,
+        ...(outDir ? { baseDir: outDir, learningDir: outDir } : {}),
+        ...(deps?.root !== undefined ? { root: deps.root } : {}),
+      });
       totalInputs += result.outputs.length;
       log(`✓ golden run ${set} → ${result.dir}(${result.outputs.length} 個輸入)`);
       if (mode === 'live') {
@@ -154,6 +166,10 @@ async function runGoldenCommand(argv: string[], log: (s: string) => void, lines:
         }
       }
     } catch (e) {
+      if (e instanceof DirtyPromptError) {
+        log(`✗ ${e.message}`);
+        return { code: 1, output: lines.join('\n') };
+      }
       if (e instanceof LiveRunOfflineError) {
         log(`✗ ${e.message}`);
         return { code: 1, output: lines.join('\n') };

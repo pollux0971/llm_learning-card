@@ -32,7 +32,7 @@
   {
     "from": "11-review-cli",
     "to": "05-grading",
-    "reason": "phase-1 是組合層,session/answer.ts 呼叫 05 的 gradeFillQuestion/gradeApply 審核作答,scripts/review.ts 用 05 的 FakeLlmRouter 當預設 router(跟 scripts/grade.ts 同一個模式)"
+    "reason": "phase-1 是組合層,session/answer.ts 呼叫 05 的 gradeFillQuestion/gradeApply 審核作答,session 的 router 型別用 05 的 LlmRouter。T13 之後 scripts/review.ts 不再用 05 的預錄 router,改走 03 的 createLiveGatewayRouter(見 11-review-cli → 03-llm-router)"
   },
   {
     "from": "02-ingest-pipeline",
@@ -60,8 +60,33 @@
     "reason": "§11b 只留一份實作(T7):scripts/lint.ts 寫 state/lint-report 用 01 的 writeFileAtomic"
   },
   {
+    "from": "11-review-cli",
+    "to": "03-llm-router",
+    "reason": "T13(I2 整合):scripts/review.ts 互動模式用 createLiveGatewayRouter({ ledger }) 組真的 router(與 scripts/llm.ts 同一條真呼叫路:resolveVerifiedLedger 驗證過的帳本,不接受未驗證路徑)。硬規則:LLM 呼叫一律經過 llm-router 的介面,不在別處 import provider SDK——這條例外正是為了遵守那條,而不是繞過它"
+  },
+  {
+    "from": "05-grading",
+    "to": "03-llm-router",
+    "reason": "T13(I2 整合):scripts/grade.ts 第三層才用 createLiveGatewayRouter({ ledger })(與 scripts/llm.ts 同一條真呼叫路)。第一、二層不碰 router、不要求指標檔。硬規則:LLM 呼叫一律經過 llm-router 的介面,不在別處 import provider SDK——這條例外正是為了遵守那條,而不是繞過它"
+  },
+  {
+    "from": "05-grading",
+    "to": "infra",
+    "reason": "scripts/grade.ts 補 ADR-034 的 .env 載入(side-effect import scripts/_env.ts),第三層真呼叫才讀得到 .env 的金鑰,跟 scripts/llm.ts / scripts/review.ts 同一個模式"
+  },
+  {
     "from": "12-prompt-quality",
     "to": "infra",
     "reason": "ADR-050:scripts/prompt-check.ts 補上 ADR-034 的 .env 載入(side-effect import scripts/_env.ts)——之前漏了這行,--live 從來讀不到 .env 的 LLM_CLOUD_PROVIDER/OPENAI_API_KEY,落回 config/settings.yaml 的舊設定再丟 MissingCredentialError,跟 scripts/ingest.ts / llm-spend.ts / review.ts 同一個模式"
+  },
+  {
+    "from": "06-test-card",
+    "to": "14-hud-skin",
+    "reason": "ADR-071:06 考試卡 的畫面改用 14-hud-skin 的 packages/ui-shared/src/hud/ 元件(面板、按鈕、標題列、HP 條)。外觀只有一份,兩邊各抄一份會長得不一樣。只開這一條單向 import(沒有 14→06 考試卡),hud/ 歸 14 不歸 07,所以不碰 ADR-035 第 2 點守的 07 的圍欄插件。依賴與理由見 features/14-hud-skin/FEATURE.md「依賴」"
+  },
+  {
+    "from": "07-teach-card",
+    "to": "14-hud-skin",
+    "reason": "ADR-071:07 教學卡 的畫面改用 14-hud-skin 的 packages/ui-shared/src/hud/ 元件(面板、按鈕、標題列、HP 條)。外觀只有一份,兩邊各抄一份會長得不一樣。只開這一條單向 import(沒有 14→07 教學卡),hud/ 歸 14 不歸 07,所以不碰 ADR-035 第 2 點守的 07 的圍欄插件。依賴與理由見 features/14-hud-skin/FEATURE.md「依賴」"
   }
 ]

@@ -149,6 +149,10 @@
       "11-review-cli"
     ],
     [
+      "scripts/review-router.test.ts",
+      "11-review-cli"
+    ],
+    [
       "scripts/prompt-check.ts",
       "12-prompt-quality"
     ],
