@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "identifier": "dev.learningcards.desktop",
   "build": {
-    "frontendDist": "placeholder"
+    "frontendDist": "frontend"
   },
   "app": {
     "windows": [
@@ -32,7 +32,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": false,
+        "scope": []
+      }
     }
   },
   "bundle": {
