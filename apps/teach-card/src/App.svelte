@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { renderMarkdown } from '@learning/ui-shared';
+  import '@learning/ui-shared/hud/hud.css';
+  import HudButton from '@learning/ui-shared/hud/HudButton.svelte';
+  import HudPanel from '@learning/ui-shared/hud/HudPanel.svelte';
+  import { createWindowControls } from '@learning/ui-shared/hud/window-controls';
   import { CATEGORY, ORDER, cardPath, createFixtureFs } from './stubs/fixture-data.js';
   import { parseCard, type CardFrontmatter } from './lib/card.js';
   import { createDeck, currentCardId, pressNext, isFinished, type DeckState } from './lib/deck.js';
@@ -8,6 +12,7 @@
   const fs = createFixtureFs();
   const deck = $state<DeckState>(createDeck(ORDER));
   const finished = $derived(isFinished(deck));
+  const controls = createWindowControls();
 
   let frontmatter = $state<CardFrontmatter | null>(null);
   let bodyHtml = $state('');
@@ -41,9 +46,7 @@
   });
 </script>
 
-<main>
-  <h1>教學卡</h1>
-
+<HudPanel title="教學卡" {controls} fill>
   {#if loadError}
     <p class="error">讀取失敗:{loadError}</p>
   {:else if finished}
@@ -61,33 +64,38 @@
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <div class="body">{@html bodyHtml}</div>
     <div class="controls">
-      <button type="button" onclick={handleNext} disabled={finished}>下一個</button>
+      <HudButton onclick={handleNext} disabled={finished}>下一個</HudButton>
     </div>
   {/if}
-</main>
+</HudPanel>
 
 <style>
-  main {
-    max-width: 40rem;
-    margin: 2rem auto;
-    font-family: system-ui, sans-serif;
-    padding: 0 1rem;
-  }
   .markers {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     font-size: 0.85rem;
-    color: #555;
+    color: var(--hud-text);
   }
   .badge {
-    color: #a15c00;
-    background: #fff3cd;
-    border-radius: 0.25rem;
+    color: var(--hud-text);
+    background: var(--hud-accent-wash);
     padding: 0 0.4rem;
   }
+  h2 {
+    margin: 0.6rem 0 0.35rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+  }
+  .body {
+    overflow-wrap: anywhere;
+  }
+  .controls {
+    margin-top: 0.75rem;
+  }
   :global(.lc-example) {
-    background: #f6f8fa;
-    border-left: 3px solid #ccc;
+    background: var(--hud-solid);
+    border-left: 1px solid var(--hud-line);
     padding: 0.5rem 1rem;
     margin: 1rem 0;
   }

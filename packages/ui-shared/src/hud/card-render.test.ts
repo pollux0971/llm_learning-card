@@ -1,0 +1,115 @@
+/**
+ * 14-hud-skin phase-2(工單 T15)兩張卡的渲染檢查:headless Chrome 開 dev server,視窗 360 × 480。
+ * 測試 agent 寫;開發 worker 不改。檢查邏輯在 card-render-test-support.ts,cucumber 跑同一份。
+ * 找不到 Chrome 就紅(設 LC_CHROME),不跳過。
+ */
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  enterKeyProblems, fieldHoverProblems, exampleBorderProblems, exampleMarginProblems, hpBarProblems, noResultBeforeSubmitProblems, openCard, panelFillProblems,
+  resultTextProblems, scrollInsideProblems, submitGapProblems, submitLifecycleProblems, submitVisibleProblems, teachCardFaceProblems, teachShapeProblems, testShapeProblems, testCardFaceProblems, textareaProblems,
+} from './card-render-test-support.js';
+import { PANEL_FILLS_WINDOW } from './card-design-values-test-support.js';
+import type { GalleryPage } from './render-test-support.js';
+
+describe('教學卡的版面(360 × 480)', () => {
+  let page: GalleryPage | undefined;
+  beforeAll(async () => { page = await openCard('teach-card'); }, 60_000);
+  afterAll(async () => { await page?.close(); }, 30_000);
+  const p = (): GalleryPage => { if (!page) throw new Error('教學卡沒有開起來'); return page; };
+
+  it.runIf(PANEL_FILLS_WINDOW)('驗收 5:面板撐滿視窗(0,0,360,480),整頁不捲,四邊黑線在視窗邊上', async () => {
+    await p().reset();
+    expect(await panelFillProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it.runIf(PANEL_FILLS_WINDOW)('驗收 5:第一張卡比視窗長,捲的是面板裡面', async () => {
+    await p().reset();
+    expect(await scrollInsideProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('驗收 6:例子框左右離面板捲動區都 ≥ 12 像素,捲動區沒有橫向凸出', async () => {
+    await p().reset();
+    expect(await exampleMarginProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('P1/P2:「下一個」鍵 hover 與 focus 時,切角外側仍是背景(不填成方塊),矩形外 2–4 像素沒有橘色(沒有方形 outline),橘色還在', async () => {
+    await p().reset();
+    expect(await teachShapeProblems(p())).toEqual([]);
+  }, 90_000);
+
+  it('O1(第三輪):「下一個」鍵的內部 = 半透明 --hud-panel 疊在後面的像素', async () => {
+    await p().reset();
+    expect(await teachCardFaceProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('O4:例子框左邊那條線是 1 像素(border-left-width 1px,線還在)', async () => {
+    await p().reset();
+    expect(await exampleBorderProblems(p())).toEqual([]);
+  }, 60_000);
+});
+
+describe('考試卡的版面與互動(360 × 480)', () => {
+  let page: GalleryPage | undefined;
+  beforeAll(async () => { page = await openCard('test-card'); }, 60_000);
+  afterAll(async () => { await page?.close(); }, 30_000);
+  const p = (): GalleryPage => { if (!page) throw new Error('考試卡沒有開起來'); return page; };
+
+  it.runIf(PANEL_FILLS_WINDOW)('驗收 5:面板撐滿視窗(0,0,360,480),整頁不捲,四邊黑線在視窗邊上', async () => {
+    await p().reset();
+    expect(await panelFillProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('驗收 7:第一題(填空)的「送出」整顆在視窗與捲動區看得到的範圍裡,不用捲動,沒被蓋住', async () => {
+    await p().reset();
+    expect(await submitVisibleProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('驗收 2:送出鍵只在題目顯示中出現,看到結果後只剩「下一題」', async () => {
+    await p().reset();
+    expect(await submitLifecycleProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('驗收 2:填好在輸入框按 Enter 照舊能送出(鍵盤路徑不動)', async () => {
+    await p().reset();
+    expect(await enterKeyProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('驗收 3:HP 條剛載入是 0 / 3,答完一題長到 1/3(data-percent、畫出來的綠色那一段、「1 / 3」那行字)', async () => {
+    await p().reset();
+    expect(await hpBarProblems(p())).toEqual([]);
+  }, 90_000);
+
+  it('驗收 2:對錯不只靠顏色:剛好「✓ 答對了」與「× 答錯了」,兩者不同;兩個顏色換成同一色字樣不變', async () => {
+    expect(await resultTextProblems(p())).toEqual([]);
+  }, 90_000);
+
+  it('驗收 2:還沒送出之前沒有 data-result 元素', async () => {
+    await p().reset();
+    expect(await noResultBeforeSubmitProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('O1(第三輪):作答欄與「送出」「下一題」鍵的內部 = 半透明 --hud-panel 疊在後面的像素(深色背景、--hud-panel 換成半透明紅來量;不透明白與灰都抓得到)', async () => {
+    await p().reset();
+    expect(await testCardFaceProblems(p())).toEqual([]);
+  }, 120_000);
+
+  it('O2:應用題 textarea 不能縮放(resize: none),rows 仍至少五行高', async () => {
+    await p().reset();
+    expect(await textareaProblems(p())).toEqual([]);
+  }, 90_000);
+
+  it('O3:「送出」鍵離上方作答欄外框 ≥ 8 像素(填空、應用題各量)', async () => {
+    await p().reset();
+    expect(await submitGapProblems(p())).toEqual([]);
+  }, 90_000);
+
+  it('P1/P2:「送出」「下一題」鍵與作答欄在 hover / focus 下,切角外側仍是背景,矩形外 2–4 像素沒有橘色,橘色還在', async () => {
+    await p().reset();
+    expect(await testShapeProblems(p())).toEqual([]);
+  }, 150_000);
+
+  it('P3:滑鼠移到作答欄上,外觀不變(作答欄沒有 hover 樣式)', async () => {
+    await p().reset();
+    expect(await fieldHoverProblems(p())).toEqual([]);
+  }, 60_000);
+});

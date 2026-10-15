@@ -9,12 +9,15 @@
     title = '',
     frameless,
     solid,
+    fill = false,
     controls,
     children,
   }: {
     title?: string;
     frameless?: boolean;
     solid?: boolean;
+    /** 卡片視窗:面板撐滿視窗,內容比視窗長時捲裡面。展示頁不傳。 */
+    fill?: boolean;
     controls?: WindowControls;
     children?: Snippet;
   } = $props();
@@ -29,7 +32,7 @@
   const solidOn = $derived(solid ?? readRoot(SOLID_CLASS));
 </script>
 
-<div data-hud="panel" class:hud-solid={solidOn} class:hud-frameless={framelessOn}>
+<div data-hud="panel" class:hud-solid={solidOn} class:hud-frameless={framelessOn} class:hud-fill={fill}>
   <div class="hud-cut">
     <div class="hud-cut-inner">
       {#if framelessOn}

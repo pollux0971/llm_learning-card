@@ -25,6 +25,9 @@
   --hud-page-line: rgba(0, 0, 0, 0.07);
   --hud-font-display: "Rajdhani", "Noto Sans CJK TC", "Noto Sans TC", sans-serif;
   --hud-font-body: "Noto Sans CJK TC", "Noto Sans TC", sans-serif;
+  /* 結果字色:對面板最差對比 ≥ 4.5。#146c2e ≈ 5.21、#b31d28 ≈ 5.36。 */
+  --hud-pass: #146c2e;
+  --hud-fail: #b31d28;
 }
 
 html {
@@ -120,6 +123,44 @@ body {
   padding: 0.85rem 0.95rem 1rem;
 }
 
+/* 卡片視窗:切角就是視窗的形狀。展示頁不帶這個 class。 */
+[data-hud="panel"].hud-fill {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+html:has([data-hud="panel"].hud-fill),
+html:has([data-hud="panel"].hud-fill) body {
+  height: 100%;
+  overflow: hidden;
+}
+
+[data-hud="panel"].hud-fill > .hud-cut,
+[data-hud="panel"].hud-fill .hud-cut-inner {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 底邊距留在捲動區外面。內容比視窗長時,捲動區的 padding-bottom 會捲走,字會貼到視窗下緣,把 1px 黑線量厚。 */
+[data-hud="panel"].hud-fill .hud-cut-inner {
+  padding-bottom: 8px;
+  box-sizing: border-box;
+}
+
+[data-hud="panel"].hud-fill .hud-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 [data-hud="titlebar"] {
   display: flex;
   align-items: center;
@@ -158,25 +199,54 @@ body {
 }
 
 [data-hud="button"] {
+  position: relative;
   display: flex;
   align-items: stretch;
+  overflow: visible;
   font-family: var(--hud-font-display);
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--hud-text);
-  background: var(--hud-line);
+  background: transparent;
   border: none;
+  outline: none;
   padding: var(--hud-line-width);
   cursor: pointer;
+}
+
+/* 黑線只畫一圈,不墊在內部底下。inset -1px 讓線落在小數像素時不被偽元素盒子裁成半像素;座標都加 1px,線仍在元素邊上。面板的 .hud-cut::before 不走這條。 */
+[data-hud="button"]::before,
+[data-hud="field"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--hud-line);
   clip-path: polygon(
-    8px 0,
-    100% 0,
-    100% calc(100% - 8px),
-    calc(100% - 8px) 100%,
-    0 100%,
-    0 8px
+    evenodd,
+    9px 1px,
+    calc(100% - 1px) 1px,
+    calc(100% - 1px) calc(100% - 9px),
+    calc(100% - 9px) calc(100% - 1px),
+    1px calc(100% - 1px),
+    1px 9px,
+    9px 1px,
+    9px 2px,
+    calc(100% - 2px) 2px,
+    calc(100% - 2px) calc(100% - 9px),
+    calc(100% - 9px) calc(100% - 2px),
+    2px calc(100% - 2px),
+    2px 9px,
+    9px 2px
   );
+}
+
+[data-hud="button"]:hover::before,
+[data-hud="button"]:focus-visible::before,
+[data-hud="field"]:focus-within::before {
+  background: var(--hud-accent);
 }
 
 .hud-button-label {
@@ -197,8 +267,14 @@ body {
   );
 }
 
+/* 切角按鈕不填方塊、不加方形 outline。橘色只走 ::before 那圈切角線。瀏覽器預設的 focus 外框也是方的,要關掉。 */
 [data-hud="button"]:hover,
-[data-hud="button"]:focus-visible,
+[data-hud="button"]:focus,
+[data-hud="button"]:focus-visible {
+  background: transparent;
+  outline: none;
+}
+
 [data-hud="minimize"]:hover,
 [data-hud="minimize"]:focus-visible,
 [data-hud="close"]:hover,
@@ -208,9 +284,10 @@ body {
   outline-offset: 2px;
 }
 
+/* 比 accent-wash 深,focus 的淺色內框才分得出來(T14 G5 要差 ≥ 30 像素)。 */
 [data-hud="button"]:hover .hud-button-label,
 [data-hud="button"]:focus-visible .hud-button-label {
-  background-color: var(--hud-accent-wash);
+  background-color: color-mix(in srgb, var(--hud-accent) 35%, transparent);
 }
 
 /* 內框畫在標籤上、縮進切角裡面。不用 accent:hover 時按鈕已是整片 accent,再畫同色看不出來。 */
@@ -234,6 +311,65 @@ body {
 [data-hud="minimize"],
 [data-hud="close"] {
   transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+/* 作答欄:跟按鈕同一種切角細黑框。輸入框自己不畫框。 */
+[data-hud="field"] {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  overflow: visible;
+  padding: var(--hud-line-width);
+  background: transparent;
+  outline: none;
+  color: var(--hud-text);
+}
+
+.hud-field-face {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--hud-panel);
+  clip-path: polygon(
+    7px 0,
+    100% 0,
+    100% calc(100% - 7px),
+    calc(100% - 7px) 100%,
+    0 100%,
+    0 7px
+  );
+}
+
+[data-hud="field"] input,
+[data-hud="field"] textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+  resize: none;
+  font-family: var(--hud-font-body);
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--hud-text);
+}
+
+[data-hud="field"]:focus,
+[data-hud="field"]:focus-within {
+  outline: none;
+}
+
+[data-hud="field"]:has(:disabled) {
+  opacity: 0.45;
 }
 
 [data-hud="hp-bar"] {
