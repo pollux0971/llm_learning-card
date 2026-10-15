@@ -1,0 +1,8 @@
+{
+  "id": "cards-same-origin",
+  "text": "[\n  {\n    \"title\": \"同源的定義\",\n    \"body\": \"來源由協定、主機、埠號組成；三者完全相同才算同源。\",\n    \"examples\": [\n      \"`https://shop.example.com:443` 與 `https://shop.example.com:443/cart` 同源。\"\n    ],\n    \"lines\": [\n      8,\n      9\n    ]\n  },\n  {\n    \"title\": \"同源政策的安全目的\",\n    \"body\": \"同源政策限制網頁讀取其他來源的資料，避免網站濫用瀏覽器自動附帶的 cookie。\",\n    \"examples\": [\n      \"惡意網站不能在背景讀取銀行網站回應中的帳戶資料。\"\n    ],\n    \"lines\": [\n      11,\n      12\n    ]\n  },\n  {\n    \"title\": \"不同路徑仍可同源\",\n    \"body\": \"同一主機使用相同協定與埠號時，不同路徑仍然同源。\",\n    \"examples\": [\n      \"`https://example.com/home` 與 `https://example.com/profile` 同源。\"\n    ],\n    \"lines\": [\n      14,\n      14\n    ]\n  },\n  {\n    \"title\": \"協定或埠號不同即不同源\",\n    \"body\": \"即使主機相同，變更協定或埠號也會造成不同源。\",\n    \"examples\": [\n      \"`http://example.com` 與 `https://example.com` 不同源。\",\n      \"`https://example.com:443` 與 `https://example.com:8443` 不同源。\"\n    ],\n    \"lines\": [\n      14,\n      15\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "children-preflight",
+  "text": "[\n  {\n    \"title\": \"哪些請求會觸發預檢\",\n    \"body\": \"常見觸發條件包括 PUT、DELETE、PATCH，或使用 application/json、自訂標頭等非簡單請求特徵。\",\n    \"examples\": [\n      \"fetch('https://api.example.com/items/7', {\\n  method: 'PUT',\\n  headers: { 'Content-Type': 'application/json' },\\n  body: '{\\\"name\\\":\\\"A\\\"}'\\n})\"\n    ]\n  },\n  {\n    \"title\": \"預檢交換的標頭\",\n    \"body\": \"瀏覽器以 OPTIONS 詢問方法與標頭；伺服器用 Access-Control-Allow-* 標頭表示允許的跨來源範圍。\",\n    \"examples\": [\n      \"OPTIONS /items HTTP/1.1\\nOrigin: https://app.example\\nAccess-Control-Request-Method: PUT\\nAccess-Control-Request-Headers: Content-Type\"\n    ]\n  },\n  {\n    \"title\": \"預檢快取時間\",\n    \"body\": \"伺服器可用 Access-Control-Max-Age 指定預檢結果的有效秒數，期間內瀏覽器可省略重問。\",\n    \"examples\": [\n      \"Access-Control-Max-Age: 600\"\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

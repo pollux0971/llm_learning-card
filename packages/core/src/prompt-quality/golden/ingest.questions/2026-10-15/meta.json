@@ -1,0 +1,12 @@
+{
+  "set": "ingest.questions",
+  "task": "ingest.questions",
+  "date": "2026-10-15",
+  "model": "gpt-5.6-luna",
+  "provider": "openai",
+  "promptFileGitCommit": "06dd2cd",
+  "mode": "live",
+  "tokens_in": 1784,
+  "tokens_out": 1901,
+  "estimated_cost_usd": 0.023469999999999998
+}

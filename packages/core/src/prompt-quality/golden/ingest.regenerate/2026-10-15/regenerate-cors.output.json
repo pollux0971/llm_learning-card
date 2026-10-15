@@ -1,0 +1,8 @@
+{
+  "id": "regenerate-cors",
+  "text": "[{\"golden\":\"regenerate-cors\",\"category\":\"security\",\"source\":\"security-basics.md\",\"title\":\"跨來源資源共享\",\"body\":\"同源政策限制跨來源讀取，但前端與 API 分離時常需 CORS。伺服器以回應標頭明確允許來源；瀏覽器符合才交付內容，否則請求雖成功也無法讀取。權限由伺服器決定。帶憑證時須明確指定來源，不可用萬用字元。\"}]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

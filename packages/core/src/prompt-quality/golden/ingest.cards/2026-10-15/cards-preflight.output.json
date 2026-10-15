@@ -1,0 +1,8 @@
+{
+  "id": "cards-preflight",
+  "text": "[\n  {\n    \"title\": \"預檢請求的觸發時機\",\n    \"body\": \"跨來源請求若可能改變伺服器狀態，或帶有自訂標頭，瀏覽器會先發送預檢請求。\",\n    \"examples\": [\n      \"跨來源 DELETE /users/42\",\n      \"跨來源請求帶有 X-Client-Version: 2\"\n    ],\n    \"lines\": [6, 9]\n  },\n  {\n    \"title\": \"預檢通過後才送正式請求\",\n    \"body\": \"伺服器同意預檢後，瀏覽器才會送出真正請求，以保護未預期跨來源寫入的舊系統。\",\n    \"examples\": [\n      \"伺服器回覆 Access-Control-Allow-Origin 後，瀏覽器才送出 POST\"\n    ],\n    \"lines\": [11, 12]\n  },\n  {\n    \"title\": \"預檢結果快取\",\n    \"body\": \"預檢結果可快取一段時間，讓後續符合條件的請求免除重複往返。\",\n    \"examples\": [\n      \"伺服器設定 Access-Control-Max-Age: 600\"\n    ],\n    \"lines\": [14, 14]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}
