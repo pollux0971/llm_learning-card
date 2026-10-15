@@ -37,6 +37,9 @@ function event(partial: Record<string, unknown>): LogEvent {
     provider: 'openai',
     model: 'gpt-5.6-luna',
     latency_ms: 100,
+    // T9:計價行的 tokens_in / tokens_out 一定要在(缺了就是壞行),所以預設帶 0,各測試再覆寫
+    tokens_in: 0,
+    tokens_out: 0,
     ...partial,
   } as unknown as LogEvent;
 }
