@@ -4,7 +4,9 @@
 //! 參數名(`relPath`、`relDir`、`content`)、錯誤的 JSON 形狀、`State` 的注入,都跟 webview 真的 invoke 一樣。
 //!
 //! 介面:
-//!   - `commands::LearningRoot(pub PathBuf)`:Tauri managed state(T2c-2 會改成從指標檔來)。
+//!   - `commands::LearningRoot::new(learning_root::Resolved)`:Tauri managed state。T2c-2 起根目錄只有一個來源(指標檔),
+//!     所以這裡的 harness 也一樣:在暫存目錄寫指標檔與 `config/vault-id`,用 `learning_root::resolve_at` 解析,再交給 `LearningRoot::new`。
+//!     四個 command 吃的是這一份,不自己讀環境、不自己讀指標檔。
 //!   - `commands::handler::<R>()`:回傳 `generate_handler![read, write, list, exists]`;main.rs 用同一個。
 //!   - command 的回傳:read → string、write → null、list → string[]、exists → bool;
 //!     錯誤 → `{"kind":"refused","reason":...}` 或 `{"kind":"io","code":...}`(io 可以另帶 errno 等欄位)。
@@ -19,6 +21,7 @@ use std::path::Path;
 
 use common::{assert_warning_line, is_root_user, Learning};
 use learning_cards_desktop::commands::{self, LearningRoot};
+use learning_cards_desktop::learning_root;
 use serde_json::{json, Value};
 use tauri::ipc::{CallbackFn, InvokeBody};
 use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY};
@@ -28,18 +31,47 @@ use tauri::{App, WebviewWindow, WebviewWindowBuilder};
 struct Harness {
     _app: App<MockRuntime>,
     webview: WebviewWindow<MockRuntime>,
+    pointer_dir: std::path::PathBuf,
 }
 
+impl Drop for Harness {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.pointer_dir);
+    }
+}
+
+const POINTER_ID: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+fn fresh_pointer_dir() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!("lc-cmd-pointer-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    fs::create_dir_all(dir.join("llm-learning-cards")).unwrap();
+    dir
+}
+
+/// 唯一的給根方式:暫存指標檔 + 根裡的 `config/vault-id`。
 fn harness(root: &Path) -> Harness {
+    let pointer_dir = fresh_pointer_dir();
+    let pointer_file = pointer_dir.join("llm-learning-cards").join("vault.json");
+    fs::write(&pointer_file, json!({ "learning_dir": root, "vault_id": POINTER_ID }).to_string()).unwrap();
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(root.join("config/vault-id"), format!("{POINTER_ID}\n")).unwrap();
+    let resolved = learning_root::resolve_at(&pointer_file);
+    assert_eq!(resolved.state.reason(), "ok", "the harness root must resolve");
+    harness_with(resolved, pointer_dir)
+}
+
+fn harness_with(resolved: learning_root::Resolved, pointer_dir: std::path::PathBuf) -> Harness {
     let app = mock_builder()
-        .manage(LearningRoot(root.to_path_buf()))
+        .manage(LearningRoot::new(resolved))
         .invoke_handler(commands::handler())
         .build(mock_context(noop_assets()))
         .expect("build the mock app");
     let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .expect("build the mock webview");
-    Harness { _app: app, webview }
+    Harness { _app: app, webview, pointer_dir }
 }
 
 impl Harness {
@@ -327,4 +359,54 @@ fn main_rs_registers_the_same_handler() {
     assert!(main.contains(".invoke_handler("), "main.rs registers no invoke_handler");
     assert!(main.contains("commands::handler"), "main.rs must register commands::handler(), the one these tests call");
     assert!(main.contains("LearningRoot"), "main.rs must manage the LearningRoot state the commands read");
+}
+
+// ---------------------------------------------------------------- T2c-2 驗收 3:四種失敗狀態下 command 回「未設定」
+
+fn failed_state_harness(which: &str) -> (Harness, std::path::PathBuf) {
+    let pointer_dir = fresh_pointer_dir();
+    let pointer_file = pointer_dir.join("llm-learning-cards").join("vault.json");
+    let learning = pointer_dir.join("learning");
+    fs::create_dir_all(learning.join("config")).unwrap();
+    fs::write(learning.join("config/vault-id"), format!("{POINTER_ID}\n")).unwrap();
+    match which {
+        "pointer-missing" => {}
+        "pointer-unreadable" => fs::write(&pointer_file, "{").unwrap(),
+        "learning-dir-missing" => fs::write(&pointer_file, json!({ "learning_dir": pointer_dir.join("nowhere"), "vault_id": POINTER_ID }).to_string()).unwrap(),
+        "marker-mismatch" => {
+            fs::write(&pointer_file, json!({ "learning_dir": learning, "vault_id": "11111111-2222-4333-8444-555555555555" }).to_string()).unwrap()
+        }
+        other => panic!("unknown state {other}"),
+    }
+    let resolved = learning_root::resolve_at(&pointer_file);
+    assert_eq!(resolved.state.reason(), which);
+    (harness_with(resolved, pointer_dir), learning)
+}
+
+#[test]
+fn in_every_failed_start_state_all_four_commands_say_not_configured() {
+    for which in ["pointer-missing", "pointer-unreadable", "learning-dir-missing", "marker-mismatch"] {
+        let (h, learning) = failed_state_harness(which);
+        let results = [
+            ("read", h.read("cards/c.md")),
+            ("write", h.write("cards/c.md", "x")),
+            ("list", h.list("cards")),
+            ("exists", h.exists("cards/c.md")),
+        ];
+        for (name, result) in results {
+            let err = result.expect_err(&format!("{which}/{name}: must fail"));
+            assert_eq!(err["kind"], "not-configured", "{which}/{name}: neither a refusal nor an io error: {err}");
+        }
+        assert!(!learning.join("cards").exists(), "{which}: a failed state must not create anything");
+        assert!(!learning.join("state").exists(), "{which}: no warning line, no state directory");
+    }
+}
+
+#[test]
+fn not_configured_is_not_a_refusal_and_writes_no_warning_even_for_a_raw_path() {
+    // raw/ 在 ok 的根會被拒絕並寫 warning;根沒設好的時候是「未設定」,不是拒絕,也不寫。
+    let (h, learning) = failed_state_harness("marker-mismatch");
+    let err = h.read("raw/x.md").expect_err("must fail");
+    assert_eq!(err["kind"], "not-configured", "{err}");
+    assert!(!learning.join("state").exists(), "no warning, so no state directory");
 }

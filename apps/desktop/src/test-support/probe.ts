@@ -11,6 +11,28 @@
  *        同一個 AssetRefusalLimiter 依序處理每個請求,時鐘 = 某個固定起點 + at 秒;endAt 不是 null 就在那一秒 flush
  *   { op: 'segment', path }                path_guard::check_segment
  *   { op: 'status' } / { op: 'builtin-asset' }   (T2b,不變)
+ *
+ * T2c-2 起 learning 根目錄只有一個來源(使用者層指標檔),probe 也一樣:
+ *   - probe 行程從自己的環境(`XDG_CONFIG_HOME`、`HOME`)找 `${XDG_CONFIG_HOME:-~/.config}/llm-learning-cards/vault.json`,
+ *     用 library 的 `learning_root::resolve` 解析一次;**請求裡不再有 `root` 欄位**(probe 看到 `root` 要當壞請求)。
+ *   - 這裡的 runProbe 為了讓舊的測試好寫,收到 `body.root` 時會自己在暫存目錄寫指標檔與 `config/vault-id`,
+ *     把 `root` 從請求拿掉,再用 `XDG_CONFIG_HOME` 指過去。也就是說:給 probe 根目錄的唯一管道是指標檔。
+ *   - 五種啟動狀態不是 `ok` 時:read/write/list/exists 回 `ok:false, refused:false, error:{kind:'not-configured'}`
+ *     (不是拒絕、不是 io 錯誤、不寫 warning、fsCalls 空);asset 回 status 403(不寫 log)。
+ *   新的 op:
+ *   { op: 'startup' }
+ *        → { ok:true, state: 'pointer-missing'|'pointer-unreadable'|'learning-dir-missing'|'marker-mismatch'|'ok',
+ *            root: string|null, pointerPath: string,
+ *            view: { text: string },   畫面上整段文字(狀態不是 ok 才有意義)
+ *            windows: string[] }       state==='ok' 是 ['teach','test'],其他狀態是 []
+ *        什麼檔都不寫(不建目錄、不碰指標檔、不碰 config/vault-id、不建 state/)。
+ *   { op: 'session', requests: [{ kind: 'read' | 'asset', path }] }
+ *        → 一次 resolve,之後 command 與 lc 協定都吃同一份結果(跟 main.rs 的 Tauri state 一樣)。
+ *          { state, root, results: [{ kind, ok, status?, bodyHex?, valueText?, error?, fsCalls }] }
+ *   { op: 'pointer-path', xdg: string|null, home }        → { ok:true, value: <路徑字串> }
+ *   { op: 'marker-compare', markerText, vaultId }          → { ok:true, value: 'equal'|'not-equal' }
+ *   { op: 'pointer-parse', raw }                           → { ok:true, value: 'ok'|'unreadable', learningDir?, vaultId? }
+ *   後三個是純函式,不讀環境。
  * 回應:
  *   ok、refused、error(command 回給 webview 的同一個錯誤 JSON,成功是 null)、value、fsCalls、checked
  *   asset 另有 status、headers(名字一律小寫)、bodyHex;asset-sequence 回 responses: [{ status }]
@@ -20,6 +42,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSyscallShim } from './syscall-shim.js';
+import { pointerForRoot } from './learning-root-sandbox.js';
 
 export const LC_FS_BIN = join(import.meta.dirname, '../../src-tauri/target/debug/lc-fs');
 
@@ -30,7 +53,7 @@ export interface FsCall {
 
 /** command 的錯誤在邊界上的形狀。 */
 export interface WireError {
-  kind: 'refused' | 'io';
+  kind: 'refused' | 'io' | 'not-configured';
   reason?: string;
   code?: string;
   errno?: number;
@@ -85,8 +108,28 @@ export function parseTrace(text: string): TraceEntry[] {
     });
 }
 
-export function runProbe(body: Record<string, unknown>, shim?: ShimOptions): ProbeRun {
+export interface ProbeOptions {
+  /** 加在行程環境上;值是 undefined 就是把那個變數拿掉 */
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+}
+
+export function runProbe(body: Record<string, unknown>, shim?: ShimOptions, opts: ProbeOptions = {}): ProbeRun {
   const env: NodeJS.ProcessEnv = { ...process.env };
+  // 真環境的指標檔與舊的後門一律不能漏進測試:先清掉,再由呼叫端指定
+  delete env.LC_LEARNING_ROOT;
+  let pointerBox: { cleanup(): void } | undefined;
+  if (typeof body.root === 'string') {
+    const box = pointerForRoot(body.root);
+    pointerBox = box;
+    Object.assign(env, box.env);
+    body = { ...body };
+    delete body.root;
+  }
+  for (const [k, v] of Object.entries(opts.env ?? {})) {
+    if (v === undefined) delete env[k];
+    else env[k] = v;
+  }
   let traceDir: string | undefined;
   let tracePath: string | undefined;
   if (shim) {
@@ -98,7 +141,7 @@ export function runProbe(body: Record<string, unknown>, shim?: ShimOptions): Pro
     env.LC_SHIM_INJECT = (shim.inject ?? []).join(',');
   }
   try {
-    const r = spawnSync(LC_FS_BIN, { input: JSON.stringify(body), encoding: 'utf8', env });
+    const r = spawnSync(LC_FS_BIN, { input: JSON.stringify(body), encoding: 'utf8', env, ...(opts.cwd ? { cwd: opts.cwd } : {}) });
     if (r.error) throw r.error;
     const out = (r.stdout ?? '').trim();
     if (!out) {
@@ -121,6 +164,7 @@ export function runProbe(body: Record<string, unknown>, shim?: ShimOptions): Pro
     return { resp, trace, stderr: r.stderr ?? '' };
   } finally {
     if (traceDir) rmSync(traceDir, { recursive: true, force: true });
+    pointerBox?.cleanup();
   }
 }
 

@@ -31,7 +31,6 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import type { LearningWorld } from './_world.js';
 import { recordEvent, validateLogEvent } from '../../packages/core/src/schema/log.js';
 import { BUILD_LC_FS_TIMEOUT_MS, buildLcFs } from '../../apps/desktop/src/test-support/build-lc-fs.js';
-import { decideStartup, saveChosenPath, type StartupDecision } from '../../apps/desktop/src/startup.js';
 import {
   assetProtocolStatus,
   pluginDirectRead,
@@ -120,12 +119,10 @@ interface Bag {
   outsideFile: string;
   configPath: string;
   logPath: string;
-  mode: 'startup' | 'config' | 'boundary';
+  mode: 'config' | 'boundary';
   boundary?: ProbeBoundary;
   last?: BoundaryResult;
   err?: unknown;
-  startup?: StartupDecision;
-  chosen?: string;
   linkRel?: string;
   listDir?: string;
   decoded?: string;
@@ -454,18 +451,6 @@ function lineFor(b: Bag, path: string): Record<string, unknown> {
 
 // ---------------------------------------------------------------- Given
 
-Given('no configuration file exists', function (this: LearningWorld) {
-  const b = ensure(this, 'startup');
-  assert.equal(existsSync(b.configPath), false);
-});
-
-Given('the configured path does not exist', function (this: LearningWorld) {
-  const b = ensure(this, 'startup');
-  const missing = join(b.parent, 'missing-learning');
-  writeFileSync(b.configPath, JSON.stringify({ learningDir: missing }));
-  assert.equal(existsSync(missing), false);
-});
-
 Given('the boundary sits in front of a file system that records every call it receives', async function (this: LearningWorld) {
   await boundaryOf(this);
 });
@@ -572,12 +557,6 @@ Given('a built front end folder whose html references a .ts source file', functi
 });
 
 // ---------------------------------------------------------------- When
-
-When('the application starts', function (this: LearningWorld) {
-  const b = bags.get(this);
-  if (b?.mode !== 'startup') throw new Error('「the application starts」只用在首次啟動與設定路徑的場景');
-  b.startup = decideStartup(b.configPath);
-});
 
 When('the front end requests a card file', async function (this: LearningWorld) {
   const rel = 'cards/security/sec-0042.md';
@@ -858,31 +837,6 @@ When('the static front end check runs', function (this: LearningWorld) {
 });
 
 // ---------------------------------------------------------------- Then
-
-Then('it asks the person to choose a learning directory', function (this: LearningWorld) {
-  assert.equal(bag(this).startup?.askChoose, true);
-});
-
-Then('it offers to initialise the directory if it is empty', function (this: LearningWorld) {
-  assert.equal(bag(this).startup?.offerInit, true);
-});
-
-Then('the chosen path is saved to the configuration', function (this: LearningWorld) {
-  const b = bag(this);
-  b.chosen = join(b.parent, 'chosen-learning');
-  mkdirSync(b.chosen, { recursive: true });
-  saveChosenPath(b.configPath, b.chosen);
-  const saved = JSON.parse(readFileSync(b.configPath, 'utf8')) as { learningDir?: string };
-  assert.equal(saved.learningDir, b.chosen);
-});
-
-Then('it says the directory could not be found', function (this: LearningWorld) {
-  assert.equal(bag(this).startup?.notFound, true);
-});
-
-Then('it asks the person to choose again', function (this: LearningWorld) {
-  assert.equal(bag(this).startup?.askAgain, true);
-});
 
 Then('the read command is invoked with a path relative to the learning directory', function (this: LearningWorld) {
   const b = bag(this);
