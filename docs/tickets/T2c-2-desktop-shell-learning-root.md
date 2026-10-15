@@ -80,7 +80,16 @@ must_catch:
 5. **不寫檔**:靜態檢查 `apps/desktop/src-tauri/src` 的非測試程式碼,對 `vault.json` 與 `vault-id` 只有讀取。
    行為測試:五種狀態各跑一次啟動,前後 `XDG_CONFIG_HOME` 目錄與 learning 目錄的檔案清單與內容雜湊不變。
 6. **`@manual`(UI/Tauri 負責人截圖,技術顧問判)**:五種狀態各一張截圖;四種失敗畫面的 init 指令可以直接複製貼上執行。
-7. cargo-mutants:本張新增的 Rust(指標檔解析、身分比對、啟動狀態)納入,沿用地板棘輪。
+7. cargo-mutants:本張新增的 Rust(指標檔解析、身分比對、啟動狀態)納入,沿用地板棘輪。**由驗收者在拿到重活位子之後跑**
+   (拿協調者指定的鎖、指令前面加 `CARGO_BUILD_JOBS=2`);開發 worker 不跑,只把新檔補進 `.cargo/mutants.toml` 的 `examine_globs`。
+
+## 重活規則(技術顧問 2026-10-15 12:5x;開發 worker 自己跑 cargo-mutants,24 個行程把負載推到 34 之後補上)
+
+1. **開發 worker 不跑變異測試。** cargo-mutants 與 Stryker 都是驗收 / 測試 agent 的工作,而且只在跟協調者拿到重活位子之後才跑。
+   開發 worker 交件前只跑一般測試(`cargo test`、vitest、phase-2 的 cucumber),不跑 `run-mutants.mjs`、`cargo mutants`、`npm run mutate`。
+2. **所有 cargo 指令前面加 `CARGO_BUILD_JOBS=2`**,例如 `CARGO_BUILD_JOBS=2 cargo test --test commands`。
+   vitest 與 cucumber 會自己呼叫 `cargo build --bin lc-fs` 重編 probe,所以跑它們時也在指令前面加(環境變數會傳下去)。
+3. **同一時間只開一個重活。** 完整 `cargo test`、cucumber、vite build、變異測試,一次一個;不在背景同時跑兩個,也不跟別的 agent 的重活重疊(先問協調者)。
 
 ## 預算
 
@@ -89,8 +98,8 @@ must_catch:
 ## 測試誰寫
 
 - 測試 agent:紅測試、步驟定義、讀 T5 向量檔的 Rust harness。**等前置 1–3 都在 main 才開始。**
-- 開發 agent(worker-grok):只寫實作,不改測試、不改 gherkin。
-- 驗收:照 `worker-acceptance`。
+- 開發 agent(worker-grok):只寫實作,不改測試、不改 gherkin。**不跑變異測試**;cargo 指令加 `CARGO_BUILD_JOBS=2`;一次一個重活(見「重活規則」)。
+- 驗收:照 `worker-acceptance`(含驗收 7 的 cargo-mutants),拿到重活位子才跑。
 - UI/Tauri 負責人:驗收 3 的畫面文字與驗收 6 的截圖。
 
 ## worktree

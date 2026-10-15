@@ -64,8 +64,8 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
    - 三處 `And the TypeScript caller records a warning event through recordEvent`(T2b 版 :66、:113、:243)→ 改成 Rust 寫事件;
    - :140-146 asset protocol 的 `no warning event is written` → 改成「寫一行、而且限流」;
    - 新增:io 錯誤與拒絕分得出來(驗收 D)、圖片位元組往返(驗收 E)、SVG 不執行 script(驗收 E)、真前端靜態檢查(驗收 F)。
-4. 鎖:cargo-mutants 與完整 `cargo test` 要拿協調者指定的那一把(T5 之後是 `$XDG_RUNTIME_DIR/llm-learning-cards/stryker.lock`;
-   T5 未合併前照 T2b 的做法,由協調者排,不和別的重活同時跑)。
+4. 鎖:cargo-mutants 由**驗收者**跑(開發 worker 不跑,見「重活規則」),要拿協調者指定的那一把
+   (T5 之後是 `$XDG_RUNTIME_DIR/llm-learning-cards/stryker.lock`);完整 `cargo test` 也算重活,不和別的重活同時跑。
 5. **契約 1.4.0 已在 main**(含 `contracts/fixtures/path-segment-vectors.json`,51 列;目前在 contracts clone 的 `contracts-1.4.0` @ `6d71bef8cdf83d4d63f6cccdb5330aa59e8100b4`,樹 `1bf59c71ebc2673faba083f4aeb4930d68311c26`;檔案 sha256 `71dded0ecbe5376fdb9adbe417f82e0d27d756d7256d359c6516e75e8ac7a1c6`)。驗收 A'(段向量)要讀它。統籌·契約定的合併順序:`feature-13-work-dag` → `contracts-1.4.0` → `tickets-t5-t6`。
 6. learning 根目錄在本張**沿用 T2b 的來源**(`LC_LEARNING_ROOT`),只當測試與開發用;換成單一來源是 T2c-2 的事。本張不得再新增任何根目錄來源。
 
@@ -221,10 +221,20 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
     - 開發者工具的 console 沒有 CSP 違規訊息(驗收 E13 的 csp 沒有擋到自己的 script)。
     06/07 這時候還是吃 stub(MemoryFs);換成真的 `LearningFs` 是 I3 的事,不在本張。
 
-### G. cargo-mutants
+### G. cargo-mutants(驗收者跑,開發 worker 不跑)
 
 20. 本張新增的 Rust(command、事件 append 與限流、io 錯誤分類、asset 的 bytes 與 header)納入 cargo-mutants;
-    沿用 T2b 的地板棘輪(只准升不准降),拿前置 4 的那把鎖。存活的變異體逐一列在報告,各標「補測試」或「等價,理由」。
+    沿用 T2b 的地板棘輪(只准升不准降)。**由驗收者在拿到重活位子之後跑**,拿前置 4 的那把鎖,指令前面加 `CARGO_BUILD_JOBS=2`。
+    開發 worker 要做的只有:把 `.cargo/mutants.toml` 的 `examine_globs` 補上本張新增的檔(`commands.rs`、`event_log.rs`)。
+    存活的變異體由驗收者逐一列在驗收報告,各標「補測試」或「等價,理由」;要補的測試由測試 agent 寫。
+
+## 重活規則(技術顧問 2026-10-15 12:5x;開發 worker 自己跑 cargo-mutants,24 個行程把負載推到 34 之後補上)
+
+1. **開發 worker 不跑變異測試。** cargo-mutants 與 Stryker 都是驗收 / 測試 agent 的工作,而且只在跟協調者拿到重活位子之後才跑。
+   開發 worker 交件前只跑一般測試(`cargo test`、vitest、phase-2 的 cucumber),不跑 `run-mutants.mjs`、`cargo mutants`、`npm run mutate`。
+2. **所有 cargo 指令前面加 `CARGO_BUILD_JOBS=2`**,例如 `CARGO_BUILD_JOBS=2 cargo test --test commands`。
+   vitest 與 cucumber 會自己呼叫 `cargo build --bin lc-fs` 重編 probe,所以跑它們時也在指令前面加(環境變數會傳下去)。
+3. **同一時間只開一個重活。** 完整 `cargo test`、cucumber、vite build、變異測試,一次一個;不在背景同時跑兩個,也不跟別的 agent 的重活重疊(先問協調者)。
 
 ## 預算
 
@@ -234,8 +244,8 @@ cucumber 綠的是 Node 裡的測試用 probe(`target/debug/lc-fs`),不是 app�
 ## 測試誰寫
 
 - 測試 agent:紅測試、步驟定義(照 `features/steps/_world.ts`)、驗收 C 的 Rust harness(讀 T7 的向量檔)。**等前置 1–3 都在 main 才開始。**
-- 開發 agent(worker-grok):只寫實作,不改測試、不改 gherkin。要改測試就停下回報協調者。
-- 驗收:照 `worker-acceptance` 的流程(先重編 `lc-fs` 再跑 cucumber、`must_catch` 逐條、自選 ≥ 3 個突變)。
+- 開發 agent(worker-grok):只寫實作,不改測試、不改 gherkin。要改測試就停下回報協調者。**不跑變異測試**;cargo 指令加 `CARGO_BUILD_JOBS=2`;一次一個重活(見「重活規則」)。
+- 驗收:照 `worker-acceptance` 的流程(先重編 `lc-fs` 再跑 cucumber、`must_catch` 逐條、自選 ≥ 3 個突變、驗收 G 的 cargo-mutants),拿到重活位子才跑。
 - UI/Tauri 負責人:驗收 E15、F19 的截圖與「看哪裡、什麼算對」清單,交技術顧問判。
 
 ## worktree
