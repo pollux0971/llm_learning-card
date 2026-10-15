@@ -25,7 +25,7 @@
 
 - [x] 自身:phase-1 `done`(2026-10-15)
 - [x] 跨資料夾:06 phase-1、07 phase-1 `done`
-- [ ] 設定:`scripts/boundaries.allow.json` 開「06→14」「07→14」兩條例外(ADR-071;協調者改;理由見 FEATURE.md「依賴」)
+- [x] 設定:`scripts/boundaries.allow.json` 開「06→14」「07→14」兩條例外(ADR-071;協調者改;理由見 FEATURE.md「依賴」;2026-10-16 已開)
 - [ ] 排程:跟 06、07 的 I3 接線(06 phase-2/3、07 phase-2)誰先,由協調者排;同一時間只有一個人改 `apps/teach-card` 或 `apps/test-card`
 - [ ] 開工前帶進工單:phase-1 @manual 留下的 D1(展示頁的說明文字在深色背景上看不見;技術顧問 2026-10-15 裁定記進 phase-2 工單)
 - [x] 整合:無
