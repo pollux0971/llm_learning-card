@@ -1,6 +1,6 @@
 ---
 id: T3
-deps: []
+deps: [T5]                          # T5 把 .stryker.lock 改成機器範圍,直接回答 B2 的跨 clone 問題;兩張都動 scripts/mutate.ts、scripts/run-tests.ts
 touches: [scripts/]
 cpu: heavy                             # 整鏈計時、worker 數曲線
 budget_usd: 5                          # 草估,統籌·契約填
