@@ -434,7 +434,7 @@ describe('T11 runGolden fake', () => {
   it('dirty 的 prompt:fake 不拒絕(預設存 golden-fake/),meta 記 <sha>-dirty', async () => {
     const { root, sha } = promptRepo();
     put(root, PROMPT, '# edited\n');
-    const result = await run({ set: 'selftest', today: '2026-09-10', mode: 'fake', root });
+    const result = await run({ set: 'selftest', today: '2026-09-10', mode: 'fake', root, router: countingRouter() });
     expect(result.dir.startsWith(join(root, FAKE_REL))).toBe(true);
     expect(readMeta(result.dir).promptFileGitCommit).toBe(`${sha}-dirty`);
   });
@@ -450,7 +450,7 @@ describe('T11 runGolden fake', () => {
 
   it('乾淨的 prompt:fake 的 meta 是乾淨的 sha', async () => {
     const { root, sha } = promptRepo();
-    const result = await run({ set: 'selftest', today: '2026-09-10', mode: 'fake', root, baseDir: tmp('pq-dirty-out-') });
+    const result = await run({ set: 'selftest', today: '2026-09-10', mode: 'fake', root, baseDir: tmp('pq-dirty-out-'), router: countingRouter() });
     expect(readMeta(result.dir).promptFileGitCommit).toBe(sha);
   });
 });
