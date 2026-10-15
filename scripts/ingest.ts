@@ -39,6 +39,7 @@ import { FakeLlmRouter } from '../packages/core/src/ingest/fake-llm.js';
 import { runIngest, runIngestPipeline } from '../packages/core/src/ingest/ingest.js';
 import { ensureInitialized, setCategory } from '../packages/core/src/ingest/init.js';
 import { LlmRouterImpl, type RouterSettings } from '../packages/core/src/llm/router-impl.js';
+import { formatCategoryIdRefusal, validateCategoryId } from '../packages/core/src/schema/category-id.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
@@ -63,6 +64,15 @@ async function main(): Promise<void> {
 
   if (!filePath || !outDir) {
     console.error('用法: ingest.ts [--fake] --file <raw file> --out <learning dir> [--category <id>]');
+    process.exit(1);
+  }
+
+  // T6(契約 1.4.0 §1、ADR-067):分類名是 raw/<分類>、cards/<分類> 的路徑段,必須在
+  // ensureInitialized 之前驗——拒絕時輸出目錄前後相等,連骨架都不建。印一行(帶使用者給的值
+  // 與 rule 名),不丟 stack trace;與 runIngest、setCategory、schema 同一份 validateCategoryId。
+  const verdict = validateCategoryId(category);
+  if (!verdict.ok) {
+    console.error(`${formatCategoryIdRefusal(category, verdict.rule)};沒有建立任何檔案或資料夾`);
     process.exit(1);
   }
 
