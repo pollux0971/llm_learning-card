@@ -13,6 +13,9 @@ must_catch:
   - 桌面程式長出第三份 bootstrap:Rust 寫指標檔或 config/vault-id(任何一個),靜態檢查與「首次啟動不寫任何檔」的測試必須紅
   - 四種失敗混在一起:任兩種失敗回同一個啟動狀態(例如讀不到與不存在都顯示「找不到資料夾」),狀態向量必須紅
   - 自我回報函式改成常數 true:same_checks_as_read、scope_is_learning_root 只要還在,改成永遠回 true 必須有測試紅;照驗收 8 刪掉的話,src-tauri/src 裡兩個名字零命中,而且拿掉 respond 的 symlink 檢查、或拿掉解碼後的 check_rel_path,「The asset protocol is scoped to the learning directory」場景必須紅
+  - 開發指令選錯 bin:拿掉 Cargo.toml 的 default-run,驗收 9 的靜態檢查必須紅
+  - 新根的 warning 靜默消失:拿掉 append 之前建 state/ 的那一步,驗收 10 剛初始化的根那兩列(read 與 lc)必須紅(state/log.jsonl 沒有那一行)
+  - 沒有 logger:拿掉 lib 裡 logger 初始化的呼叫(main.rs 與 lc-fs 共用的那一個),驗收 10「state 是一般檔案」那一列的 stderr 斷言必須紅
 ---
 
 # 工單 T2c-2:10 desktop-shell phase-2 的 learning 根目錄只有一個來源(讀 T5 的指標檔)
@@ -103,9 +106,46 @@ must_catch:
      | `scopeIsLearningRoot` | learning 根裡放一個指向根外檔案的 symlink,經 `lc` 請求它:403,body 不含根外檔案的內容 |
      | `sameChecksAsRead` | 同一張樣本表逐列送:`read` 收原字串 `p`,`lc` 收 `p` 逐段 `encodeURIComponent` 之後的字串(跟 `assetUrl` 產生的一樣),兩邊同拒同放(「拒」= 拒絕;`read` 的 io 錯誤與 `lc` 的 404 都算「放」)。樣本至少是 T2b 函式裡那六個(`../etc/passwd`、`cards/a.`、`nul.md`、`raw/x`、`cards/a.md`、`cards/가.md`;`가` 編碼後是 `%EA%B0%80`,`lc` 不解碼就會拒絕,這列才真的測到解碼)。另加一列只送 `lc` 的 `cards/a%252emd`:解一次是 `cards/a%2emd`,含 `%`,必須拒絕(解兩次才會變成合法的 `cards/a.md`) |
 
-   - 同類,一併處理(UI/Tauri 負責人加的,顧問審稿可以刪):`status` 的 `custom_enabled: Some(true)`(`../../apps/desktop/src-tauri/src/bin/lc-fs.rs:95`)
+   - 同類,一併處理(UI/Tauri 負責人加的,技術顧問 2026-10-15 審過、保留):`status` 的 `custom_enabled: Some(true)`(`../../apps/desktop/src-tauri/src/bin/lc-fs.rs:95`)
      是寫死的常數,不是量出來的。改成量真正註冊的地方:`src/main.rs` 有 `register_uri_scheme_protocol(SCHEME, …)`
      (靜態檢查,測試 agent 寫),probe 不再回報這個欄位。
+
+9. **`npm run tauri dev` 照原文就能跑**(T2c-1 `@manual` 的發現 1;技術顧問 2026-10-15)。
+   現況:T2b 加了 `src/bin/lc-fs.rs` 之後,crate 有兩個 bin(`lc-fs`、`learning-cards-desktop`),`Cargo.toml` 沒有 `default-run`。
+   - `npm run tauri dev` 失敗:`` `cargo run` could not determine which binary to run. Use the `--bin` option to specify a binary, or the `default-run` manifest key. available binaries: lc-fs, learning-cards-desktop ``。
+   - `tauri build --debug --no-bundle` 印的是 `Built application at: …/target/debug/lc-fs`:打包會把 probe 當成 app。
+
+   要求:`Cargo.toml` 的 `[package]` 加 `default-run = "learning-cards-desktop"`。
+   只加這行之後 `tauri build` 若仍印 `lc-fs`,worker 停下回報,不自己改 bin 名或 `tauri.conf.json`,由技術顧問裁。
+
+   驗收:
+   - 靜態(測試 agent 寫):`cargo metadata --no-deps --format-version 1` 裡這個 package 的 `default_run` 是 `"learning-cards-desktop"`。
+   - 實機(驗收者,拿到重活位子之後):照原文 `npm run tauri dev`(不加 `--bin`)兩個視窗都開得起來;
+     `tauri build --debug --no-bundle` 印的 application 是 `learning-cards-desktop`。
+
+10. **warning 事件不能靜默消失**(T2c-1 `@manual` 的發現 3;技術顧問 2026-10-15)。
+    現況(`apps/desktop/src-tauri/src/event_log.rs`):`append_to_log` 照 T2c-1 的設計「不建目錄」,`state/` 不在就寫不進去,改記 `log::error!`;
+    但 app 沒有裝 logger,那行字不會出現在任何地方。`scripts/vault.ts init` 只建 `config/`、不建 `state/`,所以剛初始化的根第一次被拒絕時,
+    拒絕照樣是拒絕,warning 卻沒有留下任何痕跡(T2c-1 實機:暫存根裡沒有 `state/log.jsonl`,app 的 stdout、stderr 都是空的)。
+    TS 的 `appendLogEvent` 本來就自己建目錄(ADR-070:「`appendLogEvent` 保留各自的 `mkdirSync`」);契約 §10、§11b 沒有禁止建 `state/`。
+
+    要求:
+    - Rust 在 append 之前**自己建 `<根>/state` 這一層**,已經存在不算錯。
+    - **learning 根不存在時不建根。** 現在 `learning_fs::note_refusal` 與 `asset_protocol::record_in_root` 先 `canonicalize` 根,根不在就只記 log;這個順序保留。
+    - **只在要寫 warning 的時候才建**,啟動時不建(驗收 5「啟動不寫任何檔」照舊成立)。
+    - `scripts/vault.ts` 不動(T8 正在改它)。
+    - 裝一個 logger(`env_logger` 或 `tauri-plugin-log`,worker 回報選哪個與版本),`log::error!` 至少寫到 stderr。
+      `main.rs` 與 `src/bin/lc-fs.rs` 呼叫 lib 裡**同一個**初始化函式,測試才能從 probe 驗 stderr。
+
+    測試(測試 agent 寫,經 probe;根照驗收 4 由暫存 `XDG_CONFIG_HOME` 的指標檔給):
+
+    | 情境 | 預期 |
+    |---|---|
+    | 剛用 `vault.ts init` 初始化的根(有 `config/vault-id`、沒有 `state/`),`read("raw/x.md")` | 拒絕;之後 `state/` 存在,`state/log.jsonl` 恰好一行 warning(欄位照 T2c-1) |
+    | 同一種新的根,經 `lc` 請求 `raw/x.png` | 403;`state/log.jsonl` 照 T2c-1 的限流規則有那一行 |
+    | `<根>/state` 是一般檔案(建不了目錄,也開不了 log) | 拒絕照樣是拒絕;stderr 含 `could not append a warning event` |
+    | 指標檔的 `learning_dir` 不存在,`read("raw/x.md")` | 照驗收 3 回「未設定」的錯誤,不是拒絕、不寫 warning;**根沒有被建出來** |
+    | 啟動(驗收 3 的五種狀態) | 驗收 5 照舊:前後檔案清單與雜湊不變,沒有因為這條多出 `state/` |
 
 ## 重活規則(技術顧問 2026-10-15 12:5x;開發 worker 自己跑 cargo-mutants,24 個行程把負載推到 34 之後補上)
 
