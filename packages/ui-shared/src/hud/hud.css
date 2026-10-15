@@ -28,8 +28,6 @@
   /* 結果字色:對面板最差對比 ≥ 4.5。#146c2e ≈ 5.21、#b31d28 ≈ 5.36。 */
   --hud-pass: #146c2e;
   --hud-fail: #b31d28;
-  /* 作答欄內底。不透明白:半透明面板色疊在黑框上會變成灰,看起來像停用。 */
-  --hud-field: #ffffff;
 }
 
 html {
@@ -201,25 +199,53 @@ html:has([data-hud="panel"].hud-fill) body {
 }
 
 [data-hud="button"] {
+  position: relative;
   display: flex;
   align-items: stretch;
+  overflow: visible;
   font-family: var(--hud-font-display);
   font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--hud-text);
-  background: var(--hud-line);
+  background: transparent;
   border: none;
   padding: var(--hud-line-width);
   cursor: pointer;
+}
+
+/* 黑線只畫一圈,不墊在內部底下。inset -1px 讓線落在小數像素時不被偽元素盒子裁成半像素;座標都加 1px,線仍在元素邊上。面板的 .hud-cut::before 不走這條。 */
+[data-hud="button"]::before,
+[data-hud="field"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--hud-line);
   clip-path: polygon(
-    8px 0,
-    100% 0,
-    100% calc(100% - 8px),
-    calc(100% - 8px) 100%,
-    0 100%,
-    0 8px
+    evenodd,
+    9px 1px,
+    calc(100% - 1px) 1px,
+    calc(100% - 1px) calc(100% - 9px),
+    calc(100% - 9px) calc(100% - 1px),
+    1px calc(100% - 1px),
+    1px 9px,
+    9px 1px,
+    9px 2px,
+    calc(100% - 2px) 2px,
+    calc(100% - 2px) calc(100% - 9px),
+    calc(100% - 9px) calc(100% - 2px),
+    2px calc(100% - 2px),
+    2px 9px,
+    9px 2px
   );
+}
+
+[data-hud="button"]:hover::before,
+[data-hud="button"]:focus-visible::before,
+[data-hud="field"]:focus-within::before {
+  background: var(--hud-accent);
 }
 
 .hud-button-label {
@@ -281,30 +307,23 @@ html:has([data-hud="panel"].hud-fill) body {
 
 /* 作答欄:跟按鈕同一種切角細黑框。輸入框自己不畫框。 */
 [data-hud="field"] {
+  position: relative;
   display: flex;
   box-sizing: border-box;
   width: 100%;
   min-height: 36px;
   margin: 0;
+  overflow: visible;
   padding: var(--hud-line-width);
-  background: var(--hud-line);
+  background: transparent;
   color: var(--hud-text);
-  clip-path: polygon(
-    8px 0,
-    100% 0,
-    100% calc(100% - 8px),
-    calc(100% - 8px) 100%,
-    0 100%,
-    0 8px
-  );
-  transition: background-color 120ms ease;
 }
 
 .hud-field-face {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  background: var(--hud-field);
+  background: var(--hud-panel);
   clip-path: polygon(
     7px 0,
     100% 0,
@@ -336,7 +355,6 @@ html:has([data-hud="panel"].hud-fill) body {
 }
 
 [data-hud="field"]:focus-within {
-  background: var(--hud-accent);
   outline: 1px solid var(--hud-accent);
   outline-offset: 2px;
 }
