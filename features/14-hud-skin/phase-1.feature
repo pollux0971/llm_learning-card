@@ -62,6 +62,36 @@ Feature: The HUD kit and its gallery
     When the HUD stylesheet is applied
     Then no HUD piece animates or transitions
 
+  # The scenarios below were added after the manual review of 2026-10-15 (ticket T14). They draw the
+  # gallery in a headless Chrome (LC_CHROME, or a usual install path; missing Chrome is a failure, not
+  # a skip) at 720 x 900 with one image pixel per CSS pixel, and measure pixels and computed styles.
+  # Nothing is sent to the mouse or the keyboard: hover and focus are forced through DevTools.
+  # The measuring helpers are in packages/ui-shared/src/hud/render-test-support.ts.
+
+  Scenario: The panel lets the page behind it show through
+    When the gallery is drawn in a headless browser
+    Then every sampled pixel in the panel padding equals the panel colour laid over the pixel behind it
+
+  Scenario: Every frame line is one pixel wide
+    Given the third gallery button is labelled with Latin letters only
+    When the gallery is drawn in a headless browser
+    Then each straight edge of the panel and of every button is one pixel wide
+    And each cut corner of the panel still has its thin line
+
+  Scenario: Keyboard focus looks different from hover
+    When the gallery is drawn in a headless browser
+    Then the focused second button differs in pixels from both the hovered and the normal one
+    And its computed style differs from the hovered one
+
+  Scenario: The shared stylesheet does not paint the page behind the panels
+    When the HUD stylesheet rules for the page root are read
+    Then none of them sets a background, except under the solid class
+
+  Scenario: Latin capitals are about as tall as Chinese characters
+    When the gallery is drawn in a headless browser
+    Then a Latin capital in the display font is between 0.78 and 0.92 of the height of a Chinese character
+    And the Rajdhani font face declares a size adjustment above 100 percent
+
   @manual
   Scenario: The gallery looks like an SAO style HUD
     When the gallery is opened
