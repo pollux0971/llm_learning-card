@@ -163,13 +163,6 @@ export const DEGRADED_SIGNALS = {
     summary: '重問之後仍有環 → 本地丟邊修成 DAG,以修過的圖繼續寫 order',
   },
 
-  // ── 11-review-cli ─────────────────────────────────────────────────────────
-  'session.router-default-fake': {
-    kind: 'default-path',
-    owner: '11-review-cli',
-    summary: 'buildSession 沒給 router → 用 contracts/fixtures/llm 的 FakeLlmRouter(stub)',
-  },
-
   // ── 12-prompt-quality ─────────────────────────────────────────────────────
   'prompt-quality.mode-default-fake': {
     kind: 'default-path',

@@ -89,3 +89,14 @@ export function renderNoCards(cardsDir: string): string {
     '這不是很乾淨,是掃描器壞了。--dir 指錯地方、目錄被搬走或同步刪掉時就長這樣。',
   ].join('\n');
 }
+
+/**
+ * 到期超過 daily_cap 時的一行。`deferred === 0` 回 undefined——呼叫端不印,
+ * 測試釘的是這行不出現,不是印出「0 張延後」。
+ *
+ * 措辭是建議值,不是契約。測試只釘 `(\\d+)\\s*張延後` 的 N,以及 N = 0 時整行不出現。
+ */
+export function renderDeferred(deferred: number, dailyCap: number): string | undefined {
+  if (deferred === 0) return undefined;
+  return `其餘 ${deferred} 張延後(今日上限 ${dailyCap})。`;
+}

@@ -6,15 +6,24 @@
  *
  * --dry-run 不進互動迴圈,只建立 session 再印出清單,對照
  * phase-1.feature「Listing what is due without answering anything」與
- * FEATURE.md 的單獨執行範例。
+ * FEATURE.md 的單獨執行範例。不評分、不花錢,不需要指標檔。
  *
- * 互動模式:presentNextCard → node:readline 收輸入 → submitAnswer,循環直到
- * 'done',結束時印 renderSummary。填空單行(逗號分隔)、應用多行(空行結束)。
+ * 互動模式:先確認帳本(指標檔驗證過的路徑),再 presentNextCard → node:readline
+ * 收輸入 → submitAnswer,循環直到 'done',結束時印 renderSummary。
+ * 填空單行(逗號分隔)、應用多行(空行結束)。
+ *
+ * 檢查順序(早的先擋):參數不全(退出碼 1)→ 磁碟上 0 張卡(退出碼 1)→
+ * 互動模式才查帳本(失敗退出碼 2,今天有沒有卡到期都先查)。
  */
 import './_env.js';
 import { createInterface } from 'node:readline/promises';
-import { join, resolve } from 'node:path';
-import { FakeLlmRouter, loadFixturesFromDir } from '../packages/core/src/grading/index.js';
+import { join } from 'node:path';
+import {
+  createLiveGatewayRouter,
+  defaultVaultDeps,
+  resolveVerifiedLedger,
+} from '../packages/core/src/llm/index.js';
+import type { LlmRouter } from '../packages/core/src/grading/types.js';
 import { buildDueList } from '../packages/core/src/scheduler/index.js';
 import { nextCalendarDay } from '../packages/core/src/schema/review.js';
 import { buildTodaySession } from '../packages/core/src/session/build.js';
@@ -23,14 +32,13 @@ import { joinApplyLines, submitAnswer } from '../packages/core/src/session/answe
 import { listCardIds, loadReviews } from '../packages/core/src/session/io.js';
 import {
   estimateTomorrow,
+  renderDeferred,
   renderDryRun,
   renderDryRunHeader,
   renderNoCards,
   renderSummary,
 } from '../packages/core/src/session/summary.js';
 import type { Session } from '../packages/core/src/session/types.js';
-
-const ROOT = resolve(import.meta.dirname, '..');
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -41,6 +49,31 @@ function usageError(message: string): never {
   console.error(message);
   console.error('用法: review.ts --dir <learning 目錄> --today <YYYY-MM-DD> [--dry-run]');
   process.exit(1);
+}
+
+/** --dry-run 永遠不評分。被呼叫就丟錯,避免悄悄走一條會花錢的路。 */
+function refusingRouter(): LlmRouter {
+  const refuse = async (): Promise<never> => {
+    throw new Error('dry-run 不評分,不該呼叫 router');
+  };
+  return {
+    call: refuse,
+    probeOnline: refuse,
+    probeLocal: refuse,
+  };
+}
+
+/**
+ * 互動模式的 router。帳本只來自驗證過的指標檔,跟 scripts/llm.ts 同一條真呼叫路。
+ * 失敗印 message、退出碼 2,不建 session。
+ */
+function liveRouterOrExit(): LlmRouter {
+  const resolved = resolveVerifiedLedger(defaultVaultDeps());
+  if (!resolved.ok) {
+    console.error(resolved.message);
+    process.exit(2);
+  }
+  return createLiveGatewayRouter({ ledger: resolved.ledger });
 }
 
 async function runInteractive(session: Session, rl: ReturnType<typeof createInterface>): Promise<void> {
@@ -86,15 +119,19 @@ async function main(): Promise<void> {
   }
 
   // 先數磁碟上有幾張卡,再建 session。0 張卡是異常狀態,不是空閒日——這個判斷
-  // 要在 buildTodaySession 之前,因為卡片不見時排程本身也已經沒有意義了。
+  // 要在 buildTodaySession 之前,也要早於帳本檢查:沒有指標檔時仍是退出碼 1,不是 2。
   const cardIds = listCardIds(dir);
   if (cardIds.length === 0) {
     console.error(renderNoCards(join(dir, 'cards')));
     process.exit(1);
   }
 
-  const router = new FakeLlmRouter(loadFixturesFromDir(resolve(ROOT, 'contracts/fixtures/llm')));
+  // 互動模式不管今天有沒有卡到期都先查帳本(快速失敗)。--dry-run 不查、不建真 router。
+  const router = dryRun ? refusingRouter() : liveRouterOrExit();
   const session = await buildTodaySession({ learningDir: dir, today, router });
+
+  const deferredLine = renderDeferred(session.deferred, session.dailyCap);
+  if (deferredLine !== undefined) console.log(deferredLine);
 
   if (dryRun) {
     // 未排程 = 磁碟上有卡、reviews.json 沒有紀錄。檔案不存在與檔案是 `{}` 對

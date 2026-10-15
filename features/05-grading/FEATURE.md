@@ -42,7 +42,7 @@ npx tsx scripts/grade.ts --apply --fake \
 
 | 東西 | 位置 | 整合時移除於 |
 |---|---|---|
-| `FakeLlmRouter` | `packages/core/src/grading/fake-llm.ts` | I2(改用 03) |
+| `FakeLlmRouter` | `packages/core/src/grading/fake-llm.ts` | 已移除(T13,I2 整合) |
 
 ## 技術棧
 
