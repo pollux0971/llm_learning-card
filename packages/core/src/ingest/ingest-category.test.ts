@@ -5,12 +5,13 @@
  * 「什麼都不建」用輸出目錄的完整列檔(路徑 + 內容雜湊)前後相等來判,不是只看幾個檔不存在。
  * 兩種起點:空目錄(runIngest 連骨架都不能先建)與已有骨架的目錄。
  */
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runIngest, runIngestPipeline } from './ingest.js';
-import { ensureInitialized } from './init.js';
+import { ensureInitialized, setCategory } from './init.js';
 import type { LlmResult, LlmRouter } from './types.js';
 
 function snapshot(root: string): string[] {
@@ -124,4 +125,86 @@ describe.each(['runIngest', 'runIngestPipeline'] as const)('%s 拒絕不合法�
       expect(calls()).toBeGreaterThan(0);
     }
   });
+});
+
+// ---------------------------------------------------------------- 驗收補測(測試 agent,T6 驗收時加的)
+
+describe('驗收補測:setCategory 不寫不合法的分類 id', () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 't6-accept-set-'));
+    ensureInitialized(root);
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('S15: 不合法的 id 丟錯(訊息帶被拒絕的值與 rule 名),categories.yaml 一個位元組都沒變', () => {
+    const before = snapshot(root);
+    expect(() => setCategory(root, { id: 'C++', name: 'x', require_raw: true })).toThrow(/C\+\+.*charset/);
+    expect(() => setCategory(root, { id: 'a.', name: 'x', require_raw: true })).toThrow(/trailing-dot/);
+    expect(() => setCategory(root, { id: '', name: 'x', require_raw: true })).toThrow(/empty/);
+    expect(snapshot(root)).toEqual(before);
+  });
+
+  it('對照:合法的 id 照常寫進 categories.yaml', () => {
+    setCategory(root, { id: 'Security', name: 'Security', require_raw: true });
+    expect(readFileSync(join(root, 'config/categories.yaml'), 'utf8')).toContain('Security');
+  });
+});
+
+describe('驗收補測:真正的使用者入口 scripts/ingest.ts 遇到不合法分類,也要「拒絕、什麼都不建、有人看得懂的訊息」', () => {
+  const REPO = join(import.meta.dirname, '../../../..');
+  let work: string;
+  beforeEach(() => {
+    work = mkdtempSync(join(tmpdir(), 't6-accept-cli-'));
+    writeFileSync(join(work, 'note.md'), '# 筆記\n\n第一行。\n第二行。\n', 'utf8');
+  });
+  afterEach(() => {
+    rmSync(work, { recursive: true, force: true });
+  });
+
+  function cli(args: string[]): { status: number | null; stdout: string; stderr: string } {
+    const r = spawnSync(process.execPath, ['--import=tsx', join(REPO, 'scripts/ingest.ts'), ...args], {
+      cwd: REPO,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: { PATH: process.env.PATH ?? '', HOME: work, XDG_CONFIG_HOME: join(work, 'xdg'), XDG_RUNTIME_DIR: join(work, 'run') },
+    });
+    return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  }
+
+  it.each([['C++', 'charset'], ['a.', 'trailing-dot'], ['nul', 'reserved']])(
+    '--category %s(rule %s):退出碼非 0,訊息帶值與 rule 名,不是一段 stack trace;全新的輸出目錄前後相等(連骨架都沒建)',
+    (category, rule) => {
+      const out = join(work, 'out');
+      mkdirSync(out);
+      const before = snapshot(out);
+      const r = cli(['--fake', '--file', join(work, 'note.md'), '--out', out, '--category', category]);
+      expect(r.status).not.toBe(0);
+      expect(`${r.stdout}${r.stderr}`).toContain(category);
+      expect(`${r.stdout}${r.stderr}`).toContain(rule);
+      expect(r.stderr, '使用者看到的是 stack trace').not.toMatch(/\n\s+at /);
+      expect(snapshot(out), '輸出目錄被動過').toEqual(before);
+    },
+    90_000,
+  );
+
+  it('已有骨架的輸出目錄:不合法分類被拒絕後,整棵樹(路徑加內容雜湊)前後相等', () => {
+    const out = join(work, 'out');
+    mkdirSync(out);
+    ensureInitialized(out);
+    const before = snapshot(out);
+    const r = cli(['--fake', '--file', join(work, 'note.md'), '--out', out, '--category', 'C++']);
+    expect(r.status).not.toBe(0);
+    expect(snapshot(out)).toEqual(before);
+  }, 90_000);
+
+  it('對照:合法的分類照常跑完(不是整個 CLI 都壞了才綠)', () => {
+    const out = join(work, 'out');
+    mkdirSync(out);
+    const r = cli(['--fake', '--file', join(REPO, 'contracts/fixtures/raw/security-basics.md'), '--out', out, '--category', 'Security']);
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    expect(readdirSync(join(out, 'cards', 'Security')).length).toBeGreaterThan(0);
+  }, 90_000);
 });
