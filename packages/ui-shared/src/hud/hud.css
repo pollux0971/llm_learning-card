@@ -210,6 +210,7 @@ html:has([data-hud="panel"].hud-fill) body {
   color: var(--hud-text);
   background: transparent;
   border: none;
+  outline: none;
   padding: var(--hud-line-width);
   cursor: pointer;
 }
@@ -266,8 +267,14 @@ html:has([data-hud="panel"].hud-fill) body {
   );
 }
 
+/* 切角按鈕不填方塊、不加方形 outline。橘色只走 ::before 那圈切角線。瀏覽器預設的 focus 外框也是方的,要關掉。 */
 [data-hud="button"]:hover,
-[data-hud="button"]:focus-visible,
+[data-hud="button"]:focus,
+[data-hud="button"]:focus-visible {
+  background: transparent;
+  outline: none;
+}
+
 [data-hud="minimize"]:hover,
 [data-hud="minimize"]:focus-visible,
 [data-hud="close"]:hover,
@@ -277,9 +284,10 @@ html:has([data-hud="panel"].hud-fill) body {
   outline-offset: 2px;
 }
 
+/* 比 accent-wash 深,focus 的淺色內框才分得出來(T14 G5 要差 ≥ 30 像素)。 */
 [data-hud="button"]:hover .hud-button-label,
 [data-hud="button"]:focus-visible .hud-button-label {
-  background-color: var(--hud-accent-wash);
+  background-color: color-mix(in srgb, var(--hud-accent) 35%, transparent);
 }
 
 /* 內框畫在標籤上、縮進切角裡面。不用 accent:hover 時按鈕已是整片 accent,再畫同色看不出來。 */
@@ -316,6 +324,7 @@ html:has([data-hud="panel"].hud-fill) body {
   overflow: visible;
   padding: var(--hud-line-width);
   background: transparent;
+  outline: none;
   color: var(--hud-text);
 }
 
@@ -354,9 +363,9 @@ html:has([data-hud="panel"].hud-fill) body {
   color: var(--hud-text);
 }
 
+[data-hud="field"]:focus,
 [data-hud="field"]:focus-within {
-  outline: 1px solid var(--hud-accent);
-  outline-offset: 2px;
+  outline: none;
 }
 
 [data-hud="field"]:has(:disabled) {
