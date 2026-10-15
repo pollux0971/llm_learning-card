@@ -5,9 +5,13 @@ export { anthropicAdapter } from './adapters/anthropic.js';
 export { openaiAdapter } from './adapters/openai.js';
 export { decideRoute, ROUTING_TABLE, type RouteGroup, type RouteInput, type RouteDecision } from './routing.js';
 export { TASK_MAX_TOKENS } from './token-limits.js';
+// -------------------------------------------------------------- T5(ADR-066):帳本指標與身分
 export {
   ExplicitLedger,
   VerifiedLedger,
+  VAULT_INIT_CMD,
+  VAULT_SHOW_CMD,
+  defaultVaultDeps,
   resolveVerifiedLedger,
   vaultPointerPath,
   type LedgerHandle,
@@ -59,12 +63,19 @@ export {
   readSpendPrices,
   DEFAULT_DAILY_CAP_USD,
   DEFAULT_SPEND_PRICES,
+  MissingLedgerError,
   type DailySpend,
   type SpendPrices,
 } from './spend.js';
 export {
   GatewayLlmRouter,
+  createLiveGatewayRouter,
   isCloudFailure,
   CLOUD_FAILURE_ERRORS,
+  type ExplicitLedgerOptions,
+  type GatewayLlmRouterBaseOptions,
   type GatewayLlmRouterOptions,
+  type LiveGatewayRouterOptions,
+  type NoLedgerOptions,
+  type VerifiedLedgerOptions,
 } from './router-gateway.js';

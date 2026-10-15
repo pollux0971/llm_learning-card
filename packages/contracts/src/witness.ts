@@ -58,11 +58,6 @@ export const DEGRADED_SIGNALS = {
     owner: '03-llm-router',
     summary: 'GatewayLlmRouter.probeLocal() 丟錯(含沒設 GATEWAY_API_KEY)→ 回 { available: false, models: [] }',
   },
-  'llm.gateway-router.spend-no-log-zero': {
-    kind: 'default-path',
-    owner: '03-llm-router',
-    summary: '沒給 logPath 也沒注入 spendReader → 今日花費一律當 0,預算分支永遠走不到',
-  },
   'llm.router-impl.probe-local-swallowed': {
     kind: 'swallow',
     owner: '03-llm-router',
@@ -97,11 +92,6 @@ export const DEGRADED_SIGNALS = {
     kind: 'swallow',
     owner: '03-llm-router',
     summary: 'POST /gateway/chat 回 401 → 作廢 token 重換一次再重打,第二次成功就當正常回應',
-  },
-  'llm.spend.log-unreadable-zero': {
-    kind: 'swallow',
-    owner: '03-llm-router',
-    summary: 'log.jsonl 讀不到(任何錯誤,不只 ENOENT)→ 今日花費當 { usd: 0, calls: 0 }',
   },
   'llm.spend.bad-line-skipped': {
     kind: 'swallow',

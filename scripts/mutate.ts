@@ -1,5 +1,5 @@
 /**
- * 跨 worktree 的 Stryker 檔案鎖(P-29)。
+ * 機器範圍的 Stryker 檔案鎖(P-29;T5 / ADR-066 起跨 worktree 也跨 clone)。
  *
  * 為什麼有這支:三個 worktree 的審核輪同時跑 Stryker,把彼此 OOM 掉(exit 144)。
  * 那一輪三個審核跑了 84 / 45 / 40 分鐘,一大半燒在互相踩踏。更危險的是被 OOM
@@ -37,8 +37,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** 鎖檔名。放在主 repo 的 `.git/` 旁邊(不是各 worktree 自己的根)。 */
-export const LOCK_FILENAME = '.stryker.lock';
+/** 鎖檔名。放在機器範圍的目錄(`strykerLockPath`,T5 / ADR-066),不是任何簽出自己的根。 */
+export const LOCK_FILENAME = 'stryker.lock';
 
 /** 拿不到鎖時的重試間隔。 */
 export const RETRY_INTERVAL_MS = 15_000;
@@ -154,35 +154,40 @@ export interface LockPathDeps {
 }
 
 /**
- * 機器範圍的鎖。不看 git、不看 cwd:clone 與 worktree 算出同一把。
- * XDG_RUNTIME_DIR 空字串視同未設。
+ * 算鎖的路徑:**機器範圍**(T5 / ADR-066)。
+ *
+ * `${XDG_RUNTIME_DIR}/llm-learning-cards/stryker.lock`;`XDG_RUNTIME_DIR` 未設或空字串 →
+ * `~/.cache/llm-learning-cards/stryker.lock`。不看 git、不看 cwd:主簽出、worktree、另一個 clone
+ * 算出同一把。以前用 `git rev-parse --git-common-dir` 的上一層——它在 worktree 之間是同一把,
+ * 在 clone 之間各一把,而變異測試與整鏈搶的是同一台機器(T0 量到、T3 phase-a 的負載紀錄)。
+ * 鎖不牽涉錢,不需要身分標記。純函式:env / homedir 由呼叫端注入,入口層才給真的(`defaultLockPath`)。
  */
 export function strykerLockPath(deps: LockPathDeps): string {
   const runtime = deps.env.XDG_RUNTIME_DIR;
-  if (runtime !== undefined && runtime !== '') return join(runtime, 'llm-learning-cards', 'stryker.lock');
-  return join(deps.homedir(), '.cache', 'llm-learning-cards', 'stryker.lock');
+  if (runtime !== undefined && runtime !== '') return join(runtime, 'llm-learning-cards', LOCK_FILENAME);
+  return join(deps.homedir(), '.cache', 'llm-learning-cards', LOCK_FILENAME);
 }
 
-export interface LockDirFs {
-  mkdirSync: (path: string, opts: { recursive: boolean; mode: number }) => void;
-  chmodSync: (path: string, mode: number) => void;
-  accessSync: (path: string, mode: number) => void;
-}
-
-/** 目錄不存在就建(0700)。建不出來或寫不進去就丟錯——呼叫端不得沒鎖繼續跑。 */
-export function ensureLockDir(lockPath: string, fsImpl?: LockDirFs): void {
-  const fs = fsImpl ?? { mkdirSync, chmodSync, accessSync };
+/**
+ * 鎖目錄不存在就建(權限 0700);**建不出來或寫不進去就丟錯**——呼叫端必須拒絕開始跑,
+ * 不是沒鎖繼續跑(沒有鎖的靜默 = 互撞又回來)。
+ *
+ * 只對這次新建的目錄設 0700(`mkdir` 的 mode 會被 umask 吃掉一部分);本來就在的目錄不動它的權限——
+ * 寫不進去就是寫不進去,不替使用者改回來。
+ */
+export function ensureLockDir(lockPath: string): void {
   const dir = dirname(lockPath);
   try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(dir, 0o700);
-    fs.accessSync(dir, constants.W_OK);
+    const created = mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (created !== undefined) chmodSync(dir, 0o700);
+    accessSync(dir, constants.W_OK);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`鎖目錄建不出來或寫不進去:${dir}:${message}`);
+    throw new Error(`鎖目錄建不出來或寫不進去:${dir}(${message})。拒絕開始跑:沒有鎖就會跟別的簽出互撞。`);
   }
 }
 
+/** 入口層:真的 process.env / os.homedir()。 */
 export function defaultLockPath(): string {
   return strykerLockPath({ env: process.env, homedir: () => homedir() });
 }
@@ -450,7 +455,7 @@ export function sameWorktree(a: string, b: string): boolean {
  * 這個目錄所在的 worktree 根(`git rev-parse --show-toplevel`)。問不到回 null,**不丟**。
  *
  * 要用 `--show-toplevel` 而不是 `--git-common-dir`:後者對同一個主 repo 底下的所有 worktree
- * 都回同一個 `.git/`(strykerLockPath 正是靠這點算出同一把鎖),拿它來判會把所有 worktree
+ * 都回同一個 `.git/`(T5 之前的 strykerLockPath 正是靠這點算出同一把鎖),拿它來判會把所有 worktree
  * 都判成自己的——那就是這個函式要防的誤判本身。
  */
 function worktreeRoot(dir: string): string | null {

@@ -164,6 +164,31 @@ function ownGitRepo(scratch: string, withChange: boolean): string {
   return d;
 }
 
+const VAULT_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+/**
+ * 只寫使用者層指標檔(T5 / ADR-066;內容由呼叫端決定,`null` = 不寫),回傳指向它的 env。
+ * 探針的 env 疊在 process.env 上,所以 HOME / XDG_CONFIG_HOME **一定要蓋掉**——
+ * 不然會讀到使用者真的指標檔(工單 T5 第 15 條)。
+ */
+function pointerEnv(scratch: string, pointerContent: string | null): Record<string, string> {
+  const xdg = join(scratch, 'xdg');
+  if (pointerContent === null) mkdirSync(xdg, { recursive: true });
+  else file(xdg, 'llm-learning-cards/vault.json', pointerContent);
+  return { HOME: join(scratch, 'home'), XDG_CONFIG_HOME: xdg };
+}
+
+/**
+ * 合成的帳本:`learning/config/vault-id` + 指向它的指標。沒有 `--log` 時,llm-spend 只讀這種
+ * 經身分標記驗證過的帳本。`log === null` 表示帳本檔不存在。
+ */
+function verifiedVault(scratch: string, log: string | null): Record<string, string> {
+  const learning = join(scratch, 'learning');
+  file(learning, 'config/vault-id', `${VAULT_ID}\n`);
+  if (log !== null) file(learning, 'state/log.jsonl', log);
+  return pointerEnv(scratch, JSON.stringify({ learning_dir: learning, vault_id: VAULT_ID }));
+}
+
 /** 一個 log.jsonl 事件。ts 用 UTC 正午,任何時區的本地日期都還是同一天。 */
 function llmCallLine(day: string, provider = 'openai'): string {
   return JSON.stringify({ ts: `${day}T12:00:00Z`, type: 'llm_call', provider, model: 'gpt', tokens_in: 1000, tokens_out: 1000 });
@@ -784,16 +809,24 @@ export const ROSTER: Record<string, Entry> = {
       {
         label: 'llm-spend',
         // 每一次 spawn 都帶 SPEND_ENV(見該常數的註解):基線與探針都不靠 .env 或 shell。
+        // T5(ADR-066):明講 --log 的帳本是**未驗證**的,報告一律 exit 2(不能當煞車),所以 exit 0 的
+        // 基線與正當的空帳本都走「指標 + 身分標記」驗證過的合成帳本,不給 --log。
         baselines: {
-          healthy: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `${llmCallLine(SPEND_DAY)}\n${llmCallLine(SPEND_DAY)}\n`)], env: SPEND_ENV }),
-          quiet: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `${llmCallLine('2026-08-01')}\n`)], env: SPEND_ENV }),
+          healthy: (s) => ({ args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...verifiedVault(s, `${llmCallLine(SPEND_DAY)}\n${llmCallLine(SPEND_DAY)}\n`) } }),
+          quiet: (s) => ({ args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...verifiedVault(s, `${llmCallLine('2026-08-01')}\n`) } }),
         },
         probes: [
           {
             kind: 'empty',
             name: 'log.jsonl 是空檔',
-            build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '')], env: SPEND_ENV }),
+            build: (s) => ({ args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...verifiedVault(s, '') } }),
             legitZero: '剛 init 的 vault 就是空的 log,還沒花過錢是事實。訊息帶「0 次呼叫」,跟有花費的那天分得出來',
+          },
+          {
+            // T5:還沒跑 vault.ts init 的機器。不知道帳本在哪 = 算不出來,不是 0。
+            kind: 'missing',
+            name: '沒有指標檔(還沒 vault.ts init)',
+            build: (s) => ({ args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...pointerEnv(s, null) }, mention: 'npx tsx scripts/vault.ts init' }),
           },
           {
             kind: 'missing',
@@ -816,6 +849,43 @@ export const ROSTER: Record<string, Entry> = {
           { kind: 'malformed', name: 'log.jsonl 每一行都是壞 JSON', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '{ "ts": \n{{{\n')], env: SPEND_ENV }), against: ['healthy', 'quiet'] },
           { kind: 'wrong-type', name: 'log.jsonl 每一行都是數字', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', '5\n6\n')], env: SPEND_ENV }), against: ['healthy', 'quiet'] },
           { kind: 'wrong-type', name: 'log.jsonl 是一個 JSON 陣列', build: (s) => ({ args: ['--day', SPEND_DAY, '--log', file(s, 'log.jsonl', `[${llmCallLine(SPEND_DAY)}]\n`)], env: SPEND_ENV }), against: ['healthy', 'quiet'] },
+        ],
+      },
+    ],
+  },
+  'scripts/vault.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'vault show',
+        baselines: { healthy: (s) => ({ args: ['show'], env: verifiedVault(s, null) }) },
+        probes: [
+          { kind: 'missing', name: '沒有指標檔', build: (s) => ({ args: ['show'], env: pointerEnv(s, null), mention: 'npx tsx scripts/vault.ts init' }) },
+          { kind: 'empty', name: '指標檔是空檔', build: (s) => ({ args: ['show'], env: pointerEnv(s, '') }) },
+          { kind: 'malformed', name: '指標檔是壞 JSON', build: (s) => ({ args: ['show'], env: pointerEnv(s, '{ "learning_dir": ') }) },
+          { kind: 'wrong-type', name: '指標檔是 JSON 陣列', build: (s) => ({ args: ['show'], env: pointerEnv(s, '[]') }) },
+        ],
+      },
+      {
+        label: 'vault init',
+        baselines: { healthy: (s) => ({ args: ['init', '--learning-dir', emptyDir(s, 'learning')], env: pointerEnv(s, null) }) },
+        probes: [
+          {
+            kind: 'missing',
+            name: '--learning-dir 不存在',
+            build: (s) => { const p = missingPath(s, 'nope'); return { args: ['init', '--learning-dir', p], env: pointerEnv(s, null), mention: p }; },
+          },
+          { kind: 'empty', name: '--learning-dir 沒給值', build: (s) => ({ args: ['init', '--learning-dir'], env: pointerEnv(s, null) }) },
+          {
+            kind: 'malformed',
+            name: '帳本身分標記不是 uuid',
+            build: (s) => { const d = emptyDir(s, 'learning'); file(d, 'config/vault-id', 'not-a-uuid\n'); return { args: ['init', '--learning-dir', d], env: pointerEnv(s, null), mention: 'vault-id' }; },
+          },
+          {
+            kind: 'wrong-type',
+            name: '--learning-dir 指到一個檔案',
+            build: (s) => { const f = file(s, 'learning', 'i am a file'); return { args: ['init', '--learning-dir', f], env: pointerEnv(s, null), mention: f }; },
+          },
         ],
       },
     ],

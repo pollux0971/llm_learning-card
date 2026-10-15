@@ -23,12 +23,15 @@
  *   以及 HTTP 5xx。**不包含** `MissingCredentialError` / `UnsupportedProviderError` /
  *   `UnknownTaskError`:那些是設定或呼叫端的錯,備援只會讓錯誤設定藏著。
  * - `isCloudFailure(err)`:上面那條規則的判斷函式。
- * - `GatewayLlmRouterOptions`:phase-2 `LlmRouterImplOptions` 全部 +
+ * - `GatewayLlmRouterOptions`:phase-2 `LlmRouterImplOptions`(扣掉 `logPath` / `cloudRouter`)+
  *     - `gateway?: GatewayClient`(不給就用 `createGatewayClient(env)`)
  *     - `fallbackTable?: Readonly<Record<LlmTask, FallbackGroup>>`(預設 FALLBACK_TABLE)
  *     - `dailyCapUsd?: number`(預設 `readDailyCapUsd(env)`)
  *     - `prices?: SpendPrices`(預設 `readSpendPrices(env)`)
- *     - `spendReader?: (day: string) => DailySpend`(測試注入;預設讀 `logPath`)
+ *     - `ledger`:帳本把手(T5 / ADR-066,不再收裸字串 `logPath`)。三選一:
+ *       `VerifiedLedger`(真呼叫)/ `ExplicitLedger` + 每個 provider 都注入的 adapter(假的)/ 沒有。
+ *     - `spendReader?: (day: string) => DailySpend`(測試注入;預設讀 `ledger`,沒有 ledger 就丟
+ *       `MissingLedgerError`——花費是「不知道」,不是 0)
  *     - `today?: () => string`(預設 `dayOf(new Date().toISOString())`)
  * - `class GatewayLlmRouter implements LlmRouter`
  *     - `call(task, prompt, opts?)`:
@@ -58,7 +61,9 @@
  * 本體先留空/丟 not implemented,邏輯留給下一輪開發 agent。測試見 router-gateway.test.ts。
  */
 
-import type { LlmResult, LlmRouter, LlmTask } from './types.js';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import type { CloudAdapter, CloudProvider, LlmResult, LlmRouter, LlmTask } from './types.js';
 import type { LogEvent } from '@contracts/index.js';
 import { recordEvent } from '@core/schema/log.js';
 import { LlmRouterImpl, type LlmRouterImplOptions } from './router-impl.js';
@@ -75,7 +80,7 @@ import {
   type DailySpend,
   type SpendPrices,
 } from './spend.js';
-import type { LedgerHandle, VerifiedLedger } from './ledger.js';
+import type { ExplicitLedger, VerifiedLedger } from './ledger.js';
 import type { LogAppender } from './router.js';
 
 /**
@@ -105,7 +110,8 @@ const FALLBACK_SIGNAL: Readonly<Record<FallbackReason, DegradedSignal>> = {
   budget_exhausted: 'llm.fallback.budget-exhausted',
 };
 
-export interface GatewayLlmRouterOptions extends Omit<LlmRouterImplOptions, 'logPath'> {
+/** 三種帳本形態共用的選項。`adapters` 由下面三種形態各自規定(誰可以不給、誰一定要給全)。 */
+export interface GatewayLlmRouterBaseOptions extends Omit<LlmRouterImplOptions, 'logPath' | 'adapters' | 'cloudRouter'> {
   /** 不給就用 createGatewayClient(env) */
   gateway?: GatewayClient;
   /** ADR-039 的備援表,預設 FALLBACK_TABLE */
@@ -114,13 +120,45 @@ export interface GatewayLlmRouterOptions extends Omit<LlmRouterImplOptions, 'log
   dailyCapUsd?: number;
   /** 預設 readSpendPrices(env) */
   prices?: SpendPrices;
-  /** 帳本把手。不給、也沒注入 spendReader 時,查花費就丟錯,不再回 0。 */
-  ledger?: LedgerHandle;
-  /** 測試注入;預設從 ledger 讀 log.jsonl 算 */
+  /** 測試注入;預設從 ledger 讀 log.jsonl 算(沒有 ledger 就丟 MissingLedgerError) */
   spendReader?: (day: string) => DailySpend;
   /** 「今天」是哪一天,預設本地日期 */
   today?: () => string;
 }
+
+/**
+ * 真呼叫:帳本是經指標與標記驗證過的那本。`adapters` 可以不給(預設就是真的雲端 adapter)。
+ */
+export interface VerifiedLedgerOptions {
+  ledger: VerifiedLedger;
+  adapters?: Partial<Record<CloudProvider, CloudAdapter>>;
+}
+
+/**
+ * 假的 adapter 的 router:帳本未驗證(明確參數),**每一個**雲端 provider 都要注入 adapter——
+ * 少一個,那個 provider 就會落回真的 SDK adapter,變成「拿未驗證的帳本真的花錢」(T5 第 8 條)。
+ * 注入的是不是假的,型別管不到;這裡擋的是「忘了給」——要拿真的 adapter 配未驗證帳本,得明寫出來,
+ * 而且 `git grep -n "ExplicitLedger.unverified"` 找得到。
+ */
+export interface ExplicitLedgerOptions {
+  ledger: ExplicitLedger;
+  adapters: Readonly<Record<CloudProvider, CloudAdapter>>;
+}
+
+/**
+ * 沒有帳本:`call()` 在打任何 adapter 之前就丟(查花費丟 MissingLedgerError;注入 spendReader 時則是
+ * ADR-050 的 UnaccountableLlmCallError,除非也注入 logAppender)。給 `--probe` 這類不花錢的用途與測試。
+ */
+export interface NoLedgerOptions {
+  ledger?: undefined;
+  adapters?: Partial<Record<CloudProvider, CloudAdapter>>;
+}
+
+/**
+ * 真呼叫(打網路、花錢)的 router 型別上只收 `VerifiedLedger`;`ExplicitLedger` 只能配齊全的注入 adapter。
+ * 把 `ExplicitLedger` 傳給不注入 adapter 的 router 是編譯錯誤(型別測試見 vault-pointer.test.ts)。
+ */
+export type GatewayLlmRouterOptions = GatewayLlmRouterBaseOptions & (VerifiedLedgerOptions | ExplicitLedgerOptions | NoLedgerOptions);
 
 /** 用 01 的 recordEvent() 原子寫入。ADR-050:沒有 path 就不建這個 appender——
  * 理由同 router.ts 的同名函式,這裡是 GatewayLlmRouter 自己那半(閘道/備援)的
@@ -129,11 +167,12 @@ function createFileLogAppender(path: string): LogAppender {
   return (event) => recordEvent(path, event);
 }
 
-/** 真呼叫(打網路、花錢)的建構。型別上只收 VerifiedLedger。 */
-export interface LiveGatewayRouterOptions extends Omit<GatewayLlmRouterOptions, 'ledger'> {
+/** `scripts/llm.ts` 真呼叫模式的選項:只收 `VerifiedLedger`,不接受注入 adapter(就是要打真的)。 */
+export interface LiveGatewayRouterOptions extends GatewayLlmRouterBaseOptions {
   ledger: VerifiedLedger;
 }
 
+/** 真呼叫(打網路、花錢)的建構。型別上只收 `VerifiedLedger`。 */
 export function createLiveGatewayRouter(opts: LiveGatewayRouterOptions): GatewayLlmRouter {
   return new GatewayLlmRouter(opts);
 }
@@ -143,7 +182,7 @@ export class GatewayLlmRouter implements LlmRouter {
   private readonly inner: LlmRouterImpl;
   private readonly fallbackTable: Readonly<Record<LlmTask, FallbackGroup>>;
   private readonly env: NodeJS.ProcessEnv;
-  /** undefined = 沒給 logPath 也沒給 logAppender,callGateway() 要硬錯(ADR-050)。 */
+  /** undefined = 沒給 ledger 也沒給 logAppender,callGateway() 要硬錯(ADR-050)。 */
   private readonly log: LogAppender | undefined;
   private readonly capUsd: number;
   private readonly prices: SpendPrices;
@@ -155,7 +194,13 @@ export class GatewayLlmRouter implements LlmRouter {
   constructor(opts: GatewayLlmRouterOptions = {}) {
     this.opts = opts;
     const innerOpts: LlmRouterImplOptions = { ...opts };
-    if (opts.ledger !== undefined) innerOpts.logPath = opts.ledger.logPath;
+    if (opts.ledger !== undefined) {
+      innerOpts.logPath = opts.ledger.logPath;
+      // 全新安裝(T5:驗證過的帳本、log 檔還不存在 = 0,合法):learning/ 在,state/ 可能還沒有。
+      // append-only 的 log 寫入只開檔不建目錄;不先建好,雲端已經回來(錢已經花了)才發現記不了帳——
+      // ADR-050 要擋的同一個洞。只建帳本檔所在的那一層目錄。
+      mkdirSync(dirname(opts.ledger.logPath), { recursive: true });
+    }
     this.inner = new LlmRouterImpl(innerOpts);
     this.fallbackTable = opts.fallbackTable ?? FALLBACK_TABLE;
     this.env = opts.env ?? process.env;
