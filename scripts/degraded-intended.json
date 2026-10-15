@@ -4,7 +4,7 @@
   "entries": [
     {
       "file": "packages/core/src/llm/router-gateway.test.ts",
-      "test": "GatewayLlmRouter — 沒給 logPath 也沒注入 spendReader:花費一律當 0(ADR-044 spend-no-log-zero) > 對照:gateway-fallback 任務有 logPath 時,第二次改走閘道且回 provisional=true",
+      "test": "GatewayLlmRouter — 沒有帳本把手也沒注入 spendReader:花費是「不知道」,丟錯不放行(T5,取代 ADR-044 spend-no-log-zero) > 對照:gateway-fallback 任務有 logPath 時,第二次改走閘道且回 provisional=true",
       "signal": "llm.fallback.budget-exhausted",
       "reason": "對照組:有 logPath 時第二次要因預算耗盡改走閘道、provisional=true、log 有 fallback_reason=budget_exhausted——斷言的就是 budget-exhausted 這條備援分支",
       "since": "2026-09-05"

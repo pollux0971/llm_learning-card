@@ -26,7 +26,7 @@
  */
 import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
@@ -734,20 +734,33 @@ describe('runTests 全套時拿鎖', () => {
   });
 
   it('不給 lockPath 時用 strykerLockPath():跟 Stryker **同一把**,不是另一把', async () => {
+    // T5 第 12、15 條:XDG_RUNTIME_DIR / HOME 指到 mkdtemp,不碰真的;結束還原。
+    const saved = { HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR };
+    const runtime = tmp('run-tests-default-runtime');
+    const home = tmp('run-tests-default-home');
+    process.env.XDG_RUNTIME_DIR = runtime;
+    process.env.HOME = home;
     let seen: string | undefined;
-    await runTests({
-      argv: ['node', 'run-tests.ts'],
-      acquire: async (p) => {
-        seen = p;
-        return { lockPath: p, info: info(), release: () => {} };
-      },
-      runVitest: async () => 0,
-      installCleanup: () => () => {},
-      log: () => {},
-    });
+    try {
+      await runTests({
+        argv: ['node', 'run-tests.ts'],
+        acquire: async (p) => {
+          seen = p;
+          return { lockPath: p, info: info(), release: () => {} };
+        },
+        runVitest: async () => 0,
+        installCleanup: () => () => {},
+        log: () => {},
+      });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
     // 兩把不同的鎖 = 沒有互斥。這條是整張工單的地基。
-    expect(seen).toBe(strykerLockPath({ env: process.env, homedir }));
-    expect(seen?.endsWith('stryker.lock')).toBe(true);
+    expect(seen).toBe(strykerLockPath({ env: { XDG_RUNTIME_DIR: runtime }, homedir: () => home }));
+    expect(seen).toBe(join(runtime, 'llm-learning-cards', 'stryker.lock'));
   });
 
   it('把 signal 清理掛上去,結束時再拆掉', async () => {

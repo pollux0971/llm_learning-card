@@ -27,7 +27,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it, vi } from 'vitest';
@@ -105,7 +105,7 @@ function read(raw: string, mtimeMs = T0): { raw: string; mtimeMs: number } {
 const DEAD_PID = 0x7ffffffe;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. 鎖的位置:跨 worktree 必須是同一個
+// 1. 鎖的位置:機器範圍(T5 / ADR-066),跨 worktree 與 clone 都是同一個
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** git init 一個 repo,再掛兩個 worktree。回主 repo 與兩個 worktree 的路徑。 */
@@ -1037,27 +1037,37 @@ describe('acquireLock 的預設值(不注入 now / sleep / log 時)', () => {
 });
 
 describe('runMutate 的預設值與例外', () => {
-  it('不給 lockPath 時用 strykerLockPath(),以現在的 cwd 算', async () => {
+  it('不給 lockPath 時用機器範圍的 strykerLockPath(XDG_RUNTIME_DIR,不看 cwd)', async () => {
+    // T5 第 12、15 條:XDG_RUNTIME_DIR / HOME 指到 mkdtemp,不碰真的;結束還原。
+    const saved = { HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR };
+    const runtime = tmp('mutate-default-runtime');
+    process.env.XDG_RUNTIME_DIR = runtime;
+    process.env.HOME = tmp('mutate-default-home');
     let seen: string | undefined;
-    const code = await runMutate({
-      argv: ['node', 'mutate.ts'],
-      acquire: async (p) => {
-        seen = p;
-        return { lockPath: p, info: info(), release: () => {} };
-      },
-      runStryker: async () => 0,
-      installCleanup: () => () => {},
-      log: () => {},
-    });
+    let code: number;
+    try {
+      code = await runMutate({
+        argv: ['node', 'mutate.ts'],
+        acquire: async (p) => {
+          seen = p;
+          return { lockPath: p, info: info(), release: () => {} };
+        },
+        runStryker: async () => 0,
+        installCleanup: () => () => {},
+        log: () => {},
+      });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
     expect(code).toBe(0);
-    expect(seen).toBe(strykerLockPath({ env: process.env, homedir }));
-    // 「鎖在主 repo 的根,不是 worktree 自己的根」**不在這裡**用「套件現在跑在哪」推。
-    // 這裡曾寫成 `if (inWorktree) expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'))`,
-    // 而 inWorktree 是拿被測的 strykerLockPath() 自己算的:函式算錯成 worktree 本地時,
-    // inWorktree 恰好變 false、斷言被跳過 —— 綠的是它自己,不是實作
-    // (2026-09-05 審核輪實測:把 strykerLockPath 改成回 worktree 本地路徑,這條在 worktree 裡照樣綠)。
-    // 那個保證由 §1 的 describe('strykerLockPath') 在臨時 git repo 裡蓋 worktree 直接驗,
-    // 再由 §12 的「從 worktree 裡起跑」在行程層級驗一次;兩條都不管套件本身在哪裡跑。
+    expect(seen).toBe(join(runtime, 'llm-learning-cards', 'stryker.lock'));
+    // 期望值是寫死的機器範圍路徑,不是拿被測的 strykerLockPath() 自己算——
+    // 2026-09-05 審核輪實測過「拿被測函式算期望值」會讓錯的實作照樣綠。
+    // 「主簽出 / worktree / clone 看到同一把」由 scripts/machine-lock.test.ts(T5 第 14 條)
+    // 在行程層級驗,§12 的「從 worktree 裡起跑」再驗一次;兩條都不管套件本身在哪裡跑。
   });
 
   it('不給 acquire 時走真的 acquireLock', async () => {

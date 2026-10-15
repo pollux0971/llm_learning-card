@@ -1,29 +1,23 @@
 /**
- * T5:vault.ts init / show,以及 llm / llm-spend 的拒絕姿態。
- * 讀寫只在 mkdtemp。spawn 的子程序也只拿到沙箱的 HOME / XDG。
+ * T5 第 4、5 條:`scripts/vault.ts init` / `show`。
+ *
+ * 讀寫只在 mkdtemp。HOME / XDG_CONFIG_HOME / XDG_RUNTIME_DIR 指到沙箱並在結束時還原;
+ * spawn 的子程序也只拿到沙箱的值。守門只 stat 真指標檔,不讀內容。
  */
 import { spawnSync } from 'node:child_process';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { initVault, showVault, type VaultIo } from './vault.js';
-import { resolveLlmLedger } from './llm.js';
-import { buildSpendReport, formatSpendReport, exitCodeFor, resolveSpendLedger } from './llm-spend.js';
-import { resolvePollutionLogPath } from './check-ledger-pollution.js';
 
+const ENV_KEYS = ['HOME', 'XDG_CONFIG_HOME', 'XDG_RUNTIME_DIR'] as const;
+const SAVED_ENV = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]])) as Record<(typeof ENV_KEYS)[number], string | undefined>;
 const REAL_HOME = homedir();
 const REAL_XDG = process.env.XDG_CONFIG_HOME;
 const UUID_A = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const UUID_B = '11111111-2222-4333-8444-555555555555';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REPO = resolve(import.meta.dirname, '..');
 
 function realPointerPath(): string {
@@ -44,7 +38,14 @@ function snapshotRealPointer(): { exists: boolean; mtimeMs: number | null } {
 const realPointerBefore = snapshotRealPointer();
 const sandboxes: string[] = [];
 
-function sandbox(): { root: string; home: string; config: string; runtime: string } {
+interface Box {
+  root: string;
+  home: string;
+  config: string;
+  runtime: string;
+}
+
+function sandbox(): Box {
   const root = mkdtempSync(join(tmpdir(), 't5-vault-cli-'));
   sandboxes.push(root);
   const home = join(root, 'home');
@@ -60,11 +61,16 @@ function sandbox(): { root: string; home: string; config: string; runtime: strin
 }
 
 afterAll(() => {
-  expect(snapshotRealPointer()).toEqual(realPointerBefore);
+  for (const k of ENV_KEYS) {
+    const v = SAVED_ENV[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
   for (const dir of sandboxes) rmSync(dir, { recursive: true, force: true });
+  expect(snapshotRealPointer()).toEqual(realPointerBefore);
 });
 
-function childEnv(box: { home: string; config: string; runtime: string }): NodeJS.ProcessEnv {
+function childEnv(box: Box): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH ?? '',
     HOME: box.home,
@@ -73,14 +79,19 @@ function childEnv(box: { home: string; config: string; runtime: string }): NodeJ
   };
 }
 
-function listTree(root: string): string[] {
+/** 列檔(相對路徑,排序)連同每個檔的內容——「不改任何檔」要連內容一起比。 */
+function treeWithContent(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const abs = join(dir, name);
       const rel = abs.slice(root.length + 1);
-      out.push(rel);
-      if (statSync(abs).isDirectory()) walk(abs);
+      if (statSync(abs).isDirectory()) {
+        out.push(`${rel}/`);
+        walk(abs);
+      } else {
+        out.push(`${rel} ${readFileSync(abs, 'utf8')}`);
+      }
     }
   };
   walk(root);
@@ -93,7 +104,23 @@ function learningDir(root: string, name = 'learning'): string {
   return dir;
 }
 
-function ioRecording(rootWrites: string[]): VaultIo {
+function pointerPathOf(box: Box): string {
+  return join(box.config, 'llm-learning-cards', 'vault.json');
+}
+
+function writePointerRaw(box: Box, raw: string): string {
+  mkdirSync(join(box.config, 'llm-learning-cards'), { recursive: true });
+  writeFileSync(pointerPathOf(box), raw);
+  return pointerPathOf(box);
+}
+
+function writeMarker(learning: string, text: string): void {
+  mkdirSync(join(learning, 'config'), { recursive: true });
+  writeFileSync(join(learning, 'config', 'vault-id'), text);
+}
+
+/** 真的寫檔,另外記下每一次 writeAtomic 的目標——「沒有寫任何東西」要能斷言。 */
+function ioRecording(writes: string[]): VaultIo {
   return {
     exists: (path) => {
       try {
@@ -105,18 +132,22 @@ function ioRecording(rootWrites: string[]): VaultIo {
     },
     readFile: (path) => readFileSync(path, 'utf8'),
     writeAtomic: (path, content) => {
-      rootWrites.push(path);
-      mkdirSync(join(path, '..'), { recursive: true });
+      writes.push(path);
       writeFileSync(path, content);
     },
     mkdir: (path, mode) => {
-      mkdirSync(path, { recursive: true, mode });
+      if (mode === undefined) mkdirSync(path, { recursive: true });
+      else mkdirSync(path, { recursive: true, mode });
     },
   };
 }
 
-describe('vault init', () => {
-  it('全新:無指標、learning 無標記 → 產生 uuid,寫兩份,exit 0', () => {
+function readPointer(box: Box): { learning_dir: string; vault_id: string } {
+  return JSON.parse(readFileSync(pointerPathOf(box), 'utf8')) as { learning_dir: string; vault_id: string };
+}
+
+describe('vault init(第 4 條的表,每列一個測試)', () => {
+  it('全新:無指標、learning 無標記 → 產生 uuid,寫標記與指標,exit 0', () => {
     const box = sandbox();
     const learning = learningDir(box.root);
     const writes: string[] = [];
@@ -128,95 +159,76 @@ describe('vault init', () => {
       randomUUID: () => UUID_A,
     });
     expect(result.exitCode).toBe(0);
-    expect(writes).toEqual(
-      expect.arrayContaining([
-        join(box.config, 'llm-learning-cards', 'vault.json'),
-        join(learning, 'config', 'vault-id'),
-      ]),
-    );
+    expect(writes).toEqual([join(learning, 'config', 'vault-id'), pointerPathOf(box)]);
     expect(readFileSync(join(learning, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_A}\n`);
-    const pointer = JSON.parse(readFileSync(join(box.config, 'llm-learning-cards', 'vault.json'), 'utf8')) as {
-      learning_dir: string;
-      vault_id: string;
-    };
-    expect(pointer).toEqual({ learning_dir: learning, vault_id: UUID_A });
+    expect(readPointer(box)).toEqual({ learning_dir: learning, vault_id: UUID_A });
   });
 
-  it('learning 已有標記、無指標 → 沿用標記 uuid,不重新產生', () => {
+  it('全新且不注入 randomUUID:寫出的是合法的小寫 uuid,兩份檔相同', () => {
     const box = sandbox();
     const learning = learningDir(box.root);
-    mkdirSync(join(learning, 'config'), { recursive: true });
-    writeFileSync(join(learning, 'config', 'vault-id'), `${UUID_B}\n`);
+    const result = initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording([]) });
+    expect(result.exitCode).toBe(0);
+    const pointer = readPointer(box);
+    expect(pointer.vault_id).toMatch(UUID_RE);
+    expect(readFileSync(join(learning, 'config', 'vault-id'), 'utf8')).toBe(`${pointer.vault_id}\n`);
+  });
+
+  it('learning 已有標記、無指標 → 沿用標記的 uuid 寫指標(不重新產生,標記不動)', () => {
+    const box = sandbox();
+    const learning = learningDir(box.root);
+    writeMarker(learning, `${UUID_B}\n`);
+    const writes: string[] = [];
     const result = initVault({
       learningDir: learning,
       env: childEnv(box),
       homedir: () => box.home,
-      io: ioRecording([]),
+      io: ioRecording(writes),
       randomUUID: () => {
         throw new Error('不該重新產生 uuid');
       },
     });
     expect(result.exitCode).toBe(0);
-    const pointer = JSON.parse(readFileSync(join(box.config, 'llm-learning-cards', 'vault.json'), 'utf8')) as {
-      vault_id: string;
-    };
-    expect(pointer.vault_id).toBe(UUID_B);
+    expect(writes).toEqual([pointerPathOf(box)]);
+    expect(readPointer(box)).toEqual({ learning_dir: learning, vault_id: UUID_B });
     expect(readFileSync(join(learning, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_B}\n`);
   });
 
-  it('指標已指向同一個 learning 且 id 相符 → 不改任何檔,exit 0,印已初始化', () => {
+  it('指標已存在、指向同一個 learning_dir 且 id 相符 → 不改任何檔,exit 0,印「已初始化」', () => {
     const box = sandbox();
     const learning = learningDir(box.root);
-    mkdirSync(join(learning, 'config'), { recursive: true });
-    writeFileSync(join(learning, 'config', 'vault-id'), `${UUID_A}\n`);
-    mkdirSync(join(box.config, 'llm-learning-cards'), { recursive: true });
-    const pointerPath = join(box.config, 'llm-learning-cards', 'vault.json');
-    writeFileSync(pointerPath, JSON.stringify({ learning_dir: learning, vault_id: UUID_A }));
-    const before = readFileSync(pointerPath, 'utf8');
-    const markerBefore = readFileSync(join(learning, 'config', 'vault-id'), 'utf8');
+    writeMarker(learning, `${UUID_A}\n`);
+    writePointerRaw(box, JSON.stringify({ learning_dir: learning, vault_id: UUID_A }));
+    const before = treeWithContent(box.root);
     const writes: string[] = [];
-    const result = initVault({
-      learningDir: learning,
-      env: childEnv(box),
-      homedir: () => box.home,
-      io: ioRecording(writes),
-    });
+    const result = initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording(writes) });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('已初始化');
     expect(writes).toEqual([]);
-    expect(readFileSync(pointerPath, 'utf8')).toBe(before);
-    expect(readFileSync(join(learning, 'config', 'vault-id'), 'utf8')).toBe(markerBefore);
+    expect(treeWithContent(box.root)).toEqual(before);
   });
 
-  it('must_catch: init 不加 --force 不得覆寫指向別處的指標', () => {
+  it('must_catch: init 不加 --force 就覆寫指向別處的指標 —— 拒絕,不改任何檔,exit 非 0,訊息說要 --force', () => {
     const box = sandbox();
     const here = learningDir(box.root, 'here');
     const there = learningDir(box.root, 'there');
-    mkdirSync(join(box.config, 'llm-learning-cards'), { recursive: true });
-    const pointerPath = join(box.config, 'llm-learning-cards', 'vault.json');
-    const old = JSON.stringify({ learning_dir: there, vault_id: UUID_A });
-    writeFileSync(pointerPath, old);
+    writeMarker(there, `${UUID_A}\n`);
+    writePointerRaw(box, JSON.stringify({ learning_dir: there, vault_id: UUID_A }));
+    const before = treeWithContent(box.root);
     const writes: string[] = [];
-    const result = initVault({
-      learningDir: here,
-      env: childEnv(box),
-      homedir: () => box.home,
-      io: ioRecording(writes),
-    });
+    const result = initVault({ learningDir: here, env: childEnv(box), homedir: () => box.home, io: ioRecording(writes) });
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain('--force');
     expect(writes).toEqual([]);
-    expect(readFileSync(pointerPath, 'utf8')).toBe(old);
+    expect(treeWithContent(box.root)).toEqual(before);
   });
 
-  it('加 --force 才覆寫,而且先印出舊指標內容', () => {
+  it('指標指向別處 + --force → 覆寫指標,而且先印出舊指標內容(第 5 條)', () => {
     const box = sandbox();
     const here = learningDir(box.root, 'here');
     const there = learningDir(box.root, 'there');
-    mkdirSync(join(box.config, 'llm-learning-cards'), { recursive: true });
-    const pointerPath = join(box.config, 'llm-learning-cards', 'vault.json');
     const old = JSON.stringify({ learning_dir: there, vault_id: UUID_A });
-    writeFileSync(pointerPath, old);
+    writePointerRaw(box, old);
     const result = initVault({
       learningDir: here,
       force: true,
@@ -226,206 +238,213 @@ describe('vault init', () => {
       randomUUID: () => UUID_B,
     });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(old);
-    const next = JSON.parse(readFileSync(pointerPath, 'utf8')) as { learning_dir: string };
-    expect(next.learning_dir).toBe(here);
+    const oldAt = result.stdout.indexOf(old);
+    expect(oldAt).toBeGreaterThanOrEqual(0);
+    expect(oldAt).toBeLessThan(result.stdout.indexOf('--force'));
+    expect(readPointer(box)).toEqual({ learning_dir: here, vault_id: UUID_B });
+    expect(readFileSync(join(here, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_B}\n`);
   });
 
-  it('--learning-dir 相對路徑或不存在 → 拒絕,不建任何東西', () => {
+  it('--learning-dir 是相對路徑或不存在 → 拒絕,不建任何東西', () => {
     const box = sandbox();
-    const before = listTree(box.root);
-    const relative = initVault({
-      learningDir: 'learning',
+    const learning = learningDir(box.root);
+    const before = treeWithContent(box.root);
+    const writes: string[] = [];
+    // 相對路徑:就算從 cwd 解析得到一個真的目錄也拒絕。
+    const relativeResult = initVault({
+      learningDir: relative(process.cwd(), learning),
       env: childEnv(box),
       homedir: () => box.home,
-      io: ioRecording([]),
+      io: ioRecording(writes),
     });
-    expect(relative.exitCode).not.toBe(0);
+    expect(relativeResult.exitCode).not.toBe(0);
     const missing = initVault({
       learningDir: join(box.root, 'nope'),
       env: childEnv(box),
       homedir: () => box.home,
-      io: ioRecording([]),
+      io: ioRecording(writes),
     });
     expect(missing.exitCode).not.toBe(0);
-    expect(listTree(box.root)).toEqual(before);
+    const empty = initVault({ learningDir: '', env: childEnv(box), homedir: () => box.home, io: ioRecording(writes) });
+    expect(empty.exitCode).not.toBe(0);
+    expect(writes).toEqual([]);
+    expect(treeWithContent(box.root)).toEqual(before);
   });
 
-  it('指標與標記 id 不符 → 拒絕,只印前 8 碼,要 --force', () => {
+  it('指標與標記的 id 不符 → 拒絕,只印兩邊各自的前 8 碼(不印整個 uuid),要 --force', () => {
     const box = sandbox();
     const learning = learningDir(box.root);
-    mkdirSync(join(learning, 'config'), { recursive: true });
-    writeFileSync(join(learning, 'config', 'vault-id'), `${UUID_B}\n`);
-    mkdirSync(join(box.config, 'llm-learning-cards'), { recursive: true });
-    writeFileSync(
-      join(box.config, 'llm-learning-cards', 'vault.json'),
-      JSON.stringify({ learning_dir: learning, vault_id: UUID_A }),
-    );
+    writeMarker(learning, `${UUID_B}\n`);
+    writePointerRaw(box, JSON.stringify({ learning_dir: learning, vault_id: UUID_A }));
+    const before = treeWithContent(box.root);
+    const writes: string[] = [];
+    const result = initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording(writes) });
+    expect(result.exitCode).not.toBe(0);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(result.stderr).toContain('--force');
+    expect(result.stderr).toContain(`指標 ${UUID_A.slice(0, 8)}`);
+    expect(result.stderr).toContain(`標記 ${UUID_B.slice(0, 8)}`);
+    expect(out).not.toContain(UUID_A);
+    expect(out).not.toContain(UUID_B);
+    expect(out).not.toContain(learning);
+    expect(writes).toEqual([]);
+    expect(treeWithContent(box.root)).toEqual(before);
+  });
+
+  it('id 不符 + --force → 指標改成標記的 id(標記是帳本本身的身分,不動),並先印舊指標', () => {
+    const box = sandbox();
+    const learning = learningDir(box.root);
+    writeMarker(learning, `${UUID_B}\n`);
+    const old = JSON.stringify({ learning_dir: learning, vault_id: UUID_A });
+    writePointerRaw(box, old);
+    const writes: string[] = [];
     const result = initVault({
       learningDir: learning,
+      force: true,
       env: childEnv(box),
       homedir: () => box.home,
-      io: ioRecording([]),
+      io: ioRecording(writes),
+      randomUUID: () => {
+        throw new Error('標記在,不該重新產生');
+      },
     });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(old);
+    expect(writes).toEqual([pointerPathOf(box)]);
+    expect(readPointer(box)).toEqual({ learning_dir: learning, vault_id: UUID_B });
+    expect(readFileSync(join(learning, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_B}\n`);
+  });
+
+  it('指標檔壞掉(不是 JSON)→ 拒絕,訊息說指標讀不到、要 --force,不誤報成 id 不符', () => {
+    const box = sandbox();
+    const learning = learningDir(box.root);
+    writePointerRaw(box, '{ not json');
+    const before = treeWithContent(box.root);
+    const writes: string[] = [];
+    const result = initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording(writes) });
     expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('讀不到');
     expect(result.stderr).toContain('--force');
-    expect(result.stderr).toContain(UUID_A.slice(0, 8));
-    expect(result.stderr).toContain(UUID_B.slice(0, 8));
-    expect(result.stderr).not.toContain(UUID_A);
-    expect(result.stderr).not.toContain(UUID_B);
+    expect(result.stderr).not.toContain('不符');
+    expect(writes).toEqual([]);
+    expect(treeWithContent(box.root)).toEqual(before);
+  });
+
+  it('指標裡的 learning_dir 是相對路徑(就算從 cwd 解析剛好是同一處)→ 不算「已初始化」,要 --force', () => {
+    const box = sandbox();
+    const learning = learningDir(box.root);
+    writeMarker(learning, `${UUID_A}\n`);
+    writePointerRaw(box, JSON.stringify({ learning_dir: relative(process.cwd(), learning), vault_id: UUID_A }));
+    const writes: string[] = [];
+    const result = initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording(writes) });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).not.toContain('已初始化');
+    expect(result.stderr).toContain('--force');
+    expect(writes).toEqual([]);
+  });
+
+  it('標記檔內容不是合法 uuid → 拒絕,不寫指標(帳本身分壞了,要人看)', () => {
+    const box = sandbox();
+    const learning = learningDir(box.root);
+    writeMarker(learning, 'garbage\n');
+    const before = treeWithContent(box.root);
+    const writes: string[] = [];
+    const result = initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording(writes) });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('vault-id');
+    expect(writes).toEqual([]);
+    expect(treeWithContent(box.root)).toEqual(before);
   });
 });
 
-describe('vault show', () => {
-  it('相符時印出指標位置、learning_dir、標記存在且相符,exit 0', () => {
-    const box = sandbox();
+describe('vault show(第 4 條)', () => {
+  function setup(box: Box, markerText: string | null, pointerId = UUID_A): string {
     const learning = learningDir(box.root);
-    mkdirSync(join(learning, 'config'), { recursive: true });
-    writeFileSync(join(learning, 'config', 'vault-id'), `${UUID_A}\n`);
-    const pointerPath = join(box.config, 'llm-learning-cards', 'vault.json');
-    mkdirSync(join(box.config, 'llm-learning-cards'), { recursive: true });
-    writeFileSync(pointerPath, JSON.stringify({ learning_dir: learning, vault_id: UUID_A }));
+    if (markerText !== null) writeMarker(learning, markerText);
+    writePointerRaw(box, JSON.stringify({ learning_dir: learning, vault_id: pointerId }));
+    return learning;
+  }
+
+  it('相符時印出指標位置、learning_dir、標記存在、相符,exit 0', () => {
+    const box = sandbox();
+    const learning = setup(box, `${UUID_A}\n`);
     const result = showVault({ env: childEnv(box), homedir: () => box.home, io: ioRecording([]) });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain(pointerPath);
-    expect(result.stdout).toContain(learning);
+    expect(result.stdout).toContain(`pointer: ${pointerPathOf(box)}`);
+    expect(result.stdout).toContain(`learning_dir: ${learning}`);
     expect(result.stdout).toContain('marker: present');
     expect(result.stdout).toContain('match: yes');
   });
 
-  it('任何不符 exit 非 0', () => {
+  it('標記不符:exit 非 0,match: no', () => {
     const box = sandbox();
+    setup(box, `${UUID_B}\n`);
     const result = showVault({ env: childEnv(box), homedir: () => box.home, io: ioRecording([]) });
     expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain('marker: present');
+    expect(result.stdout).toContain('match: no');
+  });
+
+  it('標記不存在:exit 非 0,marker: missing', () => {
+    const box = sandbox();
+    setup(box, null);
+    const result = showVault({ env: childEnv(box), homedir: () => box.home, io: ioRecording([]) });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain('marker: missing');
+    expect(result.stdout).toContain('match: no');
+  });
+
+  it('指標不存在 / 讀不到:exit 非 0', () => {
+    const box = sandbox();
+    expect(showVault({ env: childEnv(box), homedir: () => box.home, io: ioRecording([]) }).exitCode).not.toBe(0);
+    writePointerRaw(box, '{');
+    const broken = showVault({ env: childEnv(box), homedir: () => box.home, io: ioRecording([]) });
+    expect(broken.exitCode).not.toBe(0);
+    expect(broken.stdout).toContain('match: no');
+  });
+
+  it('show 不寫任何東西', () => {
+    const box = sandbox();
+    setup(box, `${UUID_A}\n`);
+    const before = treeWithContent(box.root);
+    const writes: string[] = [];
+    showVault({ env: childEnv(box), homedir: () => box.home, io: ioRecording(writes) });
+    expect(writes).toEqual([]);
+    expect(treeWithContent(box.root)).toEqual(before);
   });
 });
 
-describe('scripts/llm.ts 解析', () => {
-  it('真呼叫模式給 --log 就拒絕,exit 2', () => {
-    const box = sandbox();
-    const result = resolveLlmLedger({
-      argv: ['--task', 'deepen', '--prompt', 'x', '--log', join(box.root, 'other.jsonl')],
-      env: childEnv(box),
-      homedir: () => box.home,
-      readFile: (path) => readFileSync(path, 'utf8'),
-      exists: () => false,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.exitCode).toBe(2);
-    expect(result.message).toContain('指標檔');
-  });
-
-  it('假 adapter 模式 --log 可用,而且不讀指標檔', () => {
-    const box = sandbox();
-    const seen: string[] = [];
-    const log = join(box.root, 'fake.jsonl');
-    const result = resolveLlmLedger({
-      argv: ['--fake', '--log', log, '--probe'],
-      env: childEnv(box),
-      homedir: () => box.home,
-      readFile: (path) => {
-        seen.push(path);
-        return readFileSync(path, 'utf8');
-      },
-      exists: () => false,
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.ledger.kind).toBe('explicit');
-    expect(result.ledger.logPath).toBe(log);
-    expect(seen).toEqual([]);
-  });
-
-  it('沒有指標時真呼叫拒絕,exit 2,訊息含 init 與 show', () => {
-    const box = sandbox();
-    const result = resolveLlmLedger({
-      argv: ['--probe'],
-      env: childEnv(box),
-      homedir: () => box.home,
-      readFile: (path) => readFileSync(path, 'utf8'),
-      exists: () => false,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.exitCode).toBe(2);
-    expect(result.message).toContain('npx tsx scripts/vault.ts init');
-    expect(result.message).toContain('npx tsx scripts/vault.ts show');
-  });
-});
-
-describe('scripts/llm-spend.ts', () => {
-  it('指標拒絕時 exit 2,不是 0', () => {
-    const box = sandbox();
-    const resolved = resolveSpendLedger({
-      explicitLog: undefined,
-      env: childEnv(box),
-      homedir: () => box.home,
-      readFile: (path) => readFileSync(path, 'utf8'),
-      exists: () => false,
-    });
-    expect(resolved.ok).toBe(false);
-    if (resolved.ok) return;
-    expect(resolved.exitCode).toBe(2);
-  });
-
-  it('明確 --log 的報告第一行標 ledger=unverified,而且不能當煞車(exit 2)', () => {
-    const box = sandbox();
-    const log = join(box.root, 'log.jsonl');
-    writeFileSync(log, '');
-    const resolved = resolveSpendLedger({
-      explicitLog: log,
-      env: childEnv(box),
-      homedir: () => box.home,
-      readFile: () => {
-        throw new Error('不該讀指標');
-      },
-      exists: () => {
-        throw new Error('不該探測指標');
-      },
-    });
-    expect(resolved.ok).toBe(true);
-    if (!resolved.ok) return;
-    expect(resolved.ledger.kind).toBe('explicit');
-    const report = buildSpendReport(
-      { ...childEnv(box), LLM_DAILY_CAP_USD: '1', LLM_PRICE_IN_PER_M: '2.5', LLM_PRICE_OUT_PER_M: '10' },
-      resolved.ledger,
-      '2026-10-15',
-    );
-    expect(report.kind).toBe('computed');
-    if (report.kind !== 'computed') return;
-    expect(report.ledger).toBe('unverified');
-    const text = formatSpendReport(report);
-    expect(text.split('\n')[0]).toContain('ledger=unverified');
-    expect(exitCodeFor(report)).toBe(2);
-  });
-});
-
-describe('check-ledger-pollution 解析失敗是 UNKNOWN 路徑,不建檔', () => {
-  it('沒有指標時不回一個可當 PASS 的既有帳本路徑,也不建檔', () => {
-    const box = sandbox();
-    const before = listTree(box.root);
-    const result = resolvePollutionLogPath({
-      env: childEnv(box),
-      homedir: () => box.home,
-      readFile: (path) => readFileSync(path, 'utf8'),
-      exists: () => false,
-    });
-    expect(result.resolved).toBe(false);
-    expect(listTree(box.root)).toEqual(before);
-  });
-});
-
-describe('CLI 子程序隔離', () => {
-  it('spawn vault show 時子程序的 HOME / XDG 在沙箱,真指標檔不變', () => {
-    const box = sandbox();
-    const child = spawnSync(process.execPath, ['--import=tsx', join(REPO, 'scripts/vault.ts'), 'show'], {
+describe('CLI(子程序,HOME / XDG 在沙箱)', () => {
+  function cli(box: Box, args: string[]): { status: number | null; stdout: string; stderr: string } {
+    const r = spawnSync(process.execPath, ['--import=tsx', join(REPO, 'scripts/vault.ts'), ...args], {
       cwd: box.root,
       encoding: 'utf8',
       timeout: 60_000,
       env: childEnv(box),
     });
-    expect(child.status).not.toBe(0);
+    return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  }
+
+  it('init → show 相符;再 init 一次是「已初始化」;沒有暫存檔殘留', () => {
+    const box = sandbox();
+    const learning = learningDir(box.root);
+    const init = cli(box, ['init', '--learning-dir', learning]);
+    expect(init.status, `${init.stdout}\n${init.stderr}`).toBe(0);
+    const show = cli(box, ['show']);
+    expect(show.status, `${show.stdout}\n${show.stderr}`).toBe(0);
+    expect(show.stdout).toContain('match: yes');
+    const again = cli(box, ['init', '--learning-dir', learning]);
+    expect(again.status).toBe(0);
+    expect(again.stdout).toContain('已初始化');
+    expect(readdirSync(join(learning, 'config'))).toEqual(['vault-id']);
+    expect(readdirSync(join(box.config, 'llm-learning-cards'))).toEqual(['vault.json']);
+    expect(snapshotRealPointer()).toEqual(realPointerBefore);
+  });
+
+  it('沒有指標時 show 非 0;不認得的子指令非 0', () => {
+    const box = sandbox();
+    expect(cli(box, ['show']).status).not.toBe(0);
+    expect(cli(box, ['bogus']).status).not.toBe(0);
     expect(snapshotRealPointer()).toEqual(realPointerBefore);
   });
 });
