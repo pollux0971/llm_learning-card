@@ -8,7 +8,6 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { validateLogEvent } from '../../../packages/core/src/schema/log.js';
 import { BUILD_LC_FS_TIMEOUT_MS, buildLcFs } from './test-support/build-lc-fs.js';
 import { LC_FS_BIN, runProbe, type ProbeResponse } from './test-support/probe.js';
 import {
@@ -52,7 +51,9 @@ describe('驗收 10:warning 事件不能靜默消失', () => {
     const lines = logLines(sb);
     expect(lines).toHaveLength(1);
     const event = JSON.parse(lines[0] ?? '') as Record<string, unknown>;
-    expect(validateLogEvent(event).ok).toBe(true);
+    // 契約 §10 的最小形狀(10-desktop-shell 不跨資料夾 import 01 的 schema,所以這裡自己對一次):ts 是含時區的 ISO、type 是字串
+    expect(String(event.ts)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/);
+    expect(typeof event.type).toBe('string');
     expect(event.type).toBe('warning');
     expect(event.reason).toBe('path-refused');
     expect(event.path).toBe('raw/x.md');
