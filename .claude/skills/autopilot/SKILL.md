@@ -696,8 +696,8 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent openco
 19. **worker 不跑 `check:all` 時,收批前先跑 `npx tsc --noEmit`**。
 
 ### 用量與預算
-20. **Claude worker 的名目 `$` 只記錄,不拿來煞車**(Max 訂閱,不是現金);**真正的停止線是額度**:`7d` 比開工漲超過 3 個百分點,或 `5h` 超過 80%,立刻停。**付現的 worker(grok、opencode)才用 `$` 煞車**:opencode 不守預算(T5 $25.39/預算 $6、T7 $9.37/預算 $4),要每輪量 `$`,到預算立即 `opencode api POST /api/session/{id}/interrupt`。
-21. **opencode 的對話在背景服務,關 TUI 不會停**;重開前先 `opencode api GET /api/session/active`。解析 `opencode session export <id>` 要用 `python3 -I`(輸出前綴不是 JSON)。
+20. **所有 worker 的 `$` 只記錄,不拿來煞車**(使用者 2026-10-15 16:4x 在顧問 session 親口說:「GROK不需要限額」):Claude(Max 訂閱,名目)、grok、opencode 一律如此。工單的 `budget_usd` 只是估計值,實際花費照樣記進證據(寫原值、模型、耗時、session id),但**不因為超過預算而 interrupt**。**Claude worker 仍有額度停止線**(那是共用額度,不是預算):`7d` 比開工漲超過 3 個百分點,或 `5h` 超過 80%,立刻停。驗收證據照舊寫「花費 / 預算 = 幾倍」供使用者知道,不當作退回理由。
+21. **開發 worker 預設用 opencode + grok-4.7**(「暫停派 grok」已解除);grok 卡住、做不完(像 T5)時改派 Claude 接手。**已經開工的 worker 不中途換。**opencode 的對話在背景服務,關 TUI 不會停;**重開 opencode 之前先 `opencode api GET /api/session/active`**,避免同一個 worktree 同時跑兩個對話(那是重複做工,不是限額);停用 `opencode api POST /api/session/{id}/interrupt`。解析 `opencode session export <id>` 要用 `python3 -I`(輸出前綴不是 JSON)。
 22. **`--live` 與任何會打真 provider 的動作,煞車延長到 T9 合併為止**(T9:帳本對 tokens 非數字/負數、ts 不合法的 llm_call 行低估花費,F-4)。
 
 ### 合併後的收尾
