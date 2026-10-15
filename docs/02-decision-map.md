@@ -1344,7 +1344,7 @@ graph TD
 - **Context**: 2026-10-15 起草 T2c 時讀 main @ `f2f7d76`,TS 有三份 §11b 寫入、兩份 log append,而且不一樣(技術顧問同日打開檔案核對):
   1. `../packages/core/src/schema/atomic-write.ts:42` `writeFileAtomic`:暫存檔名 `.<name>.<pid>.<ts>.tmp`(§11b 寫「固定是 `<name>.tmp`」)、**沒有 fsync(目錄)**、`renameSync` 在 try 外面所以 rename 失敗會留下 tmp。**`../packages/core/src/session/io.ts:55` 寫 `state/reviews.json` 用的就是它**。
   2. `../packages/core/src/ingest/state.ts:36` `atomicWriteJson`:跟 §11b 一致(ADR-040 的四步、EINVAL 例外、清理在 finally 不遮錯)。
-  3. `../packages/core/src/lint/atomic-write.ts:40` `atomicWriteFileSync`:`<name>.tmp` 對,但沒有 fsync(目錄);寫 `state/lint-report-<日期>.md`。
+  3. packages/core/src/lint/atomic-write.ts 第 40 行的 `atomicWriteFileSync`:`<name>.tmp` 對,但沒有 fsync(目錄);寫 `state/lint-report-<日期>.md`。
   4. log:`appendLineAtomic`(O_APPEND、一次寫、fsync)與 `appendLogEvent`(`appendFileSync`,沒有 fsync)。
   幾個月的記憶資料是用少了第 4 步的那一份寫的,違反硬約定 §11b 與 CLAUDE.md 硬規則 5。這是 ADR-060(字數四份實作)的同一個形狀。
 - **Decision**:

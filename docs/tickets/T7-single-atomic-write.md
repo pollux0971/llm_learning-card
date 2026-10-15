@@ -34,7 +34,7 @@ must_catch:
 |---|---|---|---|
 | `writeFileAtomic` | `../../packages/core/src/schema/atomic-write.ts:42` | 暫存檔名是 `.<name>.<pid>.<ts>.tmp`(§11b:「固定是 `<name>.tmp`」);**沒有 fsync(目錄)**(第 4 步);`renameSync`(:60)在 try 外面,**rename 失敗會留下 tmp** | `../../packages/core/src/session/io.ts:55`(**寫 `state/reviews.json`**)、`../../packages/core/src/schema/init.ts:76`、`../../packages/core/src/schema/graph.ts:262`、`../../features/steps/data-layer.steps.ts:663` |
 | `atomicWriteJson` | `../../packages/core/src/ingest/state.ts:36` | 跟 §11b 一致:`<path>.tmp`、fsync(fd)、rename、fsync(目錄)、只有 EINVAL 算成功、清理在 finally 且不遮錯 | `ingest/ingest.ts`、`ingest/deps.ts` |
-| `atomicWriteFileSync` | `../../packages/core/src/lint/atomic-write.ts:40` | `<name>.tmp` 對,但**沒有 fsync(目錄)**(檔頭自己寫「三步」) | `../../scripts/lint.ts:85`(寫 `state/lint-report-<日期>.md`) |
+| `atomicWriteFileSync` | packages/core/src/lint/atomic-write.ts 第 40 行 | `<name>.tmp` 對,但**沒有 fsync(目錄)**(檔頭自己寫「三步」) | `../../scripts/lint.ts:85`(寫 `state/lint-report-<日期>.md`) |
 
 log 也有兩份:`../../packages/core/src/schema/atomic-write.ts:72` `appendLineAtomic`(O_APPEND、一次 `writeSync`、fsync)與
 `../../packages/core/src/ingest/state.ts:90` `appendLogEvent`(`appendFileSync`,沒有 fsync)。§11b 對 log 只要求「每次寫入是完整的一行」,
