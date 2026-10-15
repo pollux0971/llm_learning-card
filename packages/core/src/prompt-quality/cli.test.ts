@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main, runList, SCANNER_BROKEN } from './cli.js';
@@ -70,6 +70,8 @@ function installFakeCloud(opts: { online?: boolean; replyText?: string } = {}): 
 describe('cli main --live', () => {
   let realFetch: typeof globalThis.fetch;
   let realEnv: NodeJS.ProcessEnv;
+  /** 合成帳本的 learning/(T5:--live 的帳本只來自使用者層指標檔) */
+  let ledgerLearning: string;
 
   beforeEach(() => {
     realFetch = globalThis.fetch;
@@ -77,6 +79,21 @@ describe('cli main --live', () => {
     process.env.LLM_CLOUD_PROVIDER = 'anthropic';
     process.env.LLM_CLOUD_MODEL = LIVE_MODEL;
     process.env.ANTHROPIC_API_KEY = 'test-key';
+    // T5(ADR-066):HOME / XDG_* 指到 mkdtemp 的合成指標與標記(afterEach 還原整個 env)。
+    // 絕不讀使用者真的指標檔,也不寫真的帳本;--out 只管輸出,不再是帳本。
+    const vault = tmpOutDir();
+    const vaultId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    ledgerLearning = join(vault, 'learning');
+    mkdirSync(join(ledgerLearning, 'config'), { recursive: true });
+    writeFileSync(join(ledgerLearning, 'config', 'vault-id'), `${vaultId}\n`);
+    mkdirSync(join(vault, 'xdg', 'llm-learning-cards'), { recursive: true });
+    writeFileSync(
+      join(vault, 'xdg', 'llm-learning-cards', 'vault.json'),
+      JSON.stringify({ learning_dir: ledgerLearning, vault_id: vaultId }),
+    );
+    process.env.HOME = vault;
+    process.env.XDG_CONFIG_HOME = join(vault, 'xdg');
+    process.env.XDG_RUNTIME_DIR = join(vault, 'runtime');
   });
 
   afterEach(() => {
@@ -94,6 +111,27 @@ describe('cli main --live', () => {
       '  模型 anthropic/claude-sonnet-5,token 進 300 出 120,花費 (此模型未定價,上面的估計不可用;每日上限走 .env 費率,仍然有效)',
     );
     expect(result.output.split('\n').filter((l) => l.startsWith('  ⚠ '))).toEqual([]);
+    // 帳本是指標那本,不是 --out:三個 golden 輸入三筆 llm_call,--out 底下不長出 state/。
+    const ledger = readFileSync(join(ledgerLearning, 'state', 'log.jsonl'), 'utf8').trim().split('\n');
+    expect(ledger).toHaveLength(3);
+    expect(existsSync(join(out, 'state'))).toBe(false);
+  });
+
+  it('T5:沒有指標時 --live 不跑(退出碼非 0,訊息帶 init / show),不建任何東西', async () => {
+    installFakeCloud();
+    const bare = tmpOutDir();
+    process.env.HOME = bare;
+    process.env.XDG_CONFIG_HOME = join(bare, 'xdg');
+    const out = tmpOutDir();
+    const result = await main(['--golden', '--set', 'selftest', '--live', '--out', out]).catch((err: unknown) => ({
+      code: 1,
+      output: err instanceof Error ? err.message : String(err),
+    }));
+    expect(result.code).not.toBe(0);
+    expect(result.output).toContain('npx tsx scripts/vault.ts init');
+    expect(result.output).toContain('npx tsx scripts/vault.ts show');
+    expect(readdirSync(bare)).toEqual([]);
+    expect(readdirSync(out)).toEqual([]);
   });
 
   it('有結構性問題時逐項列出,結尾那句說清楚那不代表品質不好', async () => {
