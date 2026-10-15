@@ -12,6 +12,7 @@ must_catch:
   - 卡片自己的 <style> 畫框(border / outline / box-shadow / clip-path / mask,.lc-example 的 border-left 除外):「不自畫外框」必須紅
   - 卡片的 <style> 出現顏色字面值(例如答對答錯改回 #1a7f37、#d1242f):顏色字面值掃描必須紅
   - --hud-pass 或 --hud-fail 對面板的最差對比 < 4.5:結果字色的對比檢查必須紅
+  - 對錯只剩顏色差異(兩種結果的字樣一樣、拿掉 ✓ / × 標示、或標示改用 CSS ::before 畫):「對錯不只靠顏色」必須紅。反過來,把 --hud-pass 與 --hud-fail 換成同一個顏色時,這條照樣綠(對錯靠字樣分得出來)
   - 卡片自己設 hud-frameless / hud-solid,或傳 frameless / solid 給 HudPanel:「class 由桌面殼決定」必須紅
   - 考試卡有一個作答欄沒有包在 HudField 裡(只包第一格、或 textarea 沒包):「作答欄來自 HUD」必須紅
   - 進度不是 HpBar,或 HpBar 拿錯數字(done 多 1、total 寫死):「HP 條填到 1/3」必須紅
@@ -28,7 +29,8 @@ must_catch:
 
 # 工單 T15:14-hud-skin phase-2 —— 教學卡與考試卡換上 HUD
 
-> 狀態:草稿,待技術顧問審。
+> 狀態:技術顧問 2026-10-16 審過。Q1 照建議(不改 `.feature`、不加空按鈕);送出鍵出現時機、面板撐滿視窗、`--hud-pass` / `--hud-fail`、D1 改展示頁都同意;
+> 另加一條「對錯不只靠顏色」(驗收 2,字樣由規格作者定案)。
 > 作者:UI/Tauri 負責人(14-hud-skin 的規格作者,不是實作者)。編號:協調者配(T15)。派工:協調者。
 > 實作:worker-grok。紅測試:另一個角色(建議見「紅測試」)。驗收:-ed。觀感:技術顧問。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
@@ -92,6 +94,15 @@ phase-2 把它們套到兩張卡上。順便處理三件留下來的事:
   答對 / 答錯的字色在 `hud.css` 加兩個設計值 `--hud-pass`、`--hud-fail`,
   對面板的**最差對比 ≥ 4.5**(跟內文一樣的算法:`--hud-panel` 分別疊在純白與純黑上,取比較差的那個,`worstContrast`)。
   現在的 #1a7f37 只有 4.05、#d1242f 只有 4.18,不夠。前端算過 #146c2e(5.21)與 #b31d28(5.36)可以,實作者可以另選。
+- **對錯不只靠顏色**(技術顧問 2026-10-16):色弱的使用者也要分得出對錯,所以結果那一行除了顏色,還要有符號與文字。
+  - 字樣定案(實作者不改):答對是「`✓ 答對了`」,答錯是「`× 答錯了`」。符號後面一個半形空格。
+    `✓` 是 U+2713,`×` 是 U+00D7。兩個字都在內文字型 Noto Sans CJK TC 裡(前端用 fontconfig 查過)。
+    **不用 `✗`(U+2717)**:Noto Sans CJK TC 沒有這個字,會掉到別的字型,長相不一致,沒裝那些字型的電腦會變成方框。
+  - 「答對了」「答錯了」是 06 phase-1 現在的字,照舊不改,只在前面加符號。`phase-2.feature` 說卡片「顯示的內容不變」,所以不換成別的說法。
+    06 phase-1 與結果有關的場景(「The result is shown with a single line of feedback」)是 `@manual`,步驟檔也沒有比對這兩個字,不會衝突。
+  - 符號是標記裡真的文字,不用 CSS 的 `::before` / `content` 畫(螢幕閱讀器才念得到,`innerText` 也才量得到)。
+  - 結果那一行帶 `data-result="pass"` 或 `data-result="fail"`(給測試找元素用)。顏色照舊由 `--hud-pass` / `--hud-fail` 決定。
+  - 「評分失敗,請再試一次」不是對錯結果,不加符號、不帶 `data-result`。
 - **只能** import `@learning/ui-shared/hud/…`。不能 import `@learning/ui-shared` 的根或 `ui-shared/src/` 底下其他檔:
   那些是 07 的,ADR-035 第 2 點(06 在 I3 前不 import 07 的圍欄插件)照舊成立。違反時 `npm run boundaries` 會紅。
 - 不改 `apps/test-card/package.json`:workspace 的 `node_modules/@learning/ui-shared` 連結已經在,import 解析得到。
@@ -196,7 +207,7 @@ phase-2 把它們套到兩張卡上。順便處理三件留下來的事:
 - 兩個視窗:整個視窗是一塊白色半透明面板,四邊是很細的黑線,四個角切斜。按鈕是 HUD 按鈕:滑過整顆變橘,鍵盤焦點多一圈淺色內框。按鈕上的英文用 Rajdhani。
 - 教學卡:上面那個大大的「教學卡」標題不見了(視窗名稱在系統標題列)。例子框左右都有空間,顏色換成 HUD 的淺灰。
 - 考試卡:「0 / 3」旁邊多一條綠色 HP 條,答一題長一格。作答欄變成有切角黑框的 HUD 輸入框。
-  **多一顆「送出」鍵**;Enter 與 Ctrl+Enter 照舊能用。「答對了」「答錯了」的綠與紅深一點。
+  **多一顆「送出」鍵**;Enter 與 Ctrl+Enter 照舊能用。結果那一行變成「✓ 答對了」「× 答錯了」,綠與紅也深一點;只看字也分得出對錯。
 - 展示頁:勾深色背景時,頁首的字看得清楚了;多了兩個作答欄範例。
 - 還不會變的:系統標題列還在,視窗也還不透明(那是 10 phase-6)。所以現在看不到自畫的標題列與縮放把手。
 
@@ -211,6 +222,7 @@ phase-2 把它們套到兩張卡上。順便處理三件留下來的事:
 |---|---|---|
 | 1、2 | 兩張卡的原始碼 | 靜態掃描 `App.svelte` 與 `main.ts`:最外層只有一個 `<HudPanel>`;沒有 `<h1>`、沒有原生 `<button>`;考試卡每個 `<input>` / `<textarea>` 的祖先有 `<HudField>`;`<HpBar>` 的 `done` / `total` 綁 `view.answeredCount` / `view.totalCount`;送出鍵的 `onclick` 呼叫 `submitFill` / `submitApply`、`disabled` 含 `view.submitting`;`<style>` 用 hud/ 的 `parseCss` 檢查不畫框、`colourLiteralProblems` 的規則檢查顏色;不提那兩個 class、不傳 `frameless` / `solid`;import 只來自 `@learning/ui-shared/hud/`(考試卡) |
 | 2 | 結果字色 | `hud.css` 的 `--hud-pass`、`--hud-fail` 用 `worstContrast` 算,≥ 4.5 |
+| 2 | 對錯不只靠顏色 | 畫出來:同 3 的開法,一題填 fixture 的正確答案、一題填錯的,各讀 `[data-result]` 的 `innerText`(看得到的字);答對要剛好是「✓ 答對了」、答錯要剛好是「× 答錯了」,兩者不相等、各自有非空的符號。靜態:`App.svelte` 的結果那一行,答對與答錯兩個分支的字樣不同,而且都含符號;符號不是寫在 `<style>` 的 `content` 裡 |
 | 3 | HP 條 | headless Chrome 開 `apps/test-card` 的 dev server,360 × 480;透過 DOM 填答案、點「送出」與「下一題」;讀 `data-percent`、截圖量綠色那一段、讀進度那一區的字 |
 | 4 | HudField | 在展示頁量框線墨水量、切角、高度與寬度、focus-within 的像素差;沿用 `render-test-support.ts` 的 `inkAcross`、`differingPixels`、`forceState` |
 | 5、6、7 | 兩張卡畫出來的版面 | 同 3 的開法;量面板矩形、整頁與捲動區的捲動尺寸、四邊墨水量(只往內量)、`.lc-example` 的左右邊距、送出鍵的矩形與 `elementFromPoint` |
