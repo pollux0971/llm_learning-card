@@ -297,3 +297,71 @@ fn write_does_not_overwrite_an_existing_outside_file_through_a_planted_tmp_symli
     assert_eq!(fs::read_to_string(&secret).unwrap(), "OUTSIDE-SENTINEL", "the outside file must keep its content");
     assert_eq!(fs::read_to_string(l.root.join("cards/a.md")).unwrap(), "old");
 }
+
+// cargo-mutants(驗收時跑)存活的非等價突變,補測:
+
+/// io 錯誤的分類表。`NotADirectory`、`StorageFull`、`ReadOnlyFilesystem`、`CrossesDevices` 四個分支的刪除原本沒有任何測試會紅
+/// (在測試機上造不出滿磁碟、唯讀檔案系統、跨裝置),所以直接餵 `io::Error` 給分類函式。工單 D11 的 code 清單就是這張表。
+#[test]
+fn io_code_maps_every_kind_to_the_documented_code() {
+    use std::io::ErrorKind::*;
+    for (kind, code) in [
+        (NotFound, "not_found"),
+        (IsADirectory, "is_dir"),
+        (NotADirectory, "not_dir"),
+        (PermissionDenied, "permission"),
+        (StorageFull, "no_space"),
+        (ReadOnlyFilesystem, "read_only"),
+        (CrossesDevices, "cross_device"),
+        (InvalidData, "other"),
+        (Other, "other"),
+    ] {
+        let err = std::io::Error::from(kind);
+        assert_eq!(learning_cards_desktop::learning_fs::io_code(&err), code, "{kind:?}");
+    }
+}
+
+#[test]
+fn list_on_a_regular_file_is_a_not_dir_io_error_and_writes_no_warning() {
+    let l = Learning::new("list-on-file");
+    l.plant("cards/a.md", b"x");
+    let err = list(&l.root, "cards/a.md").unwrap_err();
+    assert_eq!(io_code(&err), "not_dir");
+    assert!(l.log_lines().is_empty());
+}
+
+/// 記錄現行行為:路徑的中間段是一般檔案(`cards/a.md/b`),`symlink_metadata` 回 ENOTDIR 而不是 NotFound,
+/// guard 把「不是 NotFound 的錯」一律當成拒絕(reason `symlink`),不放行。拿掉這個區別(任何錯都當作「不存在」)原本沒有測試會紅。
+#[test]
+fn a_path_through_a_regular_file_is_refused_not_treated_as_absent() {
+    let l = Learning::new("through-file");
+    l.plant("cards/a.md", b"x");
+    for op in ["read", "exists"] {
+        let err = match op {
+            "read" => read(&l.root, "cards/a.md/b").unwrap_err(),
+            _ => exists(&l.root, "cards/a.md/b").unwrap_err(),
+        };
+        assert_eq!(refusal_reason(&err), "symlink", "{op}");
+    }
+    assert!(!l.root.join("cards/a.md/b").exists());
+}
+
+/// 舊樣式殘檔 `.<name>.<digits>.<digits>.tmp` 在下一次寫入時清掉;長得像但不是的(非數字、只有一段數字、別的目標)一個都不能碰。
+#[test]
+fn only_exact_old_style_strays_of_the_same_target_are_removed() {
+    let l = Learning::new("old-style-strays");
+    l.plant("cards/a.md", b"old");
+    let stray = l.plant("cards/.a.md.12.34.tmp", b"stray");
+    let keep = [
+        l.plant("cards/.a.md.x1.y2.tmp", b"keep"),
+        l.plant("cards/.a.md.12.y2.tmp", b"keep"),
+        l.plant("cards/.a.md.12.tmp", b"keep"),
+        l.plant("cards/.a.md..34.tmp", b"keep"),
+        l.plant("cards/.b.md.12.34.tmp", b"keep"),
+    ];
+    write(&l.root, "cards/a.md", "new").unwrap();
+    assert!(!stray.exists(), "the exact old-style stray of the same target must be removed");
+    for k in keep {
+        assert!(k.exists(), "{} must not be touched", k.display());
+    }
+}

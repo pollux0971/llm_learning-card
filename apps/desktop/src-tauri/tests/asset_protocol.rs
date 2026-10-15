@@ -249,3 +249,28 @@ fn main_rs_serves_lc_through_respond() {
     assert!(main.contains("asset_protocol::respond"), "the lc handler must call asset_protocol::respond (one code path with the probe)");
     assert!(!main.contains(".as_str().unwrap_or(\"\")"), "the lc handler still turns the body into text");
 }
+
+// ---------------------------------------------------------------- 驗收補測(cargo-mutants 存活的非等價突變)
+
+/// 程式正常結束時 `flush_refusals` 把限流器還沒寫出的次數補寫進 log(工單 B7 最後一列)。
+/// `AssetRefusalLimiter::flush` 本身有測試;包它的這個函式(`replace flush_refusals with ()`)原本沒有。
+#[test]
+fn flush_refusals_writes_the_pending_counts_into_the_log_and_only_once() {
+    use learning_cards_desktop::asset_protocol::flush_refusals;
+    let l = Learning::new("asset-flush");
+    let mut limiter = AssetRefusalLimiter::new();
+    let t0 = now();
+    respond(&l.root, "raw/x.png", &mut limiter, t0);
+    respond(&l.root, "raw/x.png", &mut limiter, t0 + Duration::from_secs(10));
+    respond(&l.root, "raw/x.png", &mut limiter, t0 + Duration::from_secs(20));
+    assert_eq!(l.log_lines().len(), 1, "within 60 seconds only the first refusal is written");
+
+    flush_refusals(&l.root, &mut limiter, t0 + Duration::from_secs(30));
+    let events = l.log_events();
+    assert_eq!(events.len(), 2, "the pending count must be flushed as one more line");
+    assert_eq!(events[1]["op"], "asset");
+    assert_eq!(events[1]["count"], 2);
+
+    flush_refusals(&l.root, &mut limiter, t0 + Duration::from_secs(40));
+    assert_eq!(l.log_events().len(), 2, "a second flush has nothing left to write");
+}
