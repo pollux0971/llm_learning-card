@@ -8,6 +8,7 @@
 ```
 learning-minimal/     一個合法的最小 learning/,3 張卡、1 個類別。lint 應該回報 0 個問題
 learning-broken/      刻意壞掉的,附 EXPECTED.md 列出每一個問題
+learning-broken-category/  不合法的分類名(契約 1.4.0 §1),附 EXPECTED.md;lint 應回報恰好 3 個 invalid_category
 cards/                單張卡的合法與非法樣本,檔名說明錯在哪
 reviews/              各種複習狀態
 weekly/               週目標狀態
