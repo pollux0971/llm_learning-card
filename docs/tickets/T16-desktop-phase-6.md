@@ -10,6 +10,8 @@ must_catch:
   - 任一個視窗(teach 或 test)的 decorations 改回 true 或沒寫:「兩個視窗都沒有系統外框」必須紅
   - 任一個視窗的 transparent 改回 false 或沒寫:「兩個視窗都透明」必須紅
   - 任一個視窗的 visible 改回 true:「載入完才顯示」的設定檢查必須紅
+  - 頁面一直不完成載入,視窗永遠不顯示(拿掉 3 秒的逾時退路):「載入卡住也要顯示」必須紅
+  - 逾時退路顯示兩次,或頁面已經載入完、3 秒到時還寫 warn:「只顯示一次、載入完不警告」必須紅
   - capabilities 少開四個權限中的任一個(開始拖曳、開始縮放拖曳、縮小、關閉):權限檢查必須紅
   - capabilities 多開別的視窗操作(例如 allow-set-position、allow-hide、allow-destroy、core:window:default 以外的任何一條):「不多開」必須紅
   - 頁面那段程式不加 hud-frameless,或寫錯字(例如 hud-frame-less):「頁面根元素有 frameless class」必須紅
@@ -33,7 +35,7 @@ must_catch:
 > 規格來源:`features/10-desktop-shell/phase-6.feature`(**不改**)、`features/10-desktop-shell/NEXT.md` 的 phase-6 段、
 > `features/10-desktop-shell/FEATURE.md`、`features/14-hud-skin/FEATURE.md` 的「不在範圍」。
 > 基底:origin/main `337512f`(含 T15、14 phase-2 done)。協調者本地的 NEXT.md gate 打勾 commit 還沒推,合併時處理。
-> **需要 ADR**(合成器偵測與頁面模式的傳遞,見「需要 ADR」)。號碼由協調者配。
+> **需要 ADR**(合成器偵測與頁面模式的傳遞,見「需要 ADR」),配給 **ADR-072**。
 
 ## 為什麼有這張
 
@@ -69,6 +71,13 @@ T15 退回四輪,三次是「一般狀態量了、hover / focus 沒量」或「�
 - 兩個視窗都 `"visible": false`,等頁面第一次載入完(Tauri 的 page load 事件,`Finished`)才由 Rust 顯示。
   理由:沒有合成器時,透明視窗在頁面畫出來之前是黑的;先藏起來,使用者就不會看到「先黑再變」。
   - 注意 window-state 外掛會還原「可見」:它的 `StateFlags` 要拿掉 `VISIBLE`,不然它會在頁面載入之前就把視窗打開。
+  - **逾時退路(技術顧問 2026-10-16,必修)**:頁面載入失敗或卡住時,不能讓使用者永遠看不到視窗(看起來像程式沒開)。
+    規則:載入完成就顯示;**超過 3 秒**還沒完成,也照樣顯示(這時可能先黑一下,可以接受),並寫一行 `log::warn!`(說是哪一個視窗、等了多久)。
+    - 每個視窗**只顯示一次**:載入完成與 3 秒到時,先到的那一個顯示;後到的什麼都不做。
+    - 載入在 3 秒內完成時,不寫 warn。
+    - 判斷邏輯放 `window_mode.rs`,不碰時鐘與視窗,才測得到。例如 `pub const SHOW_FALLBACK: Duration = Duration::from_secs(3);`,
+      加一個小狀態(例如 `ShowGate`):`on_page_finished() -> bool`、`on_timeout() -> bool`,回傳「這一次要不要顯示」;`on_timeout` 回 true 時呼叫端寫 warn。
+      main.rs 在 page load 的 `Finished` 呼叫前者,另開一個計時(3 秒)呼叫後者。名字由實作者定,但要能不開視窗就測。
 - 啟動失敗時開的 `setup` 視窗(`start_screen`)**不改**:它不是 HUD 的畫面,照舊有系統外框。
 - 置頂照舊:X11 建好視窗後 `set_always_on_top(true)`、拿到焦點時再設一次(`apply_session_behaviour`)。
 
@@ -175,13 +184,14 @@ T15 退回四輪,三次是「一般狀態量了、hover / focus 沒量」或「�
 | 標題列、縮小 / 關閉鈕、縮放把手的長相 | 檢查器截圖(`Page.snapshotRect`)。四種狀態各一張(第 5 點的表),附切角外側、外圍一圈、框線顏色、放大法的數字 |
 | 兩張卡沒退步 | T15 的整套重拍:送出鍵不捲動可見、100 字內文、對錯符號、HP 條、作答欄與按鈕的狀態 |
 
-### 需要 ADR
+### 需要 ADR(ADR-072)
 
-協調者配號。要寫的:
+協調者配給 **ADR-072**。要寫的:
 
 - 合成器怎麼偵測:GDK `Screen::is_composited()`,建窗前問一次;不追執行中的變化(之後要追再開票,GTK 有 `composited-changed` 訊號)。
 - 結果怎麼交給頁面:`initialization_script`(user script,在頁面內容之前執行,不受頁面 CSP 管);不用 `invoke`(非同步,會先畫一次錯的)、不用 URL 參數(要改兩張卡的程式)。
-- 視窗載入完才顯示,window-state 外掛不還原「可見」。
+- 視窗載入完才顯示,window-state 外掛不還原「可見」。**逾時退路:超過 3 秒還沒載入完也照樣顯示,寫一行 warn**(使用者不能永遠看不到視窗;代價是那一次可能先黑一下)。
+- 已知限制:合成器只問一次(執行中開關要重開 app);Wayland 上 `is_composited` 一律 true,只驗 X11。
 - 只驗 Linux;macOS(`macOSPrivateApi`)、Windows 的透明視窗跟 phase-4、phase-5 一起在實機上做。
 
 ## 使用者看得到的差別
@@ -189,9 +199,17 @@ T15 退回四輪,三次是「一般狀態量了、hover / focus 沒量」或「�
 - 兩個視窗沒有系統的標題列與外框了。視窗就是那塊切角的 HUD 面板;最上面是 HUD 自己的標題列(「教學卡」「考試卡」),右邊有 – 和 × 兩顆切角小按鈕。
 - 四個切角外面看得到桌面(有合成器時);沒有合成器時切角是淺灰的實心底,不會是黑的。
 - 拖標題列移動視窗、拖邊或角縮放;– 縮小、× 關閉,跟以前按系統的按鈕一樣。
-- 已知限制:點在切角外面那一小塊,點擊還是給視窗(視窗實際上是長方形)。
+- 已知限制:點在切角外面那一小塊,點擊還是給視窗(視窗實際上是長方形);執行中開關合成器要重開 app。全部見「已知限制」。
+- 頁面卡住超過 3 秒時,視窗照樣出現(可能先黑一下),不會像程式沒開。
 - 標題列佔掉上面約 30 像素,卡片內容往下移。
 - 視窗打開時不會先閃一下黑的。
+
+## 已知限制(不在這張修)
+
+- 點在切角外面那一小塊,點擊還是給視窗(視窗實際上是長方形)。使用者選 A 時已知道。
+- **合成器只在建窗前問一次**:使用者在 app 執行中開或關合成器,畫法不會跟著變,要重開 app。
+- **Wayland 上 `is_composited` 一律是 true**(Wayland 的合成器就是顯示伺服器)。這張只驗 X11 的兩種情況(有合成管理員、沒有)。
+- 逾時退路顯示的那一次,沒有合成器時可能先黑一下(頁面還沒畫好)。只在載入超過 3 秒時發生。
 
 ## 紅測試(另一個角色寫,開發 worker 不改)
 
@@ -203,6 +221,7 @@ T15 退回四輪,三次是「一般狀態量了、hover / focus 沒量」或「�
 | 2 | 權限 | 讀 `capabilities/default.json`:`permissions` 跟那六條的集合相等,`windows` 不變 |
 | 3 | 頁面程式 | vitest 讀 `window_mode.js`,在 `node:vm` 裡配一個假的 `document.documentElement.classList` 跑兩種模式,看 class;靜態掃描禁止 `innerHTML`、`<style>`、`style` 屬性、`invoke`、`await`、`setTimeout`;class 名字跟 `layout.ts` 的兩個常數一致 |
 | 3 | Rust 純函式 | `apps/desktop/src-tauri/tests/window_mode.rs`(獨立檔,不寫在實作檔的 `mod tests`):`mode_for(true/false)`、`init_script` 開頭那行是合法 JSON、後面就是 `window_mode.js` 的內容 |
+| 1 | 逾時退路 | 同一個 Rust 測試檔:用一個**故意不結束載入的頁面**(測試替身,只會叫 `on_timeout`、永遠不叫 `on_page_finished`)→ 要顯示一次、要警告;載入在逾時前完成 → 顯示一次、`on_timeout` 回 false(不警告);逾時之後才完成 → `on_page_finished` 回 false(不顯示第二次);`SHOW_FALLBACK` 是 3 秒。測試不真的等 3 秒(直接呼叫兩個方法);另可加一條靜態檢查:main.rs 有計時並在逾時時呼叫 `log::warn!` |
 | 5、7 | 縮小 / 關閉鈕 | 展示頁勾「無框」與「假視窗按鈕」:四種狀態的切角外側、外圍一圈、框線中點顏色、`outline` 計算樣式、放大法、focus vs hover 像素差 |
 | 6 | 縮放把手 | hover 時計算 `background-color` 透明;面板切角外側 0 個橘色點 |
 | 7 | 框線顏色 | HudButton、HudField 在 hover / focus 時四邊中點 (231, 119, 31) ±10 |
