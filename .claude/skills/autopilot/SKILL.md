@@ -658,6 +658,52 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent openco
 | Claude(Opus 5.5 xhigh) | T3 階段 A(大量測) | 帳面約 $16.26;7d 額度約 +1 個百分點;5h 沒量到 |
 一張小票約 $0.9–2.6;審核約 $0.26;Claude 的大張約 $16。**用哪個 worker 是使用者的決定**,這張表只給選擇用。
 
+## 4g. 2026-10-15 累積規則(技術顧問逐條批准;每條都是當天踩到或量到的)
+
+### 角色與派工
+1. **每張工單兩個角色**:測試 agent 先寫紅測試與步驟定義並 commit(不寫 gherkin、不碰實作),開發 worker **只改實作**,驗收者(不是作者)再驗。**起草工單、寫紅測試、審 UI 不要是同一個人**(T2c-2:前端起草,驗收·測試 agent 寫紅)。
+2. **派工提示要列「受保護的測試檔」**:`*.test.ts`、`features/steps/**`、Rust 的 tests 目錄、test-support、fixtures、`.feature`、向量檔。worker 覺得測試有錯,寫進報告的「待協調」,不改。驗收一律用「測試檔只能來自測試 agent 的 commit」比對(`git diff --name-only <基底>..HEAD`)。
+3. **開發 worker 的起點分支由協調者組**:最新 origin/main + 測試 agent 的紅分支(+ 該票前置分支),在主 repo 開臨時 worktree 合好、驗過基底,再 fetch 進 workers clone;派工後驗 `git merge-base --is-ancestor origin/main HEAD`。
+4. **R2(落點互斥)要把 review 狀態的工單也算進去**,不只 dispatched。落點含 `packages/contracts` 的工單不可同時進行。
+
+### 重活規則(R3)與 load
+5. **重活(整條鏈、cargo 編譯、cargo-mutants、Stryker、cucumber 全 feature、`tauri dev`/`build`)同一時間只准一個**,由協調者排位子:誰拿位子誰在完成時回「釋放」。位子順序寫進訊息,不靠默契。`-j`/`CARGO_BUILD_JOBS` 不是排程:2026-10-15 12:50 開發 worker 同時跑 24 個 cargo-mutants 行程,load 34,兩邊的測試都可能誤紅。
+6. **開發 worker 不跑任何變異測試**(cargo-mutants、Stryker、`apps/desktop/src-tauri/run-mutants.mjs`、`npm run mutate`)——那是驗收者的。開發 worker 對 mutants 只剩一件事:把新 Rust 檔補進 `.cargo/mutants.toml` 的 examine_globs。
+7. **所有 cargo、vitest、cucumber 指令前面加 `CARGO_BUILD_JOBS=2`**(vitest 與 cucumber 會重編 lc-fs)。重活期間,開發 worker 在 5 分鐘 load 平均超過 8 時先做不需編譯的部分(讀、寫程式、tsc、靜態測試)。
+8. **load 高時量到的紅不當真紅**:先在低負載重跑再下判斷。
+
+### 量測(唯一量法)
+9. **learning/ 的量法只有這一個**(顧問 2026-10-15 裁決;`learning/` 底下有 `.git`,含 `.git` 的量法會因 git 操作而變;排序要固定語系):
+   ```bash
+   cd /data/python/llm_learning-cards/learning && LC_ALL=C find . -path ./.git -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16
+   find . -path ./.git -prune -o -type f -print | wc -l        # 檔數(不含 .git)
+   wc -l < state/log.jsonl                                     # 帳本行數
+   ```
+   **基準值(2026-10-15 量):64 檔 / c5aa80b18b474ed4 / 52 行。** 基準會因使用者真的用而改變;不一致時先確認「資料被動了」還是「量法不同」。舊值 168 / 959b2661…(含 .git)與 64 / 307b6f60…(沒設 LC_ALL)作廢。派工提示與證據只用這一個量法。
+10. **指令偵測行程時,看 `/proc/<pid>/exe`,不要只比對 cmdline 字串**:Claude worker 的 cmdline 帶整段派工提示,會含「cargo」「mutants」等字,造成誤判;`orca-ide worktree ps | grep` 也會比中自己的命令字串。
+
+### 驗證鏈(合併後)
+11. **從全新簽出跑**:`git worktree add --detach <新目錄> <合併 commit>`,只用 `tar` 複製 `node_modules`(排除 `.vite`、`.vite-temp`),**不帶 `apps/desktop/src-tauri/target`**(啟動前 `ls` 確認不存在),`ls <目錄>/.env` 必須不存在。預檢先跑:`npx tsc --noEmit`、`npm run boundaries`、`npx tsx scripts/check-doc-links.ts`、`npx tsx scripts/check-adr-numbers.ts`,再 `CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 TEMPLATE_DIR=<釘 v1.6.8 的目錄> npm run check:all`,另跑 `env -u TEMPLATE_DIR npm run check:gates`。證據帶 host、核數、worker 數、起訖時間與 1/5/15 分 load、樹 sha 前後、porcelain、learning/ 前後(用上面的唯一量法)。
+12. **只動文件的批次不重跑整條鏈**,但要重跑預檢(第 11 條前四項加 `lint:docs`、`check:gates`),並在證據裡**照實寫**「沒重跑完整鏈,上一批的鏈仍有效」。
+13. **合併衝突照顧問裁決的那一版**,合併後 `git diff <合併前> HEAD -- <該檔>` 必須為空(確認真的是那一版),並讀過那個檔;`git merge` 沒報衝突不代表對(見 §4a)。
+14. **單步驟確認**:多步驟指令用 `set -e` 或逐步確認,不要用長串 `&&` 把 `cd` 放在可能失敗的步驟之後(曾經把 node_modules 解回主目錄自己身上)。
+
+### 文件與程式習慣
+15. **doc-links**:文件(含工單、證據、報告)不要把「路徑:行號」放進反引號,寫成「路徑 第 N 行」純文字;反引號的相對路徑相對於文件所在目錄。送文件分支前先單跑 `npx tsx scripts/check-doc-links.ts`,紅了直接退回作者。
+16. **改函式簽章時 `git grep` 所有呼叫端,包含 `.mjs`、`.js`**(tsc 不檢查它們):T5 改了 `strykerLockPath` 的簽章,`apps/desktop/src-tauri/run-mutants.mjs` 還傳字串,一跑就 TypeError。驗收清單也加這條。
+17. **新增任何 `.ts` 要登記 `scripts/boundaries.owners.json`**,`npm run boundaries` 綠才交件。
+18. **刪檔要連引用它的文件連結一起掃**(doc-links 守門會紅)。
+19. **worker 不跑 `check:all` 時,收批前先跑 `npx tsc --noEmit`**。
+
+### 用量與預算
+20. **Claude worker 的名目 `$` 只記錄,不拿來煞車**(Max 訂閱,不是現金);**真正的停止線是額度**:`7d` 比開工漲超過 3 個百分點,或 `5h` 超過 80%,立刻停。**付現的 worker(grok、opencode)才用 `$` 煞車**:opencode 不守預算(T5 $25.39/預算 $6、T7 $9.37/預算 $4),要每輪量 `$`,到預算立即 `opencode api POST /api/session/{id}/interrupt`。
+21. **opencode 的對話在背景服務,關 TUI 不會停**;重開前先 `opencode api GET /api/session/active`。解析 `opencode session export <id>` 要用 `python3 -I`(輸出前綴不是 JSON)。
+22. **`--live` 與任何會打真 provider 的動作,煞車延長到 T9 合併為止**(T9:帳本對 tokens 非數字/負數、ts 不合法的 llm_call 行低估花費,F-4)。
+
+### 合併後的收尾
+23. **收 worker 要三件加四邊**(見 §4f):porcelain 0、HEAD 已在 origin/main 或已另存成分支、畫面閒置無進行中工作;刪後目錄、`git worktree list`、分支、行程都不在。
+24. **一輪只合一條就通知一次**;送出「請驗推」後 main 凍結到顧問回「已推」或「退回」。
+
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
 ```
