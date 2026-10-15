@@ -10,6 +10,8 @@ must_catch:
   - 同一天再跑一次,題目集合被重建(當天新到期的卡混進來,或順序變了),而不是用第一次建好的那一份
   - 中斷後續答從第一題重新開始,或進度不是「已答 2 / 共 5」,或已經答過的卡又被問一次
   - 跨午夜沒有重建,或昨天的快取檔還留著,或昨天沒答的卡沒有多逾期一天
+  - 續答後小結只算本次執行答的(passed / returned 沒有包含早先執行已答的卡),或明日預估的回退數用的是本次的計數器
+  - 批改失敗的題被算進 passed 或 returned,或沒有列「待重試 N 題」(N 不是名單裡沒有今天 history 的卡數),或沒印「本次作答 N 題」
   - 快取壞掉(不是合法 JSON、或欄位不合格式)時整個指令當掉,或沒有重建,或沒有寫一筆 warning 事件,或把已經記錄的答案忘掉
   - --pause 把任何一張卡記成答錯(reviews.json 有變動),或沒有在快取標記暫停
   - 暫停的那天再跑,仍然開始問題;或沒有說「今天已暫停」
@@ -30,6 +32,7 @@ must_catch:
 > 規格來源:`features/11-review-cli/phase-2.feature`(場景 1–8,**不改**)、同檔新增的 3 個 snapshot 場景(與本工單同批進來)、
 > `features/11-review-cli/FEATURE.md` 的「snapshot 的呼叫點(ADR-042)」、`features/01-data-layer/phase-4.feature`。
 > **gate 的解讀**:`features/11-review-cli/NEXT.md` 寫「I2 通過」,依 **ADR-073**(I2 不打 tag,自動驗收通過、人工確認延到 I4)要讀成「I2 自動驗收通過」。
+> 小結的算法(今天這一輪)依顧問 2026-10-16 裁決;`phase-2.feature` 因此新增 2 個場景,既有場景文字不動。
 > 這是 I3 的第一張工單(I3 在 I2 自動驗收通過的基礎上開工)。
 
 ## 已裁決的取捨(技術顧問 2026-10-16)
@@ -64,7 +67,19 @@ phase-1(I2)做好了「建 session → 逐題作答 → 立即落地 → 小結�
 - **之後同一天執行**:讀快取,**題目集合與順序用快取裡那一份**(`queue`、`reteach`、`total_due`、`deferred`),不再呼叫 `selectSession` 重新選;
   當天新到期的卡不加進來(等明天,NEXT.md 已定案)。
 - **已答的不再問**:快取的 `queue` 裡,`reviews.json` 該卡的 `history` 有一筆 `date === today` 者視為已答,略過。進度分子 = 已略過 + 目前題號,分母 = `total_due`
-  (例:5 題答了 2 題,續答時顯示「3/5」,小結仍是 5 題的結果)。續答時 `passed`/`failed` 的計數只算本次執行答的,與 phase-1 一致。
+  (例:5 題答了 2 題,續答時第一題顯示「3/5」,分母是當天整個 session 的題數。)
+- **小結是「今天這一輪」的結果**(顧問裁決 2026-10-16,取代「只算本次執行」):有當日快取就表示**一天一個 session**,續答是同一個 session 的延續,不是新的一次。
+  小結的 `passed` / `returned` 從 `reviews.json` 算,不從記憶體的計數器抄:
+
+  - 範圍 = 當日快取名單(`queue`)裡的卡,而且該卡 `history` 有 `date === today` 的筆。
+  - 一張卡「通過」= 它今天的那幾筆(stage 2 會有填空、應用兩筆)每一筆的有效結果都是通過;**有效結果 = `revised_to ?? pass`**(雲端改判過的以改判為準)。
+    只要有一筆是未通過,這張卡就是「回退」(returned)。每張卡只算一次。
+  - 批改失敗的題(卡片沒動、`history` 沒有今天的筆)**不算進 passed / returned**,另外列成「待重試 N 題」:N = 名單裡沒有今天的 `history` 的卡數(跑完整個迴圈後留下的就是它們;下次續答會再問,見 Q2)。
+  - 另加一行「**本次作答 N 題**」:N = **這一次執行**裡使用者送出答案的題數(填空題、應用題各算 1 題;批改失敗的也算,因為使用者答了)。這是唯一只算本次的數字。
+  - 文字(沿用 phase-1 的英文小結格式;紅測試只釘數字):`<P> passed, <R> returned.`、`Answered this run: <N>.`、`Retry later: <K> question(s).`(K = 0 時整行不出現,取代 phase-1 的 `N question(s) had a grading error and were skipped.`)、`Tomorrow: …`(照舊)。
+  - 明日預估的 `returnedToday` 也用同一個 R(今天這一輪的回退數),不再用本次執行的計數器。
+  - 一次跑完、沒有續答的 session,小結跟 phase-1 完全一樣(phase-1 的小結場景不變);`SessionSummaryInput` 多 `answeredThisRun`、`retryLater` 兩個欄位,`summary.test.ts` 由測試 agent 同步。
+- **本次作答 0 題**(例如續答時名單全是已答、或進來就離開):照樣印小結,`Answered this run: 0.`;不呼叫 snapshot(見第 4 點)。
 - **跨日**:快取的 `date` 不等於今天(或檔名日期不等於今天)→ 用 `reviews.json` 重新建;**建好今天的之後**刪掉這個 `<vault_id>` 資料夾裡所有其他日期的 `session-*.json`(別的帳本的資料夾不動)。
   昨天沒答的卡仍然到期,所以自然多逾期一天(04 的 `overdue_days` 由 `reviews.json` 算,不是從快取抄)。
 - **快取讀不到或壞掉**(不是合法 JSON、或欄位不合下面的格式):丟掉、重建、**寫一筆 `warning` 事件**到 `state/log.jsonl`(`reason: "session-cache-invalid"`,`path` 是快取檔的檔名,不寫絕對路徑;
@@ -97,7 +112,7 @@ phase-1(I2)做好了「建 session → 逐題作答 → 立即落地 → 小結�
 
 - `scripts/review.ts` 的 `main()` 在印完 `renderSummary(...)` **之後**呼叫一次 `snapshotLearningDir(dir)`(`@core/schema/git-repo.js`)。
 - `--dry-run`、`--pause`、暫停日的直接執行、`--unpause` 之後**沒有答任何題就離開**:不呼叫 snapshot(沒有變更 snapshot 本來也是 no-op,但 dry-run 的契約是不寫任何檔,commit 也是寫)。
-  其餘照一般結束:答完一題以上就呼叫。
+  其餘照一般結束:本次作答 ≥ 1 題就呼叫。
 - **snapshot 失敗不影響複習**:不改退出碼、不丟錯;印一行提示。`not-a-repo` 的提示要說「跑 `cli.ts init` 就會補上版本控制」;其他失敗印原因。
 - `11-review-cli → 01-data-layer` 的 boundaries 例外已經在 `scripts/boundaries.allow.json`,不新增。
 
@@ -121,6 +136,7 @@ phase-1(I2)做好了「建 session → 逐題作答 → 立即落地 → 小結�
 |---|---|---|
 | 1 | 當日集合固定、續答、已答不再問、跨日、壞快取 | `phase-2.feature` 場景 1–4、7 的步驟定義(`features/steps/review-cli-phase2.steps.ts`),在暫存的 learning 目錄上跑真的 `scripts/review.ts`(輸入用 stdin,環境變數 `XDG_CACHE_HOME`、`HOME` 指向暫存目錄),查 `reviews.json`、快取檔、`log.jsonl` |
 | 1 | 快取格式與位置 | `session/cache.test.ts`:`SessionCacheSchema` 接受上面的格式、拒絕未知 version / 缺欄位 / 多餘的 `learned_at`;路徑在 `XDG_CACHE_HOME` 底下(測試一律 `mkdtemp` 當 `XDG_CACHE_HOME`;空字串視同未設 → `$HOME/.cache`,`HOME` 也用暫存目錄);`<vault_id>` 分開(兩本帳本互不看見);沒有 vault-id 時用 `path-<16 hex>`;寫入走 `writeFileAtomic`(殘檔 `.tmp` 不留);`learning/` 底下沒有多出任何檔案 |
+| 1 | 小結 | 新增的 2 個 phase-2 場景(續答後的小結涵蓋整天、批改失敗列待重試);`summary.test.ts` 的 `SessionSummaryInput` 新欄位;passed/returned 以 `revised_to ?? pass` 與 stage 2 兩筆合成一張卡驗證;未續答的 session 小結位元組與 phase-1 相同 |
 | 2 | 暫停 | 場景 5、6;另測 `reviews.json` 位元組不變、`--pause`+`--unpause` 同時給 → 1 |
 | 3 | dry-run | 場景 8;快取位元組與 mtime 不變;沒有快取時不建立 |
 | 4 | snapshot | 新增的 3 個場景(結束時 snapshot、dry-run 不 snapshot、失敗不影響退出碼與 not-a-repo 的提示);用暫存 git repo 驗 commit 真的出現(且 commit 裡沒有快取),用非 repo 目錄驗提示 |
