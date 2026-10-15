@@ -237,6 +237,10 @@
       "infra"
     ],
     [
+      "scripts/machine-lock.test.ts",
+      "infra"
+    ],
+    [
       "scripts/run-tests.ts",
       "infra"
     ],
