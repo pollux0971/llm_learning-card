@@ -47,6 +47,8 @@ import {
 } from '../support/review-session-harness.js';
 import type { LearningWorld } from './_world.js';
 
+/** 每個會起 review.ts 子程序的步驟(一次 2–10 秒,多次執行會更久)。 */
+const STEP_TIMEOUT_MS = 180_000;
 const YESTERDAY = addDays(TODAY, -1);
 /** 摘要的第一行(phase-1 的 renderSummary):`3 passed, 0 returned.` */
 const SUMMARY_LINE = /\d+ passed, \d+ returned\./;
@@ -157,7 +159,7 @@ Given('a learning directory in daily use', function (this: LearningWorld) {
 
 // ---------------------------------------------------------------- 場景 1:當日集合固定
 
-Given('the session was created this morning with {int} questions', async function (this: LearningWorld, n: number) {
+Given('the session was created this morning with {int} questions', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld, n: number) {
   const s = st(this);
   resetDue(this, idsFrom(n), descending(n, n + 2));
   // 看到第一題就離開:當天的快取已經建好,什麼都還沒答
@@ -178,7 +180,7 @@ Given('more cards have become due since', function (this: LearningWorld) {
   s.reviewsBefore = readFileSync(reviewsPath(s.vault), 'utf8');
 });
 
-When('the review command is run again today', async function (this: LearningWorld) {
+When('the review command is run again today', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   await run(this, { answers: 'all' });
 });
 
@@ -201,7 +203,7 @@ Then('the newly due cards are left for tomorrow', function (this: LearningWorld)
 
 // ---------------------------------------------------------------- 場景 2:續答
 
-Given('{int} questions were due and {int} were answered before quitting', async function (this: LearningWorld, total: number, answered: number) {
+Given('{int} questions were due and {int} were answered before quitting', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld, total: number, answered: number) {
   const s = st(this);
   resetDue(this, idsFrom(total), descending(total, total + 2));
   await run(this, { answers: answered });
@@ -211,7 +213,7 @@ Given('{int} questions were due and {int} were answered before quitting', async 
   assert.equal(done.length, answered, `離開前應該已經答了 ${answered} 題,磁碟上只有 ${done.length} 題有今天的作答`);
 });
 
-When('the review command is run again the same day', async function (this: LearningWorld) {
+When('the review command is run again the same day', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   await run(this, { answers: 'all' });
 });
 
@@ -229,11 +231,14 @@ Then('the progress shows two of five', function (this: LearningWorld) {
   // 已答 2 題、共 5 題:續答的進度從 3/5 起算,分母仍是 5,絕不是從 1/3 重新數
   assert.deepEqual(out.asked.map((a) => [a.index, a.total]), [[3, 5], [4, 5], [5, 5]], `進度不對:${JSON.stringify(out.asked)}`);
   assert.doesNotMatch(out.stdout, /\((1|2)\/5\)/, '不該再出現第 1、2 題的進度');
+  // 小結是「今天這一輪」(顧問裁決):早上答的 2 題 + 下午答的 3 題 = 5 題的結果,另外說明本次作答 3 題
+  assert.match(out.stdout, /5 passed, 0 returned\./, `小結應該是整個 session 5 題的結果:\n${out.stdout}`);
+  assert.match(out.stdout, /本次作答\s*3\s*題/);
 });
 
 // ---------------------------------------------------------------- 場景 3:跨午夜
 
-Given('{int} questions were left unanswered yesterday', async function (this: LearningWorld, n: number) {
+Given('{int} questions were left unanswered yesterday', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld, n: number) {
   const s = st(this);
   // 3 張在「昨天」到期、沒答就離開(昨天的快取建好了)
   const ids = idsFrom(n);
@@ -248,7 +253,7 @@ Given('{int} questions were left unanswered yesterday', async function (this: Le
   writeFileSync(s.otherVaultStale, '{}\n', 'utf8');
 });
 
-When('the review command is run today', async function (this: LearningWorld) {
+When('the review command is run today', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   await run(this, { answers: 'all' });
 });
 
@@ -345,7 +350,7 @@ Given('a card was answered this morning', function (this: LearningWorld) {
   seedAnsweredThisMorning(this, 'sec-0006', idsFrom(4));
 });
 
-When('the session is rebuilt for any reason', async function (this: LearningWorld) {
+When('the session is rebuilt for any reason', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   const s = st(this);
   // 任何原因的重建:這裡是把當日快取刪掉(使用者清過 ~/.cache)
   rmSync(cachePath(s.vault, this.today), { force: true });
@@ -363,7 +368,7 @@ Then('that card is not asked again today', function (this: LearningWorld) {
 
 // ---------------------------------------------------------------- 場景 5、6:暫停
 
-When('the review command is run with the pause option', async function (this: LearningWorld) {
+When('the review command is run with the pause option', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   const s = st(this);
   s.reviewsBefore = readFileSync(reviewsPath(s.vault), 'utf8');
   s.logBefore = existsSync(join(s.vault.dir, 'state/log.jsonl')) ? readFileSync(join(s.vault.dir, 'state/log.jsonl'), 'utf8') : '';
@@ -386,7 +391,7 @@ Then('the session cache marks the day as paused', function (this: LearningWorld)
   assert.equal(cache.date, this.today);
 });
 
-Then('running the command again says the day is paused', async function (this: LearningWorld) {
+Then('running the command again says the day is paused', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   const out = await run(this, { answers: 'all' });
   assert.equal(out.status, 0, out.output);
   assert.match(out.output, PAUSED_TODAY);
@@ -394,7 +399,7 @@ Then('running the command again says the day is paused', async function (this: L
   assert.equal(out.asked.length, 0, '暫停的那天不該問任何題目');
 });
 
-Given('today was paused', async function (this: LearningWorld) {
+Given('today was paused', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   const s = st(this);
   resetDue(this, idsFrom(5), descending(5, 7));
   const out = await run(this, { args: ['--pause'] });
@@ -410,7 +415,7 @@ Given('today was paused', async function (this: LearningWorld) {
   writeReviews(s.vault, reviews);
 });
 
-When('the review command is run with the unpause option', async function (this: LearningWorld) {
+When('the review command is run with the unpause option', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   await run(this, { args: ['--unpause'], answers: 'all' });
 });
 
@@ -427,7 +432,8 @@ Then('answering continues normally', function (this: LearningWorld) {
   const s = st(this);
   const out = lastRun(this);
   assert.equal(out.status, 0, out.output);
-  assert.match(out.stdout, SUMMARY_LINE);
+  assert.match(out.stdout, /5 passed, 0 returned\./);
+  assert.match(out.stdout, /本次作答\s*5\s*題/);
   const reviews = readReviews(s.vault);
   for (const id of s.originalQueue) {
     assert.ok(reviews[id]!.history.some((h) => h.date === this.today && h.pass), `${id} 的作答應該已經落地`);
@@ -437,7 +443,7 @@ Then('answering continues normally', function (this: LearningWorld) {
 
 // ---------------------------------------------------------------- 場景 8:dry-run 反映真實 session
 
-Given('a session already exists for today with {int} of {int} answered', async function (this: LearningWorld, answered: number, total: number) {
+Given('a session already exists for today with {int} of {int} answered', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld, answered: number, total: number) {
   const s = st(this);
   resetDue(this, idsFrom(total), descending(total, total + 2));
   await run(this, { answers: answered });
@@ -492,7 +498,7 @@ Given('a learning directory that is not a git repository', function (this: Learn
   assert.ok(!existsSync(join(s.vault.dir, '.git')), 'fixture 目錄不該是 git repo');
 });
 
-Given('the person answers every due question', async function (this: LearningWorld) {
+Given('the person answers every due question', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
   const s = st(this);
   await run(this, { answers: 'all' });
   assert.ok(lastRun(this).asked.length >= 3, `三張到期的卡都該被問:\n${lastRun(this).output}`);

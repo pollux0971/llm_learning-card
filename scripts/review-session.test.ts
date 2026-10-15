@@ -306,14 +306,16 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
   );
 
   it(
-    '續答時 passed / returned 只算本次執行答的:先答 1 題,再續答剩下 3 題(第一題故意答錯)→ 「2 passed, 1 returned.」',
+    '小結是「今天這一輪」(顧問裁決):先答 1 題、續答剩下 3 題(續答第一題故意答錯)→ 「3 passed, 1 returned.」,另有「本次作答 3 題」',
     async () => {
       const v = dueVault(4);
       await runReview(v, { answers: 1 });
       expect(readReviews(v)['sec-0001']!.history).toHaveLength(1);
       const out = await runReview(v, { answers: 'all', wrongAt: [0] });
       expect(out.asked.map((a) => a.index)).toEqual([2, 3, 4]);
-      expect(out.stdout).toMatch(/2 passed, 1 returned\./);
+      expect(out.stdout).toMatch(/3 passed, 1 returned\./);
+      expect(out.stdout).toMatch(/本次作答\s*3\s*題/);
+      expect(out.stdout).not.toMatch(/待重試/);
     },
     TEST_TIMEOUT_MS,
   );
@@ -328,10 +330,17 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
       expect(first.asked.map((a) => a.card).sort()).toEqual(['sec-0001', 'sec-0002']);
       expect(readReviews(v)['sec-0001']!.history, '審核失敗不寫 history').toEqual([]);
       expect(readReviews(v)['sec-0002']!.history).toHaveLength(1);
+      // 批改失敗的題沒有 history:不算 passed / returned,另列「待重試」
+      expect(first.stdout).toMatch(/1 passed, 0 returned\./);
+      expect(first.stdout).toMatch(/待重試\s*1\s*題/);
+      expect(first.stdout).toMatch(/本次作答\s*2\s*題/);
 
       const second = await runToEnd(v, { applyText: 'PASSALL' });
       expect(second.asked.map((a) => a.card), '沒有結果的卡要再問,已經答完的不再問').toEqual(['sec-0001']);
       expect(readReviews(v)['sec-0001']!.history).toHaveLength(1);
+      expect(second.stdout).toMatch(/2 passed, 0 returned\./);
+      expect(second.stdout).toMatch(/本次作答\s*1\s*題/);
+      expect(second.stdout).not.toMatch(/待重試/);
     },
     TEST_TIMEOUT_MS,
   );

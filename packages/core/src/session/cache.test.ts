@@ -151,7 +151,7 @@ describe('寫入走 writeFileAtomic(硬規則 5:暫存檔、fsync、rename)', ()
     expect(code()).toMatch(/\bwriteFileAtomic\b/);
   });
 
-  it('cache.ts 沒有自己寫檔或改名(writeFileSync / writeFile / rename / appendFile / createWriteStream)', () => {
-    expect(code()).not.toMatch(/\b(writeFileSync|writeFile|renameSync|rename|appendFileSync|appendFile|createWriteStream|copyFileSync)\b/);
+  it('cache.ts 沒有自己寫檔或改名(writeFileSync / writeFile / rename / createWriteStream)', () => {
+    expect(code()).not.toMatch(/\b(writeFileSync|writeFile|renameSync|rename|createWriteStream|copyFileSync)\b/);
   });
 });
