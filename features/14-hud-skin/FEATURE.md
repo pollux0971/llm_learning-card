@@ -74,7 +74,7 @@ ADR-035 第 2 點寫「06-test-card 在 I3 前不 import ui-shared」,那條是�
 | 位置 | `packages/ui-shared/src/hud/` | ui-shared 已是 workspace,不改 root `package.json`;owners 表加 `packages/ui-shared/src/hud/` → 14(比 07 的 `packages/ui-shared/` 長,協調者改) |
 | 元件 | Svelte 5 | 跟 06、07 同一套 |
 | 樣式 | 全部放 `.css` 檔與元件的 `<style>` | 不用 HTML 的 `style=` 屬性、不插 inline `<style>`(桌面版 CSP 是 `default-src 'self'`,沒有 `style-src`) |
-| 字型 | 開放授權(SIL OFL 1.1)的拉丁字型,只用在標題、數字、按鈕的英文字;中文用系統字型 | 候選 Rajdhani(OFL 1.1)。字型檔與 `OFL.txt` 一起放在 `hud/fonts/`,從本機載入,不連外部字型服務(CSP)。**選定後在這一列寫明字型名稱、版本、授權** |
+| 字型 | 開放授權(SIL OFL 1.1)的拉丁字型,只用在標題、數字、按鈕的英文字;中文用系統字型 | 候選 Rajdhani(OFL 1.1)。字型檔與 `OFL.txt` 一起放在 `hud/fonts/`,從本機載入,不連外部字型服務(CSP)。**已選定(2026-10-15 回寫)**:Rajdhani Medium v1.201(Indian Type Foundry),SIL OFL 1.1,檔案 `Rajdhani-Medium.ttf` 與 `OFL.txt` 在 `hud/fonts/`,與上游 google/fonts 倉庫 ofl/rajdhani 的檔逐位元組相同(sha256 前 16 碼 12ff7dcfe4c206e3,驗收者 -ed 比對);`@font-face` 帶 `size-adjust`(大於 100%,T14),讓中英混排的大寫字高接近中文 |
 | 視窗 API | `@tauri-apps/api/window` 的縮小、關閉、開始拖曳、開始縮放拖曳 | 只在偵測到 Tauri 時呼叫;權限由 10 phase-6 開。關閉一律呼叫視窗的 `close()`(送出跟系統關閉同一個關閉請求),不直接結束程式、不直接藏視窗 |
 | 測試 | vitest(純函式與設定值的檢查)+ cucumber | 外觀本身走 `@manual`,由技術顧問判 |
 | 變異門檻 | 寬鬆,不強制 | UI;可自動的只有幾個純函式 |
@@ -95,7 +95,7 @@ ADR-035 第 2 點寫「06-test-card 在 I3 前不 import ui-shared」,那條是�
 
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
-| 1 | HUD 元件與展示頁(瀏覽器單獨跑) | Wave 0 | ready | |
+| 1 | HUD 元件與展示頁(瀏覽器單獨跑) | Wave 0 | done | 2026-10-15 |
 | 2 | 套到教學卡與考試卡 | 不綁整合點 | todo | |
 
 ## 驗收方式
