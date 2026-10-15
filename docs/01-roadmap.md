@@ -10,7 +10,7 @@
 | 欄位 | 值 |
 |---|---|
 | 目前階段 | **I1 · 內容管線 —— 通過**(2026-09-04,tag `I1`)。第四次真呼叫 `@e2e @llm` 全綠,兩條人工確認由技術顧問判定 PASS。下一步:12-prompt-quality/phase-2 的 gate 解除,之後 `/integrate I2` |
-| 目前 sprint | **2026-W37** — **沒有 feature phase 推進**,整週在基礎設施與量尺(見 `docs/sprints/2026-W37.md`)。⚠️ 09-12 發現**花錢的煞車在 `--live` 這條路上沒有接**:真呼叫不進 `learning/state/log.jsonl`,`llm-spend --today` 回報「確信的零」,每日上限一次都不會觸發。**修好之前不跑任何 `--live`。** 驗證中,見工單 T1。 |
+| 目前 sprint | **2026-W37** — **沒有 feature phase 推進**,整週在基礎設施與量尺(見 `docs/sprints/2026-W37.md`)。⚠️ 09-12 發現**花錢的煞車在 `--live` 這條路上沒有接**:真呼叫不進 `learning/state/log.jsonl`,`llm-spend --today` 回報「確信的零」,每日上限一次都不會觸發。**修好之前不跑任何 `--live`。** 驗證中,見工單 T1。(2026-10-15 補:T1/T5/T8/T9 合併、三項檢查綠,`--live` 煞車已解除,見 `.claude/skills/autopilot/SKILL.md` §4g 第 22 條。) |
 | 下一個 gate 已解除但沒人排的 | **`12-prompt-quality/phase-2`** —— gate 自 2026-09-04 解除,備註「由協調者安排」,**8 天沒被排**。2026-09-12 去排時撞出上面那三個洞。 |
 | 契約版本 | 1.4.0(§12 加帳本身分、§1 CategoryId 收窄,見 ADR-066、ADR-067) |
 | 最後更新 | 2026-09-12 |

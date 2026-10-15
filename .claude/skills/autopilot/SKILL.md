@@ -526,8 +526,8 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 第二個 clone `/data/python/llm_learning-cards-workers`(push URL 已停用)同時做到「推不出去」與「拿不到 key」。
 ⚠️ 但帳本(`resolveVaultLearningDir`,用 `git rev-parse --git-common-dir`)與 `.stryker.lock` 只解 worktree 不解 clone:
 三個 clone = 三份日上限。**開 clone 之前先列「還有什麼東西的範圍是從 repo 根算出來的」。**
-**煞車(2026-10-01 顧問):帳本範圍修好之前,任何 clone、任何 worktree 都不准 `--live` 或任何會打真 provider 的東西。**
-(2026-10-14 顧問確認解讀:**grok worker 自己的模型呼叫是 agent 的成本,不是專案的 LLM 呼叫**;專案程式碼的 `--live`、golden run 真模型仍禁止。)
+~~**煞車(2026-10-01 顧問):帳本範圍修好之前,任何 clone、任何 worktree 都不准 `--live` 或任何會打真 provider 的東西。**~~ **已於 2026-10-15 解除,現行規則見 §4g 第 22 條**(真呼叫只在主簽出跑,worker 的簽出沒有憑證)。
+(2026-10-14 顧問確認解讀:**grok worker 自己的模型呼叫是 agent 的成本,不是專案的 LLM 呼叫**;專案程式碼的 `--live`、golden run 真模型在當時禁止;2026-10-15 起依 §4g 第 22 條處理。)
 
 ### 非作者反向驗證(§2 第 1 步)要加的
 
@@ -679,7 +679,8 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent openco
    find . -path ./.git -prune -o -type f -print | wc -l        # 檔數(不含 .git)
    wc -l < state/log.jsonl                                     # 帳本行數
    ```
-   **基準值(2026-10-15 量):64 檔 / c5aa80b18b474ed4 / 52 行。** 基準會因使用者真的用而改變;不一致時先確認「資料被動了」還是「量法不同」。舊值 168 / 959b2661…(含 .git)與 64 / 307b6f60…(沒設 LC_ALL)作廢。派工提示與證據只用這一個量法。
+   **不寫死一個基準值**(顧問 2026-10-15 19:4x 裁決;帳本本來就會隨真呼叫與使用增長):**每次驗收前後各量一次,驗收期間三個數字必須完全相同**;帳本行數平時只能增加,而且只能在尾端追加,**變少、或中間的行被改了就是警報**。不一致時先確認「資料被動了」還是「量法不同」。舊值 168 / 959b2661…(含 .git)與 64 / 307b6f60…(沒設 LC_ALL)作廢。派工提示與證據只用這一個量法。
+   **參考值(2026-10-15,第一次真模型 golden run 之後):64 檔 / 41d8021b5937c60d / 67 行**(之前是 64 / c5aa80b18b474ed4 / 52;差的 15 行是 golden run 的 15 次呼叫,只追加)。參考值會隨使用過時,不是門檻。
 10. **指令偵測行程時,看 `/proc/<pid>/exe`,不要只比對 cmdline 字串**:Claude worker 的 cmdline 帶整段派工提示,會含「cargo」「mutants」等字,造成誤判;`orca-ide worktree ps | grep` 也會比中自己的命令字串。
 
 ### 驗證鏈(合併後)
@@ -698,11 +699,14 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent openco
 ### 用量與預算
 20. **所有 worker 的 `$` 只記錄,不拿來煞車**(使用者 2026-10-15 16:4x 在顧問 session 親口說:「GROK不需要限額」):Claude(Max 訂閱,名目)、grok、opencode 一律如此。工單的 `budget_usd` 只是估計值,實際花費照樣記進證據(寫原值、模型、耗時、session id),但**不因為超過預算而 interrupt**。**Claude worker 仍有額度停止線**(那是共用額度,不是預算):`7d` 比開工漲超過 3 個百分點,或 `5h` 超過 80%,立刻停。驗收證據照舊寫「花費 / 預算 = 幾倍」供使用者知道,不當作退回理由。
 21. **開發 worker 預設用 opencode + grok-4.7**(「暫停派 grok」已解除);grok 卡住、做不完(像 T5)時改派 Claude 接手。**已經開工的 worker 不中途換。**opencode 的對話在背景服務,關 TUI 不會停;**重開 opencode 之前先 `opencode api GET /api/session/active`**,避免同一個 worktree 同時跑兩個對話(那是重複做工,不是限額);停用 `opencode api POST /api/session/{id}/interrupt`。解析 `opencode session export <id>` 要用 `python3 -I`(輸出前綴不是 JSON)。
-22. **`--live` 與任何會打真 provider 的動作,煞車延長到 T9 合併為止**(T9:帳本對 tokens 非數字/負數、ts 不合法的 llm_call 行低估花費,F-4)。
+22. **`--live` 煞車 2026-10-15 19:3x 解除**(依據:T1 花費煞車、T5 帳本跨 clone 只有一本且驗身分、T8 壞行算「不知道」而拒絕真呼叫、T9 每一行都要符合 schema,加上 4df31b8 上的三項檢查全綠;顧問宣布)。**已知限制**:T10(逾時、重試、截斷那幾行會低估,每筆最多幾美分,優先度低);`.env` 的 `LLM_DAILY_CAP_USD` 每個簽出各一份(只有主簽出有 `.env`,worker 的簽出沒有憑證)。**真呼叫只在主簽出跑**,跑前、跑後各記一次 `npx tsx scripts/llm-spend.ts --today`;`llm-spend` 回 exit 1(到上限)或 exit 2(不知道)就停,**不重試**。解除不等於自動跑:每一次真呼叫都要有明確的工作理由(例如 golden run),並把花費寫進證據。第一次真呼叫:12-prompt-quality golden run,15 次、約 US$0.0919。
 
 ### 合併後的收尾
 23. **收 worker 要三件加四邊**(見 §4f):porcelain 0、HEAD 已在 origin/main 或已另存成分支、畫面閒置無進行中工作;刪後目錄、`git worktree list`、分支、行程都不在。
 24. **一輪只合一條就通知一次**;送出「請驗推」後 main 凍結到顧問回「已推」或「退回」。
+
+### 交件前(2026-10-15,顧問)
+25. **不准用 `git add -A`、`git add .`、`git commit -a`**:一律寫明要加的路徑。**交件前跑 `git diff --stat <基底>..HEAD`(也看 `git diff --name-only <基底> HEAD | sed 's#/[^/]*$##' | sort | uniq -c | sort -rn | head`),檔數與目錄分佈和預期不符就停下來。** 實例:T2c-2 驗收分支一個 `git add -A` 把 cargo-mutants 的輸出整包(`mutants.out/`,329 個檔)commit 進去,協調者合併後才由檔數量到;`.gitignore` 補上之後,**歷史裡仍有那 329 個檔**,最後由驗收者改寫自己的分支(該分支尚未推出)才乾淨。驗收「沒有某些檔」要看整段歷史:`git log --name-only <基底>..<tip> | grep -c <樣式>` 為 0,不能只看最後的樹。上游 dev-paradigm 也踩過(230337b「誤掃進版控的 580 個檔」)。**合併別人的分支之前先量檔案數與目錄分佈,再看測試結果。**
 
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
