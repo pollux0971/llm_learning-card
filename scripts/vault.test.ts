@@ -5,7 +5,7 @@
  * spawn 的子程序也只拿到沙箱的值。守門只 stat 真指標檔,不讀內容。
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -634,8 +634,123 @@ describe('驗收補測(T5 測試 agent):CLI 把 --force 與路徑接到 init', (
   it('init 沒給 --learning-dir 或值是另一個旗標:退出非 0,什麼都不建', () => {
     const box = sandbox();
     expect(cliRun(box, ['init']).status).not.toBe(0);
-    expect(cliRun(box, ['init', '--learning-dir', '--force']).status).not.toBe(0);
+    const flagAsValue = cliRun(box, ['init', '--learning-dir', '--force']);
+    expect(flagAsValue.status).not.toBe(0);
+    expect(flagAsValue.stderr).toContain('(沒給)');
     expect(readdirSync(box.config)).toEqual([]);
     expect(snapshotRealPointer()).toEqual(realPointerBefore);
+  });
+});
+
+describe('驗收補測(T5 測試 agent):輸出的精確形狀', () => {
+  function initOnce(box: Box, learning: string, extra: { force?: boolean } = {}): ReturnType<typeof initVault> {
+    return initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording([]), ...extra });
+  }
+
+  it('拒絕時 stdout 是空的、stderr 剛好以一個換行結尾', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    const b = learningDir(box.root, 'B');
+    expect(initOnce(box, a).exitCode).toBe(0);
+    for (const r of [initOnce(box, b), initOnce(box, 'relative/dir'), initOnce(box, '')]) {
+      expect(r.exitCode).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr.endsWith('\n')).toBe(true);
+      expect(r.stderr.endsWith('\n\n')).toBe(false);
+    }
+  });
+
+  it('「已初始化」的整段輸出與 stderr', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    expect(initOnce(box, a).exitCode).toBe(0);
+    const again = initOnce(box, a);
+    expect(again.exitCode).toBe(0);
+    expect(again.stdout).toBe(`已初始化:${pointerPathOf(box)} 指向這個 learning_dir,帳本身分相符,沒有改任何檔。\n`);
+    expect(again.stderr).toBe('');
+  });
+
+  it('--force 的輸出:先印舊指標原文(結尾沒換行就補一個,有換行不重複),再說已覆寫', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    const b = learningDir(box.root, 'B');
+    const rawNoNewline = JSON.stringify({ learning_dir: a, vault_id: UUID_B });
+    writePointerRaw(box, rawNoNewline);
+    const first = initOnce(box, b, { force: true });
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toBe(`舊指標(將被丟棄):\n${rawNoNewline}\n已用 --force 覆寫指標 ${pointerPathOf(box)}\n`);
+    expect(first.stderr).toBe('');
+
+    const box2 = sandbox();
+    const a2 = learningDir(box2.root, 'A');
+    const b2 = learningDir(box2.root, 'B');
+    const rawWithNewline = `${JSON.stringify({ learning_dir: a2, vault_id: UUID_B })}\n`;
+    writePointerRaw(box2, rawWithNewline);
+    const second = initOnce(box2, b2, { force: true });
+    expect(second.stdout).toBe(`舊指標(將被丟棄):\n${rawWithNewline}已用 --force 覆寫指標 ${pointerPathOf(box2)}\n`);
+  });
+});
+
+describe('驗收補測(T5 測試 agent):CLI 入口層', () => {
+  function cliRun(box: Box, args: string[], extraEnv: NodeJS.ProcessEnv = {}): { status: number | null; stdout: string; stderr: string } {
+    const r = spawnSync(process.execPath, ['--import=tsx', join(REPO, 'scripts/vault.ts'), ...args], {
+      cwd: REPO,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: { ...childEnv(box), ...extraEnv },
+    });
+    return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+  }
+
+  it('被別的模組 import 時不會自己跑 main(沒有輸出、退出碼 0)', () => {
+    const box = sandbox();
+    const r = spawnSync(process.execPath, ['--import=tsx', '-e', `await import(${JSON.stringify(join(REPO, 'scripts/vault.ts'))});`], {
+      cwd: REPO,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: childEnv(box),
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toBe('');
+  });
+
+  it('沒有子指令與不認得的子指令都印用法、退出 1', () => {
+    const box = sandbox();
+    for (const args of [[], ['bogus']]) {
+      const r = cliRun(box, args);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toBe('用法:npx tsx scripts/vault.ts init --learning-dir <絕對路徑> [--force] | npx tsx scripts/vault.ts show\n');
+      expect(r.stdout).toBe('');
+    }
+  });
+
+  it('init 途中丟出意外錯誤(設定目錄唯讀):退出 1,stderr 以「vault.ts 失敗」開頭,不留殘檔', () => {
+    if (process.getuid?.() === 0) return; // root 不受唯讀目錄限制,這個情境造不出來
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    chmodSync(box.config, 0o500);
+    try {
+      const r = cliRun(box, ['init', '--learning-dir', a]);
+      expect(r.status).toBe(1);
+      expect(r.stderr.startsWith('vault.ts 失敗')).toBe(true);
+      expect(readdirSync(box.config)).toEqual([]);
+    } finally {
+      chmodSync(box.config, 0o700);
+    }
+  });
+
+  it('init 的 stdout 與 stderr 由結果決定:成功時 stdout 有字 stderr 空;拒絕時 stderr 有字 stdout 空', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    const b = learningDir(box.root, 'B');
+    const ok = cliRun(box, ['init', '--learning-dir', a]);
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).not.toBe('');
+    expect(ok.stderr).toBe('');
+    const no = cliRun(box, ['init', '--learning-dir', b]);
+    expect(no.status).toBe(1);
+    expect(no.stdout).toBe('');
+    expect(no.stderr).not.toBe('');
   });
 });

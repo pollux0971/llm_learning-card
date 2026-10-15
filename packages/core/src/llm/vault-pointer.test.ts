@@ -525,6 +525,7 @@ describe('驗收補測(T5 測試 agent):拒絕訊息要指出是哪個檔、哪�
     if (!markerGone.ok) {
       expect(markerGone.reason).toBe('marker-mismatch');
       expect(markerGone.message).toContain(join(noMarker, 'config', 'vault-id'));
+      expect(markerGone.message).toContain('帳本身分標記不存在');
     }
 
     const other = learningWithMarker(box.root, 'other-id', `${UUID_B}\n`);
@@ -550,5 +551,46 @@ describe('驗收補測(T5 測試 agent):拒絕訊息要指出是哪個檔、哪�
     expect(detail('{"learning_dir":1,"vault_id":"a"}')).toContain('字串');
     expect(detail('{"learning_dir":"rel/dir","vault_id":"a"}')).toContain('絕對路徑');
     expect(new Set(['{', '[1]', '{"learning_dir":"/x"}', '{"learning_dir":"rel/dir","vault_id":"a"}'].map(detail)).size).toBe(4);
+  });
+});
+
+describe('驗收補測(T5 測試 agent):讀檔丟錯時的拒絕說明', () => {
+  it('指標檔存在但讀的時候丟錯:pointer-unreadable,訊息帶出路徑與底層錯誤', () => {
+    const box = sandbox();
+    writePointer(box.config, join(box.root, 'x'), UUID_A);
+    const deps = depsFor(box);
+    const result = resolveVerifiedLedger({
+      ...deps,
+      readFile: () => {
+        throw new Error('EACCES: simulated');
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('pointer-unreadable');
+      expect(result.message).toContain(pointerOf(box.config));
+      expect(result.message).toContain('EACCES: simulated');
+      expectBothHints(result.message);
+    }
+  });
+
+  it('標記檔存在但讀的時候丟錯:marker-mismatch,訊息說「讀不到」並帶出底層錯誤', () => {
+    const box = sandbox();
+    const dir = learningWithMarker(box.root, 'L', `${UUID_A}\n`);
+    writePointer(box.config, dir, UUID_A);
+    const base = depsFor(box);
+    const result = resolveVerifiedLedger({
+      ...base,
+      readFile: (path) => {
+        if (path.endsWith(join('config', 'vault-id'))) throw new Error('EIO: simulated');
+        return base.readFile(path);
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('marker-mismatch');
+      expect(result.message).toContain('讀不到');
+      expect(result.message).toContain('EIO: simulated');
+    }
   });
 });
