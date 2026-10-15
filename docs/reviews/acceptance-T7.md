@@ -14,9 +14,10 @@
 | # | 等級 | 項目 | 狀態 |
 |---|---|---|---|
 | B1 | 阻擋 | `npm run lint:docs` 紅:2 條連結指到被刪的 `lint/atomic-write.ts`,連帶 3 個測試紅 | 協調者已說明併批時另開 docs commit 修(連結改純文字) |
-| F1 | 偏離 | 工單 A3「不改 `atomic-write.test.ts`」,實際改了 1 條既有測試 | 理由成立(見下),請顧問確認 |
-| F2 | 提醒 | 寫紅測試與寫實作是同一份報告、同一個 worker | 請顧問確認是否違反「測試與實作不同 session」 |
-| F3 | 缺口 | 自選突變 X12 存活:`appendLineAtomic` 拆成兩次 `writeSync`,41 個測試仍綠 | 既有缺口,非 T7 引入;建議補一條 |
+| F1 | 偏離(顧問已裁成立) | 工單 A3「不改 `atomic-write.test.ts`」,實際改了 1 條既有測試 | 理由成立,新斷言更嚴 |
+| F2 | 違規(顧問已裁) | 寫紅測試與寫實作是同一個 worker | 由我正式收下測試,見 §12;補測見 §13 |
+| F5 | 缺口 | 被刪的 lint 測試有 1 條(`writeSync` 失敗)在 `writeFileAtomic` 這邊沒有替身,吞掉錯誤 382 個測試仍綠 | **已補測**,見 §13(`349104b`) |
+| F3 | 缺口 | 自選突變 X12 存活:`appendLineAtomic` 拆成兩次 `writeSync`,41 個測試仍綠 | **已補測**,見 §13(`ac47ecc`) |
 | F4 | 超支 | 實際花費 $9.37 / 預算 $4 = 2.34 倍,**超過 2 倍** | 協調者提供的數字,非我量得 |
 
 ## 1. 乾淨簽出與重編(流程第 1、2 步)
@@ -141,3 +142,92 @@ grok 的六條裡,我能證實的只有 F3 一條(而且是我借它的方向另
 - 沒有為 `appendLineAtomic` 補測試(X12),那是測試 agent 的事,我只交證據。
 - 冷啟動那 1 次 `deps.test.ts` 失敗沒抓到訊息原文,歸類未證實。
 - 完整 cucumber 有 241 個 undefined scenario,base 同數,未調查原因。
+
+## 12. 正式收下 T7 的測試(顧問裁決 F2 的補救 1)
+
+顧問裁定 F2 是違規,但 T7 不重做:由我以「審核/測試 agent」身分審過這批測試並收下。依據是上面 §3 §4 §5 的突變與 Stryker 100 分,另外補做 X13、X14 兩條突變,並補兩條測試(見 §13)。
+「收下」的意思是:我逐條看過它在測什麼,而且至少有一個突變會讓它變紅,證明它不是同義反覆。下表「證明」欄是我實際看到紅的那條突變。沒有任何一條需要放寬。
+
+### 12.1 `packages/core/src/schema/atomic-write.vectors.test.ts`(新檔,14 條)
+
+| 測試 | 它在測什麼 | 證明有效的突變 |
+|---|---|---|
+| 列數與列名等於測試裡寫死的清單 | 向量檔的列名與數量跟測試裡寫死的 11 個名字一致,每列有必要欄位 | 9a(少一列)紅 |
+| `syscall-order` | open tmp → write → fsync 檔案 → close → rename → open 目錄 → fsync 目錄 → close,而且 tmp 名是 `reviews.json.tmp` | MC1、MC4、X1、X2、X3 紅 |
+| `stale-tmp-overwritten` | 寫之前 `<name>.tmp` 已存在:寫入成功、目錄只剩目標 | MC4、X10 紅 |
+| `old-style-stray-cleaned` | 舊樣式 `.<name>.<pid>.<ts>.tmp` 在下一次寫入被清掉 | MC6 紅 |
+| `other-tmp-untouched` | 別的目標的 tmp 不被碰 | X13(清掉任何 `*.tmp`)紅 |
+| `rename-exdev` | rename 丟 EXDEV:丟出那一顆、tmp 不在、原檔位元組不動 | MC3 紅 |
+| `rename-and-cleanup-both-fail` | rename 與清理都失敗:丟出的是 rename 那一顆 | MC3、MC4、MC5 紅 |
+| `dir-fsync-einval` | 目錄 fsync 丟 EINVAL 算成功 | MC1 紅(拿掉目錄 fsync 時這條期待的呼叫不在) |
+| `dir-fsync-eio` | 目錄 fsync 丟 EIO 往外丟,目標已是新內容 | MC1、MC2、9a、9b 紅 |
+| `dir-fsync-enospc` | 目錄 fsync 丟 ENOSPC 往外丟 | MC1、MC2、X5 紅 |
+| `fds-closed-on-success` | 成功路徑開過的 fd(檔案與目錄)全關 | X3 紅 |
+| `fds-closed-on-dir-fsync-error` | 目錄 fsync 失敗時 fd 仍全關 | MC2、X2、X3 紅 |
+| 只留一份:`state.ts` 七個 syscall 名字零命中且寫入是轉呼叫 | 靜態檢查 | 7a、7b、G3 紅 |
+| 只留一份:lint 目錄與 `scripts/lint.ts` 不留第二份 | 靜態檢查 | 8a、8b 紅 |
+
+### 12.2 `packages/core/src/schema/atomic-write.test.ts`(改 1 條、其餘既有 12 條不動)
+
+| 測試 | 它在測什麼 | 證明有效的突變 |
+|---|---|---|
+| `opens <name>.tmp, fsyncs the file then the directory, and closes both`(**唯一被改的**,F1) | 開的是 `<dir>/<name>.tmp`、旗標 `'w'`、兩次 fsync(先檔案後目錄)、兩次 close 且順序對 | MC4、X1、X10 紅;MC1 也紅 |
+| `writes the exact content … leaves no temp file behind`、`replaces an existing file completely`、`writes UTF-8 so CJK content round-trips` | 位元組內容與覆蓋 | 這三條我沒有專屬突變;它們是內容與覆蓋的基本行為,被 §3 突變中的位元組比對間接守著。誠實標記:沒有一個突變專門證明它們 |
+| `keeps the old file and removes the temp file when fsync fails` | 檔案 fsync 失敗:舊檔不動、tmp 清掉 | X1(拿掉檔案 fsync 時呼叫次數對不上)紅 |
+| `throws when the target directory does not exist` | 目錄不存在就丟 open 的錯,不建目錄 | 在 §6 重現 grok 主張 1 時親眼確認 ENOENT/open;X9 的反面(atomicWriteJson 才建目錄)紅 |
+| `cleans up a stray tmp file left by an interrupted previous write` | 舊樣式殘檔被清 | MC6 紅 |
+| `does not touch a stray tmp file belonging to a different target file` | 別人的舊樣式殘檔不碰 | X4、X13 紅 |
+| `appendLineAtomic` 五條(單行補換行、已有換行不再補、多行依序、保留既有行、fsync 與 close 各一次) | log append 的位元組與 fd | X6、X7、X11 紅 |
+
+### 12.3 `packages/core/src/ingest/state.test.ts`(T7 沒改;§11b 那組 11 條)
+
+| 測試 | 證明有效的突變 |
+|---|---|
+| rename 失敗:刪 tmp、原檔不動、丟原本的錯 | MC3 紅 |
+| 清理也失敗:丟出的仍是原本的錯 | MC5 紅 |
+| fsync(fd) 在 rename 前、fsync(目錄) 在 rename 後 | MC1、X1、X2 紅 |
+| fsync 的目錄就是目標所在的那個目錄 | X9 間接;**沒有專屬突變**(標記) |
+| 目錄 fsync EINVAL 當成功 | MC1 紅 |
+| 目錄 fsync EIO 往外丟 | MC2 紅 |
+| 目錄 fsync ENOSPC 也往外丟 | MC2、X5 紅 |
+| 成功路徑每個 fd 都關 | X3 紅 |
+| 目錄 fsync 丟錯時 fd 也關 | X3 紅 |
+| 自動建目錄 + 2 空格縮排 + 結尾換行 | X8、X9 紅 |
+| 照舊覆寫既有檔 | 沒有專屬突變(標記) |
+
+### 12.4 `packages/core/src/ingest/append-log-event.test.ts`(新檔,1 條)
+
+「先建目錄,寫出的位元組是 `JSON.stringify(event)` + 換行,`readLogEvents` 讀回來一樣」:X6 紅(位元組)、X14(`appendLogEvent` 不再先建目錄)紅:`ENOENT: no such file or directory, open '/tmp/lc-append-log-…/state/nested/log.jsonl'`。
+
+### 12.5 被刪的 `packages/core/src/lint/atomic-write.test.ts`(7 條)
+
+逐條對照被刪的測試是否在 `writeFileAtomic` 這邊有替身:
+
+| 被刪的測試 | 替身 | 結果 |
+|---|---|---|
+| 暫存檔名是同目錄的 `<name>.tmp` | `syscall-order`、`opens <name>.tmp…` | 有(MC4 紅) |
+| 正常情況:內容完整、tmp 不留 | `writes the exact content…` | 有 |
+| tmp → fsync → rename,rename 前正式檔未被碰 | `syscall-order` | 有(順序) |
+| fsync 炸掉:舊檔完整、tmp 清掉 | `keeps the old file… when fsync fails` | 有 |
+| **write 炸掉:沒有舊檔時不會憑空出現半個正式檔** | **無**。我實測把 `writeSync` 的錯誤吞掉(Y1),382 個測試全綠 | **缺口,見 §13** |
+| rename 失敗:正式檔舊內容、tmp 清掉 | `rename-exdev` | 有(MC3 紅) |
+| 覆蓋既有檔 | `replaces an existing file completely` | 有 |
+
+## 13. 我補的測試(測試 agent 的 commit)
+
+分支 `pollux0971/t7-x12-test`,從 `pollux0971/t7-impl` `4f6f0b1` 開,**只新增兩個檔案**,沒碰實作與任何既有測試。tip:`349104ba4510f4554acd5dae7feded37b2e52807`。
+
+| commit | 檔案 | 內容 | 證明 |
+|---|---|---|---|
+| `ac47ecc` | `schema/atomic-write.append-single-write.test.ts`(4 條) | `appendLineAtomic` 整行(含結尾換行)只用一次 `writeSync`;含已有換行、長一點的行(> 2000 位元組)、連續兩次 | 實作上 4/4 綠。**X12(拆成兩次 `writeSync`)紅 4/4**:`expected [ '{"n":', '1}\n' ] to deeply equal [ '{"n":1}\n' ]`、`expected "vi.fn()" to be called 1 times, but got 2 times`。X6(不補換行)紅 3/4 |
+| `349104b` | `schema/atomic-write.write-failure.test.ts`(3 條) | `writeSync` 失敗:沒有舊檔時目標不憑空出現、tmp 不留;有舊檔時位元組不動;失敗後下一次寫入照常成功 | 實作上 3/3 綠。**Y1(吞掉 `writeSync` 的錯)紅 3/3**:`expected function to throw an error, but it didn't`。Y2(失敗不清 tmp)紅 2/3 |
+
+加了兩個新檔後:`packages/core/src/schema` 與 `ingest` 27 檔 550 測試全綠,`tsc --noEmit` 0 錯誤,`npm run boundaries` PASS(掃描 221)。
+`git diff --name-only 4f6f0b1 349104b` 只有這兩個測試檔。
+
+## 14. 對 F2 的最終狀態
+
+- T7 現有測試的作者:`c03a0e0`(worker,違規)、`ac47ecc` 與 `349104b`(驗收角色)。
+- 我已逐檔逐條審過並收下 §12 的測試,沒有放寬任何一條;「沒有專屬突變」的三處已在表中標記(`atomic-write.test.ts` 的內容與 UTF-8 三條、`state.test.ts` 的兩條),不是漏測,而是被其他突變間接守著,我沒有為它們另外設計。
+- 兩處缺口(X12、Y1)已補測並證明紅。
+- 併批時需要併入的是 `pollux0971/t7-x12-test`(tip `349104b`)。
