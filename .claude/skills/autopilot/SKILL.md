@@ -684,7 +684,7 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent openco
 
 ### 驗證鏈(合併後)
 11. **從全新簽出跑**:`git worktree add --detach <新目錄> <合併 commit>`,只用 `tar` 複製 `node_modules`(排除 `.vite`、`.vite-temp`),**不帶 `apps/desktop/src-tauri/target`**(啟動前 `ls` 確認不存在),`ls <目錄>/.env` 必須不存在。預檢先跑:`npx tsc --noEmit`、`npm run boundaries`、`npx tsx scripts/check-doc-links.ts`、`npx tsx scripts/check-adr-numbers.ts`,再 `CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 TEMPLATE_DIR=<釘 v1.6.8 的目錄> npm run check:all`,另跑 `env -u TEMPLATE_DIR npm run check:gates`。證據帶 host、核數、worker 數、起訖時間與 1/5/15 分 load、樹 sha 前後、porcelain、learning/ 前後(用上面的唯一量法)。
-12. **只動文件的批次不重跑整條鏈**,但要重跑預檢(第 11 條前四項加 `lint:docs`、`check:gates`),並在證據裡**照實寫**「沒重跑完整鏈,上一批的鏈仍有效」。
+12. **只動文件的批次不重跑整條鏈,但預檢不能只挑幾個跑**:2026-10-15 17:0x 的文件批只動了 `features/` 與決策表,我跑了 doc-links、phase-status、standalone、`check:gates` 等,**漏了 next-gates**,於是 main 帶著紅推上去(14-hud-skin 的 NEXT.md 兩行格式不符),顧問與我都沒抓到。**只要批次碰到 `features/` 或 `docs/02-decision-map.md`,預檢就要跑完整的文件與規格守門**:`check-doc-links`、`check-next-gates`、`check-phase-status`、`check-phase-coverage`、`accept:dry`(dry-run)、`check-gherkin-dup`、`check-step-dup`、`check-adr-numbers`、`check-standalone`、`lint:docs`、`check:gates`;或者直接跑 `npm run check:all`。證據裡照實寫跑了哪些、沒跑哪些。**`check:gates` 不等於 next-gates**(前者是模板守門同步)。
 13. **合併衝突照顧問裁決的那一版**,合併後 `git diff <合併前> HEAD -- <該檔>` 必須為空(確認真的是那一版),並讀過那個檔;`git merge` 沒報衝突不代表對(見 §4a)。
 14. **單步驟確認**:多步驟指令用 `set -e` 或逐步確認,不要用長串 `&&` 把 `cd` 放在可能失敗的步驟之後(曾經把 node_modules 解回主目錄自己身上)。
 
