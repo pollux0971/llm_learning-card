@@ -124,10 +124,10 @@ grok 的六項檢查要點都沒有找到真缺陷;我自己找到的缺口都�
 | 條 | 證據 |
 |---|---|
 | A1 四個 command、本體一行 | `commands.rs` 四個函式各一行呼叫 `learning_fs`;`tests/commands.rs` 22 條經真的 Tauri IPC;A1r/A1w/A1l/A1e/A1h 紅 |
-| A2 直接呼叫 command 的拒絕 | 同上,七列表格全在 `tests/commands.rs`;含懸空 symlink |
-| A3、A4 webview 端 TS | `webview-learning-fs.test.ts`(原 18 條 + 我補 29 條)、`webview-imports.test.ts`(import 掃描:`node:` 與 `@core/schema/log` 零命中,T5 突變紅);`boundaries.allow.json` 的 10→01 已刪,boundaries PASS |
+| A2 直接呼叫 command 的拒絕 | 同上,七列表格在 `tests/commands.rs` 與 `tests/learning_fs.rs`;含懸空 symlink |
+| A3、A4 webview 端 TS | `webview-learning-fs.test.ts`(我補 29 條)、`webview-imports.test.ts`(import 掃描:`node:` 與 `@core/schema/log` 零命中,T5 突變紅);`boundaries.allow.json` 的 10→01 已刪,boundaries PASS |
 | A'4a–4d 段向量 | `tests/path_guard.rs`:`include_str!` 讀向量檔、`applies_to` 選列、47 跑 4 忽略、各 rule 列數與 sha256;J1、J2、I1 紅;Unicode 版本:兩個 crate 都帶 17.0.0,向量驗證 15.0.0,47 列 Rust 全一致 |
-| B5–B8 warning 事件 | `tests/event_log.rs` 10 條、`tests/commands.rs`;限流向量 H1–H4 紅;TS 與 Rust 事件一致(cucumber 的深度相等步驟) |
+| B5–B8 warning 事件 | `tests/event_log.rs` 10 條、`tests/commands.rs`;限流向量 H1–H4 紅;TS 與 Rust 事件一致由 cucumber 對應步驟守(`@phase-2` 124 場景全綠) |
 | C9–C10 §11b 對齊 T7 向量 | `tests/atomic_write.rs` 14 條逐列跑 `atomic-write.vectors.json`;G1–G8、J3 紅;`write` 對所有路徑走同一份原子寫入 |
 | C9a EINVAL | 判斷是不在 trait 上的普通函式 `dir_fsync_is_unsupported`,用 `libc::EINVAL`;G6、G7、G8 紅 |
 | D11–D12 io 錯誤與拒絕 | `tests/commands.rs`、`learning_fs.rs`(含權限 000:非 root 執行,**沒有略過**);TS 兩個錯誤類別各自 `instanceof`;D1–D5、T6、T7 紅 |
@@ -147,7 +147,7 @@ grok 的六項檢查要點都沒有找到真缺陷;我自己找到的缺口都�
 | 工單預算 | $20 |
 | 比值 | **$17.54 / $20 = 0.88 倍,未超過 2 倍** |
 | 驗收這張的 LLM 花費 | **不知道**:`opencode run` 不顯示金額。用量:grok-4.20 一次呼叫、prompt 約 47 KB、5 分 46 秒 |
-| 驗收 CPU | cargo-mutants 兩次各約 25 分(`-j 2`、`CARGO_BUILD_JOBS=2`);手動 Rust 突變 39 條(各跑整個 `cargo test`);TS 突變 17 條;cucumber 突變約 16 次(各約 1.5 分);其餘為單檔測試。全程一次只開一個重活;load 約 5–13 |
+| 驗收 CPU | cargo-mutants 兩次各約 25 分(`-j 2`、`CARGO_BUILD_JOBS=2`);手動 Rust 突變 39 條加後補 4 條(各跑整個 `cargo test`);TS 端突變 14 條,另有 2 條(T3、T4)改跑 cucumber;cucumber 突變約 13 次(各約 1.5 分);其餘為單檔測試。全程一次只開一個重活;load 約 5–13 |
 
 ## 9. 我補的測試(測試 agent 的 commit,只動測試檔)
 
