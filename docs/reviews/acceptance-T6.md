@@ -12,7 +12,7 @@
 
 | # | 等級 | 項目 | 狀態 |
 |---|---|---|---|
-| T6-A | **請顧問裁(我傾向併前修)** | `scripts/ingest.ts` 先 `ensureInitialized(輸出目錄)` 才 `setCategory`:不合法的 `--category C++` 會**先把整個骨架建出來**(`config/categories.yaml`、`settings.yaml`、`state/log.jsonl`、各子目錄),再丟一段 stack trace、退出碼 1。工單驗收 3 要求「整個輸出目錄列檔前後相等」——`runIngest` 函式庫入口做到了,真正的使用者入口沒有。已有骨架的輸出目錄不受影響(實測前後相等) | 3 條 CLI 紅測試已在我的分支;修法一行(在 `ensureInitialized` 之前驗證並印一行訊息)。`scripts/ingest.ts` 不在工單 `touches` 裡 |
+| T6-A | **已修,已驗(見 §12)** | `scripts/ingest.ts` 先 `ensureInitialized(輸出目錄)` 才 `setCategory`:不合法的 `--category C++` 會**先把整個骨架建出來**(`config/categories.yaml`、`settings.yaml`、`state/log.jsonl`、各子目錄),再丟一段 stack trace、退出碼 1。工單驗收 3 要求「整個輸出目錄列檔前後相等」——`runIngest` 函式庫入口做到了,真正的使用者入口沒有。已有骨架的輸出目錄不受影響(實測前後相等) | 3 條 CLI 紅測試已在我的分支;修法一行(在 `ensureInitialized` 之前驗證並印一行訊息)。`scripts/ingest.ts` 不在工單 `touches` 裡 |
 | T6-B | 缺口(低) | lint 不掃 `graph/order-<分類>.json` 的檔名與 `graph/deps.json` 的 key。重現:只有這兩處壞時 lint 回報 0 個。契約 §1 自己點名分類名會出現在 `graph/order-<cat>.json` 的路徑裡。對真實資料無影響(0 個不合法),且只要 `raw/`、`cards/` 還有同名資料夾就會被另外報到 | 建議後續處理 |
 | T6-C | 已補 | `setCategory` 的驗證被整個拿掉,原本**沒有任何測試變紅**(Stryker 之外我自己的突變 S15 存活) | 已補測(`97bb1dc`),該突變現在紅 |
 | T6-D | 已審 | -e5 改了既有測試 3 處(`index.test.ts` 兩條、`graph.test.ts` 一條) | 沒有放寬,見 §8.3 |
@@ -310,3 +310,24 @@
 - 沒跑 `check:all`、沒跑 `witness:degraded`(T6 沒動任何 witness 訊號;協調者併批時跑)。
 - 沒有對 Rust 側(T2c)做任何驗證;T6 只要求 TypeScript 側與向量檔一致。
 - T6-B 沒有補 fixture 與測試。
+
+## 12. 修補輪驗收(T6-A,顧問裁「擋」之後)
+
+被驗:`t6-claude-fix` @ `84cd698`(tree `91f5aaef78cb…`),基於我的 `t6-accept-tests` `2ef8936`,再加兩個 commit:`fbefe4c`(實作)、`84cd698`(文件)。
+**測試作者檢查**:相對 `2ef8936`,`*.test.ts`、`features/steps/**`、`contracts/fixtures/**` 的變動 **0** 個;只動 `scripts/ingest.ts`(+10 行)、工單的 `touches`(補 `scripts/ingest.ts`)、worker 的報告。
+
+| 項目 | 結果 |
+|---|---|
+| 我那 3 條 CLI 紅測試(`--category C++`、`a.`、`nul`) | **全綠**:退出碼非 0、訊息帶值與 rule 名、不是 stack trace、全新的輸出目錄前後相等 |
+| 兩條綠色對照(已有骨架的輸出目錄前後相等;合法的 `Security` 照常跑完) | 仍然綠 |
+| `ingest-category.test.ts` 整檔 | 35 條全綠(修補前 31 綠 4 紅,其中 3 條是這個缺陷、1 條是我的對照寫錯後已修) |
+| 原本的重現命令(`ingest.ts --fake … --category 'C++'`,空輸出目錄) | 退出碼 1;輸出目錄**前後各 1 個項目**(修補前是 11 個);stderr 只有一行:`分類 "C++" 不合法(rule: charset,見契約 §1 與 §13);沒有建立任何檔案或資料夾` |
+| `tsc`、`boundaries`(228)、`lint:docs` | 0 錯 / PASS / PASS |
+| cucumber 全 feature | 677 / 241 undefined / 436 passed,與修補前逐數相同 |
+| `learning/` | 前後 `files=168 hash=959b2661093a10d8 ledger=52` 相同 |
+
+對修補本身做 6 個突變,全部變紅:還原修補(F1,3 條紅)、驗證放到 `ensureInitialized` 之後(F2,3 條紅,就是原缺陷)、拒絕時退出碼 1→0(F3,4 條紅)、訊息不帶 rule 名(F4)、改成丟例外而不是印一行(F5)、驗證一律拒絕(F6,合法分類被誤殺,1 條紅)。
+
+**結論:T6-A 已修,可以合併。** T6-B(lint 漏掃 `graph/` 兩處)維持記入後續清單,不擋。
+
+**花費**:修補輪 worker 名目 $0.93($4.818 → $5.750);T6 合計約 $5.6–5.75,預算 $5,比值約 **1.12–1.15 倍**,未超過 2 倍。
