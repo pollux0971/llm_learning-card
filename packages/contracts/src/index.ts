@@ -15,10 +15,79 @@ export const CardIdSchema = z
   .regex(/^[a-z]{2,6}-\d{4}$/, 'CardId 必須符合 /^[a-z]{2,6}-\\d{4}$/(例如 "sec-0042")');
 export type CardId = z.infer<typeof CardIdSchema>;
 
-export const CategoryIdSchema = z
-  .string()
-  .min(1, 'CategoryId 不可為空')
-  .regex(/^[^\s/\\]+$/, 'CategoryId 不可包含空白或路徑分隔符');
+// CategoryId(契約 1.4.0 §1,ADR-067):必須是 §13 的一個合法段,且 UTF-8 位元組 ≤ 64。
+// Rust 那一側是權威,這裡是同一規則的 TypeScript 實作;兩邊都對著同一個向量檔
+// contracts/fixtures/path-segment-vectors.json 測,不各自抄表。
+// 實作住在 contracts 而不是 core:CategoryIdSchema 本身要擋(這份 schema 不可以比契約寬),
+// 而 packages/contracts 不准 import core。core 的 schema/category-id.ts 從這裡 re-export,
+// 02-ingest 與 09-lint 引用那一份。
+
+/** 拒絕時的規則名,與向量檔的 `rule` 欄同名。 */
+export type CategoryIdRule =
+  | 'empty'
+  | 'separator'
+  | 'charset'
+  | 'nfc'
+  | 'leading-dot'
+  | 'trailing-dot'
+  | 'reserved'
+  | 'length';
+
+export type CategoryIdVerdict = { ok: true } | { ok: false; rule: CategoryIdRule };
+
+/** §1:CategoryId 的 UTF-8 位元組上限。§13 的路徑段沒有這條(只有整條 relPath ≤ 240)。 */
+export const CATEGORY_ID_MAX_BYTES = 64;
+
+/**
+ * §13 字元集合**之外**的任一字元。集合是 ASCII 的 `A`–`Z` `a`–`z` `0`–`9` `_` `-` `.`,
+ * 或 Unicode 一般類別 L、N、M;ASCII 字母與數字本來就在 L、N 裡,所以只另列 `_` `.` `-`。
+ */
+const OUTSIDE_SEGMENT_CHARSET = /[^\p{L}\p{N}\p{M}_.\-]/u;
+
+/** §13 第 6 條的 Windows 保留裝置名,已摺成小寫。不含 COM0、LPT0;`¹²³` 是 U+00B9 U+00B2 U+00B3。 */
+const RESERVED_DEVICE_NAMES = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  ...[...'123456789¹²³'].flatMap((d) => ['com' + d, 'lpt' + d]),
+]);
+
+/** 固定 ASCII 摺疊:只把 `A`–`Z` 變成 `a`–`z`,不用 Unicode 或依語系的大小寫對照(§13)。 */
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
+
+/**
+ * §1 的 CategoryId 檢查。收到什麼就檢查什麼:不修剪、不正規化(§13「不轉換」)。
+ *
+ * 一個輸入只回報一條 rule:照下面的固定順序,回報第一條違反的。這個順序讓向量檔每一列的
+ * rule 對得上,例如 `.` 同時以點開頭也以點結尾,回報 leading-dot;`a/b` 的 `/` 也不在字元集合,
+ * 回報 separator;`가` 的 NFD 形式每個字元都在字元集合裡,回報 nfc。
+ */
+export function validateCategoryId(value: string): CategoryIdVerdict {
+  const refuse = (rule: CategoryIdRule): CategoryIdVerdict => ({ ok: false, rule });
+  if (value.length === 0) return refuse('empty');
+  if (value.includes('/')) return refuse('separator');
+  if (OUTSIDE_SEGMENT_CHARSET.test(value)) return refuse('charset');
+  if (value.normalize('NFC') !== value) return refuse('nfc');
+  if (value.startsWith('.')) return refuse('leading-dot');
+  if (value.endsWith('.')) return refuse('trailing-dot');
+  // 比的是第一個 `.` 之前的部分:`nul.md` 也算裝置名,`console` 不算。
+  if (RESERVED_DEVICE_NAMES.has(asciiLower(value.split('.')[0]!))) return refuse('reserved');
+  if (new TextEncoder().encode(value).length > CATEGORY_ID_MAX_BYTES) return refuse('length');
+  return { ok: true };
+}
+
+/** 拒絕訊息:原樣帶出被拒絕的值與 rule 名。schema、ingest、lint 用同一句。 */
+export function formatCategoryIdRefusal(value: string, rule: CategoryIdRule): string {
+  return `分類 "${value}" 不合法(rule: ${rule},見契約 §1 與 §13)`;
+}
+
+export const CategoryIdSchema = z.string().superRefine((value, ctx) => {
+  const verdict = validateCategoryId(value);
+  if (!verdict.ok) ctx.addIssue(formatCategoryIdRefusal(value, verdict.rule));
+});
 export type CategoryId = z.infer<typeof CategoryIdSchema>;
 
 /** 判斷 "YYYY-MM-DD" 是不是真實存在的日期(月 01–12、日在該月範圍內、閏年正確)。 */
