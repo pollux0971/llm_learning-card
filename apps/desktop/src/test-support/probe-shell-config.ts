@@ -8,12 +8,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface AssetProtocolStatus {
-  customEnabled: boolean;
-  scopeIsLearningRoot: boolean;
+  /** 靜態量出來的:src/main.rs 有 `register_uri_scheme_protocol(SCHEME, …)`(T2c-2 驗收 8,不再讓 app 自己回報) */
+  customRegistered: boolean;
   scheme: string;
   builtinEnabled: boolean;
   builtinScope: string[];
-  sameChecksAsRead: boolean;
 }
 
 export interface PluginRefusal {
@@ -37,20 +36,16 @@ function readConf(repoRoot: string): {
   return JSON.parse(readFileSync(join(repoRoot, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'));
 }
 
-function probeStatus(): {
-  scheme: string;
-  customEnabled: boolean;
-  scopeIsLearningRoot: boolean;
-  sameChecksAsRead: boolean;
-} {
+function probeStatus(): { scheme: string } {
   const r = spawnSync(BIN, { input: JSON.stringify({ op: 'status' }), encoding: 'utf8' });
   if (r.error) throw r.error;
-  return JSON.parse(r.stdout) as {
-    scheme: string;
-    customEnabled: boolean;
-    scopeIsLearningRoot: boolean;
-    sameChecksAsRead: boolean;
-  };
+  return JSON.parse(r.stdout) as { scheme: string };
+}
+
+/** main.rs 真的把自訂協定註冊在 SCHEME 上(「asset」那個內建的不算:它的第一個引數是字串)。 */
+export function customProtocolRegistered(repoRoot: string): boolean {
+  const main = readFileSync(join(repoRoot, 'apps/desktop/src-tauri/src/main.rs'), 'utf8');
+  return /\.register_uri_scheme_protocol\(\s*SCHEME\s*,/.test(main);
 }
 
 export function assetProtocolStatus(repoRoot: string): AssetProtocolStatus {
@@ -58,12 +53,10 @@ export function assetProtocolStatus(repoRoot: string): AssetProtocolStatus {
   const asset = conf.app.security.assetProtocol ?? { enable: true, scope: ['unset'] };
   const live = probeStatus();
   return {
-    customEnabled: live.customEnabled,
-    scopeIsLearningRoot: live.scopeIsLearningRoot,
+    customRegistered: customProtocolRegistered(repoRoot),
     scheme: live.scheme,
     builtinEnabled: asset.enable,
     builtinScope: asset.scope,
-    sameChecksAsRead: live.sameChecksAsRead,
   };
 }
 

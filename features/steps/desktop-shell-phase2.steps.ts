@@ -952,26 +952,65 @@ Then('the string it received is byte-identical to the decoded path', function (t
   assert.equal(b.last?.fsCalls[0]?.path, b.decoded);
 });
 
-Then('the asset protocol is enabled with a scope limited to the learning directory', function (this: LearningWorld) {
+Then('the asset protocol is enabled with a scope limited to the learning directory', async function (this: LearningWorld) {
   const s = bag(this).assetStatus;
   assert.ok(s, '沒有讀到協定設定');
-  assert.equal(s.customEnabled, true);
-  assert.equal(s.scopeIsLearningRoot, true);
+  assert.equal(s.customRegistered, true, 'src/main.rs 沒有 register_uri_scheme_protocol(SCHEME, …)');
   assert.equal(s.scheme, 'lc');
   assert.equal(s.builtinEnabled, false);
   assert.deepEqual(s.builtinScope, []);
+  // 真的請求:根裡放一個指向根外檔案的 symlink,經 lc 要它 → 403,body 不含根外內容。
+  // 對照組:根裡的正常檔 → 200 且拿到內容,證明 403 不是「什麼都拒」。
+  const b = bag(this);
+  plant(b.root, 'cards/inside.md', 'INSIDE-SENTINEL');
+  mkdirSync(join(b.root, 'cards'), { recursive: true });
+  symlinkSync(b.outsideFile, join(b.root, 'cards', 'escape.md'));
+  await requestAsset(this, 'cards/inside.md');
+  const okResp = bag(this).last?.resp;
+  assert.equal(okResp?.status, 200, '根裡的正常檔應該是 200');
+  assert.equal(hexToBytes(String(okResp?.bodyHex ?? '')).toString('utf8'), 'INSIDE-SENTINEL');
+  await requestAsset(this, 'cards/escape.md');
+  const resp = bag(this).last?.resp;
+  assert.equal(resp?.status, 403, `symlink 逃出根目錄應該是 403: ${JSON.stringify(resp?.status)}`);
+  const body = hexToBytes(String(resp?.bodyHex ?? '')).toString('utf8');
+  assert.ok(!body.includes('OUTSIDE-SENTINEL'), 'body 洩漏了根外檔案的內容');
+  assert.equal(readFileSync(b.outsideFile, 'utf8'), 'OUTSIDE-SENTINEL');
 });
 
+/** 跟 assetUrl 一樣:逐段 encodeURIComponent,斜線留著。 */
+function encodeLikeAssetUrl(p: string): string {
+  return p.split('/').map(encodeURIComponent).join('/');
+}
+
 Then('the asset protocol applies the same path checks as the read command', async function (this: LearningWorld) {
-  const s = bag(this).assetStatus;
-  assert.equal(s?.sameChecksAsRead, true);
-  await callOp(this, 'read', '../etc/passwd');
-  const b = bag(this);
-  const readRefused = isRefusal(b, b.err);
-  await requestAsset(this, '../etc/passwd');
-  assert.equal(readRefused, true);
-  assert.equal(bag(this).last?.ok, false);
-  assert.equal(bag(this).last?.resp?.status, 403);
+  // 同一張樣本表逐列送:read 收原字串,lc 收逐段編碼後的字串。「拒」= 拒絕;read 的 io 錯誤與 lc 的 404 都算「放」。
+  const samples = [
+    '../etc/passwd',
+    'cards/a.',
+    'nul.md',
+    'raw/x',
+    'cards/a.md',
+    'cards/\u{AC00}.md', // 가 → %EA%B0%80:lc 不解碼就會拒絕,這列才真的測到解碼
+    'cards/100%.md', // 含 % → 兩邊都拒(lc 收到 cards/100%25.md,解一次得 100%)
+    'cards/a%2emd', // 含 % → 兩邊都拒
+    'cards/a b.md', // 空白不在允許字元集
+  ];
+  const rows: string[] = [];
+  for (const p of samples) {
+    await callOp(this, 'read', p);
+    const readRefused = isRefusal(bag(this), bag(this).err);
+    await requestAsset(this, encodeLikeAssetUrl(p));
+    const status = bag(this).last?.resp?.status;
+    assert.ok(status === 200 || status === 403 || status === 404, `${JSON.stringify(p)}: lc 回了意外的狀態 ${String(status)}`);
+    const lcRefused = status === 403;
+    rows.push(`${JSON.stringify(p)} read=${readRefused ? '拒' : '放'} lc=${lcRefused ? '拒' : '放'}`);
+    assert.equal(lcRefused, readRefused, `兩邊判斷不同: ${rows[rows.length - 1]}`);
+  }
+  // 至少有拒有放,表才不是空轉
+  assert.ok(rows.some((r) => r.includes('read=拒')) && rows.some((r) => r.includes('read=放')), rows.join('\n'));
+  // 只送 lc:%252e 解一次是 %2e(含 %),必須拒絕;解兩次才會變成合法的 a.md
+  await requestAsset(this, 'cards/a%252emd');
+  assert.equal(bag(this).last?.resp?.status, 403, '解碼不只一次');
 });
 
 Then(/^the path is (\d+) UTF-8 bytes long$/, function (this: LearningWorld, n: string) {
