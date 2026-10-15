@@ -6,7 +6,9 @@ export type LintProblemType =
   | 'orphan_child'
   | 'cycle'
   | 'prereq_mismatch'
-  | 'review_orphan';
+  | 'review_orphan'
+  /** 契約 1.4.0 §1:分類名不是合法的 CategoryId(T6) */
+  | 'invalid_category';
 
 export interface LintProblem {
   type: LintProblemType;

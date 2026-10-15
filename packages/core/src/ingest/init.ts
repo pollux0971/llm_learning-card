@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
+import { formatCategoryIdRefusal, validateCategoryId } from '@core/schema/category-id.js';
 
 const SKELETON_DIRS = ['raw', 'cards', 'questions', 'assets', 'state', 'graph', 'config'];
 
@@ -36,8 +37,13 @@ export function ensureInitialized(dir: string): void {
   if (!existsSync(logPath)) writeFileSync(logPath, '', 'utf8');
 }
 
-/** 新增或覆蓋一個類別設定(依 id 覆蓋)。 */
+/**
+ * 新增或覆蓋一個類別設定(依 id 覆蓋)。id 不合法(契約 1.4.0 §1)就丟錯,
+ * 不寫 categories.yaml——ingest 建分類的入口之一,不讓邊界讀不了的分類寫進設定檔。
+ */
 export function setCategory(dir: string, category: CategoryConfig): void {
+  const verdict = validateCategoryId(category.id);
+  if (!verdict.ok) throw new Error(formatCategoryIdRefusal(category.id, verdict.rule));
   const categoriesPath = join(dir, 'config/categories.yaml');
   const list = existsSync(categoriesPath)
     ? ((parse(readFileSync(categoriesPath, 'utf8')) as CategoryConfig[] | null) ?? [])

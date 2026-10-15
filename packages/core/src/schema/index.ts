@@ -15,6 +15,13 @@ export { validateReview, createInitialReview, nextCalendarDay } from './review.j
 export { validateLogEvent, recordEvent, parseLogLines } from './log.js';
 export { validateCategory, validateSettings } from './validate-config.js';
 export {
+  CATEGORY_ID_MAX_BYTES,
+  formatCategoryIdRefusal,
+  validateCategoryId,
+  type CategoryIdRule,
+  type CategoryIdVerdict,
+} from './category-id.js';
+export {
   initGitRepo,
   snapshotLearningDir,
   snapshotMessage,

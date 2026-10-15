@@ -258,8 +258,9 @@ describe('regex anchors: no leading or trailing junk', () => {
 
 describe('error messages are the ones the contract documents', () => {
   it('§1 basic types', () => {
-    expect(messagesOf(CategoryIdSchema, '')).toContain('CategoryId 不可為空');
-    expect(messagesOf(CategoryIdSchema, 'a/b')).toContain('CategoryId 不可包含空白或路徑分隔符');
+    // T6(契約 1.4.0 §1):訊息改成帶 rule 名,不再釘死舊的整句文字。更嚴:rule 名必須出現。
+    expect(messagesOf(CategoryIdSchema, '').join('\n')).toContain('empty');
+    expect(messagesOf(CategoryIdSchema, 'a/b').join('\n')).toContain('separator');
     expect(messagesOf(IsoDateSchema, '2026/09/01')).toEqual(['IsoDate 必須是 "YYYY-MM-DD"']);
     expect(messagesOf(IsoDateSchema, '2026-13-01')).toEqual([
       'IsoDate 必須是真實存在的日期(月 01–12,日不可超過該月天數)',

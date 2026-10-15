@@ -10,6 +10,7 @@ import { ensureInitialized } from './init.js';
 import { atomicWriteJson, readJsonOr, appendLogEvent } from './state.js';
 import type { Card } from '@contracts/index.js';
 import { validateCard } from '@core/schema/validate-card.js';
+import { formatCategoryIdRefusal, validateCategoryId } from '@core/schema/category-id.js';
 import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
 import { generateChildrenForCards } from './children.js';
 import { analyzeDependencies } from './deps.js';
@@ -43,8 +44,14 @@ interface IngestedState {
 }
 
 export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult> {
-  ensureInitialized(opts.outDir);
   const category = opts.category ?? inferCategory(opts.rawRelPath) ?? witnessed('ingest.category-default-security', 'security');
+  // 契約 1.4.0 §1(ADR-067):分類名不合法就拒絕,而且要在碰磁碟之前——連骨架都不建,
+  // 輸出目錄前後完全相同,也不呼叫 LLM。raw 資料夾名與明講的 category 走同一個檢查。
+  const verdict = validateCategoryId(category);
+  if (!verdict.ok) {
+    return fail(`${formatCategoryIdRefusal(category, verdict.rule)};沒有建立任何檔案或資料夾`, 1);
+  }
+  ensureInitialized(opts.outDir);
   const today = opts.today ?? new Date().toISOString().slice(0, 10);
   const rawPath = join(opts.outDir, opts.rawRelPath);
 
@@ -86,7 +93,7 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
 
   const cardsDir = join(opts.outDir, 'cards', category);
   // Stryker disable next-line all: recursive:true 只在 category 本身含路徑分隔符時才有差異
-  // (契約的 category id 是單一識別字,不會發生)——ensureInitialized() 保證 outDir/cards 已存在,
+  // (函式開頭已用 validateCategoryId 擋掉含 `/` 的分類,不會發生)——ensureInitialized() 保證 outDir/cards 已存在,
   // 拿掉 recursive 或改 false 在目前骨架下行為不變,測不出差異不代表邏輯錯。
   mkdirSync(cardsDir, { recursive: true });
   const totalLines = raw.split('\n').length;

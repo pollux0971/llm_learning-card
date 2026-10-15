@@ -33,6 +33,16 @@ export interface ScannedDir {
   questions: ScannedQuestionFile[];
   graphs: Record<string, Graph>;
   reviews: Record<string, unknown>;
+  /**
+   * 分類名出現的資料夾(T6):`raw/` 與 `cards/` 底下的子資料夾名,原樣、排序過。
+   * 選填:手組的 ScannedDir 沒給就當沒有;scanDir 一定會給。
+   */
+  categoryDirs?: { raw: string[]; cards: string[] };
+  /**
+   * `config/categories.yaml` 每一項的 `id`,只收字串(不是字串的 id 是 schema 的問題,
+   * validateCategory 會報)。檔不在、空檔或不是陣列時給 []。選填,同上。
+   */
+  configCategoryIds?: string[];
 }
 
 function toPosix(p: string): string {
@@ -83,7 +93,20 @@ export function scanDir(root: string): ScannedDir {
     reviews = JSON.parse(readFileSync(reviewsPath, 'utf8')) as Record<string, unknown>;
   }
 
-  return { root, cards, questions, graphs, reviews };
+  const categoryDirs = { raw: subdirs(join(root, 'raw')), cards: subdirs(join(root, 'cards')) };
+
+  return { root, cards, questions, graphs, reviews, categoryDirs, configCategoryIds: readConfigCategoryIds(root) };
+}
+
+/** `config/categories.yaml`(§11,頂層是陣列)裡每一項的字串 id。 */
+function readConfigCategoryIds(root: string): string[] {
+  const path = join(root, 'config/categories.yaml');
+  if (!existsSync(path)) return [];
+  const data: unknown = parseYaml(readFileSync(path, 'utf8'));
+  if (!Array.isArray(data)) return [];
+  return data
+    .map((entry: unknown) => (typeof entry === 'object' && entry !== null ? (entry as { id?: unknown }).id : undefined))
+    .filter((id): id is string => typeof id === 'string');
 }
 
 /**

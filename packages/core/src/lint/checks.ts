@@ -4,6 +4,7 @@
 import type { ScannedDir, Graph } from './scan.js';
 import type { LintProblem, LintResult, LintStatus } from './types.js';
 import { countBodyWords } from './validator-min.js';
+import { formatCategoryIdRefusal, validateCategoryId } from '@core/schema/category-id.js';
 
 /** 教學卡 body 字數上限,契約 §2 硬約定,不是 settings.short_body_limit(那是縮短版用的) */
 const BODY_WORD_LIMIT = 100;
@@ -216,6 +217,31 @@ export function checkReviewOrphans(scanned: ScannedDir): LintProblem[] {
   return problems;
 }
 
+/**
+ * T6(契約 1.4.0 §1、ADR-067):既有資料裡不合法的分類名。分類名出現的每一個位置各算一個問題——
+ * `raw/<名>` 與 `cards/<名>` 資料夾、卡片 frontmatter 的 category(路徑是卡片檔)、
+ * `config/categories.yaml` 的 id。判定用 01 的 validateCategoryId,與 schema、ingest 同一份實作;
+ * detail 含分類名與 rule 名。不是字串的 category 是 schema 的問題,這裡不重複報。
+ */
+export function checkInvalidCategories(scanned: ScannedDir): LintProblem[] {
+  const sites: Array<{ name: string; path: string; card?: string }> = [
+    ...(scanned.categoryDirs?.raw ?? []).map((name) => ({ name, path: `raw/${name}` })),
+    ...(scanned.categoryDirs?.cards ?? []).map((name) => ({ name, path: `cards/${name}` })),
+    ...scanned.cards
+      .filter((c) => typeof c.category === 'string')
+      .map((c) => ({ name: c.category, path: c.path, card: c.id })),
+    ...(scanned.configCategoryIds ?? []).map((name) => ({ name, path: 'config/categories.yaml' })),
+  ];
+  const problems: LintProblem[] = [];
+  for (const { name, ...where } of sites) {
+    const verdict = validateCategoryId(name);
+    if (!verdict.ok) {
+      problems.push({ type: 'invalid_category', ...where, detail: formatCategoryIdRefusal(name, verdict.rule) });
+    }
+  }
+  return problems;
+}
+
 export function checkStatuses(scanned: ScannedDir): LintStatus[] {
   const statuses: LintStatus[] = [];
   for (const c of scanned.cards) {
@@ -235,6 +261,7 @@ export function runChecks(scanned: ScannedDir): LintResult {
     ...findCycles(scanned),
     ...checkPrereqMismatch(scanned),
     ...checkReviewOrphans(scanned),
+    ...checkInvalidCategories(scanned),
   ];
   return { problems, statuses: checkStatuses(scanned) };
 }

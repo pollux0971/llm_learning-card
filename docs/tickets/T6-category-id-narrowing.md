@@ -1,7 +1,7 @@
 ---
 id: T6
 deps: [T7]
-touches: [packages/core/src/schema/, packages/core/src/ingest/, packages/core/src/lint/]
+touches: [packages/contracts/src/index.ts, packages/core/src/schema/, packages/core/src/ingest/, packages/core/src/lint/, scripts/ingest.ts]   # scripts/ingest.ts 是修補輪(缺陷 T6-A)補的
 cpu: light                             # 驗收階段跑變異是重活:協調者排驗收時照 R3 當 heavy 算
 budget_usd: 5                          # 草估,統籌·契約填
 status: todo
