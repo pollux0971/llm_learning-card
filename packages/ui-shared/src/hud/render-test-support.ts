@@ -457,8 +457,9 @@ export async function frameLineProblems(page: GalleryPage, opts: { latinOnlyThir
   const img = await page.screenshot();
   const problems: string[] = [];
   const targets: [string, Rect][] = [['面板', await page.rect('[data-hud="panel"]')]];
-  const buttons = await page.evaluate<number>(`document.querySelectorAll('[data-hud="button"]').length`);
-  for (let i = 0; i < buttons; i += 1) targets.push([`第 ${i + 1} 顆按鈕${i === 2 && latinOnlyThird ? '(NEXT)' : ''}`, await page.rect('[data-hud="button"]', i)]);
+  // T16 起展示頁後面多一顆停用的按鈕:停用是故意淡的(黑線也淡),不在這裡量 1 像素黑線(停用狀態由 window-frame-test-support.ts 的 disabledProblems 量)
+  const enabled = await page.evaluate<number[]>(`[...document.querySelectorAll('[data-hud="button"]')].flatMap((b, i) => (b.disabled ? [] : [i]))`);
+  for (const i of enabled) targets.push([`第 ${i + 1} 顆按鈕${i === 2 && latinOnlyThird ? '(NEXT)' : ''}`, await page.rect('[data-hud="button"]', i)]);
   for (const [name, rect] of targets) {
     const ink = edgeInk(img, rect);
     for (const [edge, v] of Object.entries(ink)) {

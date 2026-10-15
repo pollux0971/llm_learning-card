@@ -456,9 +456,9 @@ export async function exampleBorderProblems(page: GalleryPage): Promise<string[]
 }
 
 // ───────────────────────────── 第四輪:hover / focus 不能把切角填成方塊、不能多一圈方框
-const STATE_ATTR = 'data-zz-state';
+export const STATE_ATTR = 'data-zz-state';
 /** 目標元素的運算式;kind 決定要強制哪些偽類 */
-interface ShapeTarget { label: string; element: string; kind: 'button' | 'field' }
+export interface ShapeTarget { label: string; element: string; kind: 'button' | 'field' }
 const cardButton = (label: string): ShapeTarget => ({ label: `「${label}」鍵`, element: BUTTON_BY_TEXT(label), kind: 'button' });
 const lastField: ShapeTarget = { label: '作答欄', element: `(() => { const a = document.querySelectorAll('[data-hud="field"]'); return a[a.length - 1]; })()`, kind: 'field' };
 
@@ -471,7 +471,7 @@ export function isOrangeish([r, g, b]: [number, number, number]): boolean {
 }
 const nearAccent = (c: [number, number, number], _accent: { r: number; g: number; b: number }) => isOrangeish(c);
 
-function cropImage(img: Image, r: Rect): Image {
+export function cropImage(img: Image, r: Rect): Image {
   const x0 = Math.max(0, Math.floor(r.x)); const y0 = Math.max(0, Math.floor(r.y));
   const x1 = Math.min(img.width, Math.ceil(r.x + r.width)); const y1 = Math.min(img.height, Math.ceil(r.y + r.height));
   const w = Math.max(0, x1 - x0); const h = Math.max(0, y1 - y0);
@@ -490,7 +490,7 @@ function cropImage(img: Image, r: Rect): Image {
  * (c) 橘色還在(矩形外擴 1 像素範圍內至少 ACCENT_MIN_PIXELS 個接近 --hud-accent 的像素)。
  * 「後面」= 把目標藏起來截的圖。強制偽類用 CDP(CSS.forcePseudoState),不送滑鼠鍵盤、不插 <style> 以外的東西。
  */
-async function stateShapeProblems(page: GalleryPage, t: ShapeTarget, states: { name: string; list: string[] }[]): Promise<string[]> {
+export async function stateShapeProblems(page: GalleryPage, t: ShapeTarget, states: { name: string; list: string[] }[]): Promise<string[]> {
   const problems: string[] = [];
   const accent = parseColor(await page.evaluate<string>(`getComputedStyle(document.documentElement).getPropertyValue('--hud-accent')`));
   const rect = await page.evaluate<Rect | null>(`(() => { document.activeElement?.blur?.(); const e = ${t.element}; if (!e) return null;
@@ -554,8 +554,8 @@ async function stateShapeProblems(page: GalleryPage, t: ShapeTarget, states: { n
   return problems;
 }
 
-const BUTTON_STATES = [{ name: 'hover', list: ['hover'] }, { name: 'focus-visible', list: ['focus', 'focus-visible'] }];
-const FIELD_STATES = [{ name: 'focus-within', list: ['focus-within', 'focus'] }];
+export const BUTTON_STATES = [{ name: 'hover', list: ['hover'] }, { name: 'focus-visible', list: ['focus', 'focus-visible'] }];
+export const FIELD_STATES = [{ name: 'focus-within', list: ['focus-within', 'focus'] }];
 
 /** 教學卡「下一個」(在捲動區下面、x 是小數像素) */
 export async function teachShapeProblems(page: GalleryPage): Promise<string[]> {

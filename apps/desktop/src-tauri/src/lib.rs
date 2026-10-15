@@ -9,6 +9,7 @@ pub mod learning_root;
 pub mod path_guard;
 pub mod session;
 pub mod start_screen;
+pub mod window_mode;
 
 use std::path::PathBuf;
 
