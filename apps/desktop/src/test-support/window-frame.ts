@@ -264,6 +264,7 @@ export function mainRsProblems(mainRs: string): string[] {
   ];
   const problems = need.filter(([re]) => !re.test(code)).map(([, what]) => `main.rs:${what}`);
   problems.push(...stateFlagsProblems(mainRs));
+  problems.push(...gdkCfgProblems(mainRs));
   return problems;
 }
 
@@ -278,18 +279,74 @@ export function mainRsUnchangedProblems(mainRs: string): string[] {
   return problems;
 }
 
-/** gdk 是直接依賴,而且 lock 裡只有一份(版本 0.18.2) */
+/** Cargo.toml 逐行切成區塊:標題只認行首(可有空白)的 `[...]`,`#` 開頭的註解行不算;回傳 標題 → 該區塊的行 */
+export function tomlSections(toml: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  let current = '';
+  out.set(current, []);
+  for (const raw of toml.split('\n')) {
+    const line = raw.trim();
+    if (line.startsWith('#')) continue;
+    const header = /^\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$/.exec(line);
+    if (header) {
+      current = header[1]!.replace(/\s+/g, ' ');
+      if (!out.has(current)) out.set(current, []);
+      continue;
+    }
+    out.get(current)!.push(line);
+  }
+  return out;
+}
+
+/** gdk 是 GTK,只有 Linux 有:放一般 [dependencies] 會讓 macOS、Windows 一 build 就壞(10 phase-4、phase-5) */
+const LINUX_TARGET_DEPS = /^target\.\s*(?:'cfg\(\s*target_os\s*=\s*"linux"\s*\)'|"cfg\(\s*target_os\s*=\s*\\"linux\\"\s*\)")\s*\.dependencies$/;
+const GTK_DEP = /^(gdk|gtk)\s*=\s*(.+)$/;
+
+/** gdk(或 gtk)只能直接依賴在 [target.'cfg(target_os = "linux")'.dependencies];lock 裡只有一份 0.18.2 */
 export function gdkDependencyProblems(toml: string, lock: string): string[] {
   const problems: string[] = [];
-  const deps = /\[dependencies\]([\s\S]*?)(?:\n\[|$)/.exec(toml)?.[1] ?? '';
-  const targetDeps = [...toml.matchAll(/\[target\.[^\]]*dependencies\]([\s\S]*?)(?:\n\[|$)/g)].map((m) => m[1] ?? '').join('\n');
-  const direct = /^\s*(gdk|gtk)\s*=/m.test(deps) || /^\s*(gdk|gtk)\s*=/m.test(targetDeps);
-  if (!direct) problems.push('Cargo.toml 沒有直接依賴 gdk(或 gtk)');
+  const found: { section: string; line: string }[] = [];
+  for (const [section, lines] of tomlSections(toml)) {
+    if (!/dependencies$/.test(section)) continue;
+    for (const l of lines) if (GTK_DEP.test(l)) found.push({ section, line: l });
+  }
+  if (found.length === 0) problems.push('Cargo.toml 沒有直接依賴 gdk(或 gtk)');
+  for (const f of found) {
+    if (!LINUX_TARGET_DEPS.test(f.section)) {
+      problems.push(`Cargo.toml 的 [${f.section}] 有 ${f.line.split('=')[0]!.trim()}:它只能放在 [target.'cfg(target_os = "linux")'.dependencies](GTK 只有 Linux 有,放別處會讓 macOS、Windows 編不過)`);
+    }
+  }
   const versions = [...lock.matchAll(/\[\[package\]\]\nname = "gdk"\nversion = "([^"]+)"/g)].map((m) => m[1]);
   if (versions.length !== 1) problems.push(`Cargo.lock 裡有 ${versions.length} 份 gdk(${versions.join(', ')}),要剛好一份`);
   else if (versions[0] !== '0.18.2') problems.push(`Cargo.lock 的 gdk 是 ${versions[0]},要維持 0.18.2`);
-  const line = /^\s*(?:gdk|gtk)\s*=\s*(.+)$/m.exec(`${deps}\n${targetDeps}`)?.[1] ?? '';
-  const spec = /"([^"]+)"/.exec(line)?.[1] ?? /version\s*=\s*"([^"]+)"/.exec(line)?.[1] ?? '';
-  if (direct && spec && !/^[=^~]?\s*0\.18(\.2)?$/.test(spec)) problems.push(`Cargo.toml 的 gdk 版本寫 "${spec}",要跟 lock 的 0.18.2 同一個(寫 "0.18" 或 "0.18.2")`);
+  for (const f of found) {
+    const rhs = GTK_DEP.exec(f.line)![2]!;
+    const spec = /^"([^"]+)"/.exec(rhs)?.[1] ?? /version\s*=\s*"([^"]+)"/.exec(rhs)?.[1] ?? '';
+    if (spec && !/^[=^~]?\s*0\.18(\.2)?$/.test(spec)) problems.push(`Cargo.toml 的 gdk 版本寫 "${spec}",要跟 lock 的 0.18.2 同一個(寫 "0.18" 或 "0.18.2")`);
+  }
+  return problems;
+}
+
+/**
+ * main.rs 用到 gdk 的程式碼(is_composited 那一段)要包在 #[cfg(target_os = "linux")] 裡:
+ * 非 Linux 不偵測、直接走透明(不能因為 gdk 編不過而讓整個程式編不過)。
+ * 做法:找到每一個 `is_composited(`,往回找包住它的最近一個 `fn`,看那個 fn 前面緊接的屬性裡有沒有 cfg(target_os = "linux")。
+ */
+export function gdkCfgProblems(mainRs: string): string[] {
+  const code = mainRs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const problems: string[] = [];
+  const uses = [...code.matchAll(/\bis_composited\s*\(/g)];
+  if (uses.length === 0) return ['main.rs 沒有 is_composited('];
+  for (const u of uses) {
+    const before = code.slice(0, u.index);
+    const fnAt = before.lastIndexOf('fn ');
+    if (fnAt < 0) { problems.push('is_composited( 不在任何 fn 裡,看不出有沒有 cfg(target_os = "linux")'); continue; }
+    const head = before.slice(0, fnAt).split('\n').reverse();
+    const attrs: string[] = [];
+    for (const l of head) { const t = l.trim(); if (t === '') { if (attrs.length === 0) continue; break; } if (!t.startsWith('#[')) break; attrs.push(t); }
+    if (!attrs.some((a) => /^#\[\s*cfg\s*\(\s*target_os\s*=\s*"linux"\s*\)\s*\]$/.test(a))) {
+      problems.push('main.rs 用到 gdk 的函式(is_composited 那一段)前面沒有 #[cfg(target_os = "linux")]');
+    }
+  }
   return problems;
 }

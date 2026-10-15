@@ -31,3 +31,10 @@ pub fn init_logging() {
         .target(env_logger::Target::Stderr)
         .try_init();
 }
+
+/// T16 紅測試用的空殼(`tests/logging.rs`):沒設 `RUST_LOG` 時的預設 filter 要讓本 crate 的 warn 看得到
+/// (3 秒逾時退路的 `log::warn!` 預設就要印出來);設了 `RUST_LOG` 就照它。開發 worker 換成真的實作,
+/// `init_logging` 改用它(傳入 `std::env::var("RUST_LOG").ok()`)。簽章與名字照這裡。
+pub fn log_filter(_rust_log: Option<&str>) -> String {
+    unimplemented!("T16:log_filter")
+}
