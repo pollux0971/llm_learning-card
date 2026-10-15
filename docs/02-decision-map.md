@@ -1386,3 +1386,27 @@ graph TD
   - `npm run boundaries` 會多兩條有理由的例外;理由寫在 `features/14-hud-skin/FEATURE.md` 的「依賴」。
   - 之後 06、07 的新畫面一律用 14 的元件,不各自畫框。
 - **Related**: ADR-035(第 2 點的例外)、ADR-012、ADR-022、`features/14-hud-skin/FEATURE.md`、`features/10-desktop-shell/NEXT.md` 的 phase-6
+
+## ADR-072 · 無框透明視窗:合成器只在建窗前問一次,用 initialization script 告訴頁面,載入完才顯示並留 3 秒退路
+
+- **Status**: accepted · 2026-10-16(技術顧問在 T16 工單定的;協調者配號 ADR-072)
+- **Context**: 使用者要無框透明視窗,切角就是視窗的形狀(14 的 HUD 面板)。有合成器時切角外面看得到桌面;沒有合成器時透明視窗的切角是黑的,必須改畫實心底(`hud-solid`)。頁面要在第一次畫面之前就知道是哪一種,因為 HudPanel 只在 render 當下讀根元素的 class,不會跟著變。另外,透明視窗在頁面畫出來之前是黑的,所以要先藏起來;但頁面若一直載不完,使用者會以為程式沒開。
+- **Decision**:
+  1. **合成器只在建窗前問一次。** Linux 上呼叫 GDK `Screen::default().is_composited()`(tao 已經初始化 GTK,所以這裡不再呼叫 `gdk::init`)。Wayland 永遠是 true。沒有預設螢幕時當作沒有合成器,走實心底,不要黑角。執行中合成器開或關不追;GTK 有 `composited-changed`,要追再開票。
+  2. **結果用 `initialization_script` 交給頁面。** WebKit 在建好根元素之後、頁面任何內容之前執行它。它是 user script,不受頁面 CSP 管,也比卡片的 `main.ts` 早。Rust 只在前面接一行 `window.__LC_WINDOW_MODE__ = {"frameless":…,"solid":…}`(serde_json),後面逐字接 `window_mode.js`。那段程式只對 `document.documentElement.classList` 加 `hud-frameless`,以及(沒有合成器時)`hud-solid`。class 名字跟 14 的 `layout.ts` 同一份,不另寫。
+  3. **兩個卡片視窗 `visible: false`,載入完才顯示。** `tauri.conf.json` 明寫 `decorations: false`、`transparent: true`、`visible: false`。window-state 外掛的 `StateFlags` 拿掉 `VISIBLE`(`all() - VISIBLE`),否則它會在頁面載入前把視窗打開。page load 的 `Finished` 顯示一次。另開 3 秒計時(`SHOW_FALLBACK`):還沒載入完也顯示,並 `log::warn!` 寫明哪一個視窗、等了多久。每個視窗一顆 `ShowGate`,先到的顯示,後到的什麼都不做;載入在 3 秒內完成不寫 warn。判斷放 `window_mode.rs`,不碰時鐘與視窗,才測得到。
+  4. **只驗 Linux 的 X11 兩種情況**(有合成管理員、沒有)。macOS(`macOSPrivateApi`)與 Windows 的透明視窗跟 phase-4、phase-5 一起在實機上做。`setup` 視窗(啟動失敗的畫面)不改,照舊有系統外框。
+- **Alternatives**:
+  - **頁面用 `invoke` 問 Rust 有沒有合成器** —— 不採用。`invoke` 是非同步的,卡片會先畫一次沒有 `hud-frameless` 的畫面(系統外框已經拿掉,標題列會閃一下才出現),也可能先畫成黑角。
+  - **用 URL 參數帶模式** —— 不採用。要改兩張卡的程式。這張不改 `apps/teach-card`、`apps/test-card`;卡片照舊只讀根元素的 class。
+  - **頁面自己猜有沒有合成器** —— 不採用。WebKit 頁面看不到 X11 有沒有合成管理員。猜錯就是黑角,或該透明時畫成實心底。
+  - **追 `composited-changed`,執行中跟著換** —— 不採用。要在視窗活著的時候改根元素 class,HudPanel 不會重讀。使用者重開 app 即可。之後要追再開票。
+  - **頁面載入失敗就永遠不顯示** —— 不採用。看起來像程式沒開。3 秒退路的代價是那一次可能先黑一下,只在載入超過 3 秒時發生,可以接受。
+  - **window-state 照舊還原「可見」** —— 不採用。它會在頁面載入之前就把視窗打開,透明視窗先閃一下黑的。位置與大小照舊還原。
+- **Consequences**:
+  - 兩個視窗沒有系統外框。有合成器時切角外面是桌面;沒有合成器時切角是 `--hud-solid`,不是黑的。視窗打開時不會先閃黑。
+  - 頁面卡住超過 3 秒,視窗照樣出現(可能先黑一下),日誌有一行 warn。
+  - 執行中開關合成器,畫法不會跟著變,要重開 app。Wayland 上一律當有合成器,這張不驗。
+  - 點在切角外面那一小塊,點擊還是給視窗(視窗實際上是長方形)。使用者選透明視窗時已知道,不在這張修。
+  - `gdk` 是桌面殼的直接依賴,版本 `"0.18"`,lock 裡仍是 tao 已經在用的那一份 0.18.2,不另起第二份。
+- **Related**: ADR-071(HUD 元件歸 14)、ADR-011(Linux 先做)、`features/10-desktop-shell/phase-6.feature`、`features/14-hud-skin/FEATURE.md`、`docs/tickets/T16-desktop-phase-6.md`
