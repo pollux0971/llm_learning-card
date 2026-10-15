@@ -15,18 +15,22 @@
  *     defaultGoldenBaseDir(mode, root?: string)                   ← root 給了,預設存放處也跟著搬到 <root>/…/golden 或 golden-fake
  *     DirtyPromptError(extends Error, name 'DirtyPromptError', 欄位 set、promptFile)   ← 新增匯出
  *       訊息含 prompt 檔的相對路徑與 `--out`,講明為什麼拒絕
- *     runGoldenLive:沒給 baseDir 且 prompt 是 dirty → 丟 DirtyPromptError,
- *       **在任何 router.call 之前、在建立任何目錄之前**;給了 baseDir 照常寫,meta 仍是 -dirty。
- *       fake 模式不拒絕(預設存放處 golden-fake/ 不進 git),meta 一樣記 -dirty。
+ *     拒絕規則(顧問 2026-10-15 裁決)看**解析後的輸出路徑**,不看有沒有帶 --out:
+ *       prompt 是 dirty,而且輸出目錄(baseDir)的 realpath 落在 <root>/packages/core/src/prompt-quality/golden/ 底下
+ *       (含 golden/ 本身)→ 丟 DirtyPromptError,**在任何 router.call 之前、在建立任何目錄之前**。
+ *       沒給 baseDir 時預設存放處(live)就是 golden/,所以同樣被拒絕。
+ *       baseDir 還不存在時,取最近一個存在的祖先做 realpath 再接回剩下的路徑(symlink 繞進 golden/ 也要抓到)。
+ *       「底下」要比路徑邊界:golden-fake/、golden-extra/ 不算 golden/ 底下。
+ *       輸出目錄在 golden/ 以外(例如 mkdtemp)→ 照常寫,meta 是 -dirty。
+ *       規則不分 mode(顧問原話沒有限定 live;fake 預設存 golden-fake/,不會碰到)。
  *   cli.ts
  *     main(argv, deps?: { root?: string })                        ← 第二參數新增,root 原樣傳給 runGolden
- *       --live、沒有 --out、dirty → code 非 0,output 含 prompt 檔相對路徑與 `--out`,且含 'dirty' 或 '未提交'
- *
- * 未裁決(測試不涵蓋,不要在實作裡自己當成已定):--live 明確把 --out 指到 golden/ 本身的 dirty 行為。
+ *       dirty 且輸出會落在 golden/ 底下(沒有 --out,或 --out 指進 golden/)→ code 非 0,
+ *       output 含 prompt 檔相對路徑與 `--out`,且含 'dirty' 或 '未提交'
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as goldenRun from './golden-run.js';
@@ -314,7 +318,7 @@ describe('T11 runGolden --live', () => {
     expect(existsSync(join(root, GOLDEN_REL))).toBe(false);
   });
 
-  it('prompt dirty、有給 baseDir(--out):照常寫,meta 仍是 <sha>-dirty,快照是修改後的內容', async () => {
+  it('prompt dirty、baseDir 在 golden/ 以外(--out 指到暫存目錄):照常寫,meta 仍是 <sha>-dirty,快照是修改後的內容', async () => {
     const { root, sha } = promptRepo();
     put(root, PROMPT, '# edited, not committed\n');
     const out = tmp('pq-dirty-out-');
@@ -326,6 +330,92 @@ describe('T11 runGolden --live', () => {
     expect(result.meta.promptFileGitCommit).toBe(`${sha}-dirty`);
     expect(readFileSync(join(result.dir, 'prompt.snapshot.md'), 'utf8')).toBe('# edited, not committed\n');
     expect(existsSync(join(root, GOLDEN_REL))).toBe(false);
+  });
+
+  it('prompt dirty、--out 指回 golden/ 底下(不存在的子目錄):拒絕(must_catch:用 --out 指回 golden/ 繞過拒絕)', async () => {
+    const { root } = promptRepo();
+    put(root, PROMPT, '# edited\n');
+    const router = countingRouter();
+    const baseDir = join(root, GOLDEN_REL, 'x');
+    await expect(run({ set: 'selftest', today: '2026-09-10', mode: 'live', root, baseDir, createRouter: () => router })).rejects.toBeInstanceOf(
+      dirtyPromptErrorClass(),
+    );
+    expect(router.calls).toBe(0);
+    expect(existsSync(join(root, GOLDEN_REL))).toBe(false);
+  });
+
+  it('prompt dirty、--out 就是 golden/ 本身(已存在):拒絕,裡面沒長東西', async () => {
+    const { root } = promptRepo();
+    put(root, PROMPT, '# edited\n');
+    mkdirSync(join(root, GOLDEN_REL), { recursive: true });
+    const router = countingRouter();
+    await expect(
+      run({ set: 'selftest', today: '2026-09-10', mode: 'live', root, baseDir: join(root, GOLDEN_REL), createRouter: () => router }),
+    ).rejects.toBeInstanceOf(dirtyPromptErrorClass());
+    expect(router.calls).toBe(0);
+    expect(readdirSync(join(root, GOLDEN_REL))).toEqual([]);
+  });
+
+  it('prompt dirty、--out 是繞進 golden/ 的 symlink(含 symlink 底下尚不存在的子目錄):拒絕(比 realpath)', async () => {
+    const { root } = promptRepo();
+    put(root, PROMPT, '# edited\n');
+    mkdirSync(join(root, GOLDEN_REL), { recursive: true });
+    const holder = tmp('pq-dirty-link-');
+    symlinkSync(join(root, GOLDEN_REL), join(holder, 'link'));
+    for (const baseDir of [join(holder, 'link'), join(holder, 'link', 'deeper', 'x')]) {
+      const router = countingRouter();
+      await expect(run({ set: 'selftest', today: '2026-09-10', mode: 'live', root, baseDir, createRouter: () => router })).rejects.toBeInstanceOf(
+        dirtyPromptErrorClass(),
+      );
+      expect(router.calls).toBe(0);
+    }
+    expect(readdirSync(join(root, GOLDEN_REL))).toEqual([]);
+  });
+
+  it('root 本身是 symlink 路徑、--out 給真實路徑指進 golden/:拒絕(golden/ 的位置也要解析成 realpath)', async () => {
+    const { root } = promptRepo();
+    put(root, PROMPT, '# edited\n');
+    const holder = tmp('pq-dirty-rootlink-');
+    const linkedRoot = join(holder, 'repo');
+    symlinkSync(root, linkedRoot);
+    const router = countingRouter();
+    await expect(
+      run({ set: 'selftest', today: '2026-09-10', mode: 'live', root: linkedRoot, baseDir: join(realpathSync(root), GOLDEN_REL, 'x'), createRouter: () => router }),
+    ).rejects.toBeInstanceOf(dirtyPromptErrorClass());
+    expect(router.calls).toBe(0);
+  });
+
+  it('prompt dirty、--out 用 .. 繞回 golden/:拒絕(解析後的路徑)', async () => {
+    const { root } = promptRepo();
+    put(root, PROMPT, '# edited\n');
+    const baseDir = join(root, 'packages', 'core', 'src', 'prompt-quality', 'golden-fake', '..', 'golden', 'y');
+    const router = countingRouter();
+    await expect(run({ set: 'selftest', today: '2026-09-10', mode: 'live', root, baseDir, createRouter: () => router })).rejects.toBeInstanceOf(
+      dirtyPromptErrorClass(),
+    );
+    expect(router.calls).toBe(0);
+  });
+
+  it('prompt dirty、--out 在名字相近的兄弟目錄(golden-fake、golden-extra):照常寫(路徑邊界,不是字串前綴)', async () => {
+    for (const sibling of ['golden-fake', 'golden-extra']) {
+      const { root, sha } = promptRepo();
+      put(root, PROMPT, '# edited\n');
+      const baseDir = join(root, 'packages', 'core', 'src', 'prompt-quality', sibling, 'x');
+      const router = countingRouter();
+      const result = await run({ set: 'selftest', today: '2026-09-10', mode: 'live', root, baseDir, createRouter: () => router });
+      expect(router.calls).toBe(3);
+      expect(readMeta(result.dir).promptFileGitCommit).toBe(`${sha}-dirty`);
+    }
+  });
+
+  it('prompt 乾淨、--out 指進 golden/ 底下:照常寫(拒絕只針對 dirty)', async () => {
+    const { root, sha } = promptRepo();
+    const baseDir = join(root, GOLDEN_REL, 'x');
+    const router = countingRouter();
+    const result = await run({ set: 'selftest', today: '2026-09-10', mode: 'live', root, baseDir, createRouter: () => router });
+    expect(router.calls).toBe(3);
+    expect(result.dir.startsWith(baseDir)).toBe(true);
+    expect(readMeta(result.dir).promptFileGitCommit).toBe(sha);
   });
 
   it('拒絕之後把 prompt 提交,同一個呼叫就能寫進 golden/(拒絕不留狀態)', async () => {
@@ -347,6 +437,15 @@ describe('T11 runGolden fake', () => {
     const result = await run({ set: 'selftest', today: '2026-09-10', mode: 'fake', root });
     expect(result.dir.startsWith(join(root, FAKE_REL))).toBe(true);
     expect(readMeta(result.dir).promptFileGitCommit).toBe(`${sha}-dirty`);
+  });
+
+  it('dirty 的 prompt、fake 模式、--out 指進 golden/:也拒絕(規則看輸出路徑,不分 mode)', async () => {
+    const { root } = promptRepo();
+    put(root, PROMPT, '# edited\n');
+    await expect(
+      run({ set: 'selftest', today: '2026-09-10', mode: 'fake', root, baseDir: join(root, GOLDEN_REL, 'x') }),
+    ).rejects.toBeInstanceOf(dirtyPromptErrorClass());
+    expect(existsSync(join(root, GOLDEN_REL))).toBe(false);
   });
 
   it('乾淨的 prompt:fake 的 meta 是乾淨的 sha', async () => {
@@ -385,6 +484,53 @@ describe('T11 cli main', () => {
     expect(result.output).toContain(PROMPT);
     expect(result.output).toContain('--out');
     expect(result.output).toMatch(/dirty|未提交/);
+    expect(existsSync(join(root, GOLDEN_REL))).toBe(false);
+  });
+
+  it('--live --out 指進 golden/ 底下、prompt dirty:退出碼非 0,golden/ 什麼都沒長', async () => {
+    const { root } = promptRepo();
+    put(root, PROMPT, '# edited\n');
+    const result = await cli(['--golden', '--set', 'selftest', '--live', '--out', join(root, GOLDEN_REL, 'x')], { root });
+    expect(result.code).not.toBe(0);
+    expect(result.output).toContain(PROMPT);
+    expect(result.output).toMatch(/dirty|未提交/);
+    expect(existsSync(join(root, GOLDEN_REL))).toBe(false);
+  });
+
+  it('--live --out 指到暫存目錄、prompt dirty:退出碼 0,meta 記 -dirty(帳本走沙箱指標)', async () => {
+    const { root, sha } = promptRepo();
+    put(root, PROMPT, '# edited\n');
+    // 沙箱指標與標記(同 cli.test.ts 的 --live 區塊)+ 假雲端
+    const vault = tmp('pq-dirty-vault-');
+    const vaultId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const ledger = join(vault, 'learning');
+    mkdirSync(join(ledger, 'config'), { recursive: true });
+    writeFileSync(join(ledger, 'config', 'vault-id'), `${vaultId}\n`);
+    mkdirSync(join(vault, 'xdg', 'llm-learning-cards'), { recursive: true });
+    writeFileSync(join(vault, 'xdg', 'llm-learning-cards', 'vault.json'), JSON.stringify({ learning_dir: ledger, vault_id: vaultId }));
+    process.env.HOME = vault;
+    process.env.XDG_CONFIG_HOME = join(vault, 'xdg');
+    process.env.LLM_CLOUD_PROVIDER = 'anthropic';
+    process.env.LLM_CLOUD_MODEL = 'claude-sonnet-5';
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.includes('/v1/models')) return json({ data: [] });
+      if (url.includes('/v1/messages')) {
+        return json({
+          id: 'm', type: 'message', role: 'assistant', model: 'claude-sonnet-5', stop_reason: 'end_turn', stop_sequence: null,
+          content: [{ type: 'text', text: JSON.stringify({ criteria: [true, false], feedback: 'ok' }) }],
+          usage: { input_tokens: 10, output_tokens: 5 },
+        });
+      }
+      throw new Error(`T11 測試沒預期到的請求:${url}`);
+    }) as typeof globalThis.fetch;
+    const out = tmp('pq-dirty-out-');
+    const result = await cli(['--golden', '--set', 'selftest', '--live', '--out', out], { root });
+    expect(result.code).toBe(0);
+    const metaRel = listAll(out).find((p) => p.endsWith('meta.json'))!;
+    expect(readMeta(join(out, metaRel, '..')).promptFileGitCommit).toBe(`${sha}-dirty`);
     expect(existsSync(join(root, GOLDEN_REL))).toBe(false);
   });
 
