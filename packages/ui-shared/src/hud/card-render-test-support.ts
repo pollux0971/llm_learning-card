@@ -10,8 +10,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  CARD_DIRS, CARD_VIEWPORT, EXAMPLE_MIN_MARGIN_PX, HP_FILL_TOLERANCE_PX, HP_PERCENT_ONE_THIRD, NEXT_LABEL,
-  PANEL_FILL_TOLERANCE_PX, RESULT_TEXT, SUBMIT_HIDDEN_AFTER_RESULT, SUBMIT_LABEL, type CardName,
+  CARD_DIRS, CARD_VIEWPORT, EXAMPLE_BORDER_LEFT_PX, EXAMPLE_MIN_MARGIN_PX, FIELD_INNER_MAX_DARKER_LUMA, HP_FILL_TOLERANCE_PX, HP_PERCENT_ONE_THIRD, NEXT_LABEL,
+  PANEL_FILL_TOLERANCE_PX, RESULT_TEXT, SUBMIT_FIELD_MIN_GAP_PX, SUBMIT_HIDDEN_AFTER_RESULT, SUBMIT_LABEL, TEXTAREA_MIN_ROWS,
+  TEXTAREA_RESIZE, type CardName,
 } from './card-design-values-test-support.js';
 import {
   ONE_PIXEL_INK, openApp, px, type GalleryPage, type Image, type Rect,
@@ -325,4 +326,84 @@ export async function resultTextProblems(page: GalleryPage): Promise<string[]> {
 export async function noResultBeforeSubmitProblems(page: GalleryPage): Promise<string[]> {
   const r = await readResult(page);
   return r.count === 0 ? [] : [`還沒送出就有 ${r.count} 個 data-result 元素`];
+}
+
+// ───────────────────────────── 第二輪(O1–O4)
+/** 一直答到出現應用題(textarea)為止;最多 8 次 */
+export async function gotoApply(page: GalleryPage): Promise<void> {
+  for (let i = 0; i < 8; i += 1) {
+    if ((await currentQuestion(page)).textareas > 0) return;
+    await submitCurrent(page);
+    await click(page, NEXT_LABEL);
+    await sleep(150);
+  }
+  throw new Error('答了 8 次還沒有出現應用題');
+}
+
+const lumaOf = ([r, g, b]: [number, number, number]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+/**
+ * O1:作答欄內底(輸入框裡沒字的地方)的顏色跟面板一樣——不能比面板暗到像停用(灰 230 那種)。
+ * 面板色取同一列、作答欄左邊的面板內距(面板上沒有字也沒有框的地方)。填空與應用題各量一次。
+ */
+export async function fieldInnerColourProblems(page: GalleryPage): Promise<string[]> {
+  const problems: string[] = [];
+  const measure = async (what: string): Promise<void> => {
+    // 第一格有焦點(橘色框會染色),所以先讓焦點離開,量最後一個作答欄
+    const r = await page.evaluate<Rect | null>(`(() => { document.activeElement?.blur?.(); const all = document.querySelectorAll('[data-hud="field"]'); const f = all[all.length - 1]; if (!f) return null;
+      const b = f.getBoundingClientRect(); return { x: b.x, y: b.y, width: b.width, height: b.height }; })()`);
+    if (!r) { problems.push(`${what}:畫面上沒有 [data-hud="field"]`); return; }
+    const img = await page.screenshot();
+    const y = Math.round(r.y + r.height / 2);
+    const inner = px(img, Math.round(r.x + r.width * 0.75), y);
+    const panel = px(img, 8, y);
+    const darker = lumaOf(panel) - lumaOf(inner);
+    if (darker > FIELD_INNER_MAX_DARKER_LUMA) {
+      problems.push(`${what}:作答欄內底 rgb(${inner.join(',')}) 比面板 rgb(${panel.join(',')}) 暗 ${darker.toFixed(0)}(> ${FIELD_INNER_MAX_DARKER_LUMA}),看起來像停用`);
+    }
+  };
+  await measure('填空題');
+  await gotoApply(page);
+  await measure('應用題');
+  return problems;
+}
+
+/** O2:應用題 textarea 的 resize 是 none,至少五行高(06 phase-1「應用題至少五行高」不退步) */
+export async function textareaProblems(page: GalleryPage): Promise<string[]> {
+  await gotoApply(page);
+  const m = await page.evaluate<{ resize: string; rows: number; height: number; line: number }>(`(() => { const t = document.querySelector('textarea'); const s = getComputedStyle(t);
+    const lh = parseFloat(s.lineHeight); return { resize: s.resize, rows: t.rows, height: t.clientHeight, line: Number.isNaN(lh) ? parseFloat(s.fontSize) * 1.2 : lh }; })()`);
+  const problems: string[] = [];
+  if (m.resize !== TEXTAREA_RESIZE) problems.push(`textarea 的 resize 是「${m.resize}」,要是「${TEXTAREA_RESIZE}」(縮放把手會壓在切角線上)`);
+  if (m.rows < TEXTAREA_MIN_ROWS) problems.push(`textarea 的 rows 是 ${m.rows},要 ≥ ${TEXTAREA_MIN_ROWS}`);
+  if (m.height < TEXTAREA_MIN_ROWS * m.line - 1) problems.push(`textarea 內高 ${m.height}px,不到 ${TEXTAREA_MIN_ROWS} 行(行高 ${m.line.toFixed(1)}px)`);
+  return problems;
+}
+
+/** O3:「送出」鍵上緣離上方作答欄外框下緣 ≥ 8 像素;填空與應用題各量一次 */
+export async function submitGapProblems(page: GalleryPage): Promise<string[]> {
+  const problems: string[] = [];
+  const gap = (what: string) => page.evaluate<number | null>(`(() => { const b = ${BUTTON_BY_TEXT(SUBMIT_LABEL)}; if (!b) return null;
+    const top = b.getBoundingClientRect().top;
+    const above = [...document.querySelectorAll('[data-hud="field"]')].map((f) => f.getBoundingClientRect().bottom).filter((v) => v <= top + 1);
+    return above.length ? top - Math.max(...above) : null; })()`).then((g) => {
+    if (g === null) problems.push(`${what}:找不到「${SUBMIT_LABEL}」或它上方的作答欄`);
+    else if (g < SUBMIT_FIELD_MIN_GAP_PX) problems.push(`${what}:「${SUBMIT_LABEL}」離上方作答欄 ${g.toFixed(1)} 像素,要 ≥ ${SUBMIT_FIELD_MIN_GAP_PX}`);
+  });
+  await gap('填空題');
+  await gotoApply(page);
+  await gap('應用題');
+  return problems;
+}
+
+/** O4:教學卡例子框左邊那條線是 1 像素(跟面板的細黑線一致) */
+export async function exampleBorderProblems(page: GalleryPage): Promise<string[]> {
+  const m = await page.evaluate<{ width: string; style: string }[]>(`[...document.querySelectorAll('.lc-example')].map((e) => { const s = getComputedStyle(e); return { width: s.borderLeftWidth, style: s.borderLeftStyle }; })`);
+  if (m.length === 0) return ['第一張卡裡沒有 .lc-example'];
+  const problems: string[] = [];
+  m.forEach((e, i) => {
+    if (e.width !== `${EXAMPLE_BORDER_LEFT_PX}px`) problems.push(`第 ${i + 1} 個例子框的 border-left-width 是 ${e.width},要 ${EXAMPLE_BORDER_LEFT_PX}px`);
+    if (e.style === 'none') problems.push(`第 ${i + 1} 個例子框的 border-left-style 是 none(線不見了)`);
+  });
+  return problems;
 }

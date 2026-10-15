@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  enterKeyProblems, exampleMarginProblems, hpBarProblems, noResultBeforeSubmitProblems, openCard, panelFillProblems,
-  resultTextProblems, scrollInsideProblems, submitLifecycleProblems, submitVisibleProblems,
+  enterKeyProblems, exampleBorderProblems, exampleMarginProblems, fieldInnerColourProblems, hpBarProblems, noResultBeforeSubmitProblems, openCard, panelFillProblems,
+  resultTextProblems, scrollInsideProblems, submitGapProblems, submitLifecycleProblems, submitVisibleProblems, textareaProblems,
 } from './card-render-test-support.js';
 import { PANEL_FILLS_WINDOW } from './card-design-values-test-support.js';
 import type { GalleryPage } from './render-test-support.js';
@@ -30,6 +30,11 @@ describe('教學卡的版面(360 × 480)', () => {
   it('驗收 6:例子框左右離面板捲動區都 ≥ 12 像素,捲動區沒有橫向凸出', async () => {
     await p().reset();
     expect(await exampleMarginProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('O4:例子框左邊那條線是 1 像素(border-left-width 1px,線還在)', async () => {
+    await p().reset();
+    expect(await exampleBorderProblems(p())).toEqual([]);
   }, 60_000);
 });
 
@@ -72,4 +77,19 @@ describe('考試卡的版面與互動(360 × 480)', () => {
     await p().reset();
     expect(await noResultBeforeSubmitProblems(p())).toEqual([]);
   }, 60_000);
+
+  it('O1:作答欄內底跟面板一樣亮,不是灰色停用的樣子(填空、應用題各量)', async () => {
+    await p().reset();
+    expect(await fieldInnerColourProblems(p())).toEqual([]);
+  }, 90_000);
+
+  it('O2:應用題 textarea 不能縮放(resize: none),rows 仍至少五行高', async () => {
+    await p().reset();
+    expect(await textareaProblems(p())).toEqual([]);
+  }, 90_000);
+
+  it('O3:「送出」鍵離上方作答欄外框 ≥ 8 像素(填空、應用題各量)', async () => {
+    await p().reset();
+    expect(await submitGapProblems(p())).toEqual([]);
+  }, 90_000);
 });

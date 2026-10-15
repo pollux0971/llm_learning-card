@@ -133,13 +133,13 @@ export async function fieldRenderProblems(page: GalleryPage): Promise<string[]> 
   if (single < 0) return problems;
 
   // 輸入框本身沒有自己的框、外框線、底色;字型與字色;撐滿 HudField
-  const inner = await page.evaluate<{ tag: string; border: string[]; bg: string; outline: string; shadow: string; font: string; color: string; wRatio: number }[]>(`(() => {
+  const inner = await page.evaluate<{ tag: string; border: string[]; bg: string; resize: string; outline: string; shadow: string; font: string; color: string; wRatio: number }[]>(`(() => {
     const root = getComputedStyle(document.documentElement);
     return [...document.querySelectorAll('[data-hud="field"]')].map((f) => {
       const i = f.querySelector('input, textarea'); const s = getComputedStyle(i);
       return { tag: i.tagName.toLowerCase(),
         border: ['Top', 'Right', 'Bottom', 'Left'].map((d) => s.getPropertyValue('border-' + d.toLowerCase() + '-width') + ' ' + s.getPropertyValue('border-' + d.toLowerCase() + '-style')),
-        bg: s.backgroundColor, outline: s.outlineStyle + ' ' + s.outlineWidth, shadow: s.boxShadow, font: s.fontFamily, color: s.color,
+        bg: s.backgroundColor, resize: s.resize, outline: s.outlineStyle + ' ' + s.outlineWidth, shadow: s.boxShadow, font: s.fontFamily, color: s.color,
         wRatio: i.getBoundingClientRect().width / f.getBoundingClientRect().width };
     });
   })()`);
@@ -150,6 +150,7 @@ export async function fieldRenderProblems(page: GalleryPage): Promise<string[]> 
     const who = `第 ${n + 1} 個作答欄的 <${i.tag}>`;
     if (i.border.some((b) => !/^0px |none$/.test(b))) problems.push(`${who}有自己的邊框:${i.border.join(' / ')}`);
     if (!/^rgba\(0, 0, 0, 0\)$|^transparent$/.test(i.bg)) problems.push(`${who}有自己的底色:${i.bg}`);
+    if (i.tag === 'textarea' && i.resize !== 'none') problems.push(`${who}的 resize 是 ${i.resize},要 none`);
     if (!/^none /.test(i.outline) && !/ 0px$/.test(i.outline)) problems.push(`${who}平常就有外框線:${i.outline}`);
     if (i.shadow !== 'none') problems.push(`${who}有 box-shadow:${i.shadow}`);
     if (firstFamily(i.font) !== firstFamily(bodyFont)) problems.push(`${who}字型第一順位是「${firstFamily(i.font)}」,要是 --hud-font-body 的「${firstFamily(bodyFont)}」`);

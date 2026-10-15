@@ -52,6 +52,17 @@ export const RESULT_SYMBOL = { pass: String.fromCodePoint(0x2713), fail: String.
 /** 評分失敗不是對錯結果 */
 export const ERROR_TEXT = '評分失敗,請再試一次';
 
+// ── 第二輪(顧問看過 @manual 的四個觀察,2026-10-16) ───────────────────────
+/** O1:作答欄內底的亮度比面板暗超過這個值(0–255)就算「看起來像停用」 */
+export const FIELD_INNER_MAX_DARKER_LUMA = 12;
+/** O2:應用題 textarea 不能讓使用者拖縮放把手(把手會壓在切角線上),高度固定、捲動在裡面 */
+export const TEXTAREA_RESIZE = 'none';
+export const TEXTAREA_MIN_ROWS = 5;
+/** O3:「送出」鍵上緣離上方作答欄(HudField 外框)下緣的最小距離(像素) */
+export const SUBMIT_FIELD_MIN_GAP_PX = 8;
+/** O4:例子框左邊那條線的粗細(像素;跟面板的黑線一樣細) */
+export const EXAMPLE_BORDER_LEFT_PX = 1;
+
 // ── HP 條 ──────────────────────────────────────────────────────────────────
 /** 綠色那一段寬度離「內寬 × 比例」的容許誤差(右端斜切,正中間那一列少約 3.6 像素) */
 export const HP_FILL_TOLERANCE_PX = 6;
