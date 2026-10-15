@@ -72,6 +72,13 @@ Feature: The HUD kit and its gallery
     When the gallery is drawn in a headless browser
     Then every sampled pixel in the panel padding equals the panel colour laid over the pixel behind it
 
+  Scenario: On the dark backdrop the panel is visibly see-through
+    Given the gallery backdrop is switched to dark
+    When the gallery is drawn in a headless browser
+    Then the page behind the panel is dark and carries a high contrast pattern
+    And every sampled pixel in the panel padding equals the panel colour laid over the pixel behind it
+    And the shared stylesheet says nothing about the gallery
+
   Scenario: Every frame line is one pixel wide
     Given the third gallery button is labelled with Latin letters only
     When the gallery is drawn in a headless browser

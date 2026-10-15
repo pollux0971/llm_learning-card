@@ -14,6 +14,9 @@ must_catch:
   - focus-visible 的樣式拿掉、跟 hover 一樣,或畫在按鈕自己的 clip-path 外面被裁掉:「焦點跟 hover 不一樣」的像素檢查必須紅
   - 格線或底色回到 hud.css 的 html / :root / body 規則:「共用樣式不畫頁面底色」必須紅
   - 拿掉 Rajdhani 的 size-adjust,或設成 100% 以下:size-adjust 檢查與大寫高度比例都必須紅
+  - 展示頁沒有深色背景的切換,或切了之後面板後面不是深色、沒有高對比圖樣:深色背景那條必須紅
+  - 深色背景上面板不符合疊色公式(例如深色模式另外把面板改成不透明):深色背景的疊色檢查必須紅
+  - 深色背景或格線寫進 hud.css(hud.css 提到 gallery):「hud.css 不提 gallery」必須紅
   - 現有 14 phase-1 的測試(85 條 vitest、13 個非 @manual 場景)照舊全綠:長相改了,行為與規則不變
 ---
 
@@ -50,7 +53,15 @@ G7(HP 條執行時 DOM 上有 `style="--hp-fill: …"`,那是 Svelte 用 CSSOM �
      「面板後面」是把面板藏起來再截一次、同一個位置量到的像素。
    - 展示頁現在的頁面底色是 (213, 222, 230),面板應該量到約 (251, 252, 253)。
    - 注意:不透明度 0.9 時,格線透過面板只差約 1.5 個色階,在展示頁肉眼幾乎看不出來;換成深色的桌面才明顯。
-     所以「看得到後面」用疊色公式驗,不用眼睛驗。
+     所以自動驗收用疊色公式,眼睛看的部分見 1b。不透明度維持 0.9(技術顧問 2026-10-15:100 字內文好讀比較重要)。
+1b. **展示頁加一個深色背景的切換**(技術顧問 2026-10-15:判觀感時要用眼睛看到它真的是半透明)。
+   - 只改 `gallery/Gallery.svelte`:一個 `<input type="checkbox" data-gallery="dark-backdrop">`,勾起來就換成深色背景;不勾時是原本的格線。
+     `hud.css` 不提 gallery,真的卡片不受影響。
+   - 深色背景要有高對比的圖樣,例如深色底加粗格線,模擬桌面。顏色照舊只能用 `var(--hud-*)`(現有的「顏色字面值只在 hud.css」測試)。
+     現有的變數就夠用:例如 `--hud-text`(#333)或 `--hud-line`(#000)當底,`--hud-solid` 畫粗格線。不新增顏色、不動 `hud.css`。
+   - 量法(面板藏起來之後量面板後面):整片區域每 4 像素取一點,平均亮度 ≤ 128;面板左右那兩條取樣線上,亮度起伏 ≥ 100。
+   - 切到深色時,面板一樣要符合驗收 1 的疊色公式。拿 #333 加 4 像素白格線來說,面板會在約 (235, 235, 235) 與 (254, 254, 254) 之間跟著格線變。
+   - 前端重拍時附一張深色背景的面板截圖,技術顧問用那一張判斷是不是真的半透明。
 2. **G3 框線在每條直邊都剛好 1 像素**:面板四邊、三顆按鈕的四邊,第 3 顆換成純英文「NEXT」也一樣;按鈕都是中文時也一樣。
    - 量法:每條邊的正中間,跨邊量 7 個像素的「墨水量」,要在 0.7–1.35 之間(1 像素的黑線 ≈ 1,不管落在整數還是半個像素上)。
 3. **切角的斜邊還有細線**(防止 G1 的新做法把斜邊的線弄掉)。面板四個切角,在斜邊正中間那一列橫著量,墨水量要在 0.6–2.0 之間。
@@ -69,22 +80,24 @@ G7(HP 條執行時 DOM 上有 `style="--hp-fill: …"`,那是 Svelte 用 CSSOM �
 7. **不退步。** 14 phase-1 現有的測試全部照舊綠:`packages/ui-shared/src/hud/*.test.ts` 的 85 條,以及 `phase-1.feature` 原本 13 個非 `@manual` 場景。
    CSP 照舊:不用 HTML 的 `style=` 屬性,不插 inline `<style>`,不連外部服務。
 8. **觀感(`@manual`,前端重拍、技術顧問判)。** 修完之後,前端照 14 phase-1 `@manual` 報告的方法重拍:
-   Chrome 與 WebKitGTK 兩個引擎,外加「正式產物套桌面版 CSP」,其中標題列的中英混排一定要重拍。交顧問判。
+   Chrome 與 WebKitGTK 兩個引擎,外加「正式產物套桌面版 CSP」。其中標題列的中英混排一定要重拍,
+   深色背景下的面板也要附一張(驗收 1b)。交顧問判。
 
 ## 紅測試(規格作者寫,開發 worker 不改)
 
 | 檔 | 內容 |
 |---|---|
 | `packages/ui-shared/src/hud/render-test-support.ts` | 量測本體:用 vite 的 `createServer` 起展示頁,開 headless Chrome(`LC_CHROME` 或常見路徑;找不到就紅,不跳過),720 × 900、一個 CSS 像素就是一個影像像素,`--force-color-profile=srgb`。hover / focus 用 DevTools 的 `CSS.forcePseudoState`,不送滑鼠鍵盤。檔名以 `test-support.ts` 結尾,所以不會被 hud/ 的原始碼掃描掃到 |
-| `packages/ui-shared/src/hud/render.test.ts` | vitest:驗收 1–6,共 7 條(驗收 2 多一條「都是中文」的對照,本來就綠) |
+| `packages/ui-shared/src/hud/render.test.ts` | vitest:驗收 1–6 與 1b,共 10 條(驗收 2 多一條「都是中文」的對照,本來就綠;「hud.css 不提 gallery」現在也是綠的) |
 | `packages/ui-shared/src/hud/render-test-support.test.ts` | 量尺自己的測試(合成影像):PNG 解碼五種 filter、墨水量(整數與半像素的 1px ≈ 1、2px ≈ 2、3px ≈ 3、外暗內亮不誤算)、像素差、`LC_CHROME` 錯了會丟錯。本來就綠 |
-| `features/14-hud-skin/phase-1.feature` | 加 5 個場景(在原本的 `@manual` 前面) |
-| `features/steps/hud-skin-render.steps.ts` | 那 5 個場景的步驟;展示頁與 Chrome 整個 cucumber 行程只開一次 |
+| `features/14-hud-skin/phase-1.feature` | 加 6 個場景(在原本的 `@manual` 前面) |
+| `features/steps/hud-skin-render.steps.ts` | 那 6 個場景的步驟;展示頁與 Chrome 整個 cucumber 行程只開一次 |
 
 在基底上的紅(原文,Chrome 142):
 
 ```text
 G1   (29,180) 是 rgb(230,230,230),面板後面是 rgb(213,222,230),半透明疊上去應該約 rgb(251,252,253)
+1b   展示頁沒有深色背景的切換([data-gallery="dark-backdrop"] 的 checkbox)
 G3   第 3 顆按鈕(NEXT)的top邊框線量起來是 2.25 像素,要 1 像素
      第 3 顆按鈕(NEXT)的bottom邊框線量起來是 3.00 像素,要 1 像素
 G5   focus-visible 跟 hover 只差 0 個像素(至少要 30),鍵盤使用者分不出焦點
@@ -95,10 +108,12 @@ G6   Rajdhani 的 @font-face 沒有 size-adjust
      大寫「H」高 42.0px、中文「國」高 58.0px,比例 0.724,要在 0.78–0.92 之間
 ```
 
-本來就綠、在這張當防退步用的:面板四條直邊與另外兩顆中文按鈕的框線、切角斜邊的線(現在約 0.78)。
+vitest 共紅 8 條(G1、1b ×2、G3、G5、G6 ×2、G2),cucumber 用 tag 跑的 19 個場景裡紅 6 個。
+本來就綠、在這張當防退步用的:面板四條直邊與另外兩顆中文按鈕的框線、切角斜邊的線(現在約 0.78)、hud.css 不提 gallery。
 
-**能轉綠的證明**:前端用丟棄式的改法試過(沒有進 git,已還原)。改動是:黑線改成一圈、按鈕內層撐滿、焦點加一圈內框、格線搬進展示頁、`size-adjust: 112%`。
-結果新的 7 條全綠,原本 85 條也全綠。做法不附,由實作者決定。
+**能轉綠的證明**:前端用丟棄式的改法試過(沒有進 git,已還原)。改動是:黑線改成一圈、按鈕內層撐滿、焦點加一圈內框、
+格線搬進展示頁、深色背景切換(#333 底加 4 像素白格線,只用 var())、`size-adjust: 112%`。
+結果 hud/ 底下 105 條全綠:新的 10 條、量尺自測 10 條、原本的 85 條。做法不附,由實作者決定。
 
 ## 怎麼跑(都是輕的,不用拿重活位子)
 
