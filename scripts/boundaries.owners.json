@@ -49,6 +49,10 @@
       "12-prompt-quality"
     ],
     [
+      "packages/ui-shared/src/hud/",
+      "14-hud-skin"
+    ],
+    [
       "packages/ui-shared/",
       "07-teach-card"
     ],

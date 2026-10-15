@@ -68,5 +68,10 @@
     "cmd": "npx tsx scripts/prompt-check.ts --golden",
     "interactive": false,
     "expect": "golden"
+  },
+  "14-hud-skin": {
+    "cmd": "npx vite packages/ui-shared/src/hud/gallery",
+    "interactive": true,
+    "pending": "14-hud-skin/phase-1"
   }
 }
