@@ -17,7 +17,7 @@
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { acquireLock, defaultLockPath, selfLockInfo } from '../../../scripts/mutate.ts';
+import { acquireLock, defaultLockPath, ensureLockDir, selfLockInfo } from '../../../scripts/mutate.ts';
 
 const DEFAULT_JOBS = '2';
 
@@ -36,7 +36,9 @@ const env = { ...process.env };
 if (env.CARGO_BUILD_JOBS === undefined || env.CARGO_BUILD_JOBS === '') env.CARGO_BUILD_JOBS = DEFAULT_JOBS;
 
 const here = dirname(fileURLToPath(import.meta.url));
-const lock = await acquireLock(defaultLockPath(), { info: selfLockInfo(here) });
+const lockPath = defaultLockPath();
+ensureLockDir(lockPath);
+const lock = await acquireLock(lockPath, { info: selfLockInfo(here) });
 console.log(`acquired ${lock.lockPath}`);
 console.log(`cargo mutants -j ${mutantsJobs}, CARGO_BUILD_JOBS=${env.CARGO_BUILD_JOBS}`);
 const child = spawn(
