@@ -4,6 +4,11 @@
 
 | id | 正確嗎 | 是一個概念嗎 |
 |---|---|---|
-| children-same-origin |   |   |
-| children-cors |   |   |
-| children-preflight |   |   |
+| children-same-origin | 5 | 5 |
+| children-cors | 5 | 4 |
+| children-preflight | 5 | 4 |
+
+## 備註(技術顧問評分,2026-10-15)
+
+- children-cors(5/4):第 3 張「來源的組成」是前置知識,不是 CORS 的子概念。
+- children-preflight(5/4):第 3 張「快取時間」和父卡 cards-preflight 的第 3 張重複。

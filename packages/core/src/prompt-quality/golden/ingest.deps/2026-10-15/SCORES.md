@@ -4,6 +4,10 @@
 
 | id | 正確嗎 | 是一個概念嗎 |
 |---|---|---|
-| deps-three-sections |   |   |
-| deps-pair-origin-cors |   |   |
-| deps-reversed-order |   |   |
+| deps-three-sections | 5 | 5 |
+| deps-pair-origin-cors | 5 | 5 |
+| deps-reversed-order | 5 | 5 |
+
+## 備註(技術顧問評分,2026-10-15)
+
+- 三組都沒有要記的問題。
