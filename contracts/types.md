@@ -1,11 +1,12 @@
 # 契約:型別與檔案格式
 
-> 版本:1.3.1
+> 版本:1.4.0
 >
 > **硬約定**(§1 §2 §3 §4 §7 的 LlmTask 與路由表 §8 §9 §10 §11 §11b §12):改動需 ADR。
 > (§1 與 §11b 於 1.2.0 補進索引,見 ADR-061;§2 的圍欄與 CJK 判定於 1.2.0 改寫,見 ADR-060。)
 > **軟約定**(§5 §6 §7 的函式簽章 §13):改了跑測試、更新本文件、commit 說明理由即可。
 > §13 的路徑檢查見 ADR-062(1.3.0)與 ADR-063(1.3.1:字元集合、長度、raw、保留名)。
+> 1.4.0 動到兩個硬約定,使用者 2026-10-15 批准:§12 加帳本身分與位置由使用者層指標決定(ADR-066);§1 的 `CategoryId` 收窄成 §13 的一個合法段加長度上限(ADR-067)。
 > 分層理由見 `README.md`。
 
 以下是所有**跨模組**的定義。模組內部型別不在此。
@@ -16,7 +17,7 @@
 
 ```ts
 type CardId = string;        // /^[a-z]{2,6}-\d{4}$/  例 "sec-0042"
-type CategoryId = string;    // 非空,無路徑分隔符與空白
+type CategoryId = string;    // 必須是 §13 的一個合法段,且 UTF-8 位元組 ≤ 64(1.4.0,見下)
 type IsoDate = string;       // "YYYY-MM-DD",一律當地日期,不含時間
 type IsoWeek = string;       // "YYYY-Wnn"  例 "2026-W37"
 type Stage = 0 | 1 | 2 | 3 | 4 | 5 | 6;
@@ -24,6 +25,20 @@ type Level = number;         // 0..4
 type Source = 'raw' | 'llm';
 type QuestionType = 'fill' | 'apply';
 ```
+
+**`CategoryId`(1.4.0,ADR-067)**必須同時滿足:
+
+1. **是 §13 的一個合法段**:非空、不含 `/`;每個字元是 ASCII 的 `A`–`Z`、`a`–`z`、`0`–`9`、`_`、`-`、`.`,或 Unicode 一般類別為 L、N、M;
+   **已經是 NFC**(不是就拒絕,不轉換);不以 `.` 開頭或結尾;第一個 `.` 之前的部分(固定 ASCII 不分大小寫)不是 Windows 保留裝置名。
+   這些規則的**全文在 §13**,這裡只引用,不重寫。
+2. **UTF-8 位元組數 ≤ 64**。理由:分類名會出現在 `cards/<cat>/<id>.short.md`、`graph/order-<cat>.json` 的路徑裡;分類名太長,
+   它底下的每個路徑都會超過 §13 的 240 位元組上限,而「邊界讀不了的分類」正是這次收窄要擋的。
+
+**§1 引用 §13 的段規則,所以 §13「一個 `relPath` 通過,當且僅當」清單的第 2、3、5、6 條(字元集合與 NFC、開頭的點、結尾的點、保留名)今後的任何改動都等於改 §1 這個硬約定**,要走 ADR,不能當軟約定。
+**Rust 是權威**(`LearningFs` 的邊界在 Rust command),TypeScript 那一側(schema、ingest、lint)是同一規則的第二份實作;兩份載入
+同一個機器可讀的向量檔 `contracts/fixtures/path-segment-vectors.json`(真碼位,每列附 `applies_to`、`rule`、`why`),不各自抄表。**實作用 `applies_to` 選列、不用 `rule` 欄分**:長度那四列只適用於 `category`(64 位元組的上限是 `CategoryId` 的,
+§13 的路徑段沒有這條,只有整條路徑 240);`expect` 是對 `applies_to` 裡每一種檢查而言。
+1.4.0 之前的 `CategoryId` 只禁空白與分隔符,所以 ingest 可能建出邊界讀不了的分類(例如 `C++`);收窄之後 ingest 建分類前就拒絕。
 
 ## 2. 教學卡
 
@@ -359,8 +374,25 @@ learning/
 ├── state/                    reviews.json weekly.json log.jsonl
 │                             ingested.json needs-review.json provisional-queue.json
 ├── graph/                    deps.json order-<category>.json
-└── config/                   categories.yaml settings.yaml
+└── config/                   categories.yaml settings.yaml vault-id
 ```
+
+**`learning/` 的位置與帳本身分(1.4.0,ADR-066)**
+
+- `learning/` 的位置**不由程式碼所在的簽出決定**(舊做法:`git rev-parse --git-common-dir` 的上一層;它在 worktree 之間算出同一個位置、
+  在 clone 之間算出不同的位置,於是一台機器上有多本帳本、多個各自的 `LLM_DAILY_CAP_USD`),而是由**使用者層的指標檔**決定:
+  `${XDG_CONFIG_HOME:-~/.config}/llm-learning-cards/vault.json`,內容 `{ "learning_dir": "<絕對路徑>", "vault_id": "<uuid>" }`。
+  `XDG_CONFIG_HOME` 為空字串視同未設。其他作業系統的位置在 phase-4/5 決定。
+- **帳本身分標記** `learning/config/vault-id`:內容是同一個 uuid(逐字相等,容許且只容許一個結尾換行)。不是隱藏檔——使用者要看得到,
+  而且 §13 不放行以 `.` 開頭的段。
+- **任何會花錢、或判斷花了多少錢的程式**(LLM 呼叫、日上限、花費報告)的帳本解析:先看明確參數可不可以(見下),再看指標檔;
+  指標檔不存在、讀不到、`learning_dir` 不存在、標記不符,**四種一律拒絕**,不退回任何預設位置,錯誤訊息要寫出
+  `npx tsx scripts/vault.ts init` 與 `show`。
+- **花錢的帳本只能是驗證過的那一本。** 明確參數(`--out`、`learningDir`)可以改**輸出**位置,**不能改帳本位置**:真的會花錢的呼叫
+  只接受經指標檔與標記驗證過的帳本;未驗證的帳本只准給假的 adapter。
+- 身分驗證過的帳本,`state/log.jsonl` 不存在 = 全新安裝 = 今日花費 0,這是合法的。**身分沒驗證過時,花費是「不知道」,不是 0。**
+- `vault-id` 由 `scripts/vault.ts init` 建立。沒有它的 `learning/` 不能被當成帳本;不涉及花費的讀取(lint、複習)不受影響。
+- 既有硬約定不變:`raw/<category>/` 唯讀、單一帳本不加總(ADR-051 的後半仍然成立;被取代的是它「用 git 位置解析」的那一半)。
 
 專案根目錄另有 `standalone.json`,列出每個功能的單獨執行指令:
 
@@ -372,7 +404,7 @@ type StandaloneManifest = Record<string, {
 }>;
 ```
 
-## 13. 檔案存取(軟約定,見 ADR-062、ADR-063)
+## 13. 檔案存取(軟約定,見 ADR-062、ADR-063;其中段規則被 §1 引用,見下)
 
 UI 不直接碰 fs。透過:
 
@@ -446,7 +478,7 @@ NUL 與其他控制字元(不在字元集合)、反斜線(不在字元集合,所
      但它的 Script 是 `Common`,「Han / Hiragana / Katakana / Hangul」四個文字系統的清單會把它擋掉;注音符號、
      帶重音的拉丁字母也一樣。類別式一句話講完,而且不用維護文字系統清單。
    - **為什麼允許大寫**:分類名就是使用者 `raw/` 資料夾的名字原樣(ingest 用 `raw/${category}` 與 `cards/<category>`,
-     沒有轉小寫),`CategoryId`(§1)也只禁空白與分隔符。只收小寫會讓 `raw/Security/` 這種分類整個被邊界擋掉。
+     沒有轉小寫),`CategoryId`(§1,1.4.0 起套同一條段規則)允許大寫。只收小寫會讓 `raw/Security/` 這種分類整個被邊界擋掉。
    - **為什麼要 NFC**:同一個字可以有 NFC 與 NFD 兩種位元組表示(macOS 檔案系統存 NFD、Linux 存 NFC),
      在同一台 Linux 上寫測試兩種形式永遠不會同時出現,所以這個洞不會被明顯的測試抓到。只決定「允許中文」
      而不處理正規化形式,得到的是一個在 Linux 上全綠、在 macOS 上有洞的防護。
@@ -462,8 +494,9 @@ NUL 與其他控制字元(不在字元集合)、反斜線(不在字元集合,所
   Windows 階段(`features/10-desktop-shell/` 的 phase-5)要加根目錄長度檢查。
 - **Rust 與 TypeScript 的 Unicode 版本可能不同**,同一個字元的類別或 NFC 結果可能不一致。
   **Rust 是權威,TypeScript 那一側只是提示,不是執行。**
-- **§1 的 `CategoryId` 比這份白名單寬**(只禁空白與分隔符),所以 ingest 可能建出邊界讀不了的分類(例如 `C++`,`+` 不在集合)。
-  **這裡不修。** 後續:ingest 建分類時要用邊界同一個規則檢查並給清楚的錯誤;§1 是否要收窄,走 decision-record,可能要問使用者。
+- ~~§1 的 `CategoryId` 比這份白名單寬~~ —— **1.4.0 已解**(ADR-067):`CategoryId` 必須是本節的一個合法段(加 64 位元組上限),
+  ingest 建分類前就拒絕。**反過來的耦合要記住:「一個 `relPath` 通過,當且僅當」清單的第 2、3、5、6 條(字元集合與 NFC、開頭的點、結尾的點、保留名)被 §1 引用,
+  改這幾條 = 改 §1 的硬約定,要走 ADR 與使用者。**
 
 **`raw/` 不服務。** `relPath` 的第一段(固定 ASCII 不分大小寫)等於 `raw` 時,**`LearningFs` 的五個方法
 (`read`、`write`、`list`、`exists`、`assetUrl`)全部拒絕**(1.3.0 只拒絕 `write`,1.3.1 擴大,見上「字元集合與長度」
@@ -504,7 +537,7 @@ NUL 與其他控制字元(不在字元集合)、反斜線(不在字元集合,所
 | `read` | `"cards/é.md"`(U+0065 U+0301) | 拒絕 | 非 NFC(NFC 後是 U+00E9) |
 | `read` | `"cards/Security.md"` | 通過 | 大寫在集合內 |
 | `read` | `"cards/セキュリティー.md"`(結尾是 U+30FC `ー`) | 通過 | `ー` 類別 Lm |
-| `read` | `"cards/C++.md"` | 拒絕 | `+` 不在集合(見已知限制:§1 `CategoryId` 比白名單寬) |
+| `read` | `"cards/C++.md"` | 拒絕 | `+` 不在集合(`CategoryId` 在 1.4.0 起也拒絕 `C++`,見 §1) |
 | `list` | `""`(空字串) | 拒絕 | `relDir` 至少一段,不開根目錄例外 |
 | `list` | 目錄含 `.hidden` 與 `ok.md` | 回傳 `["ok.md"]` | 回傳要能往返,不合規的略過不丟錯 |
 
