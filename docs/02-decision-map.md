@@ -329,7 +329,7 @@ graph TD
   6. 合併順序:01 先,再 04,其餘隨到隨合;每次合併後跑 `boundaries`、`test`、`accept:standalone`、`standalone`。
 - **Alternatives**: 各 worktree 自己加依賴與 workspace(lock 必衝);允許 06 與 07 同時寫 ui-shared(同檔互踩)。
 - **Consequences**: worker 的自由度小一點,但合併幾乎不會衝突。`CLAUDE.md` 的「WIP ≤ 2」在 Wave 0 暫時不適用,Wave 0 之後恢復。
-- **Related**: ADR-021, ADR-022, ADR-023, packages/core/README.md, scripts/check-boundaries.ts
+- **Related**: ADR-021, ADR-022, ADR-023, ADR-071(第 2 點的例外:06、07 可以 import 14 的 `packages/ui-shared/src/hud/`), packages/core/README.md, scripts/check-boundaries.ts
 
 ## ADR-036 · cucumber.js 設定檔格式修正、standalone 指令的預期退出碼
 
@@ -1362,3 +1362,27 @@ graph TD
   - TS 的 §11b 寫入從三份變一份(`state/reviews.json`、ingest 的 state 與 deps、lint 報告都走 `writeFileAtomic`)。
   - 建目錄:`atomicWriteJson` 與 `appendLogEvent` 保留各自的 `mkdirSync` 加一行轉呼叫,因為既有測試對「`writeFileAtomic` 建不建目錄」要求相反;「一行」指的是不留第二份邏輯。
 - **Related**: ADR-040、ADR-060、ADR-069、`docs/tickets/T7-single-atomic-write.md`、`contracts/types.md` §11b
+
+## ADR-071 · 06、07 可以 import 14-hud-skin 的 `packages/ui-shared/src/hud/`:ADR-035 第 2 點的例外,不是推翻
+
+- **Status**: accepted · 2026-10-15(技術顧問判定;需求來自使用者 2026-10-15「無框+SAO刀劍神域 特殊框HUD風格」)
+- **Context**: 使用者要兩個視窗改成 SAO 的 HUD 外觀,並要求拆成兩塊:外觀(新資料夾 `features/14-hud-skin/`)與無框視窗(10 phase-6)。
+  外觀只有一份才不會兩邊長得不一樣,所以元件放在 `packages/ui-shared/src/hud/`,歸 14;14 phase-2 要讓 `apps/teach-card`(07)與
+  `apps/test-card`(06)import 它。ADR-035 第 2 點的字面是「`packages/ui-shared/` Wave 0 由 07 擁有;06-test-card 在 I3 前不 import 它」,
+  而 I3 還沒通過(10 phase-2 進行中),所以 14 phase-2 若在 I3 前做,就違反那句的字面。
+- **Decision**:
+  1. `packages/ui-shared/src/hud/` 歸 14-hud-skin(owners 表用比 07 的 `packages/ui-shared/` 更長的前綴,協調者改)。
+  2. 開兩條 import 例外:06 → 14、07 → 14(`scripts/boundaries.allow.json`,14 phase-2 開工前由協調者加)。不開 14 → 06、14 → 07。
+  3. ADR-035 第 2 點對 07 擁有的其他部分(example 圍欄插件、字數)照舊:06 在 I3 前仍然不 import。
+  4. 這是例外,不是推翻:ADR-035 維持 accepted。
+- **Alternatives**:
+  - **等 I3 通過才做 14 phase-2** —— 不採用。ADR-035 第 2 點的目的是不讓 06、07 同時改 07 擁有的圍欄插件(同檔互踩),
+    `hud/` 是 14 的檔,06、07 只 import 不改,那個風險碰不到;為了字面讓使用者要的外觀晚一個整合點,沒有換到任何東西。
+  - **06、07 各抄一份外觀** —— 不採用。ADR-060、ADR-070 的教訓:每一份都自認照規格做,漂移在沒人看的時候發生。
+  - **把元件放進 07 的 ui-shared(不另立 14)** —— 不採用。06 就變成 import 07 的檔,正好是 ADR-035 第 2 點要避免的形狀;
+    而且外觀不屬於教學卡的範圍(07 的「不在範圍」現在指向 14)。
+- **Consequences**:
+  - 14 phase-2 不必等 I3;排程只看 06、07 的 I3 接線誰先改 `apps/teach-card`、`apps/test-card`(協調者排,同一時間一個人)。
+  - `npm run boundaries` 會多兩條有理由的例外;理由寫在 `features/14-hud-skin/FEATURE.md` 的「依賴」。
+  - 之後 06、07 的新畫面一律用 14 的元件,不各自畫框。
+- **Related**: ADR-035(第 2 點的例外)、ADR-012、ADR-022、`features/14-hud-skin/FEATURE.md`、`features/10-desktop-shell/NEXT.md` 的 phase-6

@@ -15,10 +15,11 @@
 | 07 | teach-card | 教學卡 UI | 4 | `npm run dev -w apps/teach-card` |
 | 08 | weekly-goal | 週目標計數 | 2 | `tsx scripts/weekly.ts --state <f>` |
 | 09 | lint | 健檢、複審、重生 | 2 | `tsx scripts/lint.ts --dir <fixture>` |
-| 10 | desktop-shell | Tauri 視窗、系統列、跨平台 | 5 | `npm run tauri dev` |
+| 10 | desktop-shell | Tauri 視窗、系統列、跨平台 | 6 | `npm run tauri dev` |
 | 11 | review-cli | 把排程與審核串成能用的複習指令 | 2 | `tsx scripts/review.ts --dry-run` |
 | 12 | prompt-quality | golden run,讓 prompt 退化被看見 | 2 | `tsx scripts/prompt-check.ts --golden --fake` |
 | 13 | work-dag | 從既有檔案算出工作依賴圖:現在哪些能開工、能同時做、卡在誰 | 2 | `tsx scripts/dag.ts --root features/13-work-dag/fixtures/basic` |
+| 14 | hud-skin | 兩個視窗共用的 SAO HUD 外觀 | 2 | `npx vite packages/ui-shared/src/hud/gallery` |
 
 精確狀態看各 `FEATURE.md` 的 phase 表。下一步由各 `NEXT.md` 決定。
 單獨執行指令的權威來源是根目錄的 `standalone.json`,上表只是方便閱讀。
