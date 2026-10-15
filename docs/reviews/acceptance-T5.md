@@ -18,7 +18,7 @@
 | D1 | 待決 | `init` 遇到內容不是合法 uuid 的標記檔,連 `--force` 也拒絕(要人工處理)。工單的表沒有這一列 | 請顧問確認 |
 | D2 | 待決 | `--probe` 不解析帳本(worker 報告 §2.8 第 1 點);`llm-spend` 在「驗證過的帳本、log 檔不存在」仍 exit 2,而 `readDailySpend` 同情況回 0(§2.8 第 3 點) | 請顧問確認 |
 | D3 | 待決 | worker 改了 `packages/contracts/src/witness.ts`(移除兩個退化訊號),不是 `contracts/` 的硬約定,但是 contracts 擁有者的檔 | 請顧問知悉 |
-| F-D | 守門 | `witness:degraded` 未標記 155 > 基準 152。base 67e2ad7 已是 154 > 152(我在 T7 驗收時量過),T5 讓它多 1 | 鏈上本來就紅,多 1 |
+| F-D | 守門(**已查清,見 §13**) | `witness:degraded` 未標記 155 > 基準 152。base 154 > 152,T5 多 1。多出來的 1 是 `createDefaultLiveRouter()` 的兩個新測試走了**既有的、與錢無關**的 `llm.router-impl.local-prober-default`;不是 T5 新寫的程式。不在花費或帳本解析的路上,**不擋** | 建議 T8 順手在 `createDefaultLiveRouter` 明講 `localProber`(語意不變),或不處理 |
 | F-E | 超支 | worker 狀態列 $22.894(Max 訂閱等值)/ 預算 $6 = 3.8 倍,**超過 2 倍**;前一個 grok worker $25.39(被中斷) | 協調者提供 |
 | F-F | 流程 | 17 個測試檔來自開發 worker,不是測試 agent | 已逐檔收下,見 §8 |
 
@@ -380,3 +380,63 @@ worker 報告 §3 的 7 條待辦,逐條處理:1 標題→已改;2 `builtin-asse
 - `witness:degraded` 的 +1 沒追到是哪一條新增測試(base 的報告檔已隨驗收簽出刪掉);全套 3239 條仍全綠。
 - 第一輪的 34 個突變我跑了兩遍(第二遍是為了收完整的紅測試名),結果一致。
 - 沒有對真的 `learning/` 跑 `vault.ts init`(工單第 19、20 條:那是協調者合併後做的事)。
+
+## 13. `witness:degraded` 多出的 1 條,以及被刪的兩個訊號(顧問合併前條件)
+
+### 13.1 多出來的 1 條是什麼
+
+方法:在**同樣的條件**下各跑一次完整的 `npm run witness:degraded`:base `67e2ad7`、T5 原樣 `45f1478`(**不含我補的測試**),再用兩邊的原始紀錄(每個測試觸發了哪些訊號)逐條對。
+
+| | 測試數 | 觸發退化分支的測試 | 其中刻意(登記表) | **未標記** |
+|---|---|---|---|---|
+| base `67e2ad7` | 3099 | 162 | 8 | **154** |
+| T5 `45f1478` | 3214 | 160 | 5 | **155** |
+| T5 加我的補測 | 3239 | 160 | 5 | 155(我的補測沒有貢獻) |
+
+兩邊的觸發名單相差:
+
+- 只在 base 觸發、T5 不再觸發(5 條):`spend.test.ts` 的「log 檔不存在就是還沒花錢」(這條 base 是**未標記**,T5 之後走 ENOENT 的合法路徑,不再經過 `llm.spend.log-unreadable-zero`);`router-gateway.test.ts` 四條舊的「沒 log 當 0」測試(base 都是**刻意**,T5 把它們改寫掉了)。
+- 只在 T5 觸發(3 條):`router-gateway.test.ts` 那條改名過的「對照:gateway-fallback 任務有帳本把手」(**刻意**,有登記,走 `llm.fallback.budget-exhausted`);以及 `live-run.test.ts` 的**兩條新測試**——
+  1. 「must_catch: 正式程式的預設路徑走 ExplicitLedger —— `createDefaultLiveRouter()` 零參數時,記帳進指標驗證過的那本」
+  2. 「--live 的 learningDir 只管輸出(設定)位置,不管帳本:給別的目錄,事件仍進指標那本,別的目錄不長出 state/」
+  兩條觸發的都是 `llm.router-impl.local-prober-default`,各 1 次。
+
+算術:未標記 154,減掉 `spend.test.ts` 那 1 條,加上 `live-run.test.ts` 這 2 條 = **155**。刻意從 8 變 5(舊的 4 條被刪或改寫、1 條改名後仍登記)。
+
+### 13.2 在哪個檔、哪個函式、為什麼退化
+
+- 訊號:`llm.router-impl.local-prober-default`,種類 `default-path`,擁有者 03-llm-router,登記在 `packages/contracts/src/witness.ts`。
+- 位置:`packages/core/src/llm/router-impl.ts` 的 `LlmRouterImpl` 建構子:沒注入 `localProber` 時用 `alwaysUnavailable`,也就是「本機模型永遠不可用」。
+- 為什麼這兩條測試會走到:它們呼叫 `createDefaultLiveRouter()`(`packages/core/src/prompt-quality/golden-run.ts`),這個函式 `new LlmRouterImpl({ settings, logPath })`,沒有給 `localProber`。**這一行 T5 沒有動**(base 的版本也是這樣建的;`git diff 67e2ad7 45f1478` 在這個函式裡只改了帳本的來源與 `settings` 的目錄)。T5 只是新增了兩條呼叫它的測試,而同一個測試檔裡原本就有多條測試呼叫它(這個訊號在全套裡本來就有 57 個測試、82 次觸發)。
+
+### 13.3 在不在錢的路上?
+
+**不在。** 這個分支決定的是「本機模型可不可用」,不是花費怎麼算,也不是帳本怎麼解析:
+- 花費讀取(`readDailySpend`)、帳本把手、指標與標記驗證、鎖——都不經過這個分支。
+- 它退化的方向是「本機不可用」→ 路由只走雲端,不會把「不知道」當成 0,也不會讓帳本靜默退回別的位置。
+- 帳本位置在 `createDefaultLiveRouter` 裡由 `resolveVerifiedLedger` 決定,拒絕時丟錯、不建 router、不建目錄;這部分的測試與突變見 §3、§4(MC2、MC10c、S15 都紅)。
+
+結論:**不是阻擋項**。而且守門的紅綠狀態沒有因為 T5 改變:base 本來就是 154 > 152(FAIL),T5 之後 155 > 152(FAIL)。
+
+### 13.4 該登記還是補測試?
+
+這兩條測試存在的目的不是走這個分支(它們測的是帳本的來源),所以**不該登記**進 `scripts/degraded-intended.json`(登記表的意思是「這個測試就是要走那條分支」)。比較對的處理是讓分支不被走到:`createDefaultLiveRouter` 明講 `localProber: async () => ({ available: false, models: [] })`——跟 `scripts/llm.ts` 的 `createFakeRouter` 已經在做的一樣(它的註解寫明「不借道 llm.router-impl.local-prober-default 那條退化分支」),語意與現在完全相同。這是一行實作改動,**不屬於 T5**;建議併進 T8(T8 反正要動這一帶),或不處理。我不改。
+
+### 13.5 被刪的兩個訊號(D3)
+
+`packages/contracts/src/witness.ts` 少了兩個訊號。ADR-047:訊號目錄漂移本來就是 FAIL,所以程式刪了訊號就必須同批刪。逐一對應:
+
+| 被刪的訊號 | 種類 | 它原本標記的程式(T5 之前) | T5 對那段程式做了什麼 | 刪訊號對不對 |
+|---|---|---|---|---|
+| `llm.gateway-router.spend-no-log-zero` | default-path | `packages/core/src/llm/router-gateway.ts` 的 `GatewayLlmRouter` 預設 `spendReader`:沒有 `logPath`、也沒注入 `spendReader` 時 `witnessed('llm.gateway-router.spend-no-log-zero', { usd: 0, calls: 0 })`——**沒有帳本就當花費 0** | 整條分支改成丟 `MissingLedgerError`(沒有帳本把手 = 不知道,不是 0);`witnessed` 的呼叫與 `router-gateway.ts` 對 `@contracts/witness.js` 的 import 一併刪掉 | 對。程式沒了,訊號沒有呼叫點 |
+| `llm.spend.log-unreadable-zero` | swallow | `packages/core/src/llm/spend.ts` 的 `readDailySpend`:`catch { witness('llm.spend.log-unreadable-zero'); return { usd: 0, calls: 0 }; }`——**讀不到 log(任何錯誤)就當 0** | 改成只有 `ENOENT`(全新安裝)回 0,其他錯誤(權限、IO)丟出去;`witness` 呼叫刪掉 | 對。程式沒了,訊號沒有呼叫點 |
+
+`git grep` 在 T5 樹上這兩個訊號名只剩註解與測試說明(解釋為什麼被取代),沒有任何 `witness(` 或 `witnessed(` 呼叫。這兩條原本都是「不知道當成 0」的方向,正是 T5 要消掉的,所以刪訊號等於目錄跟著現實變乾淨,不是放寬量尺。另外值得注意的是:`witness.ts` 目前剩下的 `llm.spend.bad-line-skipped` 是**同一個方向的最後一條**(壞行被跳過 → 花費低估,F-A),T8 會把它連同程式一起消掉。
+
+### 13.6 這輪測量的備註
+
+兩次 `witness:degraded`(base 與 T5 原樣)是在協調者的鏈同時在跑的時候做的(load 約 10),兩次的 `ran_all` 都顯示退出碼 1(有測試在高負載下失敗);3099/3099、3214/3214 都收到,等式成立,觸發名單的差異分析不受影響。我先前在 load 約 1–2 時量的 T5 加補測是退出碼 0、3239/3239。
+
+### 13.7 Stryker 的 `vault.ts` 76.88
+
+顧問已接受(ADR-030:只有嚴格級門檻是硬的)。理由寫在 §5:perTest 覆蓋看不到子程序,`main`、`argValue` 的 30 個無覆蓋突變我手動逐條驗過全紅,covered 分數 94.62。
