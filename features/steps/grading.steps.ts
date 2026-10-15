@@ -14,7 +14,7 @@ import { Given, Then, When } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import { resolve } from 'node:path';
 import type { LearningWorld } from './_world.js';
-import { FakeLlmRouter, loadFixturesFromDir } from '../../packages/core/src/grading/fake-llm.js';
+import { fixtureRouter, loadFixturesFromDir } from '../support/fixture-router.js';
 import { gradeFillBlank, gradeFillQuestion } from '../../packages/core/src/grading/grade-fill.js';
 import { matchFuzzy } from '../../packages/core/src/grading/fuzzy.js';
 import { normalize } from '../../packages/core/src/grading/normalize.js';
@@ -28,6 +28,7 @@ import {
 } from '../../packages/core/src/grading/grade-apply.js';
 import { countWords } from '@core/schema/word-count.js';
 import type { LogEvent } from '@contracts/index.js';
+import { assertI2GraderRecorded, isI2Loop } from './i2-review-loop.steps.js';
 
 const FIXTURES_DIR = resolve(import.meta.dirname, '../../contracts/fixtures/llm');
 
@@ -50,7 +51,7 @@ function stateOf(world: LearningWorld): GradingState {
     s = {
       accepted: ['reference-phrase-xyz'],
       typed: 'completely-different-value',
-      router: new FakeLlmRouter(loadFixturesFromDir(FIXTURES_DIR), (call) => world.llmCalls.push(call)),
+      router: fixtureRouter(loadFixturesFromDir(FIXTURES_DIR), (call) => world.llmCalls.push(call)),
     };
     states.set(world, s);
   }
@@ -95,7 +96,7 @@ function applyStateOf(world: LearningWorld): ApplyState {
       question: DEFAULT_APPLY_QUESTION,
       // 預設答案命中 contracts/fixtures/llm/grade.apply.pass.json(prompt_contains: "CORS")。
       answer: '這是跨來源請求,後端要加 CORS header',
-      router: new FakeLlmRouter(loadFixturesFromDir(FIXTURES_DIR), (call) => world.llmCalls.push(call)),
+      router: fixtureRouter(loadFixturesFromDir(FIXTURES_DIR), (call) => world.llmCalls.push(call)),
       logEvents: [],
     };
     applyStates.set(world, s);
@@ -164,7 +165,7 @@ Given('neither of the first two layers matched', function (this: LearningWorld) 
 });
 
 Given('no model is available', function (this: LearningWorld) {
-  stateOf(this).router = new FakeLlmRouter([], (call) => this.llmCalls.push(call));
+  stateOf(this).router = fixtureRouter([], (call) => this.llmCalls.push(call));
 });
 
 Given('the model replies that the answers mean the same', function (this: LearningWorld) {
@@ -238,6 +239,11 @@ Then('the question fails', async function (this: LearningWorld) {
 });
 
 Then('the grader is recorded as {}', async function (this: LearningWorld, raw: string) {
+  // I2 整合:grader 記在 state/reviews.json 與帳本裡,不在這個檔的 World 狀態裡。
+  if (isI2Loop(this)) {
+    assertI2GraderRecorded(this, raw);
+    return;
+  }
   const expected = GRADER_WORDS[raw];
   assert.ok(expected, `不認得的 grader 描述:「${raw}」`);
   const result = await ensureGradedAny(this);

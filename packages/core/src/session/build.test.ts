@@ -15,9 +15,26 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CardId, Review } from '@contracts/index.js';
+import type { LlmRouter } from '@core/llm/index.js';
 import { buildTodaySession, deriveReteachQueue } from './build.js';
 
 const TODAY = '2026-09-10';
+
+/**
+ * T13(I2 整合):buildTodaySession 的 router 是必填。這份檔案只驗排程與接線,從不評分,
+ * 所以給一個「被呼叫就是走錯路」的 router——以前沒給 router 時會悄悄換上 Wave 0 的 FakeLlmRouter。
+ */
+const NEVER_CALLED_ROUTER: LlmRouter = {
+  async call() {
+    throw new Error('buildTodaySession 只建 session,不該呼叫 router');
+  },
+  async probeOnline() {
+    return false;
+  },
+  async probeLocal() {
+    return { available: false, models: [] };
+  },
+};
 
 const tmpDirs: string[] = [];
 afterEach(() => {
@@ -56,7 +73,7 @@ describe('buildTodaySession', () => {
     const dir = makeLearningDir({
       'sec-0001': review({ stage: 1, learned_at: TODAY, next_due: '2026-09-11' }),
     });
-    const session = await buildTodaySession({ learningDir: dir, today: TODAY });
+    const session = await buildTodaySession({ learningDir: dir, today: TODAY, router: NEVER_CALLED_ROUTER });
     expect(session.queue).toHaveLength(0);
     expect(session.reteachQueue).toHaveLength(0);
     expect(session.totalDue).toBe(0);
@@ -68,7 +85,7 @@ describe('buildTodaySession', () => {
       'sec-low': review({ stage: 3, learned_at: '2026-08-01', next_due: '2026-09-09' }), // stage3 間隔30天,逾期1天,ratio ~0.033
       'sec-high': review({ stage: 1, learned_at: '2026-09-05', next_due: '2026-09-07' }), // stage1 間隔1天,逾期3天,ratio 3.0
     });
-    const session = await buildTodaySession({ learningDir: dir, today: TODAY });
+    const session = await buildTodaySession({ learningDir: dir, today: TODAY, router: NEVER_CALLED_ROUTER });
     expect(session.queue.map((d) => d.card)).toEqual(['sec-high', 'sec-low']);
   });
 
@@ -81,7 +98,7 @@ describe('buildTodaySession', () => {
       },
       { daily_cap: 2 },
     );
-    const session = await buildTodaySession({ learningDir: dir, today: TODAY });
+    const session = await buildTodaySession({ learningDir: dir, today: TODAY, router: NEVER_CALLED_ROUTER });
     expect(session.dailyCap).toBe(2);
     expect(session.queue).toHaveLength(2);
     expect(session.deferred).toBe(1);
@@ -91,8 +108,36 @@ describe('buildTodaySession', () => {
   it('does not write anything to disk while building the session', async () => {
     const dir = makeLearningDir({ a: review({ stage: 1, learned_at: '2026-09-09', next_due: '2026-09-10' }) });
     const before = readFileSync(join(dir, 'state/reviews.json'), 'utf8');
-    await buildTodaySession({ learningDir: dir, today: TODAY });
+    await buildTodaySession({ learningDir: dir, today: TODAY, router: NEVER_CALLED_ROUTER });
     expect(readFileSync(join(dir, 'state/reviews.json'), 'utf8')).toBe(before);
+  });
+});
+
+describe('buildTodaySession 的 router 是必填(T13:I2 整合移除預設的 FakeLlmRouter)', () => {
+  it('沒給 router 就丟錯,訊息點名 router;不回傳一個悄悄用 fake 評分的 session', async () => {
+    const dir = makeLearningDir({ a: review({ stage: 1, learned_at: '2026-09-09', next_due: '2026-09-10' }) });
+    await expect(buildTodaySession({ learningDir: dir, today: TODAY } as never)).rejects.toThrow(/router/);
+  });
+
+  it('router: undefined 也一樣(不是只擋「沒有這個欄位」)', async () => {
+    const dir = makeLearningDir({ a: review({ stage: 1, learned_at: '2026-09-09', next_due: '2026-09-10' }) });
+    await expect(buildTodaySession({ learningDir: dir, today: TODAY, router: undefined } as never)).rejects.toThrow(/router/);
+  });
+
+  it('沒有任何卡到期時同樣要有 router(必填不看今天有沒有卡)', async () => {
+    const dir = makeLearningDir({});
+    await expect(buildTodaySession({ learningDir: dir, today: TODAY } as never)).rejects.toThrow(/router/);
+  });
+
+  it('給了 router,session.router 就是呼叫端給的那一個(不是包裝、不是預設)', async () => {
+    const dir = makeLearningDir({ a: review({ stage: 1, learned_at: '2026-09-09', next_due: '2026-09-10' }) });
+    const session = await buildTodaySession({ learningDir: dir, today: TODAY, router: NEVER_CALLED_ROUTER });
+    expect(session.router).toBe(NEVER_CALLED_ROUTER);
+  });
+
+  it('build.ts 不再引用 FakeLlmRouter、預錄 fixtures 目錄或 router-default-fake 見證訊號', () => {
+    const text = readFileSync(join(import.meta.dirname, 'build.ts'), 'utf8');
+    expect(text).not.toMatch(/FakeLlmRouter|fixtures\/llm|router-default-fake/);
   });
 });
 
