@@ -171,10 +171,10 @@ grok 的六條裡,我能證實的只有 F3 一條(而且是我借它的方向另
 
 | 測試 | 它在測什麼 | 證明有效的突變 |
 |---|---|---|
-| `opens <name>.tmp, fsyncs the file then the directory, and closes both`(**唯一被改的**,F1) | 開的是 `<dir>/<name>.tmp`、旗標 `'w'`、兩次 fsync(先檔案後目錄)、兩次 close 且順序對 | MC4、X1、X10 紅;MC1 也紅 |
+| `opens <name>.tmp, fsyncs the file then the directory, and closes both`(**唯一被改的**,F1) | 開的是 `<dir>/<name>.tmp`、旗標 `'w'`、兩次 fsync(先檔案後目錄)、兩次 close 且順序對 | MC4、X1、X10 紅 |
 | `writes the exact content … leaves no temp file behind`、`replaces an existing file completely`、`writes UTF-8 so CJK content round-trips` | 位元組內容與覆蓋 | 這三條我沒有專屬突變;它們是內容與覆蓋的基本行為,被 §3 突變中的位元組比對間接守著。誠實標記:沒有一個突變專門證明它們 |
 | `keeps the old file and removes the temp file when fsync fails` | 檔案 fsync 失敗:舊檔不動、tmp 清掉 | X1(拿掉檔案 fsync 時呼叫次數對不上)紅 |
-| `throws when the target directory does not exist` | 目錄不存在就丟 open 的錯,不建目錄 | 在 §6 重現 grok 主張 1 時親眼確認 ENOENT/open;X9 的反面(atomicWriteJson 才建目錄)紅 |
+| `throws when the target directory does not exist` | 目錄不存在就丟 open 的錯,不建目錄 | 我在 §6 重現 grok 主張 1 時親眼確認丟的是 `ENOENT`/`open`,但**沒有專屬突變**證明這條測試會紅(標記) |
 | `cleans up a stray tmp file left by an interrupted previous write` | 舊樣式殘檔被清 | MC6 紅 |
 | `does not touch a stray tmp file belonging to a different target file` | 別人的舊樣式殘檔不碰 | X4、X13 紅 |
 | `appendLineAtomic` 五條(單行補換行、已有換行不再補、多行依序、保留既有行、fsync 與 close 各一次) | log append 的位元組與 fd | X6、X7、X11 紅 |
