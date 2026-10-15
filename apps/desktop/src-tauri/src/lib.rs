@@ -1,6 +1,8 @@
 //! 10-desktop-shell。路徑檢查的權威在這裡;TS 的 assetUrl 只是提示。
 
 pub mod asset_protocol;
+pub mod commands;
+pub mod event_log;
 pub mod learning_fs;
 pub mod path_guard;
 pub mod session;

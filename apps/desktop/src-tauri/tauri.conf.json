@@ -4,14 +4,19 @@
   "version": "0.0.0",
   "identifier": "dev.learningcards.desktop",
   "build": {
-    "frontendDist": "frontend"
+    "frontendDist": "../dist",
+    "beforeDevCommand": {
+      "script": "npm run build:frontends",
+      "wait": true
+    },
+    "beforeBuildCommand": "npm run build:frontends"
   },
   "app": {
     "windows": [
       {
         "label": "teach",
         "title": "LLM Cards — Teach",
-        "url": "teach.html",
+        "url": "teach/index.html",
         "width": 360,
         "height": 480,
         "x": 100,
@@ -22,7 +27,7 @@
       {
         "label": "test",
         "title": "LLM Cards — Test",
-        "url": "test.html",
+        "url": "test/index.html",
         "width": 360,
         "height": 480,
         "x": 520,
@@ -32,7 +37,7 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self'; object-src 'none'; frame-src 'none'; img-src 'self' lc: data:; connect-src ipc: http://ipc.localhost",
       "assetProtocol": {
         "enable": false,
         "scope": []

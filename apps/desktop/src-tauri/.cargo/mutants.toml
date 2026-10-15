@@ -8,6 +8,12 @@
 # 取 .stryker.lock 的包裝見 run-mutants.mjs。
 # 射程:解決變異測試之間的互斥;不解決整條鏈之間的互斥,見另案(T3)。
 
-examine_globs = ["src/path_guard.rs", "src/learning_fs.rs", "src/asset_protocol.rs"]
+examine_globs = [
+  "src/path_guard.rs",
+  "src/learning_fs.rs",
+  "src/asset_protocol.rs",
+  "src/commands.rs",
+  "src/event_log.rs",
+]
 copy_target = true
 minimum_test_timeout = 30

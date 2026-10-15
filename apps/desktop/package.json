@@ -3,10 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Tauri 2 桌面殼。src-tauri/ 由 10-desktop-shell/phase-1 建立",
+  "description": "Tauri 2 桌面殼。src-tauri/ 由 10-desktop-shell/phase-1 建立;build:frontends 把 teach-card、test-card 建進 dist/(tauri.conf.json 的 frontendDist)",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:frontends": "vite build ../teach-card --base /teach/ --outDir ../desktop/dist/teach --emptyOutDir && vite build ../test-card --base /test/ --outDir ../desktop/dist/test --emptyOutDir"
   }
 }
