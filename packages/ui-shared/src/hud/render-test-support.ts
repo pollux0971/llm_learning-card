@@ -17,6 +17,8 @@
  * - DOM 掛鉤沿用 `test-support.ts`:`data-hud="panel"`、`data-hud="button"`。
  * - 面板的顏色與不透明度只看 `hud.css` 的 `--hud-panel`(`getComputedStyle(:root)` 讀出來)。
  * - 展示頁的面板在沒有 `hud-frameless` 時,左右兩邊各有至少 8px 沒有字的內距(現在是 0.95rem)。
+ * - 展示頁有一個深色背景的切換:`<input type="checkbox" data-gallery="dark-backdrop">`,勾起來就換成深色背景
+ *   (高對比的圖樣,例如深色底加粗格線)。只寫在 `gallery/Gallery.svelte`;顏色照舊只能用 `var(--hud-*)`。預設不勾 = 原本的格線。
  * - 其餘都是量出來的結果,不綁做法:黑線怎麼畫、焦點怎麼畫,由實作者決定。
  */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -307,34 +309,96 @@ async function panelColour(page: GalleryPage): Promise<Rgba> {
   return parseColor(v);
 }
 
+/** 展示頁的深色背景切換(只在 Gallery.svelte;觀感判定時用眼睛看半透明) */
+export const DARK_BACKDROP_SWITCH = '[data-gallery="dark-backdrop"]';
+
+/** 打開深色背景;沒有這個開關就回傳問題 */
+async function switchDarkBackdrop(page: GalleryPage): Promise<string[]> {
+  const ok = await page.evaluate<boolean>(`(() => {
+    const c = document.querySelector(${JSON.stringify(DARK_BACKDROP_SWITCH)});
+    if (!c) return false;
+    if (!c.checked) c.click();
+    return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))));
+  })()`);
+  return ok ? [] : [`展示頁沒有深色背景的切換(${DARK_BACKDROP_SWITCH} 的 checkbox)`];
+}
+
+interface PanelSample { x: number; y: number; got: [number, number, number]; behind: [number, number, number] }
 /**
- * G1:面板真的半透明。面板內距那一條直線上的每個像素,都要等於「--hud-panel 疊在面板後面那個像素上」。
- * 面板後面的像素:把面板藏起來(visibility: hidden)再截一次,同一個位置。容許每個通道差 3。
+ * 面板左右內距各一條直線上的像素,以及「面板後面」同一個位置的像素
+ * (把面板藏起來——visibility: hidden——再截一次)。
  */
-export async function panelSeeThroughProblems(page: GalleryPage): Promise<string[]> {
+async function samplePanel(page: GalleryPage, darkBackdrop: boolean): Promise<{ colour: Rgba; samples: PanelSample[]; behind: Image; rect: Rect } | string[]> {
   await page.reset();
+  if (darkBackdrop) {
+    const sw = await switchDarkBackdrop(page);
+    if (sw.length) return sw;
+  }
   const colour = await panelColour(page);
-  if (!(colour.a > 0 && colour.a < 1)) return [`--hud-panel 的不透明度是 ${colour.a},不是半透明`];
   const r = await page.rect('[data-hud="panel"]');
   const withPanel = await page.screenshot();
   await page.evaluate(`(() => { const s = document.createElement('style'); s.textContent = '[data-hud="panel"] { visibility: hidden !important; }'; document.head.append(s); return true; })()`);
   await page.evaluate('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))');
   const behind = await page.screenshot();
-  const problems: string[] = [];
-  let checked = 0;
+  const samples: PanelSample[] = [];
   for (const x of [Math.floor(r.x) + 5, Math.ceil(r.x + r.width) - 6]) {
-    for (let y = Math.ceil(r.y) + 16; y <= Math.floor(r.y + r.height) - 16; y += 1) {
-      const got = px(withPanel, x, y);
-      const bg = px(behind, x, y);
-      const want = [colour.r, colour.g, colour.b].map((ch, i) => Math.round(ch * colour.a + bg[i]! * (1 - colour.a)));
-      checked += 1;
-      if (got.some((v, i) => Math.abs(v - want[i]!) > 3) && problems.length < 5) {
-        problems.push(`(${x},${y}) 是 rgb(${got.join(',')}),面板後面是 rgb(${bg.join(',')}),半透明疊上去應該約 rgb(${want.join(',')})`);
-      }
+    for (let y = Math.ceil(r.y) + 16; y <= Math.floor(r.y + r.height) - 16; y += 1) samples.push({ x, y, got: px(withPanel, x, y), behind: px(behind, x, y) });
+  }
+  return { colour, samples, behind, rect: r };
+}
+
+/**
+ * G1:面板真的半透明。面板內距那一條直線上的每個像素,都要等於「--hud-panel 疊在面板後面那個像素上」。
+ * 容許每個通道差 3。`darkBackdrop` 時先把展示頁切到深色背景再量。
+ */
+export async function panelSeeThroughProblems(page: GalleryPage, opts: { darkBackdrop?: boolean } = {}): Promise<string[]> {
+  const s = await samplePanel(page, opts.darkBackdrop ?? false);
+  if (Array.isArray(s)) return s;
+  const { colour, samples } = s;
+  if (!(colour.a > 0 && colour.a < 1)) return [`--hud-panel 的不透明度是 ${colour.a},不是半透明`];
+  if (samples.length === 0) return ['面板太小,量不到'];
+  const problems: string[] = [];
+  for (const { x, y, got, behind } of samples) {
+    const want = [colour.r, colour.g, colour.b].map((ch, i) => Math.round(ch * colour.a + behind[i]! * (1 - colour.a)));
+    if (got.some((v, i) => Math.abs(v - want[i]!) > 3) && problems.length < 5) {
+      problems.push(`(${x},${y}) 是 rgb(${got.join(',')}),面板後面是 rgb(${behind.join(',')}),半透明疊上去應該約 rgb(${want.join(',')})`);
     }
   }
-  if (checked === 0) problems.push('面板太小,量不到');
   return problems;
+}
+
+/**
+ * 深色背景:面板後面整片區域(每 4 像素取一點)的平均亮度上限(比中灰暗),
+ * 與面板那兩條取樣線上的亮度起伏下限(高對比的圖樣要穿過取樣線,面板上才看得出來)。
+ */
+export const DARK_BACKDROP: { readonly maxMeanLuma: number; readonly minLumaRange: number } = { maxMeanLuma: 128, minLumaRange: 100 };
+
+/**
+ * 深色背景真的是深色、而且有高對比的圖樣穿過面板後面(這樣用眼睛才看得出面板是半透明)。
+ * 量的是「面板後面」的像素(面板藏起來之後)。
+ */
+export async function darkBackdropProblems(page: GalleryPage): Promise<string[]> {
+  const s = await samplePanel(page, true);
+  if (Array.isArray(s)) return s;
+  const problems: string[] = [];
+  const area: number[] = [];
+  for (let y = Math.ceil(s.rect.y); y < Math.floor(s.rect.y + s.rect.height); y += 4) {
+    for (let x = Math.ceil(s.rect.x); x < Math.floor(s.rect.x + s.rect.width); x += 4) area.push(luma(px(s.behind, x, y)));
+  }
+  const mean = area.reduce((a, b) => a + b, 0) / Math.max(1, area.length);
+  if (mean > DARK_BACKDROP.maxMeanLuma) problems.push(`深色背景在面板後面的平均亮度是 ${mean.toFixed(0)},要 ≤ ${DARK_BACKDROP.maxMeanLuma}`);
+  let widest = 0;
+  for (const x of [...new Set(s.samples.map((p) => p.x))]) {
+    const lum = s.samples.filter((p) => p.x === x).map((p) => luma(p.behind));
+    widest = Math.max(widest, Math.max(...lum) - Math.min(...lum));
+  }
+  if (widest < DARK_BACKDROP.minLumaRange) problems.push(`面板取樣線後面的亮度起伏只有 ${widest.toFixed(0)},要 ≥ ${DARK_BACKDROP.minLumaRange}(要有高對比的圖樣穿過面板後面)`);
+  return problems;
+}
+
+/** 深色背景與格線都是展示頁的東西:共用的 hud.css 不提 gallery */
+export function galleryOnlyProblems(): string[] {
+  return /gallery/i.test(readHudCss().text) ? ['hud.css 提到 gallery(展示頁的背景與開關放在 gallery/ 裡)'] : [];
 }
 
 /** 一個元素四條直邊的線寬(在每條邊的正中間,跨邊各量 3 像素) */

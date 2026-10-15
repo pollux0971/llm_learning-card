@@ -10,8 +10,8 @@ import { AfterAll, Given, Then, When } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import type { LearningWorld } from './_world.js';
 import {
-  CAP_TO_CJK, capHeightProblems, focusDistinctProblems, frameLineProblems, openGallery, panelSeeThroughProblems,
-  rootBackgroundProblems, sizeAdjustProblems, type GalleryPage,
+  CAP_TO_CJK, capHeightProblems, darkBackdropProblems, focusDistinctProblems, frameLineProblems, galleryOnlyProblems, openGallery,
+  panelSeeThroughProblems, rootBackgroundProblems, sizeAdjustProblems, type GalleryPage,
 } from '../../packages/ui-shared/src/hud/render-test-support.js';
 
 let shared: Promise<GalleryPage> | undefined;
@@ -24,11 +24,11 @@ AfterAll({ timeout: 30_000 }, async () => {
   try { await (await shared).close(); } catch { /* 開不起來的那次已經在場景裡報過 */ }
 });
 
-interface RenderState { page?: GalleryPage; latinOnlyThird: boolean; rootProblems?: string[] }
+interface RenderState { page?: GalleryPage; latinOnlyThird: boolean; darkBackdrop: boolean; rootProblems?: string[] }
 const states = new WeakMap<LearningWorld, RenderState>();
 function st(w: LearningWorld): RenderState {
   let s = states.get(w);
-  if (!s) { s = { latinOnlyThird: false }; states.set(w, s); }
+  if (!s) { s = { latinOnlyThird: false, darkBackdrop: false }; states.set(w, s); }
   return s;
 }
 function pageOf(w: LearningWorld): GalleryPage {
@@ -42,6 +42,11 @@ Given('the third gallery button is labelled with Latin letters only', function (
   st(this).latinOnlyThird = true;
 });
 
+Given('the gallery backdrop is switched to dark', function (this: LearningWorld) {
+  // 每項檢查都會重新載入展示頁,所以這裡只記下來;量的時候才去勾 data-gallery="dark-backdrop"
+  st(this).darkBackdrop = true;
+});
+
 When('the gallery is drawn in a headless browser', { timeout: 90_000 }, async function (this: LearningWorld) {
   st(this).page = await gallery();
 });
@@ -52,8 +57,17 @@ When('the HUD stylesheet rules for the page root are read', function (this: Lear
 
 Then('every sampled pixel in the panel padding equals the panel colour laid over the pixel behind it', { timeout: 60_000 },
   async function (this: LearningWorld) {
-    none(await panelSeeThroughProblems(pageOf(this)));
+    none(await panelSeeThroughProblems(pageOf(this), { darkBackdrop: st(this).darkBackdrop }));
   });
+
+Then('the page behind the panel is dark and carries a high contrast pattern', { timeout: 60_000 }, async function (this: LearningWorld) {
+  assert.ok(st(this).darkBackdrop, '這一步要先切到深色背景');
+  none(await darkBackdropProblems(pageOf(this)));
+});
+
+Then('the shared stylesheet says nothing about the gallery', function (this: LearningWorld) {
+  none(galleryOnlyProblems());
+});
 
 Then('each straight edge of the panel and of every button is one pixel wide', { timeout: 60_000 }, async function (this: LearningWorld) {
   const problems = await frameLineProblems(pageOf(this), { latinOnlyThird: st(this).latinOnlyThird });

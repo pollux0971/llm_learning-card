@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  capHeightProblems, focusDistinctProblems, frameLineProblems, openGallery, panelSeeThroughProblems, rootBackgroundProblems,
-  sizeAdjustProblems, type GalleryPage,
+  capHeightProblems, darkBackdropProblems, focusDistinctProblems, frameLineProblems, galleryOnlyProblems, openGallery,
+  panelSeeThroughProblems, rootBackgroundProblems, sizeAdjustProblems, type GalleryPage,
 } from './render-test-support.js';
 
 describe('展示頁的渲染(headless Chrome)', () => {
@@ -20,6 +20,14 @@ describe('展示頁的渲染(headless Chrome)', () => {
 
   it('G1 面板真的半透明:內距那一條直線上,每個像素 = --hud-panel 疊在面板後面那個像素上', async () => {
     expect(await panelSeeThroughProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('G1 深色背景:展示頁有切換;切到深色時,面板後面是深色加高對比圖樣', async () => {
+    expect(await darkBackdropProblems(p())).toEqual([]);
+  }, 60_000);
+
+  it('G1 深色背景上面板照樣半透明(疊色公式)', async () => {
+    expect(await panelSeeThroughProblems(p(), { darkBackdrop: true })).toEqual([]);
   }, 60_000);
 
   it('G3 框線在每條直邊都是 1 像素(面板、三顆按鈕;第 3 顆換成純英文 NEXT),切角斜邊也有線', async () => {
@@ -42,6 +50,10 @@ describe('展示頁的渲染(headless Chrome)', () => {
 describe('hud.css 的靜態規則', () => {
   it('G2 指整個頁面的規則(html、:root、body)不畫底色與格線,只有 hud-solid 可以', () => {
     expect(rootBackgroundProblems()).toEqual([]);
+  });
+
+  it('G1 深色背景與格線都只在展示頁:hud.css 不提 gallery', () => {
+    expect(galleryOnlyProblems()).toEqual([]);
   });
 
   it('G6 Rajdhani 的 @font-face 有 size-adjust,而且大於 100%', () => {
