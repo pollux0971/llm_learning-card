@@ -55,12 +55,6 @@
     "reason": "phase-2 的 --live 用 03 的 LlmRouterImpl 打真雲端(golden-run.ts 的 createDefaultLiveRouter,測試在 live-run.test.ts)。硬規則:LLM 呼叫一律經過 llm-router 的介面,不在別處 import provider SDK——這條例外正是為了遵守那條,而不是繞過它"
   },
   {
-    "from": "10-desktop-shell",
-    "to": "01-data-layer",
-    "symbols": ["recordEvent"],
-    "reason": "phase-2 的 read/write/list/exists 拒絕回給 TS 呼叫端,由 apps/desktop 呼叫 01 的 recordEvent()(§10)。只 import recordEvent,不拉 LearningFs 型別。檢查器沒有 symbols 欄、整邊放行;呼叫端只准這個 symbol"
-  },
-  {
     "from": "09-lint",
     "to": "01-data-layer",
     "reason": "§11b 只留一份實作(T7):scripts/lint.ts 寫 state/lint-report 用 01 的 writeFileAtomic"

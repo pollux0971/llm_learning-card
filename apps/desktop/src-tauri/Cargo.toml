@@ -1,7 +1,7 @@
 [package]
 name = "learning-cards-desktop"
 version = "0.0.0"
-description = "Tauri 2 桌面殼(10-desktop-shell,phase-1)"
+description = "Tauri 2 桌面殼(10-desktop-shell,phase-1、phase-2)"
 edition = "2021"
 publish = false
 
@@ -15,6 +15,22 @@ http = "1"
 log = "0.4"
 percent-encoding = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order:warning 事件要照 T2b 的 TS 版欄位順序(ts、type、path、reason)寫出,
+# 預設的 serde_json::Map 會照字母排。
+serde_json = { version = "1", features = ["preserve_order"] }
+# 事件的 ts(ISO 8601、UTC、毫秒,跟 TS 的 toISOString 同一個樣子)。tauri 經 cookie 已經在用同一版。
+time = { version = "0.3", features = ["formatting", "macros"] }
 unicode-normalization = "0.1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+
+# errno 常數:目錄 fsync 的 EINVAL 判斷(§11b、T2c-1 9a)、O_NOFOLLOW、close 的錯誤碼。
+# Windows 的對應碼是 phase-5 的事。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# 測試用(T2c-1 測試 agent):tauri 的 test feature 給 tests/commands.rs 的 mock runtime;
+# libc 給 errno 常數(EINVAL/EIO/ENOSPC…);sha2 給段向量檔與圖片 bytes 的 sha256。
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+libc = "0.2"
+sha2 = "0.10"
