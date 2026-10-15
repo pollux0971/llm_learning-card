@@ -1,0 +1,16 @@
+card: sec-0001
+fill:
+  - prompt: "同源的判定條件是 ___、___、___ 三者相同。"
+    answers:
+      - ["協定", "protocol", "scheme"]
+      - ["主機", "host", "網域", "domain"]
+      - ["埠號", "port", "埠"]
+  - prompt: "https://a.com 和 http://a.com 是否同源?___"
+    answers:
+      - ["否", "不同源", "不是", "no"]
+apply:
+  - prompt: "你的前端在 https://app.example.com,要呼叫 https://api.example.com。會遇到什麼問題?怎麼解?"
+    rubric:
+      - "有指出這是跨來源請求"
+      - "有提到需要伺服器端設定允許"
+      - "沒有事實錯誤"

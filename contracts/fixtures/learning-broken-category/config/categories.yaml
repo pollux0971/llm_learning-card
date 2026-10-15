@@ -1,0 +1,6 @@
+- id: security
+  name: 資安
+  require_raw: true
+- id: .hidden
+  name: 隱藏
+  require_raw: false

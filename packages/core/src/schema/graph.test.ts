@@ -508,11 +508,17 @@ describe('writeCategoryOrder', () => {
     expect(() => writeCategoryOrder(learningDir, '../escape' as CategoryId, [])).toThrow(/escape/);
   });
 
-  // 邊界:空字串同時違反 min(1) 跟 regex 兩條規則,zod 會回報兩個 issue——確認訊息把
-  // 兩條都列出來、用「; 」隔開,不是只挑第一個講。
-  it('lists every validation issue for an empty category id, separated by a semicolon', () => {
+  // T6(契約 1.4.0 §1)改寫:舊版靠「空字串同時違反 min(1) 與 regex、zod 回報兩個 issue」來驗證
+  // 「多個 issue 用『; 』隔開」。新的 CategoryId 規則每個輸入只回報一條 rule,任何輸入都產生不出
+  // 兩個 issue,所以「; 」的連接行為在 orderFilePath 這一層測不到(變異測試時 join 的分隔字串
+  // 變異體會是等價的,審核 agent 要在報告逐條分類)。新斷言:訊息帶出被拒絕的 id 與 rule 名。
+  it('names the refused category id and the rule for an empty category id', () => {
     const learningDir = makeLearningDir();
-    expect(() => writeCategoryOrder(learningDir, '' as CategoryId, [])).toThrow(/不可為空.*; .*不可包含空白/);
+    expect(() => writeCategoryOrder(learningDir, '' as CategoryId, [])).toThrow(/無效的分類 id "".*empty/);
+  });
+  it('names the rule for a category id that §1 refuses but the old rule accepted', () => {
+    const learningDir = makeLearningDir();
+    expect(() => writeCategoryOrder(learningDir, 'C++' as CategoryId, [])).toThrow(/C\+\+.*charset/);
   });
 });
 
