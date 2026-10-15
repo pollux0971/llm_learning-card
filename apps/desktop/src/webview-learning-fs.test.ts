@@ -231,3 +231,30 @@ describe('acceptance: TS never rewrites the path it hands to invoke (whitespace,
     expect((invoke.mock.calls[0] as [string, { content: string }])[1].content).toBe(content);
   });
 });
+
+describe('learning 根沒設好是第三種錯誤(T2c-2,驗收者補)', () => {
+  it('{kind:"not-configured"} 是 LearningNotConfiguredError:不是拒絕、不是 io 錯誤,帶 relPath;四個方法分類一致', async () => {
+    const m = await mod();
+    const NotConfigured = (m as unknown as Record<string, unknown>).LearningNotConfiguredError as (new (...a: never[]) => Error) | undefined;
+    expect(NotConfigured).toBeTypeOf('function');
+    const fs = m.createLearningFs({ os: 'linux' });
+    const calls: [string, () => Promise<unknown>, string][] = [
+      ['read', () => fs.read('cards/a.md'), 'cards/a.md'],
+      ['write', () => fs.write('cards/a.md', 'x'), 'cards/a.md'],
+      ['list', () => fs.list('cards'), 'cards'],
+      ['exists', () => fs.exists('cards/a.md'), 'cards/a.md'],
+    ];
+    for (const [name, call, rel] of calls) {
+      invoke.mockRejectedValueOnce({ kind: 'not-configured' });
+      const err = await call().then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err, name).toBeInstanceOf(NotConfigured!);
+      expect(err, name).not.toBeInstanceOf(m.PathRefusedError);
+      expect(err, name).not.toBeInstanceOf(m.LearningIoError);
+      expect((err as Error).name, name).toBe('LearningNotConfiguredError');
+      expect((err as Error & { relPath: string }).relPath, name).toBe(rel);
+    }
+  });
+});

@@ -11,6 +11,12 @@
 #   unviable 不進分母(沒編成,不是測試没抓到)。
 #   存活的 29 條逐條分類見 docs/reviews/acceptance-T2c-1.md 第 6.1 節:全部是等價、走不到、cucumber 殺掉,
 #   或 T2b 遺留的自我回報函式(same_checks_as_read、scope_is_learning_root,T2c-2 處理)。
+# 第三次實測(2026-10-15,T2c-2 驗收,cargo-mutants 27.1.0,-j 2,CARGO_BUILD_JOBS=2,examine_globs 多了 learning_root.rs 與 start_screen.rs):
+#   第一輪 256 tested, 155 caught, 47 missed, 54 unviable;其中 start_screen.rs 27 條存活(沒有 Rust 測試)、event_log.rs 的
+#   ensure_state_dir 2 條。驗收者補 tests/start_screen.rs 與 tests/event_log.rs 之後,只重跑這兩個檔:59 tested, 51 caught,
+#   1 missed(ensure_state_dir 的 `!= AlreadyExists` 守衛換成 false:等價——`_ => Ok(())` 吃掉後,開檔會把同樣的錯交出來)。
+#   合計 183 caught, 19 missed(都是 T2c-1 驗收證據第 6.1 節分類過的舊存活,加一條等價)。
+#   地板 = 183/202(90.6%)。以後的跑法:new_caught * 202 >= 183 * (new_caught + new_missed)。不准降。
 #   跑法需要 TMPDIR=<repo>/dist/mutants-tmp(兩層深)與 --copy-target false:測試用 include_str! 讀 crate 外的向量檔。
 # 取 .stryker.lock 的包裝見 run-mutants.mjs。
 # 射程:解決變異測試之間的互斥;不解決整條鏈之間的互斥,見另案(T3)。
