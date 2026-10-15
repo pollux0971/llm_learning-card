@@ -1,7 +1,7 @@
 ---
 id: T8
 deps: [T5]
-touches: [packages/core/src/llm/spend.ts, packages/core/src/llm/router-gateway.ts, packages/contracts/src/witness.ts, scripts/degraded-intended.json, scripts/llm-spend.ts, scripts/vault.ts, scripts/zero-input-roster.ts]
+touches: [packages/core/src/llm/spend.ts, packages/core/src/llm/ledger.ts, packages/core/src/llm/router-gateway.ts, packages/core/src/prompt-quality/golden-run.ts, packages/core/src/schema/atomic-write.ts, packages/contracts/src/witness.ts, scripts/degraded-intended.json, scripts/llm-spend.ts, scripts/vault.ts, scripts/zero-input-roster.ts]
 cpu: light
 budget_usd: 4
 status: todo
@@ -17,6 +17,8 @@ must_catch:
   - 驗證過但 log 不存在時報告沒有註明「帳本還沒有紀錄」(與空 log、未驗證混在一起)
   - learning_dir 是 symlink 時解析到錯的帳本(改指到別的目錄、標記不同卻放行)
   - 兩個 init 同時跑,留下無法解析的指標檔或暫存檔殘留
+  - 指標檔權限放寬:init 新建或覆寫的指標檔 mode 不是 0600(含暫存檔在 rename 之前的權限)
+  - createDefaultLiveRouter 仍走 localProber 的預設分支(local-prober-default 訊號又被觸發)
 ---
 
 # 工單 T8:帳本的剩餘缺口——壞行當「不知道」、壞標記可 `--force` 重建、全新安裝回 $0、symlink 與同時 init 的測試
@@ -38,6 +40,8 @@ T5 驗收(`docs/reviews/acceptance-T5.md`)找到四件事,顧問裁決全部收�
 | D1 | `scripts/vault.ts` 的 `init` 遇到 `config/vault-id` 內容不是合法 uuid,連 `--force` 也拒絕,只能人工改檔 | `--force` 可以重建;重建前把舊內容印出來(明示的丟棄可以,ADR-050) |
 | D2 | `scripts/llm-spend.ts` 對「帳本驗證過、`state/log.jsonl` 不存在」回 exit 2;契約 §12 寫「身分驗證過的帳本,`state/log.jsonl` 不存在 = 全新安裝 = 今日花費 0,這是合法的」,`readDailySpend` 也照做回 0 | llm-spend 要回 $0、exit 0,並註明「帳本還沒有紀錄」。`--probe` 不解析帳本,維持不變 |
 | F-C | 沒有 `learning_dir` 是 symlink 的測試,也沒有兩個 `init` 同時跑的測試 | 補測試(單人程式,後者只要求不留下壞掉的指標檔) |
+| P | `vault.ts init` 寫出的指標檔權限是 0664(群組可寫)。外層目錄 0700 擋住了實際風險,但檔案本身應該收緊 | 新建的指標檔 0600(顧問 2026-10-15 追加) |
+| W | T5 驗收 §13:`createDefaultLiveRouter()` 建 `LlmRouterImpl` 時沒給 `localProber`,每次呼叫都走 `llm.router-impl.local-prober-default` 這條預設分支(與錢無關,但讓 `witness:degraded` 的未標記數多 2 條) | 明講 `localProber`,語意不變(顧問 2026-10-15 同意併進本張) |
 
 ## 範圍
 
@@ -45,6 +49,8 @@ T5 驗收(`docs/reviews/acceptance-T5.md`)找到四件事,顧問裁決全部收�
 - **B. 壞標記的 `--force`**(`scripts/vault.ts`)。
 - **C. 全新安裝回 $0**(`scripts/llm-spend.ts`、`scripts/zero-input-roster.ts` 裡 llm-spend 的探針基線)。
 - **D. 測試**(symlink、同時 init;測試 agent 寫)。
+- **E. 指標檔權限 0600**(`scripts/vault.ts`、`packages/core/src/llm/ledger.ts` 的 `VaultIo`、`packages/core/src/schema/atomic-write.ts`)。
+- **F. `createDefaultLiveRouter` 明講 `localProber`**(`packages/core/src/prompt-quality/golden-run.ts` 一行)。
 
 ## 不在範圍
 
@@ -92,11 +98,21 @@ T5 驗收(`docs/reviews/acceptance-T5.md`)找到四件事,顧問裁決全部收�
 17. **同時 init**(`scripts/vault.test.ts`):用子程序同時起 2–4 個 `init`,指到同一個全新 `learning_dir`,重複 20 輪(每輪全新沙箱):每個子程序退出碼是 0 或 1;**結束後指標檔存在時一定是合法 JSON 且 `learning_dir`、`vault_id` 欄位型別正確**;`config/` 與指標檔目錄裡**沒有 `*.tmp` 殘檔**;標記檔存在時內容是合法 uuid。**不要求**指標與標記的 id 一致(已知競爭,不修),但報告要列「20 輪裡有幾輪不一致」的次數。
 18. 隔離:HOME / XDG_CONFIG_HOME / XDG_RUNTIME_DIR 都指向 `mkdtemp`,子程序也是;守門測試(真指標檔只 `stat`)照 T5 的做法。
 
-### E. 驗收時
+### E. 指標檔權限 0600
 
-19. 一般測試全綠(`VITEST_MAX_WORKERS=1`);`npx tsc --noEmit` 0 錯(不能省:型別測試只有 tsc 驗得到);`npm run boundaries`、`lint:docs` 綠。
-20. 對 `packages/core/src/llm/spend.ts` 的壞行判定與 `scripts/vault.ts` 的 `--force` 重建判定跑 Stryker(要先拿 CPU 位子與鎖);存活者逐條分類。`vault.ts` 的子程序盲區用手動突變補驗,寫進報告(ADR-030:只有嚴格級門檻是硬的)。
-21. `must_catch`(檔頭)每一條要有一個**具名測試**;驗收角色逐條做突變證明會紅。
+19. `scripts/vault.ts init` **新建**的指標檔,`stat(...).mode & 0o777 === 0o600`;`--force` **覆寫**既有指標(原本 0664 的舊檔)之後同樣是 0600。標記檔 `config/vault-id` 不在本條範圍(它在 `learning/` 底下,權限跟著 `learning/`)。
+20. **沒有一個瞬間比 0600 寬**:不能先用預設權限寫完再 `chmod`。`writeFileAtomic` 要能接一個 mode(建立暫存檔時就是 0600,rename 之後權限留著);預設行為(沒給 mode)**不變**,T7 的向量檔與既有測試不改也要綠。`VaultIo.writeAtomic` 簽章跟著多一個可選的 mode,`vault.ts` 寫指標時傳 0o600。
+21. 測試用 `umask(0)` 與 `umask(0o022)` 各跑一次,結果都是 0600(證明不是靠 umask 湊出來的)。
+
+### F. `createDefaultLiveRouter` 的 `localProber`
+
+22. `createDefaultLiveRouter` 建 `LlmRouterImpl` 時明講 `localProber: async () => ({ available: false, models: [] })`(跟 `scripts/llm.ts` 的 `createFakeRouter` 同一個寫法與註解),行為與現在完全相同。驗證:`live-run.test.ts` 裡呼叫 `createDefaultLiveRouter()` 的測試不再觸發 `llm.router-impl.local-prober-default`;`npm run witness:degraded` 的未標記數比 T5 合併後(155)少。
+
+### G. 驗收時
+
+23. 一般測試全綠(`VITEST_MAX_WORKERS=1`);`npx tsc --noEmit` 0 錯(不能省:型別測試只有 tsc 驗得到);`npm run boundaries`、`lint:docs` 綠。
+24. 對 `packages/core/src/llm/spend.ts` 的壞行判定與 `scripts/vault.ts` 的 `--force` 重建判定跑 Stryker(要先拿 CPU 位子與鎖);存活者逐條分類。`vault.ts` 的子程序盲區用手動突變補驗,寫進報告(ADR-030:只有嚴格級門檻是硬的)。
+25. `must_catch`(檔頭)每一條要有一個**具名測試**;驗收角色逐條做突變證明會紅。
 
 ## 預算
 
@@ -104,7 +120,7 @@ T5 驗收(`docs/reviews/acceptance-T5.md`)找到四件事,顧問裁決全部收�
 
 ## 測試誰寫
 
-- 驗收·測試 agent(-ed):A–D 全部的紅測試與靜態檢查;改既有的「log 不存在與 log 空檔」測試(驗收 12)。**先寫,開發 agent 才開工。**
+- 驗收·測試 agent(-ed):A–F 全部的紅測試與靜態檢查;改既有的「log 不存在與 log 空檔」測試(驗收 12)。**先寫,開發 agent 才開工。**
 - 開發 agent:只改實作,不改測試、不改 `.feature`。既有測試要改才能綠,就停下回報協調者。
 - 驗收:照 `worker-acceptance`。
 
