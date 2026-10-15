@@ -319,6 +319,9 @@ export function createDefaultLiveRouter(learningDir?: string, deps: VaultResolve
   return new LlmRouterImpl({
     settings: readLlmSettings(settingsDir),
     logPath: resolved.ledger.logPath,
+    // 明講底層的本機探測(跟預設值同義:ADR-039 之後閘道才是「本機」),不借道
+    // llm.router-impl.local-prober-default 那條退化分支(ADR-044)。
+    localProber: async () => ({ available: false, models: [] }),
   });
 }
 

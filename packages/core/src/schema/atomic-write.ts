@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, openSync, readdirSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fchmodSync, fsyncSync, openSync, readdirSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 /** 舊樣式暫存檔:`.<name>.<pid>.<ts>.tmp`。新寫入固定用 `<name>.tmp`(§11b)。 */
@@ -52,14 +52,21 @@ function fsyncDir(dir: string): void {
  *
  * 任何一步失敗都先刪掉 `<name>.tmp` 再把原本那個錯誤丟出去。清理自己失敗
  * 不可以遮蔽原本的錯誤。不建目錄:目錄不存在就讓 open 丟錯。
+ *
+ * `mode`(可選,T8):目標檔的權限,例如帳本指標檔的 0o600。暫存檔**建立時**就是這個權限,
+ * 不是寫完再 chmod——rename 之後目標就是暫存檔那個 inode,所以沒有一個瞬間比 `mode` 寬。
+ * 沒給 `mode` 時行為完全不變(open 的預設 0o666 & ~umask)。
  */
-export function writeFileAtomic(path: string, content: string): void {
+export function writeFileAtomic(path: string, content: string, mode?: number): void {
   cleanupStrayTmp(path);
   const dir = dirname(path);
   const tmp = join(dir, `${basename(path)}.tmp`);
   try {
-    const fd = openSync(tmp, 'w');
+    const fd = mode === undefined ? openSync(tmp, 'w') : openSync(tmp, 'w', mode);
     try {
+      // open 的 mode 只在檔案是新建時才生效(上次中斷殘留的同名暫存檔會保留舊權限),而且會被
+      // umask 再遮掉幾位。寫入任何內容之前再 fchmod 一次:結果恰好是 mode,不靠 umask 湊。
+      if (mode !== undefined) fchmodSync(fd, mode);
       writeSync(fd, content);
       fsyncSync(fd);
     } finally {

@@ -93,11 +93,6 @@ export const DEGRADED_SIGNALS = {
     owner: '03-llm-router',
     summary: 'POST /gateway/chat 回 401 → 作廢 token 重換一次再重打,第二次成功就當正常回應',
   },
-  'llm.spend.bad-line-skipped': {
-    kind: 'swallow',
-    owner: '03-llm-router',
-    summary: 'log.jsonl 某一行不是 JSON → 跳過那一行,花費照算',
-  },
   'llm.spend.tokens-missing-zero': {
     kind: 'swallow',
     owner: '03-llm-router',

@@ -56,15 +56,21 @@ export {
 export {
   computeDailySpend,
   dayOf,
+  describeBadLine,
   isBudgetExhausted,
   isLlmCallEvent,
+  parseLedger,
   readDailyCapUsd,
   readDailySpend,
   readSpendPrices,
+  BAD_LINE_PREVIEW_CHARS,
   DEFAULT_DAILY_CAP_USD,
   DEFAULT_SPEND_PRICES,
   MissingLedgerError,
+  UnknownSpendError,
+  type BadLedgerLine,
   type DailySpend,
+  type LedgerParse,
   type SpendPrices,
 } from './spend.js';
 export {

@@ -22,6 +22,7 @@ import {
   readDailyCapUsd,
   readDailySpend,
   readSpendPrices,
+  UnknownSpendError,
   type SpendPrices,
 } from './spend.js';
 
@@ -232,8 +233,8 @@ describe('readDailySpend', () => {
     }
   });
 
-  it('壞掉的一行只跳過那一行,其他行照算', () => {
-    // 整份放棄會把花費算成 0,而 0 的方向是「還可以繼續花」——錢的方向上不能這樣錯。
+  it('壞掉的一行讓花費變成「不知道」:丟 UnknownSpendError,不回部分總數(T8 A,取代舊的「只跳過那一行」)', () => {
+    // 舊行為(P-22)是跳過壞行、其他行照算;跳過壞行 = 低估花費 = 「還可以繼續花」,錢的方向上不能這樣錯。
     // 寫 log 中途被砍掉會留下半行,所以這不是假想的情況。
     const dir = mkdtempSync(join(tmpdir(), 'spend-test-'));
     try {
@@ -244,10 +245,47 @@ describe('readDailySpend', () => {
           JSON.stringify(event({ tokens_out: 500_000 })),
           '{"ts":"2026-09-04T10:00:00+08:00","type":"llm_ca',  // 被砍斷的半行
           'not json at all',
-          '',
-          '   ',
           JSON.stringify(event({ tokens_out: 500_000 })),
         ].join('\n') + '\n',
+      );
+      expect(() => readDailySpend(ExplicitLedger.unverified(logPath, 'spend test'), TODAY, PRICES)).toThrow(UnknownSpendError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('驗收補測:UnknownSpendError 的訊息說清楚三件事 —— 今日花費是不知道、去哪看是哪一行、修好或移除後再跑;物件只留路徑與行號', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-test-'));
+    try {
+      const logPath = join(dir, 'log.jsonl');
+      writeFileSync(logPath, [JSON.stringify(event({ tokens_out: 1 })), 'SECRET-LOOKING-BAD-LINE'].join('\n') + '\n');
+      let caught: unknown;
+      try {
+        readDailySpend(ExplicitLedger.unverified(logPath, 'spend test'), TODAY, PRICES);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(UnknownSpendError);
+      const e = caught as UnknownSpendError;
+      expect(e.name).toBe('UnknownSpendError');
+      expect(e.lineNumber).toBe(2);
+      expect(e.logPath).toBe(logPath);
+      expect(e.message).toContain('今日花費是不知道,不是 0');
+      expect(e.message).toContain('npx tsx scripts/llm-spend.ts');
+      expect(e.message).toContain('修好或移除後再跑一次');
+      expect(JSON.stringify(Object.keys(e))).not.toContain('SECRET');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('空白行與只有空白的行不是壞行:照樣跳過,其他行照算', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-test-'));
+    try {
+      const logPath = join(dir, 'log.jsonl');
+      writeFileSync(
+        logPath,
+        [JSON.stringify(event({ tokens_out: 500_000 })), '', '   ', '\t', JSON.stringify(event({ tokens_out: 500_000 }))].join('\n') + '\n',
       );
       const spend = readDailySpend(ExplicitLedger.unverified(logPath, 'spend test'), TODAY, PRICES);
       expect(spend.calls).toBe(2);

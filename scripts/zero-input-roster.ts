@@ -814,6 +814,11 @@ export const ROSTER: Record<string, Entry> = {
         baselines: {
           healthy: (s) => ({ args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...verifiedVault(s, `${llmCallLine(SPEND_DAY)}\n${llmCallLine(SPEND_DAY)}\n`) } }),
           quiet: (s) => ({ args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...verifiedVault(s, `${llmCallLine('2026-08-01')}\n`) } }),
+          // T8(契約 §12):驗證過的帳本、state/log.jsonl 不存在 = 全新安裝 = $0、exit 0,第二行註明
+          // 「帳本還沒有紀錄」。T8 之前這個形狀是 exit 2(違反契約),現在是正當的基線。未驗證的帳本
+          // (--log)檔案不存在仍是 exit 2,由底下的「--log 不存在」探針守;log 讀不到仍是 exit 2,
+          // 由「log.jsonl 是目錄」探針守。
+          fresh: (s) => ({ args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...verifiedVault(s, null) } }),
         },
         probes: [
           {
@@ -821,6 +826,20 @@ export const ROSTER: Record<string, Entry> = {
             name: 'log.jsonl 是空檔',
             build: (s) => ({ args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...verifiedVault(s, '') } }),
             legitZero: '剛 init 的 vault 就是空的 log,還沒花過錢是事實。訊息帶「0 次呼叫」,跟有花費的那天分得出來',
+            // 空檔(有 log、今天沒花)與全新安裝(log 不存在、帳本還沒有紀錄)都是 exit 0,訊息要不同(T8 驗收 12)。
+            against: ['healthy', 'fresh'],
+          },
+          {
+            // T8:讀得到路徑、但不是「檔案不存在」的讀取錯誤(這裡是 log.jsonl 是一個目錄,root 也造得出來)。
+            // 驗證過的帳本也一樣是算不出來、exit 2,不可以被當成全新安裝的 $0。
+            kind: 'wrong-type',
+            name: 'log.jsonl 是目錄(讀不到,不是不存在)',
+            build: (s) => {
+              const env = verifiedVault(s, null);
+              const p = emptyDir(s, 'learning/state/log.jsonl');
+              return { args: ['--day', SPEND_DAY], env: { ...SPEND_ENV, ...env }, mention: p };
+            },
+            against: ['healthy', 'fresh'],
           },
           {
             // T5:還沒跑 vault.ts init 的機器。不知道帳本在哪 = 算不出來,不是 0。

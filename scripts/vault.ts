@@ -6,6 +6,8 @@
  *
  * `init` 建立帳本身分標記 `<learning_dir>/config/vault-id` 與使用者層指標
  * `${XDG_CONFIG_HOME:-~/.config}/llm-learning-cards/vault.json`;兩份檔都走原子寫入(暫存檔 → fsync → rename)。
+ * 指標檔的權限是 0600(T8):暫存檔建立時就是 0600,rename 之後留著,沒有一個瞬間比 0600 寬。
+ * 標記檔在 `learning/` 底下,權限跟著 `learning/`,不在此列。
  *
  * | 情境 | `init` |
  * |---|---|
@@ -15,9 +17,10 @@
  * | 指標指向別處 / 讀不到 / 與標記不符 | 拒絕,不改任何檔,exit 1,說要 `--force`;不符時只印兩邊的前 8 碼 |
  * | 以上再加 `--force` | 先印出舊指標的內容(明示的丟棄,要讓人看見丟了什麼,ADR-050),再覆寫 |
  * | `--learning-dir` 相對或不存在 | 拒絕,不建任何東西 |
- * | 標記內容不是合法 uuid | 拒絕(加 `--force` 也一樣):帳本身分壞了,要人看,不自動換掉 |
+ * | 標記存在但內容不是合法 uuid(含空檔、多餘字元、大寫、`\r\n`) | 拒絕,不改任何檔,exit 1;訊息說可以加 `--force` 重建,舊內容會被丟棄 |
+ * | 上一列再加 `--force`(T8) | 先印「舊標記(將被丟棄):」與舊內容(最多 200 位元組,控制字元以 `\xNN` 顯示),再重建,exit 0。指標存在、指向同一處、指標的 `vault_id` 是合法 uuid → 沿用指標的 id 只重寫標記(帳本身分不變,其他簽出的指標不用動);否則產生新 uuid,標記與指標一起改(有舊指標也先印出來) |
  *
- * 標記是帳本本身的身分:有標記時一律沿用它,指標跟著標記走;只有沒有標記時才產生新的 uuid。
+ * 標記是帳本本身的身分:有(合法的)標記時一律沿用它,指標跟著標記走;只有沒有標記時才產生新的 uuid。
  * `show` 印出指標位置、`learning_dir`、標記是否存在、是否相符;任何不符 exit 1。
  *
  * 這支只碰呼叫端給的 env / homedir / io——測試全部注入 mkdtemp 的值。真的 `learning/` 只由協調者
@@ -28,6 +31,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
+  isUuid,
   markerPath,
   parseMarker,
   parsePointer,
@@ -74,9 +78,78 @@ function writeMarker(io: VaultIo, learningDir: string, vaultId: string): void {
   io.writeAtomic(path, `${vaultId}\n`);
 }
 
+/** 指標檔的權限(T8):只有使用者自己讀寫。傳給原子寫入,暫存檔建立時就是它,不是寫完再 chmod。 */
+const POINTER_MODE = 0o600;
+
 function writePointer(io: VaultIo, pointer: string, learningDir: string, vaultId: string): void {
   io.mkdir(dirname(pointer), 0o700);
-  io.writeAtomic(pointer, `${JSON.stringify({ learning_dir: learningDir, vault_id: vaultId })}\n`);
+  io.writeAtomic(pointer, `${JSON.stringify({ learning_dir: learningDir, vault_id: vaultId })}\n`, POINTER_MODE);
+}
+
+/** `--force` 重建壞標記時,舊內容最多印這麼多位元組。 */
+const DISCARDED_MARKER_MAX_BYTES = 200;
+
+/**
+ * 壞標記的舊內容 → 可以安全印到終端機的一段字(T8)。只看前 200 位元組;可列印的 ASCII 原樣,
+ * 其餘每個位元組(控制字元、換行、ESC、非 ASCII)與反斜線本身一律寫成 `\xNN`。標記本來應該是
+ * 一個 uuid,壞掉的內容可能是任何東西,不能讓它在終端機裡跑控制序列;反斜線也轉,
+ * 印出來的 `\x07` 才只有一種讀法。
+ */
+function showDiscardedMarker(raw: string): string {
+  const bytes = Buffer.from(raw, 'utf8');
+  if (bytes.length === 0) return '(空檔)';
+  let shown = '';
+  for (const byte of bytes.subarray(0, DISCARDED_MARKER_MAX_BYTES)) {
+    const printable = byte >= 0x20 && byte <= 0x7e && byte !== 0x5c;
+    shown += printable ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, '0')}`;
+  }
+  return bytes.length > DISCARDED_MARKER_MAX_BYTES
+    ? `${shown}…(共 ${bytes.length} 位元組,只印前 ${DISCARDED_MARKER_MAX_BYTES} 位元組)`
+    : shown;
+}
+
+/** 舊指標原文,`--force` 丟棄前印出來(明示的丟棄,ADR-050)。 */
+function discardedPointer(oldRaw: string): string {
+  return `舊指標(將被丟棄):\n${oldRaw.endsWith('\n') ? oldRaw : `${oldRaw}\n`}`;
+}
+
+/**
+ * `init --force` 遇到壞標記(存在但不是合法 uuid):先印出舊內容,再重建(T8,工單第 7、8 條)。
+ * 用哪個 id:指標存在、指向同一個 learning_dir、指標的 vault_id 是合法 uuid → 沿用指標的 id,
+ * 只重寫標記(帳本身分不變,其他簽出裡的指標不用動);否則產生新 uuid,標記與指標一起改,
+ * 有舊指標也先印出來。兩份檔都走原子寫入。
+ */
+function rebuildBadMarker(
+  io: VaultIo,
+  learningDir: string,
+  pointer: string,
+  markerRaw: string,
+  newId: () => string,
+): VaultCommandResult {
+  const marker = markerPath(learningDir);
+  const discardedMarker = `舊標記(將被丟棄):\n${showDiscardedMarker(markerRaw)}\n`;
+  const oldRaw = io.exists(pointer) ? io.readFile(pointer) : undefined;
+  const old = oldRaw === undefined ? undefined : parsePointer(oldRaw);
+
+  if (old !== undefined && old.ok && resolve(old.learningDir) === learningDir && isUuid(old.vaultId)) {
+    writeMarker(io, learningDir, old.vaultId);
+    return {
+      exitCode: 0,
+      stdout: `${discardedMarker}已用 --force 重建帳本身分標記 ${marker}(沿用指標的帳本身分 ${prefix8(old.vaultId)},指標沒有改)\n`,
+      stderr: '',
+    };
+  }
+
+  const vaultId = newId();
+  writeMarker(io, learningDir, vaultId);
+  writePointer(io, pointer, learningDir, vaultId);
+  return {
+    exitCode: 0,
+    stdout:
+      `${discardedMarker}${oldRaw === undefined ? '' : discardedPointer(oldRaw)}` +
+      `已用 --force 重建帳本身分標記 ${marker} 與指標 ${pointer}(新的帳本身分 ${prefix8(vaultId)})\n`,
+    stderr: '',
+  };
 }
 
 export function initVault(deps: VaultInitDeps): VaultCommandResult {
@@ -94,16 +167,20 @@ export function initVault(deps: VaultInitDeps): VaultCommandResult {
   const pointer = vaultPointerPath(deps.env, deps.homedir);
   const marker = markerPath(learningDir);
 
+  const newId = (): string => (deps.randomUUID ?? randomUUID)();
+
   let markerId: string | undefined;
   if (io.exists(marker)) {
-    markerId = parseMarker(io.readFile(marker));
+    const markerRaw = io.readFile(marker);
+    markerId = parseMarker(markerRaw);
     if (markerId === undefined) {
+      if (deps.force === true) return rebuildBadMarker(io, learningDir, pointer, markerRaw, newId);
       return fail(
-        `帳本身分標記 ${marker} 的內容不是合法的 uuid(config/vault-id)。不會自動換掉帳本身分;請人工檢查這個檔。`,
+        `帳本身分標記 ${marker} 的內容不是合法的 uuid(config/vault-id)。不會自動換掉帳本身分;請人工檢查這個檔。` +
+          `確定要重建帳本身分可以加 --force:舊標記的內容會被丟棄(重建前會先印出來)。`,
       );
     }
   }
-  const newId = (): string => (deps.randomUUID ?? randomUUID)();
 
   if (!io.exists(pointer)) {
     const vaultId = markerId ?? newId();
@@ -142,7 +219,7 @@ export function initVault(deps: VaultInitDeps): VaultCommandResult {
   }
 
   const vaultId = markerId ?? newId();
-  const discarded = `舊指標(將被丟棄):\n${oldRaw.endsWith('\n') ? oldRaw : `${oldRaw}\n`}`;
+  const discarded = discardedPointer(oldRaw);
   if (markerId === undefined) writeMarker(io, learningDir, vaultId);
   writePointer(io, pointer, learningDir, vaultId);
   return { exitCode: 0, stdout: `${discarded}已用 --force 覆寫指標 ${pointer}\n`, stderr: '' };

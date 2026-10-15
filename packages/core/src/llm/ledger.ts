@@ -94,7 +94,8 @@ export type VaultResolveResult =
 export interface VaultIo {
   exists: (path: string) => boolean;
   readFile: (path: string) => string;
-  writeAtomic: (path: string, content: string) => void;
+  /** `mode` 可選(T8):指標檔傳 0o600,暫存檔建立時就是這個權限(見 writeFileAtomic)。 */
+  writeAtomic: (path: string, content: string, mode?: number) => void;
   mkdir: (path: string, mode?: number) => void;
 }
 
