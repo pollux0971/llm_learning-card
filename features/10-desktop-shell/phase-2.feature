@@ -6,18 +6,127 @@ Feature: The file boundary and the learning directory
   This is a security boundary, so unlike the rest of this folder it is tested
   automatically and thoroughly.
 
-  Scenario: First run asks where the learning directory is
-    Given no configuration file exists
+  # Where the learning directory is (ADR-066, ADR-069; contract section 12, version 1.4.0).
+  # There is exactly one source: the user-level pointer file written by "npx tsx scripts/vault.ts init".
+  # The desktop application only reads it. It never writes the pointer file or the identity marker
+  # config/vault-id, because those carry money and identity and a second writer would be a second
+  # place to disagree. The start state is one of five and the four failures are never mixed:
+  #   pointer-missing, pointer-unreadable, learning-dir-missing, marker-mismatch, ok.
+  # The names are the reasons used by the shared file contracts/fixtures/vault-pointer-vectors.json.
+  # The pointer path is ${XDG_CONFIG_HOME:-~/.config}/llm-learning-cards/vault.json (an empty
+  # XDG_CONFIG_HOME counts as unset). It is not the Tauri application config directory.
+
+  Scenario: First run without a pointer file shows how to set up and writes nothing
+    Given the user-level pointer file does not exist
     When the application starts
-    Then it asks the person to choose a learning directory
-    And it offers to initialise the directory if it is empty
-    And the chosen path is saved to the configuration
+    Then the start state is pointer-missing
+    And the screen says the learning directory is not set up yet
+    And the screen shows the full command "npx tsx scripts/vault.ts init --learning-dir" followed by a path placeholder
+    And the application wrote no file anywhere
+
+  Scenario: A directory named by an environment variable is not a second source
+    Given the user-level pointer file does not exist
+    And the environment variable LC_LEARNING_ROOT names an existing directory
+    When the application starts
+    Then the start state is pointer-missing
+
+  Scenario Outline: A pointer file that cannot be read is reported with its path and is never overwritten
+    Given the user-level pointer file exists but <problem>
+    When the application starts
+    Then the start state is pointer-unreadable
+    And the screen says the settings file cannot be read
+    And the screen shows the absolute path of the pointer file
+    And the pointer file is byte-identical to before
+    And the application wrote no file anywhere
+
+    Examples:
+      | problem                                   |
+      | it is not valid JSON                      |
+      | reading it fails with a permission error  |
+      | a field has the wrong type                |
+      | learning_dir is a relative path           |
 
   Scenario: A configured path that no longer exists is reported
-    Given the configured path does not exist
+    Given the pointer file names a learning directory that does not exist
     When the application starts
-    Then it says the directory could not be found
-    And it asks the person to choose again
+    Then the start state is learning-dir-missing
+    And the screen says the folder could not be found
+    And the screen shows that path and the full init command
+    And the application wrote no file anywhere
+
+  Scenario Outline: A directory that is not the one the pointer was made for is not opened
+    Given the pointer file names an existing learning directory
+    And the identity marker of that directory <marker>
+    When the application starts
+    Then the start state is marker-mismatch
+    And the screen says this is not the same folder
+    And neither the pointer file nor the marker is changed
+    And the application wrote no file anywhere
+
+    Examples:
+      | marker                                       |
+      | holds a different identity                   |
+      | does not exist                               |
+      | cannot be read                               |
+      | matches only in its first 8 characters       |
+      | has two trailing newlines                    |
+
+  Scenario: A matching identity opens both windows
+    Given the pointer file names an existing learning directory
+    And the identity marker of that directory matches the pointer file
+    When the application starts
+    Then the start state is ok
+    And the teach card window and the test card window are opened
+    And the application wrote no file anywhere
+
+  # The commands and the asset protocol must use one resolved result, not each read the pointer file.
+  Scenario: The commands and the asset protocol share one resolved learning directory
+    Given the start state is ok
+    When the front end reads a card through the read command and the web view requests the same card through the asset protocol
+    Then both were served from the same learning directory
+    And the pointer file was read once for the whole run
+
+  Scenario Outline: In a failed start state the commands report not configured and the asset protocol refuses
+    Given the start state is <state>
+    When the front end calls the <command> command with a legal relative path
+    Then the call fails with the not-configured error
+    And the error is neither a refusal nor an io error
+    And the learning log gets no new line
+    And the asset protocol answers 403 for the same path
+
+    Examples:
+      | state                | command |
+      | pointer-missing      | read    |
+      | pointer-unreadable   | write   |
+      | learning-dir-missing | list    |
+      | marker-mismatch      | exists  |
+
+  # The Rust resolver and the TypeScript resolver (packages/core/src/llm/ledger.ts, used by the money
+  # scripts) read the same vectors, so the two cannot drift. Rows are the file's own; none may be
+  # added or skipped on the Rust side.
+  Scenario: The Rust pointer path rule agrees with every shared vector
+    When the Rust resolver computes the pointer path for every row of the pointer_path vectors
+    Then each result equals the expected path of its row
+    And the rows cover XDG_CONFIG_HOME set, unset and the empty string
+
+  Scenario: The Rust identity comparison agrees with every shared vector
+    When the Rust resolver compares the marker text and the vault id of every row of the marker_compare vectors
+    Then each result is equal or not-equal exactly as its row says
+
+  Scenario: The Rust pointer parser agrees with every shared vector
+    When the Rust resolver parses the raw content of every row of the pointer_content vectors
+    Then each result is ok with the row's learning_dir and vault_id, or unreadable, exactly as its row says
+
+  Scenario: The Rust start state agrees with every shared state vector
+    When the Rust resolver runs every row of the states vectors in a temporary directory
+    Then each start state equals the expected reason of its row
+    And the vectors file has 47 rows in total and its sha256 is the pinned value
+
+  Scenario: The pointer file is looked up where the command line tools look
+    Given XDG_CONFIG_HOME names a temporary directory containing a valid pointer file
+    When the application starts
+    Then the start state is ok
+    And the pointer file was not looked up under the Tauri application config directory
 
   Scenario: Reading a file goes through the boundary
     When the front end requests a card file
