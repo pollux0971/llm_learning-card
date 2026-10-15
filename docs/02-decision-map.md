@@ -1386,3 +1386,30 @@ graph TD
   - `npm run boundaries` 會多兩條有理由的例外;理由寫在 `features/14-hud-skin/FEATURE.md` 的「依賴」。
   - 之後 06、07 的新畫面一律用 14 的元件,不各自畫框。
 - **Related**: ADR-035(第 2 點的例外)、ADR-012、ADR-022、`features/14-hud-skin/FEATURE.md`、`features/10-desktop-shell/NEXT.md` 的 phase-6
+
+## ADR-073 · I2 不打 tag:自動驗收通過、人工確認延到 I4(不加 CLI 的學新卡指令)
+
+- **Status**: accepted · 2026-10-16(技術顧問轉達使用者裁決:選 B;使用者在顧問 session 親口說)
+- **Context**: I2 的五個 phase 都 done,整合工作(T13)已合併,`docs/integration/i2-review-loop-headless.feature` 的自動場景全綠。
+  但真的 `learning/` 有 25 張卡、`state/reviews.json` 是 0 筆。卡片要被標成「學過」才會進入複習排程;依 `docs/00-design.md` 4.1(「按『下一個』或『換類別』時,
+  目前這張卡標記為 `learned`,進入複習排程」),這一步是**教學卡**做的(07 phase-2,屬 I4)。CLI 沒有任何路徑能把卡標成學過,
+  所以使用者在真的資料上不會有卡到期,I2 的 `@e2e` 與 `@manual`(「每天用一週」)在真實環境裡做不到。
+- **Decision**:
+  1. **I2 不打 tag。** 自動驗收(headless 場景、T13 的整合工作)已通過,這一點照實寫進 `docs/01-roadmap.md` 的現況表;但 tag `I2` 代表的是「系統完整可用、人工確認過」,現在缺後者。
+  2. **I2 的人工確認(`@e2e` 在真資料上跑、`@manual` 連用一週)延到 I4,和 I4 的人工確認一起問使用者。** 延後,不是跳過:I4 通過前補做,補做的結果回頭寫進 I2。
+  3. **不加 CLI 的學新卡指令。** 使用者選 B:要用的時候是教學卡接上之後(I4),不為了湊 I2 另做一條之後會被取代的入口。
+  4. **I3 在「I2 自動驗收通過」的基礎上開工。**
+  5. `docs/05-parallel-and-integration.md`「整合的順序不能改」的意思是**功能依序建立**(後一個整合建立在前一個已經能運作的功能上),
+     不是「前一個的人工確認通過之前不能開始下一個」。人工確認可以合併延後,但不可以跳過。
+- **Alternatives**:
+  - **A. 在 CLI 加最小的學新卡指令**(把指定的卡標成 `learned`、寫入 `reviews.json`)—— 不採用(使用者選 B)。
+    這條入口 I4 會被教學卡取代,而且它寫的是排程的起點資料,多一條寫入路徑就多一個要驗的地方(ADR-060、ADR-070 的教訓:同一件事的多份實作會漂移)。
+  - **手動改 `state/reviews.json` 讓卡到期** —— 不採用。`state/` 是幾個月的記憶資料(CLAUDE.md 硬規則 5),不為了驗收手改。
+  - **拿 fixture 資料當 I2 的人工確認** —— 不採用。那樣驗的是 fixture,不是使用者的資料;I2 的價值正好在真資料上每天用。
+- **Consequences**:
+  - **使用者開始每天用的時間點,從 I2 延到 I4。** `docs/01-roadmap.md` 的現況表照實寫:I2 自動場景通過、人工確認延到 I4、沒有 tag。
+  - I3(桌面複習)可以開工,但 I3 自己的人工確認也會碰到同一個缺口(真資料沒有到期的卡),I3 的 gate 要寫明哪些人工確認併到 I4。
+  - `/integrate I2` 的收尾(打 tag)留到 I4 補完人工確認之後;在那之前不要打 `I2` tag。
+  - 之後遇到「自動場景全綠、人工確認缺前置條件」的整合點,先套這個處理:延後並寫進 roadmap,不為了湊 tag 補一條臨時入口。
+- **Related**: `docs/integration/i2-review-loop-headless.feature`、`docs/integration/i4-two-card-system.feature`、`docs/00-design.md` 4.1、`docs/05-parallel-and-integration.md`、
+  `docs/01-roadmap.md`、`features/07-teach-card/`(phase-2)、ADR-060、ADR-070
