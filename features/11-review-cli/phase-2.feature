@@ -76,3 +76,16 @@ Feature: Session boundaries
     Then the answers are on disk
     And the exit status is the one the session would have had without the snapshot
     And a hint says that running the init command adds version control
+
+  Scenario: A resumed session summarises the whole day
+    Given 5 questions were due and 2 were answered before quitting, both passed
+    When the review command is run again the same day and the other 3 are answered, one of them wrongly
+    Then the summary reports 4 passed and 1 returned
+    And the summary says 3 questions were answered in this run
+
+  Scenario: A question whose grading failed is listed to retry rather than counted
+    Given 3 questions were due and the grader returned an error for one of them
+    When the session finishes
+    Then the summary reports 2 passed and 0 returned
+    And the summary says 1 question is left to retry
+    And running the review command again asks only that question
