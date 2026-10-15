@@ -7,10 +7,9 @@
  *
  * router 型別繼續用這個模組自己的 `./types.js`(跟 grade-fill.ts 同一份),不改
  * 成直接 import `../llm/types.js`——兩邊的 LlmRouter/LlmTask 形狀完全一樣(都是
- * 契約 §7 的 call/probeOnline/probeLocal),整合時把 `LlmRouterImpl` 注入進來
- * 一樣能過;差別只在這裡的 LlmResult.provider 多了 `'fake'` 這個字面值(Wave 0
- * 的 FakeLlmRouter 用),用 `../llm/types.js` 的話 FakeLlmRouter 回傳型別會跟
- * 03 真正的 LlmResult union 對不上。這裡不直接呼叫 router,呼叫端注入什麼就是
+ * 契約 §7 的 call/probeOnline/probeLocal),整合時把實作注入進來一樣能過;差別只在
+ * 這裡的 LlmResult.provider 多了 `'fake'` 這個字面值,用 `../llm/types.js` 的話
+ * 回傳型別會跟 03 真正的 LlmResult union 對不上。這裡不直接呼叫 router,呼叫端注入什麼就是
  * 什麼;phase-2.feature 全部用假的/mock router 測,不打真的 API。
  *
  * LlmResult.provisional 決定 grader 是 'cloud' 還是 'local-provisional'——

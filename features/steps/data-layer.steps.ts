@@ -36,6 +36,7 @@ import {
   type Graph,
 } from '@core/schema/graph.js';
 import { ROOT, type LearningWorld } from './_world.js';
+import { isI2Loop, seedI2ApplyQuestion } from './i2-review-loop.steps.js';
 
 /** phase-2「the validator runs」要對付好幾種格式,用這個 tagged union 決定要呼叫哪個驗證器。 */
 type PendingValidation =
@@ -449,6 +450,11 @@ Given('a fill question with an empty answer group', function (this: DataLayerWor
 });
 
 Given('an apply question with {int} rubric criteria', function (this: DataLayerWorld, n: number) {
+  // I2 整合也用這句:要的是一張真的有 n 條 rubric 的應用題卡,不是待驗證的資料。
+  if (isI2Loop(this)) {
+    seedI2ApplyQuestion(this, n);
+    return;
+  }
   const rubric = Array.from({ length: n }, (_, i) => `criterion ${i}`);
   this.pendingValidation = { kind: 'applyQuestion', data: { prompt: 'p', rubric } };
 });

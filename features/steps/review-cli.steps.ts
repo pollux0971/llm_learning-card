@@ -21,7 +21,8 @@ import { strict as assert } from 'node:assert';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { CardId, Review } from '@contracts/index.js';
-import { FakeLlmRouter, loadFixturesFromDir, type LlmRouter } from '@core/grading/index.js';
+import type { LlmRouter } from '@core/grading/index.js';
+import { fixtureRouter, loadFixturesFromDir } from '../support/fixture-router.js';
 import { nextCalendarDay } from '@core/schema/review.js';
 import { buildTodaySession } from '../../packages/core/src/session/build.js';
 import { presentNextCard } from '../../packages/core/src/session/present.js';
@@ -29,6 +30,7 @@ import { joinApplyLines, submitAnswer } from '../../packages/core/src/session/an
 import { estimateTomorrow, renderDryRun, renderSummary } from '../../packages/core/src/session/summary.js';
 import type { AnswerOutcome, CardPresentation, CurrentQuestion, EstimateResult, Session } from '../../packages/core/src/session/types.js';
 import type { LearningWorld, RunResult } from './_world.js';
+import { assertI2GradingFailedReported, isI2Loop } from './i2-review-loop.steps.js';
 
 const LLM_FIXTURES_DIR = resolve(import.meta.dirname, '../../contracts/fixtures/llm');
 
@@ -58,7 +60,7 @@ function stateOf(world: LearningWorld): ReviewCliState {
 }
 
 function makeRouter(): LlmRouter {
-  return new FakeLlmRouter(loadFixturesFromDir(LLM_FIXTURES_DIR));
+  return fixtureRouter(loadFixturesFromDir(LLM_FIXTURES_DIR));
 }
 
 function reviewsPath(world: LearningWorld): string {
@@ -521,7 +523,7 @@ Then('the history contains both answers', function (this: LearningWorld) {
 // features/11-review-cli/REVIEW.md。用獨立的 applyQuestion prompt(跟 scenario 8
 // 的「為什麼要重開瀏覽器?」不同)搭配新 fixture
 // grade.apply.review-cli-both-pass.json,避免跟既有的失敗 fixture 撞到
-// prompt_contains(FakeLlmRouter 用最長匹配決勝,共用同一個題目會撞到舊的 fail
+// prompt_contains(重播 router 用最長匹配決勝,共用同一個題目會撞到舊的 fail
 // fixture,見 fake-llm.ts)。
 
 Given('a card at stage 2 is being asked where both answers will pass', function (this: LearningWorld) {
@@ -615,7 +617,12 @@ Then('no transition is written for that card', function (this: LearningWorld) {
   assert.equal(readFileSync(reviewsPath(this), 'utf8'), s.reviewsSnapshotBefore);
 });
 
-Then('the session reports that grading failed', function (this: LearningWorld) {
+Then('the session reports that grading failed', async function (this: LearningWorld) {
+  // I2 整合:要驗的是真的 CLI 印出來的字,不是這個檔的 session 狀態。
+  if (isI2Loop(this)) {
+    await assertI2GradingFailedReported(this);
+    return;
+  }
   const s = stateOf(this);
   assert.equal(s.outcome!.status, 'error');
   assert.equal(s.outcome!.pass, null);

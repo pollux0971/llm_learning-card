@@ -125,7 +125,6 @@ export const NOT_INSTRUMENTED: readonly NotInstrumented[] = [
   { file: 'apps/test-card/src/stubs/loader.ts', snippet: 'settings.daily_cap ?? 10', reason: 'Wave 0 stub 的設定預設值' },
   { file: 'apps/test-card/src/session.ts', snippet: "due.types[due.types.length - 1] ?? 'fill'", reason: '索引越界補值,形狀補齊' },
   // 反例:cache-miss 時**丟錯**,不退化——留著當對照
-  { file: 'packages/core/src/grading/fake-llm.ts', snippet: 'throw new Error(`FakeLlmRouter: 沒有錄製', reason: '反例:fixture 找不到就丟錯,不退化' },
   { file: 'packages/core/src/ingest/fake-llm.ts', snippet: 'throw new CloudRequiredError(task);', reason: '反例:離線時丟 CLOUD_REQUIRED,不退化' },
   { file: 'features/support/_router-guard.ts', snippet: 'throw new Error(', reason: '反例:Background 該留下 router 卻沒有時丟錯,而不是就地生一個——這支檔案就是為了擋「安靜地變綠」而存在的' },
 ];

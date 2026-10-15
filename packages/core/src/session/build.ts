@@ -4,27 +4,24 @@
  * 把 01(讀 reviews.json/settings.yaml)、04(buildDueList/selectSession)
  * 串起來,決定「今天要考哪些卡、順序為何、reteach 佇列是誰」。純粹是接線:
  * 排序與上限邏輯完全信任 04,這裡不重新計算 overdue_ratio 之類的東西。
+ *
+ * router 由呼叫端注入,型別上必填,執行期也擋:沒給或是 undefined 就丟錯。
+ * 不再有預設 router(T13,I2 整合)。
  */
 import type { CardId, Review } from '@contracts/index.js';
 import { buildDueList, selectSession, type SchedulableCard } from '@core/scheduler/index.js';
-import { FakeLlmRouter, loadFixturesFromDir, type LlmRouter } from '@core/grading/index.js';
-import { resolve } from 'node:path';
+import type { LlmRouter } from '@core/grading/index.js';
 import { loadReviews, loadSettings } from './io.js';
-import { witnessed } from '@contracts/witness.js';
 import type { Session } from './types.js';
-
-const LLM_FIXTURES_DIR = resolve(import.meta.dirname, '../../../../contracts/fixtures/llm');
 
 export interface BuildSessionCtx {
   learningDir: string;
   today: string;
   /**
-   * 呼叫端注入的 LlmRouter,用於應用題審核(05 的 gradeApply)。phase-1
-   * 不接 03-llm-router 的真實實作,一律用 05 自己的 FakeLlmRouter 從
-   * contracts/fixtures/llm/ 讀預錄回應(跟 scripts/grade.ts 同一個模式)。
-   * 不給就用預設的 FakeLlmRouter(讀 contracts/fixtures/llm/)。
+   * 呼叫端注入的 LlmRouter,用於應用題審核(05 的 gradeApply)。
+   * 必填:沒給或是 undefined 就丟錯(JS 呼叫端與 `as never` 都過得了型別,所以執行期也擋)。
    */
-  router?: LlmRouter;
+  router: LlmRouter;
 }
 
 /**
@@ -60,11 +57,14 @@ export function deriveReteachQueue(reviews: Record<CardId, Review>, dueCards: Ca
  *      totalDue = result.due.length,deferred = result.deferred,
  *      passed/failed/errors 從 0 起算,current 未設定
  *
- * router 沒給時用 FakeLlmRouter 讀 contracts/fixtures/llm/(跟
- * scripts/grade.ts 的模式一致),讓 `--dry-run` 之外的互動流程在沒有真實
- * 雲端金鑰時也能跑。
+ * router 原樣放進 session,不包裝、不替換。
  */
 export async function buildTodaySession(ctx: BuildSessionCtx): Promise<Session> {
+  if (ctx.router === undefined) {
+    throw new Error('buildTodaySession 需要 router');
+  }
+  const router = ctx.router;
+
   const reviews = loadReviews(ctx.learningDir);
   const settings = loadSettings(ctx.learningDir);
 
@@ -83,8 +83,6 @@ export async function buildTodaySession(ctx: BuildSessionCtx): Promise<Session> 
   }));
 
   const result = selectSession(schedulable, { dailyCap: settings.daily_cap, reteach: reteachQueue });
-
-  const router = ctx.router ?? witnessed('session.router-default-fake', new FakeLlmRouter(loadFixturesFromDir(LLM_FIXTURES_DIR)));
 
   return {
     learningDir: ctx.learningDir,
