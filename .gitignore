@@ -75,3 +75,7 @@ contracts/fixtures/**/state/lint-report-*.md
 .claude/first-run
 .claude/assistant-daemon-state.json
 
+
+# cargo-mutants 的輸出目錄(本地產物,不進版控)
+mutants.out/
+mutants.out.old/

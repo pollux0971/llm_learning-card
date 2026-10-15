@@ -18,7 +18,7 @@ use std::io::{self, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use common::{assert_warning_line, is_iso8601_with_zone};
-use learning_cards_desktop::event_log::{append_line, AssetRefusalLimiter};
+use learning_cards_desktop::event_log::{append_line, append_to_log, AssetRefusalLimiter};
 use serde_json::{json, Value};
 
 /// 記下每一次 `write` 呼叫拿到的緩衝區。
@@ -174,4 +174,57 @@ fn limiter_window_is_measured_from_the_last_written_line_not_the_last_refusal() 
 fn limiter_flush_with_nothing_refused_is_empty() {
     let mut l = AssetRefusalLimiter::new();
     assert!(l.flush(at(0)).is_empty());
+}
+
+
+// ---------------------------------------------------------------- T2c-2 驗收 10:`state/` 在要寫的時候才建
+
+fn event_root(tag: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!("lc-evlog-{tag}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn append_to_log_creates_the_state_directory_when_it_is_missing() {
+    let root = event_root("missing");
+    assert!(!root.join("state").exists());
+    append_to_log(&root, &json!({ "ts": "2026-10-15T00:00:00.000Z", "type": "warning" })).expect("append");
+    let content = std::fs::read_to_string(root.join("state/log.jsonl")).unwrap();
+    assert_eq!(content.lines().count(), 1, "{content}");
+    assert!(content.ends_with('\n'));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn append_to_log_with_an_existing_state_directory_is_not_an_error_and_appends() {
+    let root = event_root("exists");
+    std::fs::create_dir(root.join("state")).unwrap();
+    append_to_log(&root, &json!({ "n": 1 })).expect("first");
+    append_to_log(&root, &json!({ "n": 2 })).expect("second");
+    let content = std::fs::read_to_string(root.join("state/log.jsonl")).unwrap();
+    assert_eq!(content.lines().count(), 2, "{content}");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn append_to_log_fails_when_state_is_a_regular_file_and_leaves_it_alone() {
+    let root = event_root("file");
+    std::fs::write(root.join("state"), "I am a file").unwrap();
+    let err = append_to_log(&root, &json!({ "n": 1 })).expect_err("must fail");
+    assert!(matches!(err.kind(), io::ErrorKind::NotADirectory | io::ErrorKind::Other | io::ErrorKind::PermissionDenied) || err.raw_os_error().is_some(), "{err:?}");
+    assert_eq!(std::fs::read_to_string(root.join("state")).unwrap(), "I am a file");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn append_to_log_never_creates_a_missing_root() {
+    let root = event_root("noroot");
+    let gone = root.join("not-there");
+    let err = append_to_log(&gone, &json!({ "n": 1 })).expect_err("must fail");
+    assert_eq!(err.kind(), io::ErrorKind::NotFound, "{err:?}");
+    assert!(!gone.exists(), "the root itself is never created");
+    std::fs::remove_dir_all(&root).unwrap();
 }
