@@ -18,7 +18,7 @@
 
 ## 會走到 lc-fs 的測試完整清單(`git grep` 實測)
 
-`lc-fs` 的 BIN 常數只在兩處:`apps/desktop/src/boundary.ts:38` 與 `apps/desktop/src/shell-config.ts:35`。
+`lc-fs` 的 BIN 常數只在兩處:`apps/desktop/src/boundary.ts` 第 38 行與 `apps/desktop/src/shell-config.ts` 第 35 行。
 - vitest:`apps/desktop/src/builtin-asset.test.ts`(import `shell-config.ts`)。這是 `apps/`、`packages/`、`scripts/` 底下**唯一**會走到 lc-fs 的 `*.test.ts`。
 - cucumber:`features/steps/desktop-shell-phase2.steps.ts`(import `boundary.ts` 與 `shell-config.ts`)。`boundary.ts` 沒有任何 vitest 測試 import。
 
@@ -27,7 +27,7 @@
 | 項目 | 結果 |
 |---|---|
 | (a) 沒有 `target/`(全新簽出,`ls apps/desktop/src-tauri/target` → No such file),單跑 `npx vitest run apps/desktop/src/builtin-asset.test.ts` | 3 passed,耗時 55.6 秒(冷編譯) |
-| (b) 改 Rust 一行(`bin/lc-fs.rs:71` `refused: true` → `refused: false`),**不手動重編**,單跑同一個檔 | 紅:`× an asset: URL for a file inside learning is refused and the file is not read`,`AssertionError: expected false to be true`。還原 Rust 後不手動重編再跑 → 3 passed |
+| (b) 改 Rust 一行(`lc-fs.rs` 第 71 行 `refused: true` → `refused: false`),**不手動重編**,單跑同一個檔 | 紅:`× an asset: URL for a file inside learning is refused and the file is not read`,`AssertionError: expected false to be true`。還原 Rust 後不手動重編再跑 → 3 passed |
 | (c) 編譯失敗(`refused: nope`) | 印出 cargo 輸出(`error[E0425]: cannot find value \`nope\` in this scope`),丟 `cargo build --bin lc-fs 失敗 status=101`,3 個測試被跳過(測試紅) |
 | cucumber `features/10-desktop-shell/phase-2.feature`(設定檔會跑全部 feature) | `lc-fs rebuilt: … Finished …`;677 scenarios(241 undefined、436 passed),3161 steps,與改之前逐數相同 |
 | `npx tsc --noEmit` | 0 錯誤 |
