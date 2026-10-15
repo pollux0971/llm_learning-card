@@ -9,7 +9,9 @@ owner: worker-grok
 must_catch:
   - regenerate 回應只有 title 與 body(沒有 examples、沒有 lines)時,generateCards 丟「格式不正確」而不是接受(現況)
   - regenerate 回應有 lines 時,接受的卡的 lines 被換成回應裡的(應永遠是原卡的 lines);或回應的 lines 是亂值(字串、NaN、長度 3)就丟錯
-  - regenerate 回應沒有 examples 時,卡的 examples 變成 undefined 或空陣列(應保留原卡的 examples);有 examples 時沒有採用
+  - regenerate 回應沒有 examples、或 examples 是空陣列 [] 時,卡的 examples 變成 undefined 或被清空(應保留原卡的 examples;T12 第 2 輪的輸出就是 [])
+  - regenerate 回應給了非空的字串陣列 examples 卻沒有替換原卡的;或 examples 格式不對(非陣列、含非字串或空字串)時丟錯或被半採用(應整個忽略、保留原卡的 examples)
+  - 重寫後 body 仍超過 100 字(契約 §2)的卡被寫成卡片檔(應整張不寫、進 needs-review.json、記一筆 warning);或字數判斷用的不是 §2 的權威實作
   - regenerate 回應的 title 被採用(應保留原卡的 title:prompt 規定「不要改變 title」)
   - 動到批次回應(cards.md)的解析:缺 lines、lines 長度不是 2 時應仍然丟錯(第一批的嚴格檢查不能被一併放寬)
   - regenerate 回應 body 不是字串、不是陣列、不是合法 JSON、是空陣列時,沒有丟錯(或錯誤訊息裡沒有 regenerate)
@@ -22,6 +24,7 @@ must_catch:
 
 > 狀態:草稿,待技術顧問審(派令來自顧問,經協調者 2026-10-16)。優先度:**中**,排在 T17 之後。
 > 作者:統籌·契約(規格)。紅測試:-ed(用**生產路徑**證明現況會失敗)。開發:worker-grok。派工:協調者。
+> 2026-10-16 顧問補兩點:examples 缺少或 `[]` 都保留原卡的、重寫後仍要過 §2 字數驗證(見要求 2、4)。
 > 這份檔是工單唯一的正本。**沒有改 `prompts/`(不需要 golden run);沒有改 `contracts/`(不需要 ADR)。**
 
 ## 起因與查證(我讀過的現況)
@@ -32,7 +35,7 @@ must_catch:
 - **regenerate 的 prompt 沒有行號**:`buildRegeneratePrompt` 只送 `category`、`source`、`title`、`limit`、`previous body`;`regenerate.md` 說「回傳格式跟 ingest.cards 一樣,但只回傳這一張卡的 JSON 陣列(單一元素)」,沒有叫模型附 `lines`。模型沒有任何理由知道要回行號。
 - **regenerate 的回應裡,`lines`、`title` 從來沒被用到**:迴圈只取 `regenerated.body` 與 `regenerated.examples ?? current.examples`,其餘照 `current`(`{ ...current, body, examples }`)。`lines` 是原卡的(切自 raw 的位置),下游 `ingest.ts` 用它算 `source_ref: raw/<cat>/<file>#L<a>-L<b>`(經 `clampLines`)。
 - **2026-10-15 的真模型基準**(`golden/ingest.regenerate/2026-10-15/regenerate-*.output.json`)的回應只有 `title` 與 `body`(加上模型回顯的 header 欄位 `golden`、`category`、`source`),**沒有 `examples`、沒有 `lines`**。
-- **我在 `dc2a4c1` 上用生產路徑(`generateCards`,假 router)實測**:
+- **我在 `dc2a4c1`(`428aa88` 同)上用生產路徑(`generateCards`,假 router)實測**:
 
   | regenerate 的回應 | 結果 |
   |---|---|
@@ -58,10 +61,20 @@ must_catch:
 2. **新增 regenerate 專用的解析**(例如 `parseRegenerated(text): { body: string; examples?: string[] }`),規則:
    - 不是合法 JSON、不是陣列 → 丟錯,訊息含 `regenerate`;空陣列 → 沿用既有的 `regenerate 回應沒有回傳卡片`;多於一筆 → 取第一筆(既有行為)。
    - 第一筆必須是物件而且 `body` 是字串;否則丟錯,訊息含 `regenerate`,並附上那筆(同批次的訊息格式)。
-   - `examples`:**沒有這個欄位 → 保留原卡的 `examples`**(不是 `undefined`、不是 `[]`);**有 → 必須是字串陣列**,是就採用,不是(例如 `"abc"`、`[1]`)就丟錯。
+   - `examples`(顧問 2026-10-16:模型不寫 examples 多半是沒想到、不是想刪,為了一張重寫卡丟掉原本好的例子等於預設丟棄,ADR-050 不行):
+     **缺少、或是空陣列 `[]` → 保留原卡的 `examples`**(T12 第 2 輪的 regenerate 輸出就是 `[]`);**只有給了非空、而且每一項都是非空字串(去頭尾空白後)的陣列才替換**。
+     **格式不對**(不是陣列、含非字串、含空字串)→ **整個忽略、保留原卡的 `examples`,不丟錯**(不要為了一個旁枝欄位讓一次 ingest 失敗;也不要半採用:`["ok", 1]` 整個不採用)。
    - `title`:**忽略**(保留原卡的 title;prompt 規定不改 title)。**`lines`:忽略**——不論缺、有、或是亂值(字串、NaN、長度 3)都不驗證、不採用、不丟錯。**其他未知欄位**(基準上的 `golden`、`category`、`source`)一律忽略。
 3. `generateCards` 的重試迴圈改用新解析;`accepted` 的卡永遠是 `{ ...current, body: <新>, examples: <新或原> }`,`lines`/`title` 不變;`parked` 的 `lines` 是原卡的、`attempts` 每次都記(第 1 次是原卡)。
-4. 不改 `buildRegeneratePrompt`、不改 `regenerate.md`(那是 prompt,要 golden run;模型現在本來就不附 `lines`,解析器配合現實)。
+4. **重寫完的卡照樣要過字數驗證(契約 §2)**。查證現況(`dc2a4c1`/`428aa88`):
+   - `generateCards` 每次重寫後用 `countBodyWords(current.body) > 100` 決定要不要再重寫;三次仍超長 → `parked`(`ParkedCandidate`,`attempts` 記每一次的 body 與字數)。**沒有通過的卡不會被寫成卡片檔。**
+   - `runIngest` 對 `parked` 已有現成的處理(**不用改 `ingest.ts`**):`state/needs-review.json` 追加一筆 `{ category, title, source, lines, reason: 'body_over_limit', attempts, recordedAt }`,
+     並在 `state/log.jsonl` 記**一筆** `type: 'warning'`(`file`、`message: "N 張卡因字數超過上限被暫緩,見 needs-review.json"`)——這就是「記一筆 warning」的現有機制,沿用,不另造。
+   - **「原卡保留」的意思**:第一批的原 body 本來就超過 100 字、不能寫成卡片檔;它連同每次重寫的結果留在 `needs-review.json` 的 `attempts[0]`(`attempt: 1`),人可以回頭處理。**請顧問確認這個讀法**(我的理解:你說的「原卡保留」= 不蓋掉、不丟掉原本的內容)。
+   - 字數判斷改用契約 §2 的**權威實作** `@core/schema/word-count.js` 的 `countWords`(先用 `stripExampleFences` 去圍欄),**不再用 `word-count-min.ts` 的 Wave 0 複本**(那個檔頭自己寫了「I1 整合後改用 01-data-layer 的正式驗證器」;兩份演算法現在一致,但 ADR-060、ADR-070 的教訓是:各自一份遲早漂移)。
+     `BODY_WORD_LIMIT` 仍是 100。`word-count-min.ts` 本身不刪(別處還在用,不在這張範圍)。
+   - 寫成卡片檔之後 `runIngestPipeline` 還會用 `validateCard` 讀回驗證;這一步不改。
+5. 不改 `buildRegeneratePrompt`、不改 `regenerate.md`(那是 prompt,要 golden run;模型現在本來就不附 `lines`,解析器配合現實)。
    後續如果要把 prompt 那句「回傳格式跟 ingest.cards 一樣」改清楚(明說「只需要 title 與 body」),是另一張要跑 golden run 的工單,不在這裡。
 
 ## 測試(-ed 寫;開發不改)
@@ -69,14 +82,17 @@ must_catch:
 | 驗收 | 量什麼 | 怎麼量 |
 |---|---|---|
 | 要求 2 | **生產路徑**:`generateCards(router, opts)`,第一次回應超長、第二次回應是基準形狀 `[{title, body}]`(再加 `[{title, body, lines}]`、`[{title, body, examples}]`、完整形狀)→ 每種都被接受,卡的 `lines`/`title` 是原卡的,`examples` 依規則 | vitest,假 router |
+| 要求 2 | **examples**:缺少、`[]` → 原卡的 examples;`["新"]` → 替換;`"abc"`、`[1]`、`["ok", 1]`、`[""]`、`null` → 整個忽略、保留原卡的,不丟錯 | 同上 |
 | 要求 2 | 回應的 `lines` 是別的值(`[99, 100]`、`"x"`、`[1]`、`[1,2,3]`)→ 接受,`lines` 仍是原卡的 | 同上 |
-| 要求 2 | 錯誤:非 JSON、非陣列、空陣列、`body` 不是字串、`examples` 不是字串陣列 → 丟錯,訊息含 `regenerate` | 同上 |
+| 要求 2 | 錯誤:非 JSON、非陣列、空陣列、第一筆不是物件、`body` 不是字串 → 丟錯,訊息含 `regenerate`(`examples` 格式不對**不**丟錯,見上一列) | 同上 |
 | 要求 1 | 批次回應缺 `lines` / `lines` 長度 3 / 缺 `examples` → 仍丟錯(嚴格版不變) | 同上 |
+| 要求 4 | **超長的重寫**:第二、三次回應的 body 仍超過 100 字(§2 算法,含英數序列與標點切斷的邊界:101 字 → 不通過、100 字 → 通過)→ `parked`、**沒有卡片檔**、`needs-review.json` 多一筆(`reason: 'body_over_limit'`,`attempts[0].body` 是原 body,`attempts` 有 3 筆)、`log.jsonl` 剛好一筆 `warning`、`regenerateEvents` 是 0(`runIngest`,假 router,暫存目錄) | vitest |
+| 要求 4 | 字數判斷與 `@core/schema/word-count.js` 一致:同一批邊界字串(CJK、英數序列、連字號切斷 `same-origin` = 2、example 圍欄內不算)兩邊算出同一個數字 | vitest 差分 |
 | 要求 3 | 三次仍超長 → `parked`,`lines` 是原卡的,`attempts` 有 3 筆;第二次合格 → `regenerateEvents` 是 1 | 同上 |
 | 端到端 | `runIngest`(假 router,regenerate 回應是基準形狀)→ 卡檔寫出,front-matter 的 `source_ref` 是原卡 `lines` 算出的 `raw/<cat>/<file>#L<a>-L<b>`,日誌有一筆 `regenerate` 事件 | `ingest.test.ts` 風格,暫存目錄 |
 | 真實形狀 | 把 `golden/ingest.regenerate/2026-10-15/regenerate-*.output.json` 的 `text`(含 `golden`/`category`/`source` 回顯欄位)當 regenerate 回應餵進去 → 被接受(這些 body 本身可能仍超長,測試用字數合格的 body 取代,只保留欄位形狀) | 讀檔,不改檔 |
 
-- 在 `dc2a4c1` 上預期:基準形狀、沒有 examples 的形狀、端到端、真實形狀 **紅**(解析錯誤);完整形狀、批次嚴格檢查、parked 本來就綠。
+- 在 `428aa88` 上預期:基準形狀、沒有 examples 的形狀、`examples: []` 的形狀、端到端、真實形狀 **紅**(解析錯誤);完整形狀、批次嚴格檢查、超長重寫的 parked 與 warning(現有機制)、字數差分 **本來就綠**(防退步)。
 - 紅測試用暫存目錄;不呼叫真的 LLM。
 
 ## 排程與互斥
