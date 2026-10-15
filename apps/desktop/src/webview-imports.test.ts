@@ -33,7 +33,7 @@ describe('the import scanner itself', () => {
       writeFileSync(join(dir, 'entry.ts'), "import { b } from './sub/b.js';\nexport const a = b;\n");
       writeFileSync(
         join(dir, 'sub', 'b.ts'),
-        "// import { nope } from 'node:comment';\nimport { readFileSync } from 'fs';\nexport { recordEvent } from '@core/schema/log.js';\nexport const b = readFileSync;\n",
+        "// import { nope } from 'node:comment';\nimport { readFileSync } from 'fs';\nexport { recordEvent } from " + JSON.stringify('@core/schema/log.js') + ";\nexport const b = readFileSync;\n",
       );
       const graph = scanImportGraph(join(dir, 'entry.ts'), REPO_ROOT);
       const fromB = graph.imports.filter((i) => i.file.endsWith('sub/b.ts'));
