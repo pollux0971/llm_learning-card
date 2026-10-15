@@ -56,6 +56,8 @@ T5 驗收(`docs/reviews/acceptance-T5.md`)找到四件事,顧問裁決全部收�
 
 - 把 `learning_dir` 做 `realpath` 或拒絕 symlink:本張只**用測試記錄並鎖住現行行為**(見驗收 D);若測試顯示現行行為有洞,回報,不在本張順手改。
 - 指標與標記之間的 TOCTOU(帳本只在建構時驗證一次):已知限制,維持。
+- **已知限制(顧問 2026-10-15 裁決,不開新票)**:`learning/state` 是 symlink 指到 `learning/` 外面時,解析器放行(驗收 16 的測試鎖住現況)。所有 clone 都從同一個指標解析到同一個 `learning_dir`,再經過同一個 symlink,寫的仍是同一本帳本,不會裂開;這是使用者自己的磁碟安排(例如把 `state/` 放到別的磁碟)。
+- **已知限制(同上)**:兩個 `init` 同時跑可能讓指標與標記的 id 不一致。`show` 會判成「不相符」,真呼叫因此被拒絕(fail-closed),使用者再跑 `init --force` 即可。單人程式,接受;驗收時把 20 輪裡不一致的輪數記進證據,不要求為零。
 - `.env` 與 `LLM_DAILY_CAP_USD` 的跨簽出一致:ADR-066 的已知限制。
 - 帳本檔本身的並行寫入(`appendLineAtomic`):另案。
 
