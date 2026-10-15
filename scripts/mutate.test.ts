@@ -44,6 +44,7 @@ import {
   configPositionalIndex,
   installCleanup,
   isMainModule,
+  LOCK_FILENAME,
   mutationCommand,
   mutationRawReportPath,
   mutationSummaryFromReport,
@@ -881,7 +882,8 @@ describe('runMutate', () => {
 
 describe('.gitignore', () => {
   it('擋掉 .stryker.lock', () => {
-    // 鎖就放在主 repo 的根,沒 ignore 的話每次跑 mutate 都會多一個未追蹤檔案。
+    // T5 之前鎖放在主 repo 的根(.stryker.lock);現在搬到機器範圍的目錄,但舊的簽出裡可能還留著
+    // 一個殘鎖檔,ignore 留著,它才不會變成未追蹤檔案被誤加進 commit。
     const ignore = readFileSync(join(REPO_ROOT, '.gitignore'), 'utf8');
     expect(ignore.split('\n').map((l) => l.trim())).toContain('.stryker.lock');
   });
@@ -1919,10 +1921,10 @@ describe('清殘鎖時要印出理由', () => {
     expect(held.info.pid).toBe(process.pid);
     expect(logs).toHaveLength(1);
     // 鎖是共用的:不能叫「Stryker 鎖」(看的人會去找一個不存在的 Stryker),要講鎖檔名。
-    expect(logs[0]).toContain('清掉殘留的鎖 .stryker.lock');
+    expect(logs[0]).toContain(`清掉殘留的鎖 ${LOCK_FILENAME}`);
     expect(logs[0]).not.toContain('Stryker 鎖');
     // 冒號後面必須有東西——那就是 verdict.why。
-    const why = logs[0]!.split('.stryker.lock:')[1] ?? '';
+    const why = logs[0]!.split(`${LOCK_FILENAME}:`)[1] ?? '';
     expect(why.trim().length).toBeGreaterThan(0);
     expect(why).toContain(String(DEAD_PID));
   });
@@ -2028,7 +2030,7 @@ describe('waitingMessage:自己的鏈 vs 別人的', () => {
 
   it('第一行是事實:鎖檔名、持鎖者 pid、cwd', () => {
     const m = waitingMessage(holder, 6 * 60_000, { selfCwd: '/home/x/five-zero-guards', sameWorktree: same });
-    expect(m).toContain('等待 .stryker.lock');
+    expect(m).toContain(`等待 ${LOCK_FILENAME}`);
     expect(m).toContain('pid 2636796');
     expect(m).toContain('cwd=/home/x/five-zero-guards');
   });

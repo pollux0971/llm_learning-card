@@ -416,8 +416,9 @@ describe('vault show(第 4 條)', () => {
 
 describe('CLI(子程序,HOME / XDG 在沙箱)', () => {
   function cli(box: Box, args: string[]): { status: number | null; stdout: string; stderr: string } {
+    // cwd 是 repo 根(tsx 要從那裡解析得到);HOME / XDG 是沙箱,vault.ts 不看 cwd。
     const r = spawnSync(process.execPath, ['--import=tsx', join(REPO, 'scripts/vault.ts'), ...args], {
-      cwd: box.root,
+      cwd: REPO,
       encoding: 'utf8',
       timeout: 60_000,
       env: childEnv(box),

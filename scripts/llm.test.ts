@@ -266,8 +266,9 @@ describe('createFakeRouter:假的 adapter,不打任何真的 provider', () => {
 
 describe('scripts/llm.ts CLI(子程序,沙箱 env)', () => {
   function cli(box: Box, args: string[]): { status: number | null; stdout: string; stderr: string } {
+    // cwd 是 repo 根(tsx 要從那裡解析得到);HOME / XDG 是沙箱,llm.ts 不看 cwd。
     const r = spawnSync(process.execPath, ['--import=tsx', join(REPO, 'scripts/llm.ts'), ...args], {
-      cwd: box.root,
+      cwd: REPO,
       encoding: 'utf8',
       timeout: 60_000,
       env: { PATH: process.env.PATH ?? '', HOME: box.home, XDG_CONFIG_HOME: box.config, XDG_RUNTIME_DIR: box.runtime },
