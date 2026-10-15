@@ -7,9 +7,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-1(2026-10-15:元件與展示頁;第一次 @manual 暫不通過後經 T14 修補——面板半透明、框線 1 像素、焦點內框、格線搬出共用樣式、混排字高;技術顧問判通過,證據見 docs/reviews/14-hud-skin-phase-1-manual-2026-10-15.md 與 T14-manual-2026-10-15.md) |
+| 已完成 | phase-2(2026-10-16:教學卡與考試卡換上 HUD;工單 T15,四輪 @manual 退回修正後,技術顧問判通過——作答欄與按鈕半透明內底、hover / focus 沿切角、對錯加符號、展示頁頁首 D1;證據見 docs/reviews/T15-manual-2026-10-16.md 與 acceptance-T15.md)。phase-1(2026-10-15:元件與展示頁;第一次 @manual 暫不通過後經 T14 修補——面板半透明、框線 1 像素、焦點內框、格線搬出共用樣式、混排字高;技術顧問判通過,證據見 docs/reviews/14-hud-skin-phase-1-manual-2026-10-15.md 與 T14-manual-2026-10-15.md) |
 | 進行中 | 無 |
-| 下一個 | phase-2(等 boundaries 例外與排程) |
+| 下一個 | 無(14 的兩個 phase 都完成;視窗無框與透明在 10 phase-6) |
 
 ## 下一個 phase 的 gate
 
@@ -26,8 +26,8 @@
 - [x] 自身:phase-1 `done`(2026-10-15)
 - [x] 跨資料夾:06 phase-1、07 phase-1 `done`
 - [x] 設定:`scripts/boundaries.allow.json` 開「06→14」「07→14」兩條例外(ADR-071;協調者改;理由見 FEATURE.md「依賴」;2026-10-16 已開)
-- [ ] 排程:跟 06、07 的 I3 接線(06 phase-2/3、07 phase-2)誰先,由協調者排;同一時間只有一個人改 `apps/teach-card` 或 `apps/test-card`
-- [ ] 開工前帶進工單:phase-1 @manual 留下的 D1(展示頁的說明文字在深色背景上看不見;技術顧問 2026-10-15 裁定記進 phase-2 工單)
+- [x] 排程:跟 06、07 的 I3 接線(06 phase-2/3、07 phase-2)誰先,由協調者排;同一時間只有一個人改 `apps/teach-card` 或 `apps/test-card`(2026-10-16 做完,期間沒有人動那兩個目錄)
+- [x] 開工前帶進工單:phase-1 @manual 留下的 D1(展示頁的說明文字在深色背景上看不見;技術顧問 2026-10-15 裁定記進 phase-2 工單;T15 驗收 D1 處理,頁首對比 11.66)
 - [x] 整合:無
 - [x] 契約:無
 
