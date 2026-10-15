@@ -565,7 +565,7 @@ describe('量尺 · 甲 · catalogDriftProblems:目錄與呼叫點必須一一�
     }
   });
 
-  it('現況:真實 repo 的目錄與呼叫點一一對上(30/30)。不綠就是發現——回報,不放寬', () => {
+  it('現況:真實 repo 的目錄與呼叫點一一對上。不綠就是發現——回報,不放寬', () => {
     const found = findCallSites(REPO_ROOT);
     expect(found.unknown).toEqual([]);
     expect(catalogDriftProblems(found)).toEqual([]);

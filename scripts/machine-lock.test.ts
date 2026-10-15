@@ -122,6 +122,15 @@ describe('ensureLockDir(第 11 條)', () => {
     expect(() => ensureLockDir(join(file, 'llm-learning-cards', 'stryker.lock'))).toThrow(/鎖目錄/);
   });
 
+  it('目錄本來就在:不改它的權限(0750 還是 0750),也不丟錯', () => {
+    const box = sandbox();
+    const dir = join(box.runtime, 'llm-learning-cards');
+    mkdirSync(dir, { mode: 0o750 });
+    chmodSync(dir, 0o750);
+    expect(() => ensureLockDir(join(dir, 'stryker.lock'))).not.toThrow();
+    expect(statSync(dir).mode & 0o777).toBe(0o750);
+  });
+
   it('目錄在、但寫不進去也丟錯', () => {
     const box = sandbox();
     const dir = join(box.runtime, 'llm-learning-cards');

@@ -477,3 +477,78 @@ describe('must_catch: 測試讀到或改到真的指標檔(第 15 條)', () => {
     expect(snapshotRealPointer()).toEqual(realPointerBefore);
   });
 });
+
+describe('驗收補測(T5 測試 agent):uuid 的開頭與結尾都要錨定', () => {
+  it('標記或指標的 id 前面或後面多了東西,即使裡面藏著一個合法 uuid,也不算合法', () => {
+    expect(parseMarker(`${UUID_A}\n`)).toBe(UUID_A);
+    expect(parseMarker(`x${UUID_A}\n`)).toBeUndefined();
+    expect(parseMarker(`${UUID_A}x\n`)).toBeUndefined();
+    expect(parseMarker(`junk-${UUID_A}`)).toBeUndefined();
+    expect(vaultIdsEqual(`x${UUID_A}\n`, UUID_A)).toBe(false);
+    expect(vaultIdsEqual(`${UUID_A}\n`, `x${UUID_A}`)).toBe(false);
+  });
+});
+
+describe('驗收補測(T5 測試 agent):拒絕訊息要指出是哪個檔、哪個目錄', () => {
+  it('pointer-missing / pointer-unreadable / learning-dir-missing / marker-mismatch 的訊息各自帶出出問題的路徑', () => {
+    const box = sandbox();
+    const pointer = pointerOf(box.config);
+    const missing = resolveVerifiedLedger(depsFor(box));
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) {
+      expect(missing.reason).toBe('pointer-missing');
+      expect(missing.message).toContain(pointer);
+    }
+
+    writePointerRaw(box.config, '{');
+    const unreadable = resolveVerifiedLedger(depsFor(box));
+    expect(unreadable.ok).toBe(false);
+    if (!unreadable.ok) {
+      expect(unreadable.reason).toBe('pointer-unreadable');
+      expect(unreadable.message).toContain(pointer);
+      expect(unreadable.message).toContain('JSON');
+    }
+
+    const nowhere = join(box.root, 'nowhere');
+    writePointer(box.config, nowhere, UUID_A);
+    const noDir = resolveVerifiedLedger(depsFor(box));
+    expect(noDir.ok).toBe(false);
+    if (!noDir.ok) {
+      expect(noDir.reason).toBe('learning-dir-missing');
+      expect(noDir.message).toContain(nowhere);
+    }
+
+    const noMarker = learningWithMarker(box.root, 'no-marker', null);
+    writePointer(box.config, noMarker, UUID_A);
+    const markerGone = resolveVerifiedLedger(depsFor(box));
+    expect(markerGone.ok).toBe(false);
+    if (!markerGone.ok) {
+      expect(markerGone.reason).toBe('marker-mismatch');
+      expect(markerGone.message).toContain(join(noMarker, 'config', 'vault-id'));
+    }
+
+    const other = learningWithMarker(box.root, 'other-id', `${UUID_B}\n`);
+    writePointer(box.config, other, UUID_A);
+    const mismatch = resolveVerifiedLedger(depsFor(box));
+    expect(mismatch.ok).toBe(false);
+    if (!mismatch.ok) {
+      expect(mismatch.reason).toBe('marker-mismatch');
+      expect(mismatch.message).toContain(join(other, 'config', 'vault-id'));
+    }
+  });
+
+  it('parsePointer 的「讀不到」各有自己的說明,不是同一句空話', () => {
+    const detail = (raw: string): string => {
+      const r = parsePointer(raw);
+      expect(r.ok).toBe(false);
+      return r.ok ? '' : r.detail;
+    };
+    expect(detail('{')).toContain('JSON');
+    expect(detail('[1]')).toContain('物件');
+    expect(detail('"text"')).toContain('物件');
+    expect(detail('{"learning_dir":"/x"}')).toContain('vault_id');
+    expect(detail('{"learning_dir":1,"vault_id":"a"}')).toContain('字串');
+    expect(detail('{"learning_dir":"rel/dir","vault_id":"a"}')).toContain('絕對路徑');
+    expect(new Set(['{', '[1]', '{"learning_dir":"/x"}', '{"learning_dir":"rel/dir","vault_id":"a"}'].map(detail)).size).toBe(4);
+  });
+});
