@@ -1701,6 +1701,7 @@ name = "learning-cards-desktop"
 version = "0.0.0"
 dependencies = [
  "env_logger",
+ "gdk",
  "http",
  "libc",
  "log",

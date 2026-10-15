@@ -186,16 +186,71 @@ html:has([data-hud="panel"].hud-fill) body {
 
 [data-hud="minimize"],
 [data-hud="close"] {
+  position: relative;
+  z-index: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: visible;
   font-family: var(--hud-font-display);
   font-weight: 500;
+  font-size: 1rem;
+  line-height: 1;
   color: var(--hud-text);
   background: transparent;
-  border: var(--hud-line-width) solid var(--hud-line);
-  width: 1.65rem;
-  height: 1.35rem;
+  border: none;
+  outline: none;
+  width: 1.75rem;
+  height: 1.4rem;
   padding: 0;
-  line-height: 1;
   cursor: pointer;
+}
+
+/* 跟 HudButton 同一種切角:左上、右下各 5px。偽元素 inset -1px、座標 +1px,線才不會被裁成半像素。 */
+[data-hud="minimize"]::before,
+[data-hud="close"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--hud-line);
+  clip-path: polygon(
+    evenodd,
+    6px 1px,
+    calc(100% - 1px) 1px,
+    calc(100% - 1px) calc(100% - 6px),
+    calc(100% - 6px) calc(100% - 1px),
+    1px calc(100% - 1px),
+    1px 6px,
+    6px 1px,
+    6px 2px,
+    calc(100% - 2px) 2px,
+    calc(100% - 2px) calc(100% - 6px),
+    calc(100% - 6px) calc(100% - 2px),
+    2px calc(100% - 2px),
+    2px 6px,
+    6px 2px
+  );
+}
+
+[data-hud="minimize"]::after,
+[data-hud="close"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--hud-panel);
+  clip-path: polygon(
+    5px 0,
+    100% 0,
+    100% calc(100% - 5px),
+    calc(100% - 5px) 100%,
+    0 100%,
+    0 5px
+  );
 }
 
 [data-hud="button"] {
@@ -243,9 +298,14 @@ html:has([data-hud="panel"].hud-fill) body {
   );
 }
 
-[data-hud="button"]:hover::before,
-[data-hud="button"]:focus-visible::before,
-[data-hud="field"]:focus-within::before {
+/* 停用仍匹配 :hover。橘色只給還能按的按鈕,否則停用鈕滑鼠移上去會變橘。 */
+[data-hud="button"]:hover:not(:disabled)::before,
+[data-hud="button"]:focus-visible:not(:disabled)::before,
+[data-hud="field"]:focus-within:not(:has(:disabled))::before,
+[data-hud="minimize"]:hover::before,
+[data-hud="minimize"]:focus-visible::before,
+[data-hud="close"]:hover::before,
+[data-hud="close"]:focus-visible::before {
   background: var(--hud-accent);
 }
 
@@ -276,22 +336,29 @@ html:has([data-hud="panel"].hud-fill) body {
 }
 
 [data-hud="minimize"]:hover,
+[data-hud="minimize"]:focus,
 [data-hud="minimize"]:focus-visible,
 [data-hud="close"]:hover,
+[data-hud="close"]:focus,
 [data-hud="close"]:focus-visible {
-  background: var(--hud-accent);
-  outline: 1px solid var(--hud-accent);
-  outline-offset: 2px;
+  background: transparent;
+  outline: none;
 }
 
-/* 比 accent-wash 深,focus 的淺色內框才分得出來(T14 G5 要差 ≥ 30 像素)。 */
-[data-hud="button"]:hover .hud-button-label,
-[data-hud="button"]:focus-visible .hud-button-label {
+/* 比 accent-wash 深,focus 的淺色內框才分得出來(T14 G5 要差 ≥ 30 像素)。停用鈕不換這層。 */
+[data-hud="button"]:hover:not(:disabled) .hud-button-label,
+[data-hud="button"]:focus-visible:not(:disabled) .hud-button-label,
+[data-hud="minimize"]:hover::after,
+[data-hud="minimize"]:focus-visible::after,
+[data-hud="close"]:hover::after,
+[data-hud="close"]:focus-visible::after {
   background-color: color-mix(in srgb, var(--hud-accent) 35%, transparent);
 }
 
-/* 內框畫在標籤上、縮進切角裡面。不用 accent:hover 時按鈕已是整片 accent,再畫同色看不出來。 */
-[data-hud="button"]:focus-visible .hud-button-label {
+/* 內框畫在標籤上、縮進切角裡面。不用 accent:hover 時已是淡橘底,再畫同色看不出來。 */
+[data-hud="button"]:focus-visible:not(:disabled) .hud-button-label,
+[data-hud="minimize"]:focus-visible::after,
+[data-hud="close"]:focus-visible::after {
   background-image:
     linear-gradient(var(--hud-solid), var(--hud-solid)),
     linear-gradient(var(--hud-solid), var(--hud-solid)),
@@ -400,8 +467,10 @@ html:has([data-hud="panel"].hud-fill) body {
   background: transparent;
 }
 
+/* hover 不畫填色,只留各邊已經設好的縮放游標。橘色方塊會出現在透明的切角裡。 */
 [data-hud="resize-handle"]:hover {
-  background: var(--hud-accent);
+  background-color: transparent;
+  background-image: none;
 }
 
 [data-hud-edge="North"] {

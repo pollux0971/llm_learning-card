@@ -22,7 +22,9 @@
         "x": 100,
         "y": 100,
         "resizable": true,
-        "visible": true,
+        "decorations": false,
+        "transparent": true,
+        "visible": false,
         "create": false
       },
       {
@@ -34,7 +36,9 @@
         "x": 520,
         "y": 100,
         "resizable": true,
-        "visible": true,
+        "decorations": false,
+        "transparent": true,
+        "visible": false,
         "create": false
       }
     ],
