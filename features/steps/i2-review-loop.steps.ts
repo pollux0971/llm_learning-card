@@ -917,7 +917,7 @@ Then("the card remains in today's list", function (this: LearningWorld) {
 export async function assertI2GradingFailedReported(world: LearningWorld): Promise<void> {
   const run = await ensureRun(world);
   assert.equal(run.status, 0, `批改失敗不該讓整個指令失敗:\n${run.output}`);
-  assert.match(run.output, /1 question\(s\) had a grading error/, `小結應該報告有一題批改失敗:\n${run.output}`);
+  assert.match(run.output, /Retry later: 1 question\(s\)\./, `小結應該報告有一題待重試(批改失敗):\n${run.output}`);
   assert.match(run.output, /0 passed, 0 returned\./);
   // 雲端被問了剛好兩次(第一次無法解析,重試一次,仍無法解析才放棄)
   assert.equal(cloudRequests(world).length, 2, `應該問了兩次:${cloudRequests(world).length}`);

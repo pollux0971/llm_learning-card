@@ -233,7 +233,7 @@ Then('the progress shows two of five', function (this: LearningWorld) {
   assert.doesNotMatch(out.stdout, /\((1|2)\/5\)/, '不該再出現第 1、2 題的進度');
   // 小結是「今天這一輪」(顧問裁決):早上答的 2 題 + 下午答的 3 題 = 5 題的結果,另外說明本次作答 3 題
   assert.match(out.stdout, /5 passed, 0 returned\./, `小結應該是整個 session 5 題的結果:\n${out.stdout}`);
-  assert.match(out.stdout, /本次作答\s*3\s*題/);
+  assert.match(out.stdout, /Answered this run: 3\./);
 });
 
 // ---------------------------------------------------------------- 場景 3:跨午夜
@@ -433,12 +433,80 @@ Then('answering continues normally', function (this: LearningWorld) {
   const out = lastRun(this);
   assert.equal(out.status, 0, out.output);
   assert.match(out.stdout, /5 passed, 0 returned\./);
-  assert.match(out.stdout, /本次作答\s*5\s*題/);
+  assert.match(out.stdout, /Answered this run: 5\./);
   const reviews = readReviews(s.vault);
   for (const id of s.originalQueue) {
     assert.ok(reviews[id]!.history.some((h) => h.date === this.today && h.pass), `${id} 的作答應該已經落地`);
   }
   for (const id of s.newlyDue) assert.equal(reviews[id]!.history.length, 0, `${id} 是暫停期間新到期的,不該被問`);
+});
+
+// ---------------------------------------------------------------- 小結:整天、待重試
+
+Given(
+  '{int} questions were due and {int} were answered before quitting, both passed',
+  { timeout: STEP_TIMEOUT_MS },
+  async function (this: LearningWorld, total: number, answered: number) {
+    const s = st(this);
+    resetDue(this, idsFrom(total), descending(total, total + 2));
+    await run(this, { answers: answered }); // 作答一律答對
+    s.originalQueue = queueOf(this);
+    const reviews = readReviews(s.vault);
+    const passed = s.originalQueue.filter((id) => (reviews[id]?.history ?? []).some((h) => h.date === this.today && h.pass));
+    assert.equal(passed.length, answered);
+  },
+);
+
+When(
+  'the review command is run again the same day and the other {int} are answered, one of them wrongly',
+  { timeout: STEP_TIMEOUT_MS },
+  async function (this: LearningWorld, _rest: number) {
+    await run(this, { answers: 'all', wrongAt: [1] });
+  },
+);
+
+/** `the summary reports N passed and M returned`(phase-1 檔在 @phase-2 分派到這裡)。 */
+export function phase2AssertSummary(world: LearningWorld, passed: number, returned: number): void {
+  const out = lastRun(world);
+  assert.equal(out.status, 0, out.output);
+  assert.match(out.stdout, new RegExp(`${passed} passed, ${returned} returned\\.`), `小結不對:\n${out.stdout}`);
+}
+
+Then('the summary says {int} questions were answered in this run', function (this: LearningWorld, n: number) {
+  assert.match(lastRun(this).stdout, new RegExp(`Answered this run: ${n}\\.`));
+});
+
+Given(
+  '{int} questions were due and the grader returned an error for one of them',
+  { timeout: STEP_TIMEOUT_MS },
+  async function (this: LearningWorld, total: number) {
+    const s = st(this);
+    // sec-0001 是 stage 3(只有應用題):回答 GARBAGE → 假雲端回不是 JSON 的字 → 批改失敗;其餘是 stage 1 填空題,答對
+    resetDue(this, idsFrom(total), descending(total, total + 2));
+    const reviews = readReviews(s.vault);
+    reviews['sec-0001'] = reviewRecord({ stage: 3, next_due: addDays(this.today, -(total + 2)) });
+    writeReviews(s.vault, reviews);
+    await run(this, { answers: 'all', applyText: 'GARBAGE' });
+    s.originalQueue = queueOf(this);
+    assert.equal(readReviews(s.vault)['sec-0001']!.history.length, 0, '批改失敗的卡不該有 history');
+  },
+);
+
+export function phase2SessionFinishes(world: LearningWorld): void {
+  assert.equal(lastRun(world).status, 0, lastRun(world).output);
+}
+
+Then('the summary says {int} question is left to retry', function (this: LearningWorld, n: number) {
+  const out = lastRun(this);
+  assert.match(out.stdout, new RegExp(`Retry later: ${n} question\\(s\\)\\.`), out.stdout);
+  assert.doesNotMatch(out.stdout, /had a grading error/, '舊的「grading error skipped」那行已被「Retry later」取代');
+});
+
+Then('running the review command again asks only that question', { timeout: STEP_TIMEOUT_MS }, async function (this: LearningWorld) {
+  const out = await run(this, { answers: 'all', applyText: 'PASSALL' });
+  assert.deepEqual(askedCards(out), ['sec-0001'], `只該再問批改失敗的那一題:\n${out.output}`);
+  assert.doesNotMatch(out.stdout, /Retry later/);
+  assert.ok(readReviews(st(this).vault)['sec-0001']!.history.some((h) => h.date === this.today));
 });
 
 // ---------------------------------------------------------------- 場景 8:dry-run 反映真實 session

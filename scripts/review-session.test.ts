@@ -306,7 +306,7 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
   );
 
   it(
-    '小結是「今天這一輪」(顧問裁決):先答 1 題、續答剩下 3 題(續答第一題故意答錯)→ 「3 passed, 1 returned.」,另有「本次作答 3 題」',
+    '小結是「今天這一輪」(顧問裁決):先答 1 題、續答剩下 3 題(續答第一題故意答錯)→ 「3 passed, 1 returned.」,另有「Answered this run: 3.」',
     async () => {
       const v = dueVault(4);
       await runReview(v, { answers: 1 });
@@ -314,8 +314,50 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
       const out = await runReview(v, { answers: 'all', wrongAt: [0] });
       expect(out.asked.map((a) => a.index)).toEqual([2, 3, 4]);
       expect(out.stdout).toMatch(/3 passed, 1 returned\./);
-      expect(out.stdout).toMatch(/本次作答\s*3\s*題/);
-      expect(out.stdout).not.toMatch(/待重試/);
+      expect(out.stdout).toMatch(/Answered this run: 3\./);
+      expect(out.stdout).not.toMatch(/Retry later/);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    '小結的 passed / returned 從 reviews.json 算(今天這一輪):stage 2 的兩筆合成一張卡,有效結果 = revised_to ?? pass,每張卡只算一次;沒有今天 history 的卡是待重試,不算進去',
+    async () => {
+      const v = vault({ cards: 6 });
+      const todays = (over: Partial<{ stage: number; type: 'fill' | 'apply'; pass: boolean; revised_to: boolean }>): { date: string; stage: number; type: 'fill' | 'apply'; pass: boolean; grader: string; revised_by?: 'cloud'; revised_to?: boolean } => ({
+        date: TODAY,
+        stage: 2,
+        type: 'fill',
+        pass: true,
+        grader: 'exact',
+        ...(over.revised_to !== undefined ? { revised_by: 'cloud' as const } : {}),
+        ...over,
+      });
+      const far = addDays(TODAY, 9);
+      writeReviews(v, {
+        // 0001:stage 2,填空過、應用原本沒過但雲端改判為過 → 通過
+        'sec-0001': reviewRecord({ stage: 3, next_due: far, history: [todays({}), todays({ type: 'apply', pass: false, revised_to: true })] }),
+        // 0002:單筆應用題,原本過、雲端改判為沒過 → 回退
+        'sec-0002': reviewRecord({ stage: 1, next_due: addDays(TODAY, 1), history: [todays({ stage: 3, type: 'apply', pass: true, revised_to: false })] }),
+        // 0003:stage 2,填空過、應用沒過(沒改判)→ 回退(兩筆只算一張卡)
+        'sec-0003': reviewRecord({ stage: 1, next_due: addDays(TODAY, 1), history: [todays({}), todays({ type: 'apply', pass: false })] }),
+        // 0004:今天還沒答、到期 → 這一次執行答(填空答對)
+        'sec-0004': reviewRecord({ next_due: addDays(TODAY, -2) }),
+        // 0005:stage 3 應用題,這一次執行回答 GARBAGE → 批改失敗,卡片不動、沒有今天的 history → 待重試
+        'sec-0005': reviewRecord({ stage: 3, next_due: addDays(TODAY, -1) }),
+      });
+      writeCacheFile(
+        v,
+        cacheOf({
+          queue: ids(5).map((card, i) => ({ card, stage: 1, overdue_days: 5 - i, overdue_ratio: 5 - i })),
+        }),
+      );
+      const out = await runToEnd(v, { applyText: 'GARBAGE' });
+      expect(out.status, out.output).toBe(0);
+      expect(out.asked.map((a) => a.card).sort()).toEqual(['sec-0004', 'sec-0005']);
+      expect(out.stdout).toMatch(/2 passed, 2 returned\./);
+      expect(out.stdout).toMatch(/Answered this run: 2\./);
+      expect(out.stdout).toMatch(/Retry later: 1 question\(s\)\./);
     },
     TEST_TIMEOUT_MS,
   );
@@ -330,17 +372,17 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
       expect(first.asked.map((a) => a.card).sort()).toEqual(['sec-0001', 'sec-0002']);
       expect(readReviews(v)['sec-0001']!.history, '審核失敗不寫 history').toEqual([]);
       expect(readReviews(v)['sec-0002']!.history).toHaveLength(1);
-      // 批改失敗的題沒有 history:不算 passed / returned,另列「待重試」
+      // 批改失敗的題沒有 history:不算 passed / returned,另列「Retry later: 1 question(s).」
       expect(first.stdout).toMatch(/1 passed, 0 returned\./);
-      expect(first.stdout).toMatch(/待重試\s*1\s*題/);
-      expect(first.stdout).toMatch(/本次作答\s*2\s*題/);
+      expect(first.stdout).toMatch(/Retry later: 1 question\(s\)\./);
+      expect(first.stdout).toMatch(/Answered this run: 2\./);
 
       const second = await runToEnd(v, { applyText: 'PASSALL' });
       expect(second.asked.map((a) => a.card), '沒有結果的卡要再問,已經答完的不再問').toEqual(['sec-0001']);
       expect(readReviews(v)['sec-0001']!.history).toHaveLength(1);
       expect(second.stdout).toMatch(/2 passed, 0 returned\./);
-      expect(second.stdout).toMatch(/本次作答\s*1\s*題/);
-      expect(second.stdout).not.toMatch(/待重試/);
+      expect(second.stdout).toMatch(/Answered this run: 1\./);
+      expect(second.stdout).not.toMatch(/Retry later/);
     },
     TEST_TIMEOUT_MS,
   );
@@ -661,6 +703,27 @@ describe('結束時 snapshot(驗收 4,ADR-042)', () => {
       await runReview(v, { args: ['--pause'] });
       await runToEnd(v); // 暫停日直接再跑
       await runAndQuit(v, { args: ['--unpause'] });
+      expect(headSha(v)).toBe(head);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    '本次作答 0 題(名單全是已答):照樣印小結「Answered this run: 0.」,不 snapshot',
+    async () => {
+      const v = repoVault(3);
+      await runToEnd(v);
+      const afterFirst = commitCount(v);
+      const reviews = readReviews(v);
+      reviews['sec-0006'] = reviewRecord({ stage: 3, next_due: addDays(TODAY, 30) }); // 工作樹又有新的變動
+      writeReviews(v, reviews);
+      const head = headSha(v);
+      const out = await runToEnd(v);
+      expect(out.status, out.output).toBe(0);
+      expect(out.asked).toEqual([]);
+      expect(out.stdout).toMatch(/3 passed, 0 returned\./);
+      expect(out.stdout).toMatch(/Answered this run: 0\./);
+      expect(commitCount(v)).toBe(afterFirst);
       expect(headSha(v)).toBe(head);
     },
     TEST_TIMEOUT_MS,

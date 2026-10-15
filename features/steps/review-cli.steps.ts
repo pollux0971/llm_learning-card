@@ -30,7 +30,7 @@ import { joinApplyLines, submitAnswer } from '../../packages/core/src/session/an
 import { estimateTomorrow, renderDryRun, renderSummary } from '../../packages/core/src/session/summary.js';
 import type { AnswerOutcome, CardPresentation, CurrentQuestion, EstimateResult, Session } from '../../packages/core/src/session/types.js';
 import type { LearningWorld, RunResult } from './_world.js';
-import { phase2RunDryRun, phase2RunReviewCommand } from './review-cli-phase2.steps.js';
+import { phase2AssertSummary, phase2RunDryRun, phase2RunReviewCommand, phase2SessionFinishes } from './review-cli-phase2.steps.js';
 import { assertI2GradingFailedReported, isI2Loop } from './i2-review-loop.steps.js';
 
 const LLM_FIXTURES_DIR = resolve(import.meta.dirname, '../../contracts/fixtures/llm');
@@ -701,10 +701,12 @@ Given('5 cards were answered with 3 passes and 2 failures', function (this: Lear
 });
 
 When('the session finishes', function (this: LearningWorld) {
+  if (this.tags.includes('@phase-2')) return phase2SessionFinishes(this);
   // renderSummary 已經在 Given 算好(小結是純函式,不用等「事件」發生)。
 });
 
 Then('the summary reports {int} passed and {int} returned', function (this: LearningWorld, passed: number, returned: number) {
+  if (this.tags.includes('@phase-2')) return phase2AssertSummary(this, passed, returned);
   const s = stateOf(this);
   assert.ok(s.summaryText!.includes(String(passed)));
   assert.ok(s.summaryText!.includes(String(returned)));

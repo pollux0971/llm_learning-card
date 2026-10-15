@@ -126,6 +126,8 @@ export interface HistoryEntry {
   type: 'fill' | 'apply';
   pass: boolean;
   grader: string;
+  revised_by?: 'cloud';
+  revised_to?: boolean;
 }
 
 export interface ReviewRecord {
