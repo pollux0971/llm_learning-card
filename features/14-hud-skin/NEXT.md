@@ -13,7 +13,7 @@
 
 ## 下一個 phase 的 gate
 
-**phase-1** 需要全部滿足:
+**phase-1** 需要:
 
 - [x] 自身:無(第一個 phase)
 - [x] 整合:無
@@ -21,11 +21,11 @@
 
 不碰 `apps/desktop/`,所以跟 T2c-2 可以同時做(R2 只管同一個目錄)。
 
-**phase-2** 需要全部滿足:
+**phase-2** 需要:
 
 - [ ] 自身:phase-1 `done`
 - [x] 跨資料夾:06 phase-1、07 phase-1 `done`
-- [ ] 設定:`scripts/boundaries.allow.json` 開「06→14」「07→14」兩條例外(協調者改;理由見 FEATURE.md「依賴」)
+- [ ] 設定:`scripts/boundaries.allow.json` 開「06→14」「07→14」兩條例外(ADR-071;協調者改;理由見 FEATURE.md「依賴」)
 - [ ] 排程:跟 06、07 的 I3 接線(06 phase-2/3、07 phase-2)誰先,由協調者排;同一時間只有一個人改 `apps/teach-card` 或 `apps/test-card`
 - [x] 整合:無
 - [x] 契約:無
