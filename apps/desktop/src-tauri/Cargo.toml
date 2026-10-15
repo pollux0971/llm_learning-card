@@ -18,3 +18,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicode-normalization = "0.1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+
+# 測試用(T2c-1 測試 agent):tauri 的 test feature 給 tests/commands.rs 的 mock runtime;
+# libc 給 errno 常數(EINVAL/EIO/ENOSPC…);sha2 給段向量檔與圖片 bytes 的 sha256。
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+libc = "0.2"
+sha2 = "0.10"
