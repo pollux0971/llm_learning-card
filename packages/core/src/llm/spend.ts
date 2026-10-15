@@ -35,9 +35,11 @@
  *   一律回 false——避免有人把變數設成 0 就整個系統停擺。
  * - `readSpendPrices(env)` / `readDailyCapUsd(env)`:契約 §11 的環境變數讀取,
  *   數值不合法(非數字 / 負數)就退回預設值,不丟錯。
- * - `parseLedger(content)`:**壞行的唯一定義**(T8)。整份 log.jsonl 的文字 → 事件清單,或第一個壞行
+ * - `parseLedger(content)`:**壞行的唯一定義**(T8、T9)。整份 log.jsonl 的文字 → 事件清單,或第一個壞行
  *   (1-based 行號、該行原文、哪一種壞)。壞行 = 內容不是空白,而且 `JSON.parse` 失敗、或解析出來不是物件、
- *   或 `ts` 在卻不是字串。`readDailySpend` 與 `scripts/llm-spend.ts` 都只經過它判斷,不各留一份。
+ *   或物件沒通過 `LogEventSchema`;`llm_call` 還要再過三條花費規則(含時區的真實 ISO 時間、
+ *   出現的 tokens 是非負安全整數、計價行要有 provider 與 tokens)。`readDailySpend`、
+ *   `scripts/llm-spend.ts` 與 router 都只經過它判斷,不各留一份。
  * - `describeBadLine(logPath, bad)`:壞行的人話(行號 / 前 80 字 / 怎麼修),兩邊共用同一份文字來源。
  * - `readDailySpend(ledger, day, prices)`:讀帳本把手(`VerifiedLedger` / `ExplicitLedger`,不收裸字串)
  *   上的 `log.jsonl` 再算。把手在、檔案不存在(ENOENT)= 全新安裝 = 0;沒有把手丟 `MissingLedgerError`;
@@ -49,7 +51,7 @@
 
 import { readFileSync } from 'node:fs';
 import { witnessed } from '@contracts/witness.js';
-import type { LogEvent } from '@contracts/index.js';
+import { LogEventSchema, type LogEvent } from '@contracts/index.js';
 import type { LedgerHandle } from './ledger.js';
 
 export interface SpendPrices {
@@ -164,12 +166,15 @@ export class MissingLedgerError extends Error {
   }
 }
 
-// ────────────────────────────────────────────────────────────── 壞行(T8)
+// ────────────────────────────────────────────────────────────── 壞行(T8、T9)
 //
 // 什麼叫壞行只在這裡定義一次。以前 readDailySpend 與 scripts/llm-spend.ts 各有一份:
 // 前者把壞行跳過(兩行各 1M tokens 的帳本是 $5,弄壞一行變 $2.5),後者把壞行當「算不出來」。
 // 同一本帳本,煞車與報告講不同的話,而 router 那一份的方向是「還可以繼續花」。
 // 現在兩邊都經過 parseLedger:有壞行 = 不知道,不分哪一天(壞行讀不到 ts,證明不了它不是今天的)。
+//
+// T9 把「壞」從「JSON 壞掉 / ts 在卻不是字串」擴大:每一行都要過同一份 LogEventSchema,
+// llm_call 再加三條花費規則。不合規只可能是損壞、手動改過、或程式有 bug——三種都不能當成花得比較少。
 
 /** 壞行訊息只印該行的前 80 個字元:log 一行可能好幾 KB,煞車的訊息要看得完,也不把整行倒出去。 */
 export const BAD_LINE_PREVIEW_CHARS = 80;
@@ -177,9 +182,9 @@ export const BAD_LINE_PREVIEW_CHARS = 80;
 /** JSON.parse 丟例外:那一行連 JSON 都不是(HTML、被截斷的行、亂碼)。 */
 const NOT_JSON = '不是合法的 JSON';
 /**
- * JSON.parse 過了,但值不是契約 §10 的事件。`"hello"` / `42` / `[]` / `null` 每一個都
- * 解析得出來,但沒有一個是「物件 + 字串 ts」;把它們當事件算會得到「今日條目 0 筆、
- * $0.0000」——那是把「這檔不是花費紀錄」講成「花費是零」。
+ * JSON.parse 過了,但值不是物件。`"hello"` / `42` / `[]` / `null` 每一個都解析得出來,
+ * 卻沒有一個是契約 §10 的事件;把它們當事件算會得到「今日條目 0 筆、$0.0000」——
+ * 那是把「這檔不是花費紀錄」講成「花費是零」。物件但欄位不合的,走 LogEventSchema,不走這句。
  */
 const NOT_EVENT = '是合法的 JSON,但不是 log 事件(契約 §10 的事件是一個物件,ts 是 ISO 字串)';
 
@@ -188,31 +193,97 @@ export interface BadLedgerLine {
   /** 1-based,跟編輯器一致。 */
   lineNumber: number;
   line: string;
-  /** 哪一種壞(人話):連 JSON 都不是,或是 JSON 但不是事件。兩種修法不同(改格式 vs 改內容)。 */
+  /** 哪一種壞(人話):連 JSON 都不是、不是事件、沒過 LogEventSchema,或 llm_call 的花費規則。修法不同。 */
   what: string;
 }
 
 export type LedgerParse = { ok: true; events: LogEvent[] } | { ok: false; bad: BadLedgerLine };
 
 /**
- * 一行解析出來的值算不算契約 §10 的事件:**物件**(不是 null、不是陣列),而且 `ts`
- * 如果有,必須是字串。
- *
- * 只擋「根本不是事件」。`ts` 缺掉的物件放行——它進不了今日條目也進不了花費
- * (computeDailySpend 與 llm-spend 的今日 filter 都要字串 ts)。但 `ts` 在卻不是字串
- * (例如數字、null)是另一回事:那一行會被 filter 靜靜略過,方向是低估,所以當壞行。
- * `type` 之類的欄位由 computeDailySpend 自己認。
+ * 一行解析出來的值是不是物件(不是 null、不是陣列)。`"hello"` / `42` / `[]` / `null`
+ * 都是合法 JSON,但不是契約 §10 的事件;訊息要跟「連 JSON 都不是」分開,兩種修法不同。
+ * 物件過不過 schema 由 LogEventSchema 判,不在這裡再寫一份欄位規則。
  */
-function isLedgerEvent(value: unknown): value is LogEvent {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const ts = (value as { ts?: unknown }).ts;
-  return ts === undefined || typeof ts === 'string';
+function isLedgerObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * C1 的格式:日期、時間、可選的小數秒,以及時區 `Z` 或 `±hh:mm`(冒號必須有)。
+ * 沒有時區、空白分隔、`+0800` 都不算。
+ */
+const ISO_8601_WITH_ZONE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-](\d{2}):(\d{2}))$/;
+
+/**
+ * C1:`ts` 是含時區的 ISO 8601,而且是真實時間點。
+ * `Date` 會把 2 月 30 日滾到 3 月、把小時 25 收成隔天,所以不能只拿 `new Date(ts)` 判斷:
+ * 先對格式,再把年月日丟回 `Date.UTC` 對回來,對不上就是被滾過的假日期。
+ * 閏日(2028-02-29)對得回來,非閏年的 2 月 29 日對不回來。
+ */
+function isRealIso8601WithZone(ts: string): boolean {
+  const match = ISO_8601_WITH_ZONE.exec(ts);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59) return false;
+  if (match[8] !== 'Z') {
+    const zoneHour = Number(match[9]);
+    const zoneMinute = Number(match[10]);
+    if (zoneHour > 23 || zoneMinute > 59) return false;
+  }
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  return probe.getUTCFullYear() === year && probe.getUTCMonth() === month - 1 && probe.getUTCDate() === day;
+}
+
+/** C2:出現了就必須是非負的安全整數。缺欄位不是這裡的事(那是 C3)。 */
+function isNonNegativeSafeInteger(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
+ * 標記行:我們自己寫的、本來就沒有完整 tokens 的 llm_call。
+ * 標記必須剛好是布林 `true`;`false`、字串 `"true"`、數字 `1` 都不是,那些行要走計價規則。
+ */
+function isMarkerLine(event: LogEvent): boolean {
+  return field(event, 'timeout') === true || field(event, 'truncated') === true || field(event, 'retry') === true;
+}
+
+/** 計價行 = 不是明確免費的本機閘道(只認小寫 `ollama`,跟 isLlmCallEvent 一致),也不是標記行。 */
+function isPricedLine(event: LogEvent): boolean {
+  return field(event, 'provider') !== 'ollama' && !isMarkerLine(event);
+}
+
+/**
+ * llm_call 在 LogEventSchema 之外的花費規則。回傳違規說明(點名欄位),沒有違規回 undefined。
+ * 順序是 C1 → C2 → C3:同一行多個欄位壞掉時,先點名第一個。
+ * 標記行與 ollama 免 C3(免 provider、免 tokens 存在),但仍受 C1、C2。
+ */
+function llmCallViolation(event: LogEvent): string | undefined {
+  if (!isRealIso8601WithZone(event.ts)) return '的 ts 不是含時區的 ISO 8601 真實時間點';
+  if (Object.hasOwn(event, 'tokens_in') && !isNonNegativeSafeInteger(field(event, 'tokens_in'))) {
+    return '的 tokens_in 不是非負的安全整數';
+  }
+  if (Object.hasOwn(event, 'tokens_out') && !isNonNegativeSafeInteger(field(event, 'tokens_out'))) {
+    return '的 tokens_out 不是非負的安全整數';
+  }
+  if (!isPricedLine(event)) return undefined;
+  const provider = field(event, 'provider');
+  if (typeof provider !== 'string' || provider.length === 0) return '的 provider 不是非空字串';
+  if (!Object.hasOwn(event, 'tokens_in')) return '缺少 tokens_in';
+  if (!Object.hasOwn(event, 'tokens_out')) return '缺少 tokens_out';
+  return undefined;
 }
 
 /**
  * 壞行的唯一定義(純函式)。整份 log.jsonl 的文字 → 全部事件,或**第一個**壞行(先修第一個)。
- * 壞行 = 內容不是空白,而且 JSON.parse 失敗、或解析出來不是物件、或 ts 在卻不是字串。
- * 空行與只有空白的行不是壞行:append-only 的檔案本來就會有行尾換行。
+ * 壞行 = 內容不是空白,而且 JSON.parse 失敗、或解析出來不是物件、或沒通過 LogEventSchema;
+ * `type === 'llm_call'` 還要再過 C1–C3。空行與只有空白的行不是壞行:append-only 的檔案本來就會有行尾換行。
+ * 多個壞行回報行號最小的那個,不分哪一天(不先用 ts 濾今日)。
  */
 export function parseLedger(content: string): LedgerParse {
   const events: LogEvent[] = [];
@@ -226,8 +297,18 @@ export function parseLedger(content: string): LedgerParse {
     } catch {
       return { ok: false, bad: { lineNumber: i + 1, line, what: NOT_JSON } };
     }
-    if (!isLedgerEvent(parsed)) return { ok: false, bad: { lineNumber: i + 1, line, what: NOT_EVENT } };
-    events.push(parsed);
+    if (!isLedgerObject(parsed)) return { ok: false, bad: { lineNumber: i + 1, line, what: NOT_EVENT } };
+    const schema = LogEventSchema.safeParse(parsed);
+    if (!schema.success) {
+      const message = schema.error.issues[0]?.message ?? '驗證失敗';
+      return { ok: false, bad: { lineNumber: i + 1, line, what: `不符合 LogEventSchema(${message})` } };
+    }
+    const event = schema.data;
+    if (event.type === 'llm_call') {
+      const violation = llmCallViolation(event);
+      if (violation !== undefined) return { ok: false, bad: { lineNumber: i + 1, line, what: violation } };
+    }
+    events.push(event);
   }
   return { ok: true, events };
 }
