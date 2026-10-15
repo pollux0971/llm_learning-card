@@ -321,7 +321,7 @@ When(
     const rel = parseJsonPath(raw);
     const b = ensure(this, 'boundary');
     const boundary = boundaryOf(this);
-    b.url = undefined;
+    delete b.url;
     b.err = undefined;
     b.decoded = rel;
     try {

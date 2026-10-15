@@ -56,14 +56,15 @@ function probe(body: Record<string, unknown>): ProbeResp {
 }
 
 function toResult(resp: ProbeResp): BoundaryResult {
-  return {
+  const out: BoundaryResult = {
     ok: resp.ok,
     refused: resp.refused,
-    value: resp.value === null ? undefined : resp.value,
     fsCalls: resp.fsCalls ?? [],
     rustLog: resp.rustLog ?? [],
-    checked: resp.checked ?? undefined,
   };
+  if (resp.value !== null && resp.value !== undefined) out.value = resp.value;
+  if (resp.checked !== null && resp.checked !== undefined) out.checked = resp.checked;
+  return out;
 }
 
 function refusedError(path: string): Error & { refused: true } {
