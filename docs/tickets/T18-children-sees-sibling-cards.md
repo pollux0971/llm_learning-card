@@ -23,6 +23,7 @@ must_catch:
 
 > 狀態:草稿,待技術顧問審(派令來自顧問,經協調者 2026-10-16)。**基底 = T12 合併之後的 main**(T12 的 `children.md` 與 `parent-child-overlap.ts` 是這張的前提)。
 > 作者:統籌·契約(規格)。紅測試:-ed。開發:worker-grok。評分:顧問。派工:協調者。
+> 規格:`features/02-ingest-pipeline/phase-4.feature`(5 個場景,本工單同批新增;02 的 phase-2 已 done,不動它的 .feature)。
 > 這份檔是工單唯一的正本。**改的是 `prompts/` 與管線程式,屬硬規則 4:每一輪都要跑 golden run。**
 
 ## 起因
@@ -135,7 +136,7 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
 |---|---|---|
 | (a) | `cardSummary`:第一句、全形/半形結束符、`.` 後接空白才算、沒結束符取整段、60 字邊界(60 不截、61 截成 60+`…`)、surrogate pair、example 圍欄不算、換行壓平;`listSiblings`:排除父卡、依 id 排序、cap 80 保留 id 最大的、其他分類不混進來 | vitest 純函式 |
 | (a) | `loadCategoryCards`:不含 `.short.md`、壞卡檔略過、其他分類不讀 | 暫存目錄 |
-| (b)(c) | `generateChildren` 送給 router 的 prompt:有 sibling 時有 `already_covered:` 且在 header 的 `---` 之內、格式逐行;沒有 sibling 時整段省略且與 T12 版逐字相同;`generateChildrenForCards` 第二個父卡的 prompt 含第一個父卡剛寫的子卡標題 | 假 router 記錄 prompt |
+| (b)(c) | **phase-4 的 5 個場景**(步驟定義 -ed 寫);`generateChildren` 送給 router 的 prompt:有 sibling 時有 `already_covered:` 且在 header 的 `---` 之內、格式逐行;沒有 sibling 時整段省略且與 T12 版逐字相同;`generateChildrenForCards` 第二個父卡的 prompt 含第一個父卡剛寫的子卡標題 | 假 router 記錄 prompt |
 | (d) | golden 輸入:三個 children 輸入各自的 `already_covered` 內容(標題清單)釘死;fixture 的 sha256 釘死;其他四組輸入位元組不變 | `registry.test.ts` 風格 |
 | (e) | 門檻 0.5 剛好(`>=`)、0.3–0.5 只進觀察、不比自己的 key、A↔B 只算一次、基準與 T12 第 2 輪輸出(把 r2 的 7 個輸出放進 fixture)上的數字(0.613 的那對被抓、0.242 的不被抓——**已知限制**,測試要釘住這件事,同 T12 的做法)、CLI 退出碼與錯誤 | 同 T12 的 `parent-child-*.test.ts` |
 | 不退步 | T12 的 `parent-child-*.test.ts`、`prompt-quality` 與 `ingest` 資料夾既有測試全綠;`npm run boundaries` | |
@@ -164,7 +165,7 @@ npm run boundaries
 
 `budget_usd: 1`(worker 草估,無 $ 上限只記錄)。另外:真呼叫每輪約 $0.04,最多三輪,由協調者跑。
 
-## 待決(請顧問在審的時候一起回)
+## 已裁決的取捨(顧問 2026-10-16)
 
-- **Q1 · gherkin 放哪?** 這是 02-ingest-pipeline 已 `done` 的 phase 2 的行為補充。我沒有去改 `done` 的 `phase-2.feature`;驗收條件只寫在本工單。要不要為此開 02 的 phase-4(或 12 的 phase-3)補場景?建議:**不開**,因為驗收是顧問評分加機器回歸網,不是新的使用者行為。
-- **Q2 · 門檻 0.5 與觀察清單 0.3** 是我依上面的數字訂的(0.3 會誤報 4 對雜訊、0.5 只抓逐字),請審。
+- **Q1(顧問已裁決)· gherkin 放哪?** 照 feature-triage A 開 **02 的新 phase-4**(`features/02-ingest-pipeline/phase-4.feature`,gate = 自身 phase-2 done + T12 合併);步驟定義由 -ed 寫;FEATURE.md 的 phase 表與 NEXT.md 的 gate 已補。
+- **Q2(顧問已同意)· 門檻 0.5 與觀察清單 0.3**:0.3 會誤報 4 對雜訊、0.5 只抓逐字;真正的判斷歸顧問(ADR-043)。
