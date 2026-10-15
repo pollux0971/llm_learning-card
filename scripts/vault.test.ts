@@ -845,6 +845,42 @@ describe('T8 B:標記檔內容不是合法 uuid —— 不加 --force 拒絕,加
     expect(ctrl.stdout).toContain('\\x1b');
   });
 
+  it('驗收補測:反斜線也要轉義(\\x5c)—— 否則舊內容裡的 `\\x07` 文字和真的 0x07 分不出來', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, 'ab\\x07cd\n');
+    const r = run(box, a, { force: true, randomUUID: () => UUID_B });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('ab\\x5cx07cd');
+    expect(r.stdout).not.toContain('ab\\x07cd');
+  });
+
+  it('驗收補測:空檔的舊標記要明說是空檔,不是印一個空白行讓人以為沒東西', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, '');
+    const r = run(box, a, { force: true, randomUUID: () => UUID_B });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.startsWith('舊標記(將被丟棄):\n(空檔)\n')).toBe(true);
+  });
+
+  it('驗收補測:沿用指標 id 的那條路徑(指標指向同一處、vault_id 合法)也先印舊標記', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, `${UUID_A}\n`);
+    expect(run(box, a).exitCode).toBe(0);
+    writeMarker(a, 'OLD-GARBAGE-REUSE\n');
+    const r = run(box, a, {
+      force: true,
+      randomUUID: () => {
+        throw new Error('不該產生新 uuid');
+      },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.startsWith('舊標記(將被丟棄):\n')).toBe(true);
+    expect(r.stdout).toContain('OLD-GARBAGE-REUSE');
+  });
+
   it('指標指向同一處、指標的 vault_id 合法 → 重建時沿用指標的 id(帳本身分不變,不產生新 uuid)', () => {
     const box = sandbox();
     const a = learningDir(box.root, 'A');
