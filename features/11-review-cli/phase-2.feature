@@ -56,3 +56,23 @@ Feature: Session boundaries
     When the review command is run in dry run mode
     Then it lists the remaining 3 questions
     And it does not modify the cache
+
+  Scenario: A finished session takes one snapshot of the day
+    Given a learning directory that is a git repository
+    And the person answers every due question
+    When the session ends
+    Then the summary is printed first
+    And one snapshot commit of the state folder is made afterwards
+
+  Scenario: A dry run and a pause never take a snapshot
+    Given a learning directory that is a git repository
+    When the review command is run in dry run mode
+    And the review command is run with the pause option
+    Then no new commit exists in the learning directory
+
+  Scenario: A failed snapshot does not fail the review
+    Given a learning directory that is not a git repository
+    When the person answers every due question
+    Then the answers are on disk
+    And the exit status is the one the session would have had without the snapshot
+    And a hint says that running the init command adds version control

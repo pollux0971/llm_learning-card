@@ -45,7 +45,7 @@ npx tsx scripts/review.ts --dir contracts/fixtures/learning-minimal --dry-run --
 | Phase | 需要 | 原因 |
 |---|---|---|
 | 1 | 04 三個 phase、05 phase-2、01 phase-2 | 這一層本來就是組合層,沒有獨立的 Wave 0 版本 |
-| 2 | 自身 phase-1、I2 通過 | 續答與跨日邊界要在真的用過之後才知道怎麼設計 |
+| 2 | 自身 phase-1、I2 自動驗收通過(ADR-073) | 續答與跨日邊界要在真的用過之後才知道怎麼設計 |
 
 **注意**:這是唯一沒有 Wave 0 phase-1 的資料夾。組合層在被組合的東西存在之前無法獨立,
 硬造一個吃 stub 的版本只是在寫兩次。這是 ADR-021 的一個明確例外。
@@ -97,8 +97,4 @@ daemon,也不裝任何跨平台排程器**(cron / launchd / 工作排程器三�
 5. `11-review-cli → 01-data-layer` 的邊界例外**已經在** `scripts/boundaries.allow.json` 裡,
    不用新增。
 
-**場景寫在哪**:目前只寫在這裡與 NEXT.md,**沒有**寫進 `phase-2.feature`。原因見 ADR-042
-Consequences 第 1 點——這份 feature 的步驟一個都還沒寫,現在加場景只會讓 `accept:dry` 的
-undefined 數字變多,或逼別人先佔用 phase-2 自己要用的步驟名字。**phase-2 開工的人請把
-上面那五條寫成場景**(建議三個:結束時 snapshot、dry-run 不 snapshot、snapshot 失敗不影響
-退出碼)。模組本身的行為已經有規格了,在 `features/01-data-layer/phase-4.feature`。
+**場景寫在哪**:三個 snapshot 場景(結束時 snapshot、dry-run 與暫停不 snapshot、失敗不影響複習)已寫進 `phase-2.feature` 最後(T17 同批)。模組本身的行為在 `features/01-data-layer/phase-4.feature`。工單見 `docs/tickets/T17-review-cli-phase-2.md`。
