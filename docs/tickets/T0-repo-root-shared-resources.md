@@ -1,3 +1,14 @@
+---
+id: T0
+deps: []
+touches: [docs/reviews/]               # 只量不改;報告進 docs/reviews/
+cpu: light
+budget_usd: 0                          # 歷史工單,當時沒有記預算
+status: merged
+owner: worker-codex                    # 歷史值:當時的 worker 是 Codex,已停用
+must_catch: []
+---
+
 # 工單 T0:以 repo 根為範圍的共用資源(花費帳本、鎖、其他),只量不改
 
 > 狀態:第二版(技術顧問已批,含下列修訂)。**優先序在 T3 之前,因為它牽涉錢。** 等協調者的合併隊列清掉、機器 load 低再派。

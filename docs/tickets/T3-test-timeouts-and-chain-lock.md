@@ -1,3 +1,16 @@
+---
+id: T3
+deps: []
+touches: [scripts/]
+cpu: heavy                             # 整鏈計時、worker 數曲線
+budget_usd: 5                          # 草估,統籌·契約填
+status: todo                           # 階段 A 已合併(docs/reviews/T3-phase-a-2026-10-14.md);階段 B 未派
+owner: worker-grok                     # 預設值,派工時由協調者確認
+must_catch:
+  - 拿掉 B1a 的 CLI 旗標,worker 數曲線的測試必須變紅
+  - 鎖範圍退回每個 clone 一把,跨 clone 互斥的測試必須變紅
+---
+
 # 工單 T3:測試逾時、自我競爭與整鏈鎖
 
 > 狀態:第二版(技術顧問已批,含 B1a 範圍與 B2(i) 的改寫),T1 結束後由協調者派工。

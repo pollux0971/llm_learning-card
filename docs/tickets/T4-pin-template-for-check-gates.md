@@ -1,3 +1,14 @@
+---
+id: T4
+deps: []
+touches: [docs/reviews/]               # 階段 A 只量不改
+cpu: light
+budget_usd: 0                          # 歷史工單,當時沒有記預算
+status: merged                         # 階段 A;階段 B 是 T4b
+owner: worker-codex                    # 歷史值:當時的 worker 是 Codex,已停用
+must_catch: []
+---
+
 # 工單 T4:`check:gates` 要量「我們聲稱的模板版本」,不是模板的活 HEAD
 
 > 狀態:第二版(技術顧問已批,含下列兩處補充)。順序在 T0、T3 之後;比 T3 的 B2 小得多。
