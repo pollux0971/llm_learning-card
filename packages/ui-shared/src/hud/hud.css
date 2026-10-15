@@ -28,6 +28,8 @@
   /* 結果字色:對面板最差對比 ≥ 4.5。#146c2e ≈ 5.21、#b31d28 ≈ 5.36。 */
   --hud-pass: #146c2e;
   --hud-fail: #b31d28;
+  /* 作答欄內底。不透明白:半透明面板色疊在黑框上會變成灰,看起來像停用。 */
+  --hud-field: #ffffff;
 }
 
 html {
@@ -302,7 +304,7 @@ html:has([data-hud="panel"].hud-fill) body {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  background: var(--hud-panel);
+  background: var(--hud-field);
   clip-path: polygon(
     7px 0,
     100% 0,
@@ -326,7 +328,7 @@ html:has([data-hud="panel"].hud-fill) body {
   background: transparent;
   box-shadow: none;
   appearance: none;
-  resize: vertical;
+  resize: none;
   font-family: var(--hud-font-body);
   font-size: 1rem;
   line-height: 1.4;

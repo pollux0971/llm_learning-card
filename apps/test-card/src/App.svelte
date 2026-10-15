@@ -139,7 +139,9 @@
         {/each}
       </div>
       {#if !(view.result && !view.error)}
-        <HudButton onclick={submitFill} disabled={view.submitting}>送出</HudButton>
+        <div class="submit">
+          <HudButton onclick={submitFill} disabled={view.submitting}>送出</HudButton>
+        </div>
       {/if}
     {:else if view.current.type === 'apply' && view.current.apply}
       <p class="prompt">{view.current.apply.prompt}</p>
@@ -148,7 +150,9 @@
         ></textarea>
       </HudField>
       {#if !(view.result && !view.error)}
-        <HudButton onclick={submitApply} disabled={view.submitting}>送出</HudButton>
+        <div class="submit">
+          <HudButton onclick={submitApply} disabled={view.submitting}>送出</HudButton>
+        </div>
       {/if}
     {/if}
 
@@ -183,6 +187,9 @@
   }
   .prompt {
     margin: 0.55rem 0;
+  }
+  .submit {
+    margin-top: 0.75rem;
   }
   .pass {
     color: var(--hud-pass);

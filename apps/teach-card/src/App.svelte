@@ -95,7 +95,7 @@
   }
   :global(.lc-example) {
     background: var(--hud-solid);
-    border-left: 3px solid var(--hud-line);
+    border-left: 1px solid var(--hud-line);
     padding: 0.5rem 1rem;
     margin: 1rem 0;
   }
