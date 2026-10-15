@@ -254,6 +254,31 @@ describe('readDailySpend', () => {
     }
   });
 
+  it('驗收補測:UnknownSpendError 的訊息說清楚三件事 —— 今日花費是不知道、去哪看是哪一行、修好或移除後再跑;物件只留路徑與行號', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-test-'));
+    try {
+      const logPath = join(dir, 'log.jsonl');
+      writeFileSync(logPath, [JSON.stringify(event({ tokens_out: 1 })), 'SECRET-LOOKING-BAD-LINE'].join('\n') + '\n');
+      let caught: unknown;
+      try {
+        readDailySpend(ExplicitLedger.unverified(logPath, 'spend test'), TODAY, PRICES);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(UnknownSpendError);
+      const e = caught as UnknownSpendError;
+      expect(e.name).toBe('UnknownSpendError');
+      expect(e.lineNumber).toBe(2);
+      expect(e.logPath).toBe(logPath);
+      expect(e.message).toContain('今日花費是不知道,不是 0');
+      expect(e.message).toContain('npx tsx scripts/llm-spend.ts');
+      expect(e.message).toContain('修好或移除後再跑一次');
+      expect(JSON.stringify(Object.keys(e))).not.toContain('SECRET');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('空白行與只有空白的行不是壞行:照樣跳過,其他行照算', () => {
     const dir = mkdtempSync(join(tmpdir(), 'spend-test-'));
     try {
