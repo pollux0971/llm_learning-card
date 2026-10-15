@@ -3,9 +3,9 @@
  * 執行環境(model/provider/日期/prompt 檔的 git commit)、評分表一起存到
  * `golden/<task>/<ISO date>/`。Wave 0 phase-1 只支援 fake 模式。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse as yamlParse } from 'yaml';
 import {
   DEFAULT_SPEND_PRICES,
@@ -32,9 +32,19 @@ export const DEFAULT_GOLDEN_BASE_DIR = join(ROOT, 'packages/core/src/prompt-qual
 export const DEFAULT_FAKE_GOLDEN_BASE_DIR = join(ROOT, 'packages/core/src/prompt-quality/golden-fake');
 export const DEFAULT_FAKE_FIXTURE_DIR = join(ROOT, 'packages/core/src/prompt-quality/fixtures/llm');
 
-/** 沒指定 baseDir 時,依模式決定預設存放處。 */
-export function defaultGoldenBaseDir(mode: GoldenRunMeta['mode']): string {
-  return mode === 'fake' ? DEFAULT_FAKE_GOLDEN_BASE_DIR : DEFAULT_GOLDEN_BASE_DIR;
+const GOLDEN_DIR_REL = 'packages/core/src/prompt-quality/golden';
+const FAKE_GOLDEN_DIR_REL = 'packages/core/src/prompt-quality/golden-fake';
+
+/**
+ * 沒指定 baseDir 時,依模式決定預設存放處。
+ * `root` 給了就把存放處搬到那個 repo 底下(測試用 mkdtemp,不碰真的 golden/)。
+ * 不給 `root` 時回傳既有常數,既有呼叫的行為不變。
+ */
+export function defaultGoldenBaseDir(mode: GoldenRunMeta['mode'], root?: string): string {
+  if (root === undefined) {
+    return mode === 'fake' ? DEFAULT_FAKE_GOLDEN_BASE_DIR : DEFAULT_GOLDEN_BASE_DIR;
+  }
+  return join(root, mode === 'fake' ? FAKE_GOLDEN_DIR_REL : GOLDEN_DIR_REL);
 }
 
 export class MissingGoldenSetError extends Error {
@@ -48,6 +58,23 @@ export class LiveRunOfflineError extends Error {
   constructor(public readonly set: string) {
     super(`live golden run 需要雲端,現在連不上(set=${set})。要離線跑就用 --fake,那是重播 fixture、沒有品質資訊。`);
     this.name = 'LiveRunOfflineError';
+  }
+}
+
+/**
+ * dirty 的 prompt 不能寫進 golden/(回歸基準必須能用某個 commit 的 prompt 重現)。
+ * 在任何 router.call 之前、在建立任何目錄之前丟出。
+ */
+export class DirtyPromptError extends Error {
+  constructor(
+    public readonly set: string,
+    public readonly promptFile: string,
+  ) {
+    super(
+      `prompt 檔 ${promptFile} 有未提交的修改(dirty),不能寫進 golden/:` +
+        `回歸基準必須能用某個 commit 的 prompt 重現。先提交這個檔,或用 --out 指到 golden/ 以外。`,
+    );
+    this.name = 'DirtyPromptError';
   }
 }
 
@@ -108,15 +135,85 @@ export interface RunGoldenOptions {
    * 不然會讀到使用者真的指標檔,往真的帳本加一行。
    */
   learningDir?: string;
+  /**
+   * 讀 prompt 檔與問 git 的 repo 根。不給就是 ROOT,既有呼叫的行為不變。
+   * 測試傳 mkdtemp 的 git repo,才不會碰真的 prompts/ 與 golden/。
+   */
+  root?: string;
 }
 
-function gitCommitOf(relPath: string): string {
-  const r = spawnSync('git', ['log', '-1', '--format=%h', '--', relPath], {
-    cwd: ROOT,
+/**
+ * prompt 檔在 `root` 這個 repo 裡的短 sha。只看這個檔,不看整個 repo。
+ *
+ * 已追蹤且有 commit,但 `git diff --quiet -- <檔>` 或 `git diff --cached --quiet -- <檔>`
+ * 任一不為 0 → `<短 sha>-dirty`。沒追蹤、沒有 commit、不是 git repo → `uncommitted`(不加後綴)。
+ */
+export function gitCommitOf(relPath: string, root: string = ROOT): string {
+  const log = spawnSync('git', ['log', '-1', '--format=%h', '--', relPath], {
+    cwd: root,
     encoding: 'utf8',
   });
-  const out = (r.stdout ?? '').trim();
-  return out || 'uncommitted';
+  const sha = (log.stdout ?? '').trim();
+  if (!sha) return 'uncommitted';
+  const worktree = spawnSync('git', ['diff', '--quiet', '--', relPath], { cwd: root });
+  const index = spawnSync('git', ['diff', '--cached', '--quiet', '--', relPath], { cwd: root });
+  if (worktree.status !== 0 || index.status !== 0) return `${sha}-dirty`;
+  return sha;
+}
+
+/**
+ * 解析成可跟 symlink 對齊的絕對路徑。路徑還不存在時,取最近一個存在的祖先做 realpath,
+ * 再接回剩下的路徑。`..` 先由 resolve 折掉。
+ */
+function resolveOutputPath(p: string): string {
+  const abs = resolve(p);
+  const missing: string[] = [];
+  let cursor = abs;
+  while (!existsSync(cursor)) {
+    const parent = dirname(cursor);
+    if (parent === cursor) return abs;
+    missing.push(basename(cursor));
+    cursor = parent;
+  }
+  const real = realpathSync(cursor);
+  return missing.length === 0 ? real : join(real, ...missing.reverse());
+}
+
+/**
+ * 輸出目錄的 realpath 是否落在 `<root>/…/golden/` 底下(含它本身)。
+ * 比路徑邊界,不是字串前綴:golden-fake/、golden-extra/ 不算。
+ * golden/ 自己的位置也走 realpath(root 可能是 symlink)。
+ */
+function isInsideGolden(baseDir: string, root: string): boolean {
+  const golden = resolveOutputPath(join(root, GOLDEN_DIR_REL));
+  const out = resolveOutputPath(baseDir);
+  const rel = relative(golden, out);
+  if (rel === '') return true;
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return false;
+  return true;
+}
+
+function repoRootOf(opts: RunGoldenOptions): string {
+  return opts.root ?? ROOT;
+}
+
+function resolveRunBaseDir(mode: GoldenRunMeta['mode'], opts: RunGoldenOptions): string {
+  if (opts.baseDir !== undefined) return opts.baseDir;
+  if (opts.root !== undefined) return defaultGoldenBaseDir(mode, opts.root);
+  return defaultGoldenBaseDir(mode);
+}
+
+/**
+ * dirty 的 prompt 若會寫進 golden/ 就拒絕。必須在建立目錄與 router.call 之前呼叫。
+ * 回傳要寫進 meta 的 commit 字串(乾淨 sha、`<sha>-dirty` 或 uncommitted)。
+ */
+function commitForRun(opts: RunGoldenOptions, goldenSet: GoldenSet, mode: GoldenRunMeta['mode']): string {
+  const root = repoRootOf(opts);
+  const commit = gitCommitOf(goldenSet.promptFile, root);
+  if (commit.endsWith('-dirty') && isInsideGolden(resolveRunBaseDir(mode, opts), root)) {
+    throw new DirtyPromptError(goldenSet.id, goldenSet.promptFile);
+  }
+  return commit;
 }
 
 function today(): string {
@@ -155,14 +252,17 @@ export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Pr
   if (!goldenSet) throw new MissingGoldenSetError(opts.set);
 
   const mode: GoldenRunMeta['mode'] = 'fake';
+  const root = repoRootOf(opts);
+  // 拒絕在 mkdir 與 router.call 之前:dirty 且輸出會落在 golden/ 時不留空目錄、不呼叫。
+  const promptFileGitCommit = commitForRun(opts, goldenSet, mode);
   const date = opts.today ?? today();
-  const baseDir = opts.baseDir ?? defaultGoldenBaseDir(mode);
+  const baseDir = resolveRunBaseDir(mode, opts);
   const dir = join(baseDir, goldenSet.id, date);
   mkdirSync(dir, { recursive: true });
 
   const router = opts.router ?? witnessed('prompt-quality.router-default-fake', new FakeLlmRouter([DEFAULT_FAKE_FIXTURE_DIR], opts.onCall));
 
-  const promptFileAbs = join(ROOT, goldenSet.promptFile);
+  const promptFileAbs = join(root, goldenSet.promptFile);
   if (!existsSync(promptFileAbs)) {
     throw new Error(`golden set「${goldenSet.id}」指向的 prompt 檔不存在:${goldenSet.promptFile}`);
   }
@@ -188,7 +288,7 @@ export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Pr
     date,
     model,
     provider,
-    promptFileGitCommit: gitCommitOf(goldenSet.promptFile),
+    promptFileGitCommit,
     mode,
   };
   writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
@@ -217,21 +317,26 @@ export async function runGoldenLive(opts: RunGoldenOptions, set?: GoldenSet): Pr
   const goldenSet = set ?? getGoldenSet(opts.set);
   if (!goldenSet) throw new MissingGoldenSetError(opts.set);
 
+  const mode: GoldenRunMeta['mode'] = 'live';
+  const root = repoRootOf(opts);
+  // 拒絕在建立 router(預設路徑會 mkdir state/)、probeOnline、router.call、mkdir 之前:
+  // dirty 且輸出會落在 golden/ 時不花錢、不留空目錄。
+  const promptFileGitCommit = commitForRun(opts, goldenSet, mode);
+
   const router = opts.router ?? (opts.createRouter ? opts.createRouter() : createDefaultLiveRouter(opts.learningDir));
 
   // 順序有意義:先確認連得上、再讀 prompt 檔,兩件事都成功才建立目錄。
   // 反過來的話離線那次會留下一個空目錄,之後 diff 會把它當成一次 run。
   if (!(await router.probeOnline())) throw new LiveRunOfflineError(goldenSet.id);
 
-  const promptFileAbs = join(ROOT, goldenSet.promptFile);
+  const promptFileAbs = join(root, goldenSet.promptFile);
   if (!existsSync(promptFileAbs)) {
     throw new Error(`golden set「${goldenSet.id}」指向的 prompt 檔不存在:${goldenSet.promptFile}`);
   }
   const promptContent = readFileSync(promptFileAbs, 'utf8');
 
-  const mode: GoldenRunMeta['mode'] = 'live';
   const date = opts.today ?? today();
-  const baseDir = opts.baseDir ?? defaultGoldenBaseDir(mode);
+  const baseDir = resolveRunBaseDir(mode, opts);
   const dir = join(baseDir, goldenSet.id, date);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'prompt.snapshot.md'), promptContent);
@@ -263,7 +368,7 @@ export async function runGoldenLive(opts: RunGoldenOptions, set?: GoldenSet): Pr
     date,
     model,
     provider,
-    promptFileGitCommit: gitCommitOf(goldenSet.promptFile),
+    promptFileGitCommit,
     mode,
     tokens_in: tokensIn,
     tokens_out: tokensOut,
