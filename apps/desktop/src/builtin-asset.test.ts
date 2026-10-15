@@ -5,13 +5,19 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, it, expect } from 'vitest';
 import { requestBuiltinAsset } from './shell-config.js';
+import { BUILD_LC_FS_TIMEOUT_MS, buildLcFs } from './test-support/build-lc-fs.js';
 
 const CONF = new URL('../src-tauri/tauri.conf.json', import.meta.url);
 const CARGO = new URL('../src-tauri/Cargo.toml', import.meta.url);
 
 describe('builtin asset: protocol is off', () => {
+  // requestBuiltinAsset 會 spawn 預先編好的 target/debug/lc-fs;乾淨簽出沒有它,舊檔也可能是上一輪的。每次重編。
+  beforeAll(() => {
+    buildLcFs();
+  }, BUILD_LC_FS_TIMEOUT_MS);
+
   it('tauri.conf.json sets assetProtocol.enable false and scope empty', () => {
     const conf = JSON.parse(readFileSync(CONF, 'utf8')) as {
       app: { security: { assetProtocol?: { enable: boolean; scope: string[] } } };
