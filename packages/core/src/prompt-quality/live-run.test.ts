@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { LlmRouterImpl, UnaccountableLlmCallError } from '@core/llm/index.js';
 import type { LogEvent } from '@contracts/index.js';
+import { createDegradedTally, installDegradedCollector } from '@contracts/witness.js';
 import {
   DEFAULT_GOLDEN_BASE_DIR,
   DEFAULT_FAKE_GOLDEN_BASE_DIR,
@@ -472,6 +473,21 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
     await router.call('grade.apply', '同源政策是什麼?');
 
     expect(readEvents(join(learningDir, 'state/log.jsonl'))).toHaveLength(1);
+  });
+
+  it('T8 F:createDefaultLiveRouter 明講 localProber —— probeLocal() 不再借道 llm.router-impl.local-prober-default 那條預設分支,結果仍是「本機不可用」', async () => {
+    syntheticVault();
+    const router = createDefaultLiveRouter();
+    const tally = createDegradedTally();
+    const previous = installDegradedCollector(tally);
+    let local: Awaited<ReturnType<typeof router.probeLocal>>;
+    try {
+      local = await router.probeLocal();
+    } finally {
+      installDegradedCollector(previous);
+    }
+    expect(local.available).toBe(false);
+    expect(tally.drain()).not.toHaveProperty('llm.router-impl.local-prober-default');
   });
 
   it('--live 的 learningDir 只管輸出(設定)位置,不管帳本:給別的目錄,事件仍進指標那本,別的目錄不長出 state/', async () => {

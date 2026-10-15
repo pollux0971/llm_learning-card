@@ -7,7 +7,7 @@
  * 型別測試(工單第 8 條):`// @ts-expect-error` 那幾行是由 `npx tsc --noEmit` 驗的——
  * 拿掉型別限制,那幾行的 expect-error 就「沒有錯誤可以期待」,tsc 會報 TS2578 變紅。
  */
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -626,5 +626,58 @@ describe('驗收補測(T5 測試 agent):ExplicitLedger.unverified 只准出現�
       .map((file) => relative(ROOT, file))
       .sort();
     expect(users).toEqual(APPROVED);
+  });
+});
+
+describe('T8 D:learning_dir 是 symlink(解析器)', () => {
+  it('指標的 learning_dir 是 symlink、指向標記相符的目錄 → 解析成功,logPath 以指標裡寫的路徑為準(不 realpath)', () => {
+    const box = sandbox();
+    const real = learningWithMarker(box.root, 'real', `${UUID_A}\n`);
+    const link = join(box.root, 'link');
+    symlinkSync(real, link);
+    writePointer(box.config, link, UUID_A);
+    const r = resolveVerifiedLedger(depsFor(box));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ledger.learningDir).toBe(link);
+    expect(r.ledger.logPath).toBe(join(link, 'state', 'log.jsonl'));
+  });
+
+  it('同一個 symlink 事後改指到標記不同的目錄 → marker-mismatch,拒絕', () => {
+    const box = sandbox();
+    const a = learningWithMarker(box.root, 'a', `${UUID_A}\n`);
+    const b = learningWithMarker(box.root, 'b', `${UUID_B}\n`);
+    const link = join(box.root, 'link');
+    symlinkSync(a, link);
+    writePointer(box.config, link, UUID_A);
+    expect(resolveVerifiedLedger(depsFor(box)).ok).toBe(true);
+    rmSync(link);
+    symlinkSync(b, link);
+    const r = resolveVerifiedLedger(depsFor(box));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('marker-mismatch');
+  });
+
+  it('懸空的 symlink(目標不存在)→ learning-dir-missing', () => {
+    const box = sandbox();
+    const link = join(box.root, 'dangling');
+    symlinkSync(join(box.root, 'nowhere'), link);
+    writePointer(box.config, link, UUID_A);
+    const r = resolveVerifiedLedger(depsFor(box));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('learning-dir-missing');
+  });
+
+  it('記錄現行行為:learning/state 是 symlink 指到 learning 外面 → 解析器放行,logPath 仍是 learning_dir/state/log.jsonl(不 realpath)。帳本可以被導到驗證範圍之外', () => {
+    const box = sandbox();
+    const learning = learningWithMarker(box.root, 'L', `${UUID_A}\n`);
+    const outside = join(box.root, 'outside-state');
+    mkdirSync(outside, { recursive: true });
+    symlinkSync(outside, join(learning, 'state'));
+    writePointer(box.config, learning, UUID_A);
+    const r = resolveVerifiedLedger(depsFor(box));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ledger.logPath).toBe(join(learning, 'state', 'log.jsonl'));
   });
 });

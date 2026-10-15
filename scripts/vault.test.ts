@@ -4,12 +4,31 @@
  * 讀寫只在 mkdtemp。HOME / XDG_CONFIG_HOME / XDG_RUNTIME_DIR 指到沙箱並在結束時還原;
  * spawn 的子程序也只拿到沙箱的值。守門只 stat 真指標檔,不讀內容。
  */
-import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+import { realVaultIo } from '../packages/core/src/llm/ledger.js';
 import { initVault, showVault, type VaultIo } from './vault.js';
+
+// T8 E:renameSync 穿透包一層,記下「rename 的那一刻,來源暫存檔的權限」。指標檔在 rename 之後才對外可見,
+// 所以 rename 那一刻暫存檔就必須已經是 0600(不能 rename 完才 chmod)。其餘行為完全穿透。
+const renameSeen: Array<{ to: string; mode: number }> = [];
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    renameSync: (from: import('node:fs').PathLike, to: import('node:fs').PathLike): void => {
+      try {
+        renameSeen.push({ to: String(to), mode: actual.statSync(from).mode & 0o777 });
+      } catch {
+        /* 來源不存在就讓真的 rename 去丟錯 */
+      }
+      actual.renameSync(from, to);
+    },
+  };
+});
 
 const ENV_KEYS = ['HOME', 'XDG_CONFIG_HOME', 'XDG_RUNTIME_DIR'] as const;
 const SAVED_ENV = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]])) as Record<(typeof ENV_KEYS)[number], string | undefined>;
@@ -752,5 +771,284 @@ describe('驗收補測(T5 測試 agent):CLI 入口層', () => {
     expect(no.status).toBe(1);
     expect(no.stdout).toBe('');
     expect(no.stderr).not.toBe('');
+  });
+});
+
+// ---------------------------------------------------------------- T8 B:壞標記可以 --force 重建
+
+describe('T8 B:標記檔內容不是合法 uuid —— 不加 --force 拒絕,加了才重建', () => {
+  const BAD_MARKERS: Array<[string, string]> = [
+    ['不是 uuid 的文字', 'not-a-uuid\n'],
+    ['空檔', ''],
+    ['大寫 uuid', 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE\n'],
+    ['結尾是 \\r\\n', `${UUID_A}\r\n`],
+    ['結尾兩個換行', `${UUID_A}\n\n`],
+  ];
+
+  function run(box: Box, learning: string, extra: { force?: boolean; randomUUID?: () => string } = {}): ReturnType<typeof initVault> {
+    return initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording([]), ...extra });
+  }
+
+  it.each(BAD_MARKERS)('must_catch: init 不加 --force 就重建壞標記 —— %s:拒絕,exit 非 0,整棵樹連內容都不變,訊息說可以 --force 且舊內容會被丟棄', (_label, bad) => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, bad);
+    const before = treeWithContent(box.root);
+    const r = run(box, a);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('--force');
+    expect(r.stderr).toContain('丟棄');
+    expect(treeWithContent(box.root)).toEqual(before);
+  });
+
+  it.each(BAD_MARKERS)('--force 重建 —— %s:exit 0,先印「舊標記(將被丟棄):」與舊內容,標記與指標都是合法 uuid 且相同', (_label, bad) => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, bad);
+    const r = run(box, a, { force: true, randomUUID: () => UUID_B });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toBe('');
+    expect(r.stdout.startsWith('舊標記(將被丟棄):')).toBe(true);
+    expect(readFileSync(join(a, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_B}\n`);
+    expect(readPointer(box)).toEqual({ learning_dir: a, vault_id: UUID_B });
+    expect(readdirSync(join(a, 'config'))).toEqual(['vault-id']);
+  });
+
+  it('must_catch: --force 沒有印出舊內容 —— 舊內容在「舊標記(將被丟棄):」之後、「新」的結果之前,原文可見', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, 'OLD-MARKER-CONTENT\n');
+    const r = run(box, a, { force: true, randomUUID: () => UUID_B });
+    const head = r.stdout.indexOf('舊標記(將被丟棄):');
+    const body = r.stdout.indexOf('OLD-MARKER-CONTENT');
+    expect(head).toBe(0);
+    expect(body).toBeGreaterThan(head);
+    expect(r.stdout).not.toContain(UUID_B.slice(0, 8) + 'OLD'); // 新舊沒有混在一起
+  });
+
+  it('舊內容最多印 200 位元組,控制字元以 \\xNN 顯示(不污染終端機)', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, `${'x'.repeat(500)}\n`);
+    const long = run(box, a, { force: true, randomUUID: () => UUID_B });
+    const runs = long.stdout.match(/x+/g) ?? [];
+    expect(Math.max(...runs.map((r) => r.length))).toBe(200);
+
+    const box2 = sandbox();
+    const b = learningDir(box2.root, 'B');
+    writeMarker(b, 'a\x07b\x1b[31mred');
+    const ctrl = run(box2, b, { force: true, randomUUID: () => UUID_B });
+    expect(ctrl.stdout).not.toContain('\x07');
+    expect(ctrl.stdout).not.toContain('\x1b');
+    expect(ctrl.stdout).toContain('\\x07');
+    expect(ctrl.stdout).toContain('\\x1b');
+  });
+
+  it('指標指向同一處、指標的 vault_id 合法 → 重建時沿用指標的 id(帳本身分不變,不產生新 uuid)', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, `${UUID_A}\n`);
+    expect(run(box, a).exitCode).toBe(0); // 先建好指標(id = UUID_A)
+    writeMarker(a, 'garbage\n');
+    const r = run(box, a, {
+      force: true,
+      randomUUID: () => {
+        throw new Error('不該產生新 uuid');
+      },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(join(a, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_A}\n`);
+    expect(readPointer(box)).toEqual({ learning_dir: a, vault_id: UUID_A });
+  });
+
+  it('指標指向同一處、但指標的 vault_id 自己不是合法 uuid → 產生新 uuid,標記與指標一起改', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, 'garbage\n');
+    writePointerRaw(box, JSON.stringify({ learning_dir: a, vault_id: 'not-a-uuid' }));
+    const r = run(box, a, { force: true, randomUUID: () => UUID_B });
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(join(a, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_B}\n`);
+    expect(readPointer(box)).toEqual({ learning_dir: a, vault_id: UUID_B });
+  });
+
+  it('指標指向別處(合法)、這裡的標記是壞的 → --force:兩份舊內容(舊指標與舊標記)都先印出來,指標改指這裡並用新 uuid', () => {
+    const box = sandbox();
+    const here = learningDir(box.root, 'here');
+    const there = learningDir(box.root, 'there');
+    writeMarker(here, 'BROKEN-HERE\n');
+    writePointerRaw(box, JSON.stringify({ learning_dir: there, vault_id: UUID_A }));
+    const r = run(box, here, { force: true, randomUUID: () => UUID_B });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('舊標記(將被丟棄):');
+    expect(r.stdout).toContain('BROKEN-HERE');
+    expect(r.stdout).toContain('舊指標(將被丟棄):');
+    expect(r.stdout).toContain(there);
+    expect(readPointer(box)).toEqual({ learning_dir: here, vault_id: UUID_B });
+    expect(readFileSync(join(here, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_B}\n`);
+  });
+
+  it('標記是合法的(或不存在)時,--force 的行為不變:不印「舊標記」', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    const r = run(box, a, { randomUUID: () => UUID_B });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain('舊標記');
+    const again = run(box, a, { force: true });
+    expect(again.stdout).not.toContain('舊標記');
+  });
+
+  it('CLI(子程序):壞標記 init 不加 --force 退出非 0;加 --force 退出 0 且 show 相符', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    writeMarker(a, 'not-a-uuid\n');
+    const env = childEnv(box);
+    const cli = (args: string[]): { status: number | null; stdout: string; stderr: string } => {
+      const r = spawnSync(process.execPath, ['--import=tsx', join(REPO, 'scripts/vault.ts'), ...args], { cwd: REPO, encoding: 'utf8', timeout: 60_000, env });
+      return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+    };
+    expect(cli(['init', '--learning-dir', a]).status).not.toBe(0);
+    const forced = cli(['init', '--learning-dir', a, '--force']);
+    expect(forced.status, `${forced.stdout}\n${forced.stderr}`).toBe(0);
+    expect(forced.stdout).toContain('舊標記(將被丟棄)');
+    expect(cli(['show']).status).toBe(0);
+    expect(snapshotRealPointer()).toEqual(realPointerBefore);
+  });
+});
+
+// ---------------------------------------------------------------- T8 D:symlink 與同時 init
+
+describe('T8 D:init 與 symlink', () => {
+  function run(box: Box, learning: string): ReturnType<typeof initVault> {
+    return initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: ioRecording([]), randomUUID: () => UUID_A });
+  }
+
+  it('--learning-dir 給的是 symlink:指標裡存的是給的那條路徑(不解 symlink),標記寫進 symlink 指到的真目錄', () => {
+    const box = sandbox();
+    const real = learningDir(box.root, 'real');
+    const link = join(box.root, 'link');
+    symlinkSync(real, link);
+    const r = run(box, link);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(readPointer(box).learning_dir).toBe(link);
+    expect(readFileSync(join(real, 'config', 'vault-id'), 'utf8')).toBe(`${UUID_A}\n`);
+  });
+
+  it('懸空的 symlink(目標不存在)→ 拒絕,什麼都不建', () => {
+    const box = sandbox();
+    const link = join(box.root, 'dangling');
+    symlinkSync(join(box.root, 'nowhere'), link);
+    const before = readdirSync(box.root).sort();
+    const r = run(box, link);
+    expect(r.exitCode).not.toBe(0);
+    expect(readdirSync(box.root).sort()).toEqual(before); // 沒有長出 nowhere/ 之類的東西
+    expect(readdirSync(box.config)).toEqual([]); // 沒有指標
+  });
+});
+
+describe('T8 D:兩個 init 同時跑,不會留下壞掉的指標檔', () => {
+  const ROUNDS = 20;
+  const PARALLEL = 3;
+
+  function spawnInit(box: Box, learning: string): Promise<number | null> {
+    return new Promise((done) => {
+      const child = spawn(process.execPath, ['--import=tsx', join(REPO, 'scripts/vault.ts'), 'init', '--learning-dir', learning], {
+        cwd: REPO,
+        env: childEnv(box),
+        stdio: 'ignore',
+      });
+      child.on('close', (code) => done(code));
+      child.on('error', () => done(-1));
+    });
+  }
+
+  it(`${PARALLEL} 個子程序同時 init 同一個全新 learning_dir,重複 ${ROUNDS} 輪:退出碼只有 0 或 1;指標檔存在就是合法 JSON;沒有 *.tmp 殘檔;標記存在就是合法 uuid`, async () => {
+    let idMismatch = 0;
+    for (let round = 0; round < ROUNDS; round++) {
+      const box = sandbox();
+      const learning = learningDir(box.root, 'L');
+      const codes = await Promise.all(Array.from({ length: PARALLEL }, () => spawnInit(box, learning)));
+      for (const c of codes) expect([0, 1], `round ${round} exit codes ${codes.join(',')}`).toContain(c);
+
+      const pointerDir = join(box.config, 'llm-learning-cards');
+      const leftovers = [...(readdirSync(pointerDir)), ...(readdirSync(join(learning, 'config')))].filter((n) => n.endsWith('.tmp'));
+      expect(leftovers, `round ${round} 暫存檔殘留`).toEqual([]);
+
+      let pointerId: string | undefined;
+      try {
+        const raw = readFileSync(join(pointerDir, 'vault.json'), 'utf8');
+        const parsed = JSON.parse(raw) as { learning_dir: unknown; vault_id: unknown };
+        expect(typeof parsed.learning_dir, `round ${round} learning_dir 型別`).toBe('string');
+        expect(typeof parsed.vault_id, `round ${round} vault_id 型別`).toBe('string');
+        pointerId = parsed.vault_id as string;
+      } catch (err) {
+        // 檔案根本不存在是可以的(三個都在建立途中失敗);存在卻解析不了不可以。
+        expect((err as NodeJS.ErrnoException).code, `round ${round}: 指標檔存在但不是合法 JSON:${String(err)}`).toBe('ENOENT');
+      }
+      let markerId: string | undefined;
+      try {
+        markerId = readFileSync(join(learning, 'config', 'vault-id'), 'utf8').replace(/\n$/, '');
+        expect(markerId, `round ${round} 標記不是合法 uuid`).toMatch(UUID_RE);
+      } catch (err) {
+        expect((err as NodeJS.ErrnoException).code).toBe('ENOENT');
+      }
+      if (pointerId !== undefined && markerId !== undefined && pointerId !== markerId) idMismatch += 1;
+    }
+    // 已知競爭:指標與標記的 id 可能不一致(本張不修);次數記在報告裡。
+    console.info(`[T8 D] ${ROUNDS} 輪裡指標與標記 id 不一致:${idMismatch} 輪`);
+  }, 180_000);
+});
+
+// ---------------------------------------------------------------- T8 E:指標檔權限 0600
+
+describe('T8 E:init 寫出的指標檔是 0600', () => {
+  function initReal(box: Box, learning: string, force = false): ReturnType<typeof initVault> {
+    return initVault({ learningDir: learning, env: childEnv(box), homedir: () => box.home, io: realVaultIo(), force, randomUUID: () => UUID_A });
+  }
+
+  function withUmask<T>(mask: number, fn: () => T): T {
+    const old = process.umask(mask);
+    try {
+      return fn();
+    } finally {
+      process.umask(old);
+    }
+  }
+
+  it.each([['000', 0o000], ['022', 0o022]] as const)('must_catch: 指標檔權限放寬 —— umask %s 下,新建的指標檔 mode 是 0600', (_label, mask) => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    const r = withUmask(mask, () => initReal(box, a));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(statSync(pointerPathOf(box)).mode & 0o777).toBe(0o600);
+  });
+
+  it.each([['000', 0o000], ['022', 0o022]] as const)('--force 覆寫原本是 0664 的舊指標 —— umask %s 下,覆寫後是 0600', (_label, mask) => {
+    const box = sandbox();
+    const here = learningDir(box.root, 'here');
+    const there = learningDir(box.root, 'there');
+    writePointerRaw(box, JSON.stringify({ learning_dir: there, vault_id: UUID_B }));
+    chmodSync(pointerPathOf(box), 0o664);
+    const r = withUmask(mask, () => initReal(box, here, true));
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(statSync(pointerPathOf(box)).mode & 0o777).toBe(0o600);
+  });
+
+  it('沒有一個瞬間比 0600 寬:指標檔 rename 到位的那一刻,來源暫存檔就已經是 0600(不是 rename 完才 chmod)', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    renameSeen.length = 0;
+    withUmask(0o000, () => initReal(box, a));
+    const forPointer = renameSeen.filter((r) => r.to === pointerPathOf(box));
+    expect(forPointer.length).toBeGreaterThan(0);
+    for (const r of forPointer) expect(r.mode).toBe(0o600);
+  });
+
+  it('標記檔不在本條範圍:仍走原本的權限(跟 learning/ 一樣),沒有被改成 0600', () => {
+    const box = sandbox();
+    const a = learningDir(box.root, 'A');
+    withUmask(0o022, () => initReal(box, a));
+    expect(statSync(join(a, 'config', 'vault-id')).mode & 0o777).toBe(0o644);
   });
 });

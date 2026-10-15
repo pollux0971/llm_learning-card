@@ -36,7 +36,7 @@
  *   - CLI 層(spawn 真的跑一次):盯的是協調者實際看到的那一行與退出碼。
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
@@ -628,7 +628,7 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     expect(parsed).not.toHaveProperty('cap_usd');
   }, SPAWN_TIMEOUT_MS);
 
-  it('(驗證過的帳本)log 不存在與 log 空檔的訊息與退出碼都不一樣(路徑正規化之後比,不是比輸出)', () => {
+  it('(驗證過的帳本)log 不存在與 log 空檔:退出碼都是 0(契約 §12:全新安裝合法),但訊息不一樣(路徑正規化之後比,不是比輸出)', () => {
     const missingVault = verifiedVault(null);
     const emptyVault = verifiedVault([]);
     const missing = runCli(['--day', DAY], missingVault.env);
@@ -641,9 +641,12 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     expect(missingMsg.trim()).not.toBe('');
     expect(emptyMsg.trim()).not.toBe('');
     expect(missingMsg).not.toBe(emptyMsg);
-    // llm-spend 既有的 unknown 路徑不退步(工單第 9 條):帳本檔不存在仍是「算不出來」exit 2,空檔才是 0。
-    expect(missing.code).toBe(2);
+    // T8 C:驗證過的帳本、檔案不存在 = 全新安裝 = 0,exit 0(原本是 exit 2,違反契約 §12)。
+    expect(missing.code).toBe(0);
     expect(empty.code).toBe(0);
+    // 只有「檔案不存在」那一種註明帳本還沒有紀錄;空檔是「有 log、今天沒花」。
+    expect(missing.output).toContain('帳本還沒有紀錄');
+    expect(empty.output).not.toContain('帳本還沒有紀錄');
   }, SPAWN_TIMEOUT_MS);
 
   it('整份 log 是 "hello"(合法 JSON,但不是 JSONL 事件)→ exit 2,不是「有 log 但沒花」', () => {
@@ -744,4 +747,94 @@ const FORBIDDEN = join(REPO_ROOT, 'learning');
 
 it('測試本身不碰 learning/', () => {
   expect(tmpDirs.every((d) => !d.startsWith(FORBIDDEN))).toBe(true);
+});
+
+describe('T8 C:驗證過的帳本、log 不存在 = 全新安裝 = $0、exit 0', () => {
+  it('must_catch: 驗證過但 log 不存在時回 exit 2 —— 現在要 exit 0,印 $0.0000、0 次呼叫、今日條目 0 筆、上限,stderr 乾淨', () => {
+    const vault = verifiedVault(null);
+    const { code, stdout, stderr } = runCli(['--day', DAY], vault.env);
+
+    expect(code).toBe(0);
+    expect(stdout).toContain('今日 OpenAI 花費 $0.0000');
+    expect(stdout).toMatch(/0\s*次呼叫/);
+    expect(stdout).toMatch(/今日條目\s*0\s*筆/);
+    expect(stdout).toContain('$1.00');
+    expect(stdout).toContain(vault.logPath);
+    expect(stdout).not.toContain('ledger=unverified');
+    expect(stderr).toBe('');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('must_catch: 報告註明「帳本還沒有紀錄」,而且不能和「有 log、今天沒花」是同一句話', () => {
+    const missing = runCli(['--day', DAY], verifiedVault(null).env);
+    const hasLogNoSpend = runCli(['--day', DAY], verifiedVault([otherEvent()]).env);
+    expect(missing.stdout).toContain('帳本還沒有紀錄');
+    expect(hasLogNoSpend.stdout).not.toContain('帳本還沒有紀錄');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('上限是 0(不設限):log 不存在仍是 exit 0,印「無上限」', () => {
+    const vault = verifiedVault(null);
+    const { code, stdout } = runCli(['--day', DAY], { ...vault.env, LLM_DAILY_CAP_USD: '0' });
+    expect(code).toBe(0);
+    expect(stdout).toContain('無上限');
+    expect(stdout).toContain('帳本還沒有紀錄');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('--json:usd 0、calls 0、entries_today 0、log_exists false、ledger verified,沒有 error;檔案存在時 log_exists 是 true', () => {
+    const missingVault = verifiedVault(null);
+    const missing = runCli(['--day', DAY, '--json'], missingVault.env);
+    expect(missing.code).toBe(0);
+    const m = JSON.parse(missing.output) as Record<string, unknown>;
+    expect(m.usd).toBe(0);
+    expect(m.calls).toBe(0);
+    expect(m.entries_today).toBe(0);
+    expect(m.log_exists).toBe(false);
+    expect(m.ledger).toBe('verified');
+    expect(m.log).toBe(missingVault.logPath);
+    expect(m).not.toHaveProperty('error');
+
+    const emptyVault = verifiedVault([]);
+    const empty = runCli(['--day', DAY, '--json'], emptyVault.env);
+    expect(empty.code).toBe(0);
+    expect((JSON.parse(empty.output) as Record<string, unknown>).log_exists).toBe(true);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('未驗證的帳本(--log)檔案不存在:不變——仍是「算不出來」exit 2,不能說「全新安裝」', () => {
+    const missing = join(tmpDir(), 'nope.jsonl');
+    const { code, stdout, stderr } = runCli(['--day', DAY, '--log', missing]);
+    expect(code).toBe(2);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('算不出來');
+    expect(stderr).not.toContain('帳本還沒有紀錄');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('不是「檔案不存在」的讀取錯誤:不變——log 路徑是目錄 → 算不出來、exit 2', () => {
+    const vault = verifiedVault(null);
+    mkdirSync(vault.logPath, { recursive: true }); // log.jsonl 變成一個目錄
+    const { code, stdout, stderr } = runCli(['--day', DAY], vault.env);
+    expect(code).toBe(2);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('算不出來');
+    expect(stderr).not.toContain('帳本還沒有紀錄');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('不是「檔案不存在」的讀取錯誤:不變——log 讀不到(權限 000)→ 算不出來、exit 2', () => {
+    if (process.getuid?.() === 0) return; // root 讀得到,造不出這個情境
+    const vault = verifiedVault([otherEvent()]);
+    chmodSync(vault.logPath, 0o000);
+    try {
+      const { code, stdout, stderr } = runCli(['--day', DAY], vault.env);
+      expect(code).toBe(2);
+      expect(stdout).toBe('');
+      expect(stderr).toContain('算不出來');
+    } finally {
+      chmodSync(vault.logPath, 0o600);
+    }
+  }, SPAWN_TIMEOUT_MS);
+
+  it('環境變數壞掉時(上限不是數字):即使 log 不存在也是算不出來、exit 2——$0 不能蓋過「上限不知道」', () => {
+    const vault = verifiedVault(null);
+    const { code, stderr } = runCli(['--day', DAY], { ...vault.env, LLM_DAILY_CAP_USD: 'abc' });
+    expect(code).toBe(2);
+    expect(stderr).toContain('算不出來');
+  }, SPAWN_TIMEOUT_MS);
 });
