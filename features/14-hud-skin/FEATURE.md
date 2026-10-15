@@ -61,7 +61,7 @@ npx vite packages/ui-shared/src/hud/gallery
 **跨資料夾的例外(phase-2 起)**:`apps/teach-card`(07)與 `apps/test-card`(06)要 import `packages/ui-shared/src/hud/`(14)。
 理由:外觀只有一份,兩邊各抄一份就會長得不一樣。只開「06→14」「07→14」兩條,不開 14→06/07。
 ADR-035 第 2 點寫「06-test-card 在 I3 前不 import ui-shared」,那條是為了不讓 06、07 同時改 07 擁有的圍欄插件;
-`hud/` 歸 14,不是 07 的檔,所以不碰那條的理由。是否需要 ADR 由技術顧問決定(見「開放問題」)。
+`hud/` 歸 14,不是 07 的檔,所以不碰那條的理由。記在 ADR-071(例外,不是推翻 ADR-035)。
 
 ## Wave 0 的重複
 
@@ -106,7 +106,6 @@ ADR-035 第 2 點寫「06-test-card 在 I3 前不 import ui-shared」,那條是�
 
 ## 開放問題
 
-- 06→14、07→14 的 import 例外要不要記一筆 ADR(本檔已寫理由;CLAUDE.md 說例外要在 FEATURE.md 說明理由)。技術顧問決定。
 - 切角外面「看起來透明」的區域,點擊仍然會被視窗吃掉(視窗實際上還是長方形)。使用者選 A 時已知道;
   要做到點擊穿透得改視窗形狀,現在不做。
 
