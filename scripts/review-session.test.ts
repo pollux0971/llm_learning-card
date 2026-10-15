@@ -306,6 +306,24 @@ describe('當日快取:同一天再跑,用快取裡那一份(驗收 1)', () => {
   );
 
   it(
+    '「已答」只看今天的 history:昨天(或更早)答過的紀錄不算,到期的卡照問',
+    async () => {
+      const v = dueVault(3);
+      const reviews = readReviews(v);
+      reviews['sec-0001'] = reviewRecord({
+        stage: 2,
+        next_due: addDays(TODAY, -3),
+        history: [{ date: YESTERDAY, stage: 1, type: 'fill', pass: true, grader: 'exact' }],
+      });
+      writeReviews(v, reviews);
+      writeCacheFile(v, cacheOf({ queue: [{ card: 'sec-0001', stage: 2, overdue_days: 3, overdue_ratio: 0.5 }, { card: 'sec-0002', stage: 1, overdue_days: 2, overdue_ratio: 2 }], total_due: 2 }));
+      const out = await runReview(v, { answers: 1 });
+      expect(out.asked[0]).toEqual({ index: 1, total: 2, card: 'sec-0001' });
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
     '小結是「今天這一輪」(顧問裁決):先答 1 題、續答剩下 3 題(續答第一題故意答錯)→ 「3 passed, 1 returned.」,另有「Answered this run: 3.」',
     async () => {
       const v = dueVault(4);
