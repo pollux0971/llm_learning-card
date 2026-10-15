@@ -9,13 +9,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  ACCENT_CHANNEL_TOLERANCE, ACCENT_MIN_PIXELS, FIELD_FOCUS_MIN_DIFF_PIXELS, FIELD_MIN_HEIGHT_PX, FIELD_WIDTH_TOLERANCE_PX, HEAD_MIN_CONTRAST, PASS_FAIL_MIN_CONTRAST,
+  ACCENT_MIN_PIXELS, FIELD_FOCUS_MIN_DIFF_PIXELS, FIELD_MIN_HEIGHT_PX, FIELD_WIDTH_TOLERANCE_PX, HEAD_MIN_CONTRAST, PASS_FAIL_MIN_CONTRAST,
 } from './card-design-values-test-support.js';
 import { attrOf, allEls, hasAncestor, parseMarkup, textOf, type El } from './card-static-test-support.js';
 import {
   DIAGONAL_INK, ONE_PIXEL_INK, differingPixels, edgeInk, inkAcross, px, type GalleryPage, type Image, type Rect,
 } from './render-test-support.js';
 import { CARD_DIRS } from './card-design-values-test-support.js';
+import { isOrangeish } from './card-render-test-support.js';
 import { HUD_DIR, contrast, cssVar, flattenRules, parseColor, parseCss, readHudCss, worstContrast } from './test-support.js';
 
 // ───────────────────────────── hud.css 的新設計值
@@ -352,10 +353,13 @@ export function faceBackgroundProblems(): string[] {
 }
 
 // ───────────────────────────── 第三輪:hover / focus 還是橘色,而且 focus 與 hover 分得出來
-function accentPixels(img: Image, accent: { r: number; g: number; b: number }): number {
+/** 只數貼著邊的一圈(離外擴 6 像素的截圖邊 ≤ 10 像素 = 離元件邊 ≤ 4 像素):字的次像素抗鋸齒會出現橘色邊,不能算 */
+function accentPixels(img: Image, _accent: { r: number; g: number; b: number }): number {
   let n = 0;
-  for (let i = 0; i < img.data.length; i += 4) {
-    if (Math.abs(img.data[i]! - accent.r) <= ACCENT_CHANNEL_TOLERANCE && Math.abs(img.data[i + 1]! - accent.g) <= ACCENT_CHANNEL_TOLERANCE && Math.abs(img.data[i + 2]! - accent.b) <= ACCENT_CHANNEL_TOLERANCE) n += 1;
+  for (let y = 0; y < img.height; y += 1) for (let x = 0; x < img.width; x += 1) {
+    if (x > 10 && x < img.width - 11 && y > 10 && y < img.height - 11) continue;
+    const i = (y * img.width + x) * 4;
+    if (isOrangeish([img.data[i]!, img.data[i + 1]!, img.data[i + 2]!])) n += 1;
   }
   return n;
 }

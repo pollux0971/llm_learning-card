@@ -10,12 +10,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  CARD_DIRS, CARD_VIEWPORT, EXAMPLE_BORDER_LEFT_PX, EXAMPLE_MIN_MARGIN_PX, FACE_CHANNEL_TOLERANCE, FACE_TEST_BACKDROP, FACE_TEST_PANEL, HP_FILL_TOLERANCE_PX, HP_PERCENT_ONE_THIRD, NEXT_LABEL,
+  ACCENT_CHANNEL_TOLERANCE, ACCENT_MIN_PIXELS, CARD_DIRS, CARD_VIEWPORT, CUT_CORNER_TOLERANCE, EXAMPLE_BORDER_LEFT_PX, EXAMPLE_MIN_MARGIN_PX, FACE_CHANNEL_TOLERANCE, FACE_TEST_BACKDROP, FACE_TEST_PANEL, HP_FILL_TOLERANCE_PX, HP_PERCENT_ONE_THIRD, NEXT_LABEL,
+  FIELD_HOVER_MAX_DIFF_PIXELS, OUTER_RING_MAX_ACCENT_PIXELS, OUTER_RING_MAX_PX, OUTER_RING_MIN_PX,
   PANEL_FILL_TOLERANCE_PX, RESULT_TEXT, SUBMIT_FIELD_MIN_GAP_PX, SUBMIT_HIDDEN_AFTER_RESULT, SUBMIT_LABEL, TEXTAREA_MIN_ROWS,
   TEXTAREA_RESIZE, type CardName,
 } from './card-design-values-test-support.js';
 import {
-  ONE_PIXEL_INK, openApp, px, type GalleryPage, type Image, type Rect,
+  ONE_PIXEL_INK, differingPixels, edgeInk, openApp, px, type GalleryPage, type Image, type Rect,
 } from './render-test-support.js';
 import { parseColor } from './test-support.js';
 
@@ -452,4 +453,142 @@ export async function exampleBorderProblems(page: GalleryPage): Promise<string[]
     if (c.a !== 1 || c.r !== line.r || c.g !== line.g || c.b !== line.b) problems.push(`第 ${i + 1} 個例子框的 border-left-color 是 ${e.colour},要是不透明的 --hud-line(rgb(${line.r}, ${line.g}, ${line.b}))`);
   });
   return problems;
+}
+
+// ───────────────────────────── 第四輪:hover / focus 不能把切角填成方塊、不能多一圈方框
+const STATE_ATTR = 'data-zz-state';
+/** 目標元素的運算式;kind 決定要強制哪些偽類 */
+interface ShapeTarget { label: string; element: string; kind: 'button' | 'field' }
+const cardButton = (label: string): ShapeTarget => ({ label: `「${label}」鍵`, element: BUTTON_BY_TEXT(label), kind: 'button' });
+const lastField: ShapeTarget = { label: '作答欄', element: `(() => { const a = document.querySelectorAll('[data-hud="field"]'); return a[a.length - 1]; })()`, kind: 'field' };
+
+/**
+ * 「橘色」:1 像素的橘線落在小數像素位置時會被抗鋸齒稀釋成淡橘,所以不比「等於 --hud-accent」,
+ * 比「明顯偏橘」:R 夠大、R−B 夠大、G 介於 B 與 R 之間(白、黑、灰、淡橘底 accent-wash(R−B≈27)都不算)。
+ */
+export function isOrangeish([r, g, b]: [number, number, number]): boolean {
+  return r >= 200 && r - b >= 60 && g > b && g < r;
+}
+const nearAccent = (c: [number, number, number], _accent: { r: number; g: number; b: number }) => isOrangeish(c);
+
+function cropImage(img: Image, r: Rect): Image {
+  const x0 = Math.max(0, Math.floor(r.x)); const y0 = Math.max(0, Math.floor(r.y));
+  const x1 = Math.min(img.width, Math.ceil(r.x + r.width)); const y1 = Math.min(img.height, Math.ceil(r.y + r.height));
+  const w = Math.max(0, x1 - x0); const h = Math.max(0, y1 - y0);
+  const data = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+    const s = ((y0 + y) * img.width + x0 + x) * 4; const d = (y * w + x) * 4;
+    for (let k = 0; k < 4; k += 1) data[d + k] = img.data[s + k]!;
+  }
+  return { width: w, height: h, data };
+}
+
+/**
+ * 目標在 hover / focus 下:
+ * (a) 被切掉的角(平常就等於後面背景的那幾個角)外側的小三角形像素,仍然等於後面的背景(不能被橘色填成方塊);
+ * (b) 矩形外面 2–4 像素那一圈沒有橘色(不能有方形 outline);
+ * (c) 橘色還在(矩形外擴 1 像素範圍內至少 ACCENT_MIN_PIXELS 個接近 --hud-accent 的像素)。
+ * 「後面」= 把目標藏起來截的圖。強制偽類用 CDP(CSS.forcePseudoState),不送滑鼠鍵盤、不插 <style> 以外的東西。
+ */
+async function stateShapeProblems(page: GalleryPage, t: ShapeTarget, states: { name: string; list: string[] }[]): Promise<string[]> {
+  const problems: string[] = [];
+  const accent = parseColor(await page.evaluate<string>(`getComputedStyle(document.documentElement).getPropertyValue('--hud-accent')`));
+  const rect = await page.evaluate<Rect | null>(`(() => { document.activeElement?.blur?.(); const e = ${t.element}; if (!e) return null;
+    e.scrollIntoView({ block: 'nearest' }); e.setAttribute('${STATE_ATTR}', '');
+    return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => { const b = e.getBoundingClientRect(); r({ x: b.x, y: b.y, width: b.width, height: b.height }); }))); })()`);
+  if (!rect) return [`${t.label}:畫面上找不到`];
+  const L = Math.floor(rect.x); const T = Math.floor(rect.y); const R = Math.ceil(rect.x + rect.width) - 1; const B = Math.ceil(rect.y + rect.height) - 1;
+  const hideStyle = `(() => { const s = document.createElement('style'); s.id = 'zz-hide-state'; s.textContent = '[${STATE_ATTR}] { visibility: hidden !important; }'; document.head.append(s);
+    return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))); })()`;
+  await page.evaluate(hideStyle);
+  const behind = await page.screenshot();
+  await page.evaluate(`(() => { document.getElementById('zz-hide-state')?.remove(); return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))); })()`);
+  const normal = await page.screenshot();
+  // 平常狀態:四條直邊的黑線在小數像素位置仍是完整的 1 像素(線不被偽元素盒子裁掉)
+  for (const [edge, v] of Object.entries(edgeInk(normal, rect))) {
+    if (!(v >= ONE_PIXEL_INK[0] && v <= ONE_PIXEL_INK[1])) problems.push(`${t.label}:${edge}邊黑線量起來是 ${v.toFixed(2)} 像素(元件在 x=${rect.x.toFixed(2)} y=${rect.y.toFixed(2)}),要 1 像素`);
+  }
+  const near = [[1, 1], [2, 1], [1, 2], [3, 1], [1, 3], [2, 2]] as const;
+  const corners: [string, (a: number, b: number) => [number, number]][] = [
+    ['左上', (a, b) => [L + a - 1, T + b - 1]], ['右上', (a, b) => [R - a + 1, T + b - 1]],
+    ['左下', (a, b) => [L + a - 1, B - b + 1]], ['右下', (a, b) => [R - a + 1, B - b + 1]],
+  ];
+  const diff = (x: number, y: number, a: Image, b: Image) => { const p = px(a, x, y); const q = px(b, x, y); return Math.max(...p.map((v, i) => Math.abs(v - q[i]!))); };
+  // 平常就切掉的角:每個點都等於後面
+  const cutCorners = corners.filter(([, at]) => near.every(([a, b]) => { const [x, y] = at(a, b); return diff(x, y, normal, behind) <= CUT_CORNER_TOLERANCE; }));
+  if (cutCorners.length < 2) problems.push(`${t.label}:平常狀態只有 ${cutCorners.length} 個角被切掉(要至少 2 個),量不了 hover / focus`);
+
+  for (const st of states) {
+    const sel = t.kind === 'field' ? `[${STATE_ATTR}]` : `[${STATE_ATTR}]`;
+    await page.forceState(sel, 0, st.list.filter((s) => s === 'focus-within' || s === 'hover' || t.kind === 'button'));
+    if (t.kind === 'field' && st.list.includes('focus')) await page.forceState(`[${STATE_ATTR}] input, [${STATE_ATTR}] textarea`, 0, ['focus', 'focus-visible']);
+    const shot = await page.screenshot();
+    for (const [name, at] of cutCorners) {
+      for (const [a, b] of near) {
+        const [x, y] = at(a, b);
+        const d = diff(x, y, shot, behind);
+        if (d > CUT_CORNER_TOLERANCE) { problems.push(`${t.label} ${st.name}:${name}切角外側 (${x},${y}) 是 rgb(${px(shot, x, y).join(',')}),後面是 rgb(${px(behind, x, y).join(',')})(切角被填滿了)`); break; }
+      }
+    }
+    // 外圈 2–4 像素:沒有橘色
+    let ring = 0; let first = '';
+    for (let y = T - OUTER_RING_MAX_PX; y <= B + OUTER_RING_MAX_PX; y += 1) for (let x = L - OUTER_RING_MAX_PX; x <= R + OUTER_RING_MAX_PX; x += 1) {
+      if (x < 0 || y < 0 || x >= shot.width || y >= shot.height) continue;
+      const dist = Math.max(L - x, x - R, T - y, y - B);
+      if (dist < OUTER_RING_MIN_PX || dist > OUTER_RING_MAX_PX) continue;
+      if (nearAccent(px(shot, x, y), accent)) { ring += 1; if (!first) first = `(${x},${y})`; }
+    }
+    if (ring > OUTER_RING_MAX_ACCENT_PIXELS) problems.push(`${t.label} ${st.name}:矩形外 ${OUTER_RING_MIN_PX}–${OUTER_RING_MAX_PX} 像素那一圈有 ${ring} 個橘色像素(例如 ${first}),不能有方形 outline`);
+    // 橘色還在
+    let inside = 0;
+    for (let y = T - 1; y <= B + 1; y += 1) for (let x = L - 1; x <= R + 1; x += 1) {
+      if (x < 0 || y < 0 || x >= shot.width || y >= shot.height) continue;
+      if (x > L + 3 && x < R - 3 && y > T + 3 && y < B - 3) continue; // 字的次像素抗鋸齒會有橘色邊,只數貼邊的一圈
+      if (nearAccent(px(shot, x, y), accent)) inside += 1;
+    }
+    if (inside < ACCENT_MIN_PIXELS) problems.push(`${t.label} ${st.name}:橘色只剩 ${inside} 個像素,要 ≥ ${ACCENT_MIN_PIXELS}(hover / focus 的橘色不能拿掉)`);
+    await page.forceState(sel, 0, []);
+    if (t.kind === 'field') await page.forceState(`[${STATE_ATTR}] input, [${STATE_ATTR}] textarea`, 0, []);
+  }
+  await page.evaluate(`(() => { document.querySelectorAll('[${STATE_ATTR}]').forEach((e) => e.removeAttribute('${STATE_ATTR}')); return true; })()`);
+  return problems;
+}
+
+const BUTTON_STATES = [{ name: 'hover', list: ['hover'] }, { name: 'focus-visible', list: ['focus', 'focus-visible'] }];
+const FIELD_STATES = [{ name: 'focus-within', list: ['focus-within', 'focus'] }];
+
+/** 教學卡「下一個」(在捲動區下面、x 是小數像素) */
+export async function teachShapeProblems(page: GalleryPage): Promise<string[]> {
+  return stateShapeProblems(page, cardButton('下一個'), BUTTON_STATES);
+}
+
+/** 考試卡:填空題的「送出」與最後一個作答欄、應用題的「送出」與 textarea 的欄位、結果後的「下一題」 */
+export async function testShapeProblems(page: GalleryPage): Promise<string[]> {
+  const problems: string[] = [];
+  problems.push(...(await stateShapeProblems(page, cardButton(SUBMIT_LABEL), BUTTON_STATES)).map((p) => `填空題 ${p}`));
+  problems.push(...(await stateShapeProblems(page, lastField, FIELD_STATES)).map((p) => `填空題 ${p}`));
+  await gotoApply(page);
+  problems.push(...(await stateShapeProblems(page, cardButton(SUBMIT_LABEL), BUTTON_STATES)).map((p) => `應用題 ${p}`));
+  problems.push(...(await stateShapeProblems(page, lastField, FIELD_STATES)).map((p) => `應用題 ${p}`));
+  await submitCurrent(page);
+  problems.push(...(await stateShapeProblems(page, cardButton(NEXT_LABEL), BUTTON_STATES)).map((p) => `結果後 ${p}`));
+  return problems;
+}
+
+/** 作答欄沒有 hover 樣式:滑鼠移到作答欄(與裡面的輸入框)上,外觀不變 */
+export async function fieldHoverProblems(page: GalleryPage): Promise<string[]> {
+  const rect = await page.evaluate<Rect | null>(`(() => { document.activeElement?.blur?.(); const e = (${lastField.element}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); e.setAttribute('${STATE_ATTR}', '');
+    return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => { const b = e.getBoundingClientRect(); r({ x: b.x, y: b.y, width: b.width, height: b.height }); }))); })()`);
+  if (!rect) return ['畫面上找不到作答欄'];
+  const box = { x: rect.x - 6, y: rect.y - 6, width: rect.width + 12, height: rect.height + 12 };
+  const normal = cropImage(await page.screenshot(), box);
+  // CDP 一次只留最後一個被強制的節點,所以欄位本身與裡面的輸入框分兩次量
+  let d = 0;
+  for (const target of [`[${STATE_ATTR}]`, `[${STATE_ATTR}] input, [${STATE_ATTR}] textarea`]) {
+    await page.forceState(target, 0, ['hover']);
+    d = Math.max(d, differingPixels(normal, cropImage(await page.screenshot(), box)));
+    await page.forceState(target, 0, []);
+  }
+  await page.evaluate(`document.querySelectorAll('[${STATE_ATTR}]').forEach((e) => e.removeAttribute('${STATE_ATTR}'))`);
+  return d <= FIELD_HOVER_MAX_DIFF_PIXELS ? [] : [`滑鼠移到作答欄上,外觀變了 ${d} 個像素(作答欄不該有 hover 樣式)`];
 }

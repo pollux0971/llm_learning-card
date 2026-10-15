@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  enterKeyProblems, exampleBorderProblems, exampleMarginProblems, hpBarProblems, noResultBeforeSubmitProblems, openCard, panelFillProblems,
-  resultTextProblems, scrollInsideProblems, submitGapProblems, submitLifecycleProblems, submitVisibleProblems, teachCardFaceProblems, testCardFaceProblems, textareaProblems,
+  enterKeyProblems, fieldHoverProblems, exampleBorderProblems, exampleMarginProblems, hpBarProblems, noResultBeforeSubmitProblems, openCard, panelFillProblems,
+  resultTextProblems, scrollInsideProblems, submitGapProblems, submitLifecycleProblems, submitVisibleProblems, teachCardFaceProblems, teachShapeProblems, testShapeProblems, testCardFaceProblems, textareaProblems,
 } from './card-render-test-support.js';
 import { PANEL_FILLS_WINDOW } from './card-design-values-test-support.js';
 import type { GalleryPage } from './render-test-support.js';
@@ -31,6 +31,11 @@ describe('教學卡的版面(360 × 480)', () => {
     await p().reset();
     expect(await exampleMarginProblems(p())).toEqual([]);
   }, 60_000);
+
+  it('P1/P2:「下一個」鍵 hover 與 focus 時,切角外側仍是背景(不填成方塊),矩形外 2–4 像素沒有橘色(沒有方形 outline),橘色還在', async () => {
+    await p().reset();
+    expect(await teachShapeProblems(p())).toEqual([]);
+  }, 90_000);
 
   it('O1(第三輪):「下一個」鍵的內部 = 半透明 --hud-panel 疊在後面的像素', async () => {
     await p().reset();
@@ -97,4 +102,14 @@ describe('考試卡的版面與互動(360 × 480)', () => {
     await p().reset();
     expect(await submitGapProblems(p())).toEqual([]);
   }, 90_000);
+
+  it('P1/P2:「送出」「下一題」鍵與作答欄在 hover / focus 下,切角外側仍是背景,矩形外 2–4 像素沒有橘色,橘色還在', async () => {
+    await p().reset();
+    expect(await testShapeProblems(p())).toEqual([]);
+  }, 150_000);
+
+  it('P3:滑鼠移到作答欄上,外觀不變(作答欄沒有 hover 樣式)', async () => {
+    await p().reset();
+    expect(await fieldHoverProblems(p())).toEqual([]);
+  }, 60_000);
 });

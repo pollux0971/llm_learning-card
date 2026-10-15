@@ -74,6 +74,16 @@ export const SUBMIT_FIELD_MIN_GAP_PX = 8;
 /** O4:例子框左邊那條線的粗細(像素;跟面板的黑線一樣細) */
 export const EXAMPLE_BORDER_LEFT_PX = 1;
 
+// ── 第四輪(P1/P2:hover / focus 不能變方塊,2026-10-16) ─────────────────────
+/** 被切掉的角(離角 ≤ 這麼遠的那一小塊三角形)的像素,在 hover / focus 下要等於後面的背景,每通道容許的誤差 */
+export const CUT_CORNER_TOLERANCE = 10;
+/** 元件矩形外面 [MIN, MAX] 像素那一圈不能有橘色(擋方形 outline);容許的橘色像素數 */
+export const OUTER_RING_MIN_PX = 2;
+export const OUTER_RING_MAX_PX = 4;
+export const OUTER_RING_MAX_ACCENT_PIXELS = 0;
+/** 作答欄沒有 hover 樣式:滑鼠移上去,外擴 6 像素範圍內最多這麼多個像素看得出不同(任一通道差 > 32) */
+export const FIELD_HOVER_MAX_DIFF_PIXELS = 4;
+
 // ── HP 條 ──────────────────────────────────────────────────────────────────
 /** 綠色那一段寬度離「內寬 × 比例」的容許誤差(右端斜切,正中間那一列少約 3.6 像素) */
 export const HP_FILL_TOLERANCE_PX = 6;
