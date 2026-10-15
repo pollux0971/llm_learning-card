@@ -12,6 +12,7 @@ must_catch:
   - 指標檔路徑跟 T5 不同:改用 Tauri 的 app_config_dir(會是 ~/.config/dev.learningcards.desktop/),或忽略 XDG_CONFIG_HOME,路徑測試必須紅
   - 桌面程式長出第三份 bootstrap:Rust 寫指標檔或 config/vault-id(任何一個),靜態檢查與「首次啟動不寫任何檔」的測試必須紅
   - 四種失敗混在一起:任兩種失敗回同一個啟動狀態(例如讀不到與不存在都顯示「找不到資料夾」),狀態向量必須紅
+  - 自我回報函式改成常數 true:same_checks_as_read、scope_is_learning_root 只要還在,改成永遠回 true 必須有測試紅;照驗收 8 刪掉的話,src-tauri/src 裡兩個名字零命中,而且拿掉 respond 的 symlink 檢查、或拿掉解碼後的 check_rel_path,「The asset protocol is scoped to the learning directory」場景必須紅
 ---
 
 # 工單 T2c-2:10 desktop-shell phase-2 的 learning 根目錄只有一個來源(讀 T5 的指標檔)
@@ -82,6 +83,29 @@ must_catch:
 6. **`@manual`(UI/Tauri 負責人截圖,技術顧問判)**:五種狀態各一張截圖;四種失敗畫面的 init 指令可以直接複製貼上執行。
 7. cargo-mutants:本張新增的 Rust(指標檔解析、身分比對、啟動狀態)納入,沿用地板棘輪。**由驗收者在拿到重活位子之後跑**
    (拿協調者指定的鎖、指令前面加 `CARGO_BUILD_JOBS=2`);開發 worker 不跑,只把新檔補進 `.cargo/mutants.toml` 的 `examine_globs`。
+8. **刪掉 T2b 留下的兩個「自我回報」函式**(T2c-1 驗收證據的 F-4;技術顧問 2026-10-15 派令)。
+   現況(T2c-1 合併後的 main):`apps/desktop/src-tauri/src/asset_protocol.rs` 的 `same_checks_as_read`(:184)與
+   `scope_is_learning_root`(:205)是 app 自己出題、自己作答:probe 的 `status`(`../../apps/desktop/src-tauri/src/bin/lc-fs.rs:96-97`)回報它們的結果,
+   cucumber 只斷言回報值是 `true`(`../../features/steps/desktop-shell-phase2.steps.ts:959`、`:967`)。
+   T2c-1 的 cargo-mutants 裡,兩個函式改成永遠回 `true` 都存活(驗收證據 C6、C8):它們說謊的時候沒有測試會紅。
+   另外兩個小問題:`same_checks_as_read` 的樣本都沒有 `%`,解碼一次等於沒解,兩邊必然相同;
+   `scope_is_learning_root` 每被呼叫一次,就在系統暫存目錄建一次資料夾與 symlink。
+
+   做法:**刪掉**。顧問允許「刪掉」或「改成斷言真正的行為」二擇一;本稿選刪掉(少兩個函式、少一批變異點,
+   真正的行為本來就由 `src-tauri/tests/asset_protocol.rs` 的 symlink 與解碼測試守著)。顧問審稿時可以改。
+   - 開發 worker:刪掉這兩個函式,以及 probe `status` 回應的 `scope_is_learning_root`、`same_checks_as_read` 兩個欄位。
+   - 測試 agent:`features/10-desktop-shell/phase-2.feature` 的「The asset protocol is scoped to the learning directory」場景
+     **文字不改**,兩條步驟定義改成發真的請求(經 probe 的 `asset` op,跟 `read` 用同一個根);
+     `apps/desktop/src/test-support/probe-shell-config.ts` 拿掉那兩個欄位。
+
+     | 原本的回報值 | 改成怎麼證明 |
+     |---|---|
+     | `scopeIsLearningRoot` | learning 根裡放一個指向根外檔案的 symlink,經 `lc` 請求它:403,body 不含根外檔案的內容 |
+     | `sameChecksAsRead` | 同一張樣本表逐列送:`read` 收原字串 `p`,`lc` 收 `p` 逐段 `encodeURIComponent` 之後的字串(跟 `assetUrl` 產生的一樣),兩邊同拒同放(「拒」= 拒絕;`read` 的 io 錯誤與 `lc` 的 404 都算「放」)。樣本至少是 T2b 函式裡那六個(`../etc/passwd`、`cards/a.`、`nul.md`、`raw/x`、`cards/a.md`、`cards/가.md`;`가` 編碼後是 `%EA%B0%80`,`lc` 不解碼就會拒絕,這列才真的測到解碼)。另加一列只送 `lc` 的 `cards/a%252emd`:解一次是 `cards/a%2emd`,含 `%`,必須拒絕(解兩次才會變成合法的 `cards/a.md`) |
+
+   - 同類,一併處理(UI/Tauri 負責人加的,顧問審稿可以刪):`status` 的 `custom_enabled: Some(true)`(`../../apps/desktop/src-tauri/src/bin/lc-fs.rs:95`)
+     是寫死的常數,不是量出來的。改成量真正註冊的地方:`src/main.rs` 有 `register_uri_scheme_protocol(SCHEME, …)`
+     (靜態檢查,測試 agent 寫),probe 不再回報這個欄位。
 
 ## 重活規則(技術顧問 2026-10-15 12:5x;開發 worker 自己跑 cargo-mutants,24 個行程把負載推到 34 之後補上)
 
