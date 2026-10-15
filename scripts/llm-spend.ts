@@ -17,15 +17,20 @@
  *
  *   0  算得出來,而且 `spent < cap`。訊息要帶 **log 路徑**與**今日條目筆數**,
  *      讓 `$0.00` 看得出是「有 log 但今天沒花」而不是「根本沒有 log」。
+ *      **驗證過的帳本、`state/log.jsonl` 不存在**也是這一碼(T8,契約 §12:全新安裝 = 今日花費 0,
+ *      合法):$0.0000、0 次呼叫、今日條目 0 筆,第二行註明「帳本還沒有紀錄」,`--json` 帶
+ *      `log_exists: false`——跟「有 log、今天沒花」(`log_exists: true`)與「算不出來」三種都分得開。
  *   1  算得出來,而且 `spent >= cap`(ADR-039 的邊界:剛好等於也算用完)。
  *   2  **算不出來**。只印 `算不出來:<原因>`,**絕不印任何「還有預算」的句子**,
  *      `--json` 也不吐 `usd` / `cap_usd`(下游拿到 `undefined` 而不是 0)。
  *
- * 觸發 2 的條件:log 檔不存在或不可讀、`LLM_DAILY_CAP_USD` 缺 / 空 / 非數字、
- * 價格變數缺、log 裡有任何一行 `JSON.parse` 失敗、或有任何一行**解析得出來但不是
- * 契約 §10 的事件**(不是物件,或 `ts` 在卻不是字串:例如整份檔是 `"hello"`、`42`、
- * `[]`、`null`)。後者跟前者同一碼、同一個訊息形狀——`"hello"` 是合法 JSON,但「這份檔根本
+ * 觸發 2 的條件:**未驗證的**帳本(`--log`)檔案不存在、log 不可讀(權限、是目錄…)、
+ * `LLM_DAILY_CAP_USD` 缺 / 空 / 非數字、價格變數缺、log 裡有任何一行 `JSON.parse` 失敗、
+ * 或有任何一行**解析得出來但不是契約 §10 的事件**(不是物件,或 `ts` 在卻不是字串:例如整份檔是
+ * `"hello"`、`42`、`[]`、`null`)。後者跟前者同一碼、同一個訊息形狀——`"hello"` 是合法 JSON,但「這份檔根本
  * 不是花費紀錄」不可以被講成「花費是零」。**不知道不是零。**
+ * 什麼叫壞行由 packages/core 的 `parseLedger` 判(T8:只留一份定義),router 的煞車
+ * (`readDailySpend` → `UnknownSpendError`)用的是同一份判定與同一份訊息文字。
  *
  * ⚠️ 最後兩條是 **P-22 的反轉,不是回歸**。P-22 修的是「壞行要跳過」——那是在
  * *讀事件* 的情境,跳過一行壞資料好過整份放棄。這裡是 *算錢*:跳過壞行等於**低估**
@@ -53,19 +58,14 @@ import {
   computeDailySpend,
   dayOf,
   defaultVaultDeps,
+  describeBadLine,
   isBudgetExhausted,
+  parseLedger,
   resolveVerifiedLedger,
   type LedgerHandle,
   type SpendPrices,
   type VaultResolveDeps,
 } from '../packages/core/src/llm/index.js';
-
-/**
- * `computeDailySpend` 收的事件型別。直接寫 `LogEvent` 要從 @contracts import,
- * 而 scripts/ 這一層只跟 packages/core 的公開介面打交道(CLAUDE.md 的跨資料夾規則),
- * 所以從函式簽章倒推——型別跟著 core 走,core 改了這裡會編譯錯,不會默默漂掉。
- */
-type SpendEvents = Parameters<typeof computeDailySpend>[0];
 
 /** 退出碼的意義,寫成常數免得看的人要猜。 */
 export const EXIT_UNDER_CAP = 0;
@@ -170,6 +170,12 @@ export interface ComputedSpend {
   logPath: string;
   /** 帳本的身分。`unverified`(明講 `--log`)的報告第一行標出來,退出碼一律 2,不能當煞車。 */
   ledger: 'verified' | 'unverified';
+  /**
+   * 帳本檔在不在(T8)。只有**驗證過的**帳本會是 `false`:契約 §12,檔案不存在 = 全新安裝 = 今日花費 0,
+   * 合法;報告另起一行註明「帳本還沒有紀錄」。未驗證的帳本檔案不存在仍是算不出來,不會走到這裡。
+   * 沒給等於 `true`(檔案在)。
+   */
+  logExists?: boolean;
 }
 
 /** 算不出來。`reason` 是給人看的完整原因,`formatSpendReport` 只在前面加「算不出來:」。 */
@@ -211,44 +217,11 @@ function strictNumberEnv(env: NodeJS.ProcessEnv, name: string): number | { reaso
   return value;
 }
 
-/** exit 2 的訊息只印一行的前 80 個字元——log 一行可能好幾 KB,煞車的訊息要看得完。 */
-const BAD_LINE_PREVIEW_CHARS = 80;
-
 /**
- * 壞行的原因。三樣缺一不可:**行號、該行前 80 字、一句怎麼修**。
- * 沒有這三樣的 fail-closed 會被下一個人想辦法繞過,那比 fail-open 更糟。
+ * 驗證過的帳本、log 檔還不存在時的第二行(T8)。$0 是事實(全新安裝,契約 §12),
+ * 但要跟「有 log、今天沒花」與「算不出來」分得開——三種情況的輸出兩兩不同。
  */
-function badLineReason(logPath: string, lineNumber: number, line: string, what: string): string {
-  return (
-    `${logPath} 第 ${lineNumber} 行${what},所以今天的花費算不出來:` +
-    `${line.slice(0, BAD_LINE_PREVIEW_CHARS)}` +
-    `(修好或移除該行後重跑;這是花錢的煞車,不會自動跳過壞行)`
-  );
-}
-
-/** JSON.parse 丟例外:那一行連 JSON 都不是(HTML、被截斷的行、亂碼)。 */
-const NOT_JSON = '不是合法的 JSON';
-/**
- * JSON.parse 過了,但值不是契約 §10 的事件。`"hello"` / `42` / `[]` / `null` 每一個都
- * 解析得出來,但沒有一個是「物件 + 字串 ts」;把它們當事件算會得到「今日條目 0 筆、
- * $0.0000、exit 0」——那是把「這檔不是花費紀錄」講成「花費是零」。
- */
-const NOT_EVENT = '是合法的 JSON,但不是 log 事件(契約 §10 的事件是一個物件,ts 是 ISO 字串)';
-
-/**
- * 一行解析出來的值算不算契約 §10 的事件:**物件**(不是 null、不是陣列),而且 `ts`
- * 如果有,必須是字串。
- *
- * 只擋「根本不是事件」。`ts` 缺掉的物件放行——它進不了今日條目也進不了花費
- * (computeDailySpend 與今日 filter 都要字串 ts),既有測試也把它當「不算今天」而不是
- * 壞行。但 `ts` 在卻不是字串(例如數字)是另一回事:那一行會被兩個 filter 靜靜略過,
- * 方向是低估,所以跟 `null` 一樣當壞行。`type` 之類的欄位由 computeDailySpend 自己認。
- */
-function isLogEvent(value: unknown): value is SpendEvents[number] {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const ts = (value as { ts?: unknown }).ts;
-  return ts === undefined || typeof ts === 'string';
-}
+const LEDGER_HAS_NO_RECORDS = '帳本還沒有紀錄(帳本已驗證,log 檔還不存在:全新安裝,今日花費 0,契約 §12)';
 
 /** 帳本把手(不收裸字串,T5 第 8 條)→ 三態的報告。 */
 export function buildSpendReport(env: NodeJS.ProcessEnv, ledger: LedgerHandle, day: string): SpendReport {
@@ -266,51 +239,29 @@ export function buildSpendReport(env: NodeJS.ProcessEnv, ledger: LedgerHandle, d
   try {
     content = readFileSync(logPath, 'utf8');
   } catch (err) {
-    // 這裡跟 packages/core 的 readDailySpend() 分道揚鑣:那支檔案不存在回
-    // `{ usd: 0, calls: 0 }`(對 router 是對的,還沒呼叫過就是沒花錢),煞車不行——
-    // 讀不到 log 不等於沒花錢,只等於「我不知道花了多少」。
+    // 驗證過的帳本、檔案不存在 = 全新安裝 = 今日花費 0(契約 §12;T8 之前這裡回 exit 2,違反契約)。
+    // 跟 packages/core 的 readDailySpend() 同一個判斷。只有這一種:
+    // - 未驗證的帳本(--log)檔案不存在仍是算不出來——路徑可能打錯,不能說「全新安裝」;
+    // - 不是「檔案不存在」的讀檔錯誤(權限、是目錄)不論哪一本都是「我不知道花了多少」。
+    if (ledgerStatus === 'verified' && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { kind: 'computed', usd: 0, calls: 0, entriesToday: 0, capUsd, logPath, ledger: ledgerStatus, logExists: false };
+    }
     return {
       kind: 'unknown',
       reason: `讀不到 log 檔 ${logPath}:${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
-  // ⚠️ 這個迴圈是 **P-22 的反轉,不是回歸**。
-  //
-  // P-22 修的是 packages/core 的 readDailySpend():log 有一行壞掉時只跳過那一行,
-  // 不要整份放棄。那是在 *讀事件* 的情境——整份放棄會漏掉一堆好資料,而漏掉事件
-  // 的後果只是少看到一點歷史。
-  //
+  // ⚠️ **P-22 的反轉,不是回歸**:P-22 修的是「壞行要跳過」——那是在 *讀事件* 的情境。
   // 這裡是 *算錢*:**跳過壞行等於低估花費**,而低估花費的後果是超支使用者的錢。
-  // 所以在這支煞車裡,**有壞行 = 無法信任總數 = 算不出來(exit 2)**。
-  //
-  // 而且**不分哪一天**:JSON.parse 失敗的行讀不到 ts,沒有辦法證明它不是今天寫的,
-  // 所以一律當成不可信。不可以先用 ts 濾出今日再檢查壞行——那樣歷史壞行會被濾掉。
-  //
-  // 「解析得出來但不是事件」跟「解析不出來」走同一條路、同一個訊息形狀(行號 / 前 80
-  // 字 / 怎麼修)。以前 `"hello"` 這種行會被 push 進 events,然後被 computeDailySpend
-  // 與今日條目的 filter 靜靜略過,結果是 exit 0 加一句「有 log 但沒花」;`null` 則是
-  // 在 filter 裡讀 `.ts` 炸掉,exit 2 但訊息是一個 TypeError,沒有行號、沒有怎麼修。
-  // Stryker disable next-line ArrayDeclaration: 初值塞一個字串是真等價——computeDailySpend 與底下
-  // entriesToday 的 filter 都要 `typeof e.ts === 'string'`,字串沒有 ts,兩邊都靜靜略過,結果不變。
-  const events: SpendEvents = [];
-  const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    // 空行與只有空白的行不是壞行:append-only 的檔案本來就會有行尾換行。
-    if (line.trim().length === 0) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      // 行號用 1-based,跟編輯器一致。
-      return { kind: 'unknown', reason: badLineReason(logPath, i + 1, line, NOT_JSON) };
-    }
-    if (!isLogEvent(parsed)) {
-      return { kind: 'unknown', reason: badLineReason(logPath, i + 1, line, NOT_EVENT) };
-    }
-    events.push(parsed);
-  }
+  // 所以 **有壞行 = 無法信任總數 = 算不出來(exit 2)**,而且**不分哪一天**(壞行讀不到 ts,
+  // 證明不了它不是今天寫的;不可以先用 ts 濾出今日再檢查壞行)。
+  // 什麼叫壞行、訊息怎麼寫,都由 packages/core 的 parseLedger / describeBadLine 決定(T8:只留一份,
+  // router 的煞車 readDailySpend 用的是同一份)。「解析得出來但不是事件」(`"hello"`、`null`、ts 是數字)
+  // 跟「解析不出來」走同一條路、同一個訊息形狀(行號 / 前 80 字 / 怎麼修 / 哪一種壞)。
+  const parsed = parseLedger(content);
+  if (!parsed.ok) return { kind: 'unknown', reason: describeBadLine(logPath, parsed.bad) };
+  const events = parsed.events;
 
   const prices: SpendPrices = { inPerM, outPerM };
   const { usd, calls } = computeDailySpend(events, day, prices);
@@ -319,11 +270,11 @@ export function buildSpendReport(env: NodeJS.ProcessEnv, ledger: LedgerHandle, d
   // 而兩個數字不一樣正是重點:`calls = 0` 但 `entriesToday > 0` 的意思是
   // 「log 活著,只是今天沒打 OpenAI」——那才是「$0.00」該有的證據。
   // Stryker disable next-line ConditionalExpression: 把 `typeof e.ts === 'string'` 換成 `true` 是真等價——
-  // isLogEvent 已保證 ts 只會是 undefined 或字串,而 dayOf(undefined) 是 'NaN-NaN-NaN',永遠不等於 day。
+  // parseLedger 已保證 ts 只會是 undefined 或字串,而 dayOf(undefined) 是 'NaN-NaN-NaN',永遠不等於 day。
   // 守著這個 typeof 是給型別(dayOf 收 string),不是給行為。
   const entriesToday = events.filter((e) => typeof e.ts === 'string' && dayOf(e.ts) === day).length;
 
-  return { kind: 'computed', usd, calls, entriesToday, capUsd, logPath, ledger: ledgerStatus };
+  return { kind: 'computed', usd, calls, entriesToday, capUsd, logPath, ledger: ledgerStatus, logExists: true };
 }
 
 export function formatSpendReport(report: SpendReport): string {
@@ -339,7 +290,9 @@ export function formatSpendReport(report: SpendReport): string {
     `(${report.calls} 次呼叫,log: ${report.logPath},今日條目 ${report.entriesToday} 筆)` +
     `,上限 ${cap}`;
   const body = isBudgetExhausted(report.usd, report.capUsd) ? `${line} — 今日預算已用完` : line;
-  return `${prefix}${body}`;
+  // 驗證過的帳本、log 檔還不存在(T8):第一行照常(上限照印),第二行講清楚 $0 是「還沒有紀錄」。
+  const note = report.logExists === false ? `\n${LEDGER_HAS_NO_RECORDS}` : '';
+  return `${prefix}${body}${note}`;
 }
 
 export function exitCodeFor(report: SpendReport): number {
@@ -374,6 +327,8 @@ async function main(): Promise<void> {
               calls: report.calls,
               entries_today: report.entriesToday,
               log: report.logPath,
+              // T8:驗證過的帳本、檔案還不存在(全新安裝)是 false;檔案在是 true。
+              log_exists: report.logExists !== false,
               cap_usd: report.capUsd,
               ledger: report.ledger,
             }
