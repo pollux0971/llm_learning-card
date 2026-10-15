@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readTauriConf } from './test-support/frontend-dist.js';
 import {
-  CARGO_LOCK, CARGO_TOML, MAIN_RS, REQUIRED_PERMISSIONS, assembleInitScript, capabilityProblems, decorationsProblems, gdkDependencyProblems,
+  CARGO_LOCK, CARGO_TOML, MAIN_RS, REQUIRED_PERMISSIONS, assembleInitScript, capabilityProblems, decorationsProblems, gdkCfgProblems, gdkDependencyProblems,
   hiddenUntilLoadedProblems, layoutClassNames, mainRsProblems, mainRsUnchangedProblems, readCapability, readWindowModeJs, runInitScript, stateFlagsProblems,
   transparentProblems, windowModeJsBehaviourProblems, windowModeJsStaticProblems,
 } from './test-support/window-frame.js';
@@ -118,16 +118,46 @@ describe('main.rs 的接線(靜態;驗收 1、3)', () => {
   });
 });
 
-describe('Cargo:gdk 是直接依賴、lock 裡不多出第二份(驗收 3)', () => {
-  it('Cargo.toml 直接依賴 gdk(或 gtk),Cargo.lock 的 gdk 仍是唯一一份 0.18.2', () => {
+describe('Cargo:gdk 只在 Linux 的依賴區塊、lock 裡不多出第二份(驗收 3)', () => {
+  it('Cargo.toml 直接依賴 gdk(或 gtk)且只放在 [target.\'cfg(target_os = "linux")\'.dependencies],Cargo.lock 的 gdk 仍是唯一一份 0.18.2', () => {
     expect(gdkDependencyProblems(readFileSync(CARGO_TOML, 'utf8'), readFileSync(CARGO_LOCK, 'utf8'))).toEqual([]);
   });
+  it('main.rs 用 gdk 的函式包在 #[cfg(target_os = "linux")] 裡(非 Linux 不偵測)', () => {
+    expect(gdkCfgProblems(readFileSync(MAIN_RS, 'utf8'))).toEqual([]);
+  });
+  const lock = '[[package]]\nname = "gdk"\nversion = "0.18.2"\n';
+  const LINUX = `[target.'cfg(target_os = "linux")'.dependencies]`;
   it('檢查抓得到:沒直接依賴、兩份 gdk、版本不同', () => {
-    const lock = '[[package]]\nname = "gdk"\nversion = "0.18.2"\n';
     expect(gdkDependencyProblems('[dependencies]\nlog = "0.4"\n', lock).join('\n')).toMatch(/沒有直接依賴/);
-    expect(gdkDependencyProblems('[dependencies]\ngdk = "0.18"\n', `${lock}\n[[package]]\nname = "gdk"\nversion = "0.19.0"\n`).join('\n')).toMatch(/2 份/);
-    expect(gdkDependencyProblems('[dependencies]\ngdk = "0.19"\n', lock).join('\n')).toMatch(/同一個/);
-    expect(gdkDependencyProblems('[dependencies]\ngdk = "0.18"\n', lock)).toEqual([]);
+    expect(gdkDependencyProblems(`${LINUX}\ngdk = "0.18"\n`, `${lock}\n[[package]]\nname = "gdk"\nversion = "0.19.0"\n`).join('\n')).toMatch(/2 份/);
+    expect(gdkDependencyProblems(`${LINUX}\ngdk = "0.19"\n`, lock).join('\n')).toMatch(/同一個/);
+    expect(gdkDependencyProblems(`${LINUX}\ngdk = "0.18"\n`, lock)).toEqual([]);
+  });
+  it('檢查抓得到:gdk 放在一般 [dependencies] 或別的平台區塊', () => {
+    expect(gdkDependencyProblems('[dependencies]\ngdk = "0.18"\n', lock).join('\n')).toMatch(/只能放在/);
+    expect(gdkDependencyProblems(`[target.'cfg(windows)'.dependencies]\ngdk = "0.18"\n`, lock).join('\n')).toMatch(/只能放在/);
+    expect(gdkDependencyProblems(`[dependencies]\ngdk = "0.18"\n${LINUX}\ngdk = "0.18"\n`, lock).join('\n')).toMatch(/\[dependencies\] 有 gdk/);
+  });
+  it('檢查逐行掃區塊標題:前面有別的 target 區塊、註解裡寫區塊標題都不影響', () => {
+    const toml = `[dependencies]\nlog = "0.4"\n\n[target.'cfg(unix)'.dependencies]\nlibc = "0.2"\n\n# [target.'cfg(target_os = "linux")'.dependencies] 先放這裡\n${LINUX}\ngdk = "0.18" # 同 lock\n`;
+    expect(gdkDependencyProblems(toml, lock)).toEqual([]);
+    expect(gdkDependencyProblems(`# ${LINUX}\n[dependencies]\ngdk = "0.18"\n`, lock).join('\n')).toMatch(/只能放在/);
+  });
+  it('cfg 檢查抓得到:沒有 cfg、cfg 是別的平台;有 cfg 的通過(最小合成片段)', () => {
+    expect(gdkCfgProblems('fn probe() -> bool { s.is_composited() }').join('\n')).toMatch(/沒有 #\[cfg/);
+    expect(gdkCfgProblems('#[cfg(unix)]\nfn probe() -> bool { s.is_composited() }').join('\n')).toMatch(/沒有 #\[cfg/);
+    expect(gdkCfgProblems('#[cfg(target_os = "linux")]\nfn probe() -> bool { s.is_composited() }')).toEqual([]);
+  });
+});
+
+describe('日誌預設 filter(驗收 1 逾時退路的 warn 要看得到)', () => {
+  const lib = () => readFileSync(join(REPO, 'apps/desktop/src-tauri/src/lib.rs'), 'utf8');
+  it('init_logging 的預設 filter 來自 log_filter(RUST_LOG),不再是 default_filter_or("error")', () => {
+    const body = /pub fn init_logging\s*\(\s*\)\s*\{([\s\S]*?)\n\}/.exec(lib())?.[1] ?? '';
+    expect(body, 'lib.rs 找不到 init_logging').not.toBe('');
+    expect(body).toMatch(/log_filter\s*\(/);
+    expect(body).not.toMatch(/default_filter_or\s*\(\s*"error"\s*\)/);
+    expect(body).toMatch(/RUST_LOG/);
   });
 });
 
