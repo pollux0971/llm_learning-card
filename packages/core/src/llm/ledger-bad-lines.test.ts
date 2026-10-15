@@ -254,10 +254,11 @@ describe('T8 A:router 在打 adapter 之前就拒絕', () => {
   });
 
   it('壞行修好之後(移除那一行)呼叫恢復正常——拒絕不是永久狀態', async () => {
-    const path = writeLog([call(), 'bad line']);
+    // 便宜的呼叫(1000 tokens):修好之後的帳本不能因為舊花費超過上限而觸發煞車,否則測到的是預算而不是壞行。
+    const path = writeLog([call(DAY, 1000), 'bad line']);
     const h = harness(path);
     await expect(h.router.call('ingest.cards', '壞行時')).rejects.toThrow(UnknownSpendError!);
-    writeFileSync(path, `${call()}\n`, 'utf8');
+    writeFileSync(path, `${call(DAY, 1000)}\n`, 'utf8');
     const ok = await h.router.call('ingest.cards', '修好之後');
     expect(ok.text).toContain('修好之後');
     expect(h.cloudCalls()).toBe(1);

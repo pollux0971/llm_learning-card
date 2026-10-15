@@ -22,6 +22,7 @@ import {
   readDailyCapUsd,
   readDailySpend,
   readSpendPrices,
+  UnknownSpendError,
   type SpendPrices,
 } from './spend.js';
 
@@ -232,8 +233,8 @@ describe('readDailySpend', () => {
     }
   });
 
-  it('壞掉的一行只跳過那一行,其他行照算', () => {
-    // 整份放棄會把花費算成 0,而 0 的方向是「還可以繼續花」——錢的方向上不能這樣錯。
+  it('壞掉的一行讓花費變成「不知道」:丟 UnknownSpendError,不回部分總數(T8 A,取代舊的「只跳過那一行」)', () => {
+    // 舊行為(P-22)是跳過壞行、其他行照算;跳過壞行 = 低估花費 = 「還可以繼續花」,錢的方向上不能這樣錯。
     // 寫 log 中途被砍掉會留下半行,所以這不是假想的情況。
     const dir = mkdtempSync(join(tmpdir(), 'spend-test-'));
     try {
@@ -244,10 +245,22 @@ describe('readDailySpend', () => {
           JSON.stringify(event({ tokens_out: 500_000 })),
           '{"ts":"2026-09-04T10:00:00+08:00","type":"llm_ca',  // 被砍斷的半行
           'not json at all',
-          '',
-          '   ',
           JSON.stringify(event({ tokens_out: 500_000 })),
         ].join('\n') + '\n',
+      );
+      expect(() => readDailySpend(ExplicitLedger.unverified(logPath, 'spend test'), TODAY, PRICES)).toThrow(UnknownSpendError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('空白行與只有空白的行不是壞行:照樣跳過,其他行照算', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spend-test-'));
+    try {
+      const logPath = join(dir, 'log.jsonl');
+      writeFileSync(
+        logPath,
+        [JSON.stringify(event({ tokens_out: 500_000 })), '', '   ', '\t', JSON.stringify(event({ tokens_out: 500_000 }))].join('\n') + '\n',
       );
       const spend = readDailySpend(ExplicitLedger.unverified(logPath, 'spend test'), TODAY, PRICES);
       expect(spend.calls).toBe(2);
