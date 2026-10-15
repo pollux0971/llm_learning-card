@@ -27,13 +27,16 @@ serde_json = { version = "1", features = ["preserve_order"] }
 time = { version = "0.3", features = ["formatting", "macros"] }
 unicode-normalization = "0.1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
-# 合成器偵測(T16 / ADR-072)。版本跟 lock 裡 tao 已經用的 0.18.2 同一份。只在 Linux 呼叫。
-gdk = "0.18"
 
 # errno 常數:目錄 fsync 的 EINVAL 判斷(§11b、T2c-1 9a)、O_NOFOLLOW、close 的錯誤碼。
 # Windows 的對應碼是 phase-5 的事。
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# 合成器偵測(T16 / ADR-072)。GTK 只有 Linux 有,不能放一般 dependencies(phase-4、phase-5 會編不過)。
+# 版本跟 lock 裡 tao 已經用的 0.18.2 同一份。
+[target.'cfg(target_os = "linux")'.dependencies]
+gdk = "0.18"
 
 # 測試用(T2c-1 測試 agent):tauri 的 test feature 給 tests/commands.rs 的 mock runtime;
 # libc 給 errno 常數(EINVAL/EIO/ENOSPC…);sha2 給段向量檔與圖片 bytes 的 sha256。

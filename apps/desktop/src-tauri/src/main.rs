@@ -34,7 +34,7 @@ fn apply_session_behaviour(window: &WebviewWindow, session: SessionType) {
 }
 
 /// 建窗前問一次 GDK 預設螢幕有沒有合成器。Wayland 永遠是 true;沒有預設螢幕時當作沒有,
-/// 切角走實心底,不要黑的。執行中開關不追(ADR-072)。macOS / Windows 的透明視窗不在這張。
+/// 切角走實心底,不要黑的。執行中開關不追(ADR-072)。
 #[cfg(target_os = "linux")]
 fn desktop_is_composited() -> bool {
     match gdk::Screen::default() {
@@ -46,6 +46,7 @@ fn desktop_is_composited() -> bool {
     }
 }
 
+/// macOS / Windows 不偵測(gdk 只有 Linux 有)。直接走透明,跟 `mode_for(true)` 一樣。
 #[cfg(not(target_os = "linux"))]
 fn desktop_is_composited() -> bool {
     true

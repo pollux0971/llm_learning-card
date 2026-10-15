@@ -1409,4 +1409,6 @@ graph TD
   - 執行中開關合成器,畫法不會跟著變,要重開 app。Wayland 上一律當有合成器,這張不驗。
   - 點在切角外面那一小塊,點擊還是給視窗(視窗實際上是長方形)。使用者選透明視窗時已知道,不在這張修。
   - `gdk` 是桌面殼的直接依賴,版本 `"0.18"`,lock 裡仍是 tao 已經在用的那一份 0.18.2,不另起第二份。
+  - 第 2 輪(技術顧問 2026-10-16,不另開號):`gdk` 只放 `[target.'cfg(target_os = "linux")'.dependencies]`,不放一般 `[dependencies]`,否則 phase-4、phase-5 一 build 就壞。非 Linux 不偵測,直接走透明(`mode_for(true)`)。lock 仍是一份 0.18.2。
+  - 第 2 輪:沒設 `RUST_LOG` 時 filter 是 `error,learning_cards_desktop=warn`,本 crate 的逾時 warn 預設印得出來;設了 `RUST_LOG` 就完全照它,不加預設。
 - **Related**: ADR-071(HUD 元件歸 14)、ADR-011(Linux 先做)、`features/10-desktop-shell/phase-6.feature`、`features/14-hud-skin/FEATURE.md`、`docs/tickets/T16-desktop-phase-6.md`
