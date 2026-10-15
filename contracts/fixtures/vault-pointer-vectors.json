@@ -1,0 +1,386 @@
+{
+  "description": "Cross-language vectors for the user-level vault pointer and the ledger identity marker (contracts/types.md section 12, contract 1.4.0, ADR-066). They state only behaviour that section 12 and scripts/vault.ts already have; they add no new rule. The TypeScript resolver (packages/core/src/llm/ledger.ts) and the desktop shell (Rust) load this one file and must agree on every row. All text is ASCII; control characters are JSON escapes. Placeholders in the 'states' section: <LEARNING> is an existing absolute directory made by the harness; <MISSING> is an absolute path that does not exist; <RELATIVE> is a relative path that, resolved from the current working directory, reaches the existing <LEARNING> directory. Only POSIX absolute paths are covered (Windows and macOS locations are decided in phase 4 and 5).",
+  "reasons": [
+    "pointer-missing",
+    "pointer-unreadable",
+    "learning-dir-missing",
+    "marker-mismatch",
+    "ok"
+  ],
+  "pointer_path": [
+    {
+      "env": {
+        "XDG_CONFIG_HOME": "/tmp/x"
+      },
+      "home": "/tmp/h",
+      "expect": "/tmp/x/llm-learning-cards/vault.json",
+      "why": "XDG_CONFIG_HOME wins over the home directory"
+    },
+    {
+      "env": {},
+      "home": "/tmp/h",
+      "expect": "/tmp/h/.config/llm-learning-cards/vault.json",
+      "why": "XDG_CONFIG_HOME unset: home/.config"
+    },
+    {
+      "env": {
+        "XDG_CONFIG_HOME": ""
+      },
+      "home": "/tmp/h",
+      "expect": "/tmp/h/.config/llm-learning-cards/vault.json",
+      "why": "XDG_CONFIG_HOME empty string counts as unset (section 12)"
+    }
+  ],
+  "marker_compare": [
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "equal",
+      "why": "identical"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "equal",
+      "why": "exactly one trailing newline is allowed"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n\n",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "a second trailing newline is not allowed"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\r\n",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "CR LF is not allowed"
+    },
+    {
+      "marker_text": " aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "leading space"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee ",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "trailing space"
+    },
+    {
+      "marker_text": "\naaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "leading newline"
+    },
+    {
+      "marker_text": "aaaaaaaa-0000-4000-8000-000000000000",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "same first 8 characters is not a match"
+    },
+    {
+      "marker_text": "aaaaaaaa",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "prefix only in the marker"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "vault_id": "aaaaaaaa",
+      "expect": "not-equal",
+      "why": "prefix only in the pointer"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee0",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "one extra character after a valid id"
+    },
+    {
+      "marker_text": "xaaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "junk before a valid id"
+    },
+    {
+      "marker_text": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "expect": "not-equal",
+      "why": "upper case marker, lower case pointer"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "vault_id": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "expect": "not-equal",
+      "why": "lower case marker, upper case pointer"
+    },
+    {
+      "marker_text": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "vault_id": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+      "expect": "not-equal",
+      "why": "both upper case: upper case is not the format this system writes"
+    },
+    {
+      "marker_text": "not-a-uuid",
+      "vault_id": "not-a-uuid",
+      "expect": "not-equal",
+      "why": "equal strings that are not a uuid"
+    },
+    {
+      "marker_text": "",
+      "vault_id": "",
+      "expect": "not-equal",
+      "why": "both empty"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "vault_id": "not-a-uuid",
+      "expect": "not-equal",
+      "why": "pointer id is not a uuid"
+    },
+    {
+      "marker_text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "vault_id": "11111111-2222-4333-8444-555555555555",
+      "expect": "not-equal",
+      "why": "a different valid uuid"
+    }
+  ],
+  "pointer_content": [
+    {
+      "raw": "{\"learning_dir\": \"/abs/learning\", \"vault_id\": \"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\"}",
+      "expect": "ok",
+      "why": "valid",
+      "learning_dir": "/abs/learning",
+      "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    },
+    {
+      "raw": "{",
+      "expect": "unreadable",
+      "why": "broken JSON"
+    },
+    {
+      "raw": "null",
+      "expect": "unreadable",
+      "why": "JSON null"
+    },
+    {
+      "raw": "[]",
+      "expect": "unreadable",
+      "why": "JSON array"
+    },
+    {
+      "raw": "\"x\"",
+      "expect": "unreadable",
+      "why": "JSON string"
+    },
+    {
+      "raw": "{\"vault_id\": \"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\"}",
+      "expect": "unreadable",
+      "why": "learning_dir missing"
+    },
+    {
+      "raw": "{\"learning_dir\": \"/abs\"}",
+      "expect": "unreadable",
+      "why": "vault_id missing"
+    },
+    {
+      "raw": "{\"learning_dir\": 1, \"vault_id\": \"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\"}",
+      "expect": "unreadable",
+      "why": "learning_dir is not a string"
+    },
+    {
+      "raw": "{\"learning_dir\": \"/abs\", \"vault_id\": 7}",
+      "expect": "unreadable",
+      "why": "vault_id is not a string"
+    },
+    {
+      "raw": "{\"learning_dir\": \"learning\", \"vault_id\": \"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\"}",
+      "expect": "unreadable",
+      "why": "learning_dir is relative"
+    },
+    {
+      "raw": "{\"learning_dir\": \"./learning\", \"vault_id\": \"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\"}",
+      "expect": "unreadable",
+      "why": "learning_dir is relative (dot slash)"
+    }
+  ],
+  "states": [
+    {
+      "pointer": {
+        "kind": "absent"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n"
+      },
+      "expect": "pointer-missing",
+      "why": "pointer file does not exist; a decoy directory with a valid marker beside it must not be used",
+      "decoy_learning_dir_with_valid_marker": true
+    },
+    {
+      "pointer": {
+        "kind": "absent"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n"
+      },
+      "expect": "pointer-missing",
+      "why": "pointer file does not exist; an environment variable naming a directory is not a second source",
+      "extra_env": {
+        "LC_LEARNING_ROOT": "<LEARNING>"
+      }
+    },
+    {
+      "pointer": {
+        "kind": "raw",
+        "raw": "{"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n"
+      },
+      "expect": "pointer-unreadable",
+      "why": "broken JSON"
+    },
+    {
+      "pointer": {
+        "kind": "io-error"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n"
+      },
+      "expect": "pointer-unreadable",
+      "why": "the pointer exists but reading it fails (for example permission denied)"
+    },
+    {
+      "pointer": {
+        "kind": "raw",
+        "raw": "{\"learning_dir\": 1, \"vault_id\": \"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\"}"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n"
+      },
+      "expect": "pointer-unreadable",
+      "why": "wrong field type"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<RELATIVE>",
+        "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n"
+      },
+      "expect": "pointer-unreadable",
+      "why": "relative learning_dir is refused even though it reaches a directory with a valid marker"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<MISSING>",
+        "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "marker": {
+        "kind": "absent"
+      },
+      "expect": "learning-dir-missing",
+      "why": "learning_dir does not exist"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<LEARNING>",
+        "vault_id": "11111111-2222-4333-8444-555555555555"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n"
+      },
+      "expect": "marker-mismatch",
+      "why": "the marker holds another identity"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<LEARNING>",
+        "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "marker": {
+        "kind": "absent"
+      },
+      "expect": "marker-mismatch",
+      "why": "the marker file does not exist"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<LEARNING>",
+        "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "marker": {
+        "kind": "io-error"
+      },
+      "expect": "marker-mismatch",
+      "why": "the marker exists but reading it fails"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<LEARNING>",
+        "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-0000-4000-8000-000000000000\n"
+      },
+      "expect": "marker-mismatch",
+      "why": "only the first 8 characters match"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<LEARNING>",
+        "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n\n"
+      },
+      "expect": "marker-mismatch",
+      "why": "two trailing newlines"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<LEARNING>",
+        "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\n"
+      },
+      "expect": "ok",
+      "why": "identity matches, one trailing newline"
+    },
+    {
+      "pointer": {
+        "kind": "json",
+        "learning_dir": "<LEARNING>",
+        "vault_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "marker": {
+        "kind": "text",
+        "text": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+      },
+      "expect": "ok",
+      "why": "identity matches, no trailing newline"
+    }
+  ]
+}
