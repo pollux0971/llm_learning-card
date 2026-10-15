@@ -15,7 +15,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CardId, Review } from '@contracts/index.js';
-import type { LlmRouter } from '@core/llm/index.js';
+import type { LlmRouter } from '@core/grading/index.js';
 import { buildTodaySession, deriveReteachQueue } from './build.js';
 
 const TODAY = '2026-09-10';
