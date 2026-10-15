@@ -25,6 +25,9 @@
   --hud-page-line: rgba(0, 0, 0, 0.07);
   --hud-font-display: "Rajdhani", "Noto Sans CJK TC", "Noto Sans TC", sans-serif;
   --hud-font-body: "Noto Sans CJK TC", "Noto Sans TC", sans-serif;
+  /* 結果字色:對面板最差對比 ≥ 4.5。#146c2e ≈ 5.21、#b31d28 ≈ 5.36。 */
+  --hud-pass: #146c2e;
+  --hud-fail: #b31d28;
 }
 
 html {
@@ -118,6 +121,44 @@ body {
 
 .hud-body {
   padding: 0.85rem 0.95rem 1rem;
+}
+
+/* 卡片視窗:切角就是視窗的形狀。展示頁不帶這個 class。 */
+[data-hud="panel"].hud-fill {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+html:has([data-hud="panel"].hud-fill),
+html:has([data-hud="panel"].hud-fill) body {
+  height: 100%;
+  overflow: hidden;
+}
+
+[data-hud="panel"].hud-fill > .hud-cut,
+[data-hud="panel"].hud-fill .hud-cut-inner {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 底邊距留在捲動區外面。內容比視窗長時,捲動區的 padding-bottom 會捲走,字會貼到視窗下緣,把 1px 黑線量厚。 */
+[data-hud="panel"].hud-fill .hud-cut-inner {
+  padding-bottom: 8px;
+  box-sizing: border-box;
+}
+
+[data-hud="panel"].hud-fill .hud-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 [data-hud="titlebar"] {
@@ -234,6 +275,72 @@ body {
 [data-hud="minimize"],
 [data-hud="close"] {
   transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+/* 作答欄:跟按鈕同一種切角細黑框。輸入框自己不畫框。 */
+[data-hud="field"] {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding: var(--hud-line-width);
+  background: var(--hud-line);
+  color: var(--hud-text);
+  clip-path: polygon(
+    8px 0,
+    100% 0,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    0 100%,
+    0 8px
+  );
+  transition: background-color 120ms ease;
+}
+
+.hud-field-face {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--hud-panel);
+  clip-path: polygon(
+    7px 0,
+    100% 0,
+    100% calc(100% - 7px),
+    calc(100% - 7px) 100%,
+    0 100%,
+    0 7px
+  );
+}
+
+[data-hud="field"] input,
+[data-hud="field"] textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+  resize: vertical;
+  font-family: var(--hud-font-body);
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--hud-text);
+}
+
+[data-hud="field"]:focus-within {
+  background: var(--hud-accent);
+  outline: 1px solid var(--hud-accent);
+  outline-offset: 2px;
+}
+
+[data-hud="field"]:has(:disabled) {
+  opacity: 0.45;
 }
 
 [data-hud="hp-bar"] {
