@@ -178,6 +178,19 @@ Feature: The file boundary and the learning directory
     Then the learning log gets exactly two warning lines
     And the last line has count 2
 
+  # Boundary: a line is written when at least 60 seconds have passed since the previous line for that
+  # reason (greater than or equal, not greater than). Both implementations must use the same comparison.
+  Scenario: A refusal exactly 60 seconds after the last written line is written
+    Given the asset refusal limiter has no earlier refusals
+    When the web view is refused with reason structure at seconds 0 and 60
+    Then the learning log gets exactly two warning lines
+    And the structure line written at second 60 has count 1
+
+  Scenario: A refusal 59 seconds after the last written line is not written
+    Given the asset refusal limiter has no earlier refusals
+    When the web view is refused with reason structure at seconds 0 and 59
+    Then the learning log gets exactly one warning line
+
   # Refusals on the four commands are not rate limited: each one is a person's own action
   # and has a caller that sees the refusal.
   Scenario: Refusals through the commands are never rate limited
