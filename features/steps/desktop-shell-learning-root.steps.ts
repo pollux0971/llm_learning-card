@@ -12,7 +12,7 @@
 import { After, Given, Then, When, BeforeAll } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import type { LearningWorld } from './_world.js';
 import { BUILD_LC_FS_TIMEOUT_MS, buildLcFs } from '../../apps/desktop/src/test-support/build-lc-fs.js';
 import { hexToBytes, runProbe, type ProbeResponse, type TraceEntry } from '../../apps/desktop/src/test-support/probe.js';
@@ -396,7 +396,9 @@ Then('both were served from the same learning directory', function (this: Learni
   assert.equal(hexToBytes(String(asset?.bodyHex ?? '')).toString('utf8'), 'CARD-IN-ROOT');
   for (const r of results) {
     for (const call of r.fsCalls ?? []) {
-      assert.ok(call.path.startsWith(c.sb.learning), `${r.kind} 碰了根目錄以外的路徑 ${call.path}`);
+      // fsCalls 記的是相對根目錄的路徑(或根底下的絕對路徑);往上跳或別的絕對路徑都不行
+      const inside = isAbsolute(call.path) ? call.path.startsWith(`${c.sb.learning}/`) : !call.path.split('/').includes('..');
+      assert.ok(inside, `${r.kind} 碰了根目錄以外的路徑 ${call.path}`);
     }
   }
   assert.equal(c.session?.root, c.sb.learning);

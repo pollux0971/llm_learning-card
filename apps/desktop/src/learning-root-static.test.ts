@@ -157,6 +157,6 @@ describe('npm run tauri dev 照原文能跑(工單驗收 9,靜態部分)', () =>
     expect(pkg?.default_run).toBe('learning-cards-desktop');
     // 兩個 bin 都還在(probe 沒被改名或刪掉)
     const bins = pkg?.targets.filter((t) => t.kind.includes('bin')).map((t) => t.name).sort();
-    expect(bins).toEqual(['learning-cards-desktop', 'lc-fs']);
+    expect(bins).toEqual(['lc-fs', 'learning-cards-desktop']);
   });
 });
