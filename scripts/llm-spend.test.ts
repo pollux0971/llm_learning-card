@@ -36,7 +36,7 @@
  *   - CLI 層(spawn 真的跑一次):盯的是協調者實際看到的那一行與退出碼。
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
@@ -44,15 +44,25 @@ import {
   formatSpendReport,
   exitCodeFor,
   parseSpendArgs,
-  resolveLogPath,
+  resolveSpendLedger,
   DEFAULT_LOG_PATH,
   EXIT_UNDER_CAP,
   EXIT_AT_OR_OVER_CAP,
   EXIT_CANNOT_COMPUTE,
 } from './llm-spend.js';
-import type { SpendReport, SpendCliArgs } from './llm-spend.js';
+import type { SpendReport } from './llm-spend.js';
+import { ExplicitLedger } from '../packages/core/src/llm/ledger.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
+const VAULT_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+/**
+ * 純函式層的測試:帳本把手用明確的未驗證把手包起來(`buildSpendReport` 不再收裸字串,T5 第 8 條)。
+ * 這幾條測的是「讀得出什麼數字」,不是「能不能當煞車」——後者在下面的 formatSpendReport / exitCodeFor 與 CLI 層。
+ */
+function at(path: string): ExplicitLedger {
+  return ExplicitLedger.unverified(path, 'llm-spend 純函式測試');
+}
 
 /** spawnSync 起一個 `npx tsx` 子行程要一到三秒,機器忙的時候更久。 */
 const SPAWN_TIMEOUT_MS = 60_000;
@@ -116,12 +126,19 @@ function runCli(
   args: string[],
   env: Record<string, string | undefined> = {},
 ): { code: number; output: string; stdout: string; stderr: string } {
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...goodEnv() };
+  const isolated = tmpDir();
+  const childEnv: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH ?? '',
+    HOME: isolated,
+    XDG_CONFIG_HOME: join(isolated, 'xdg-config'),
+    XDG_RUNTIME_DIR: join(isolated, 'xdg-runtime'),
+    ...goodEnv(),
+  };
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) delete childEnv[k];
     else childEnv[k] = v;
   }
-  const r = spawnSync('npx', ['tsx', 'scripts/llm-spend.ts', ...args], {
+  const r = spawnSync(process.execPath, ['--import=tsx', join(REPO_ROOT, 'scripts/llm-spend.ts'), ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: childEnv,
@@ -151,7 +168,7 @@ describe('buildSpendReport 的三態', () => {
   it('log 存在、今天有 OpenAI 呼叫、未達上限:computed,而且帶得出 log 路徑與今日條目數', () => {
     // 1000 in * 2.5/1e6 + 2000 out * 10/1e6 = 0.0025 + 0.02 = 0.0225
     const log = writeLog([otherEvent(), openaiCall(1000, 2000)]);
-    const report = buildSpendReport(goodEnv(), log, DAY);
+    const report = buildSpendReport(goodEnv(), at(log), DAY);
 
     expect(report.kind).toBe('computed');
     if (report.kind !== 'computed') return;
@@ -165,7 +182,7 @@ describe('buildSpendReport 的三態', () => {
 
   it('N=0 但 log 存在:仍然是 computed(今天沒呼叫是合法的,不是「算不出來」)', () => {
     const log = writeLog([otherEvent(), otherEvent()]);
-    const report = buildSpendReport(goodEnv(), log, DAY);
+    const report = buildSpendReport(goodEnv(), at(log), DAY);
 
     expect(report.kind).toBe('computed');
     if (report.kind !== 'computed') return;
@@ -176,7 +193,7 @@ describe('buildSpendReport 的三態', () => {
   });
 
   it('log 存在但完全是空檔:computed,今日條目 0 筆(空 log 也是一種「算得出來」)', () => {
-    const report = buildSpendReport(goodEnv(), writeLog([]), DAY);
+    const report = buildSpendReport(goodEnv(), at(writeLog([])), DAY);
 
     expect(report.kind).toBe('computed');
     if (report.kind !== 'computed') return;
@@ -188,13 +205,13 @@ describe('buildSpendReport 的三態', () => {
     const path = join(tmpDir(), 'log.jsonl');
     writeFileSync(path, `\n${openaiCall(1000, 0)}\n\n   \n`, 'utf8');
 
-    const report = buildSpendReport(goodEnv(), path, DAY);
+    const report = buildSpendReport(goodEnv(), at(path), DAY);
     expect(report.kind).toBe('computed');
   });
 
   it('log 檔不存在:unknown。**這就是這張工單的起點**', () => {
     const missing = join(tmpDir(), 'nope.jsonl');
-    const report = buildSpendReport(goodEnv(), missing, DAY);
+    const report = buildSpendReport(goodEnv(), at(missing), DAY);
 
     expect(report.kind).toBe('unknown');
     if (report.kind !== 'unknown') return;
@@ -204,7 +221,7 @@ describe('buildSpendReport 的三態', () => {
 
   it('log 路徑指到一個目錄(讀得到 stat、讀不出內容):unknown', () => {
     const dir = tmpDir();
-    const report = buildSpendReport(goodEnv(), dir, DAY);
+    const report = buildSpendReport(goodEnv(), at(dir), DAY);
     expect(report.kind).toBe('unknown');
   });
 });
@@ -226,7 +243,7 @@ describe('buildSpendReport:環境變數缺 / 空 / 非數字一律 unknown', () 
   for (const [name, overrides] of cases) {
     it(`${name} → unknown,而且原因裡點得出變數名`, () => {
       const log = writeLog([openaiCall(1000, 2000)]);
-      const report = buildSpendReport(goodEnv(overrides), log, DAY);
+      const report = buildSpendReport(goodEnv(overrides), at(log), DAY);
 
       expect(report.kind).toBe('unknown');
       if (report.kind !== 'unknown') return;
@@ -281,14 +298,14 @@ describe('parseSpendArgs', () => {
 
 describe('buildSpendReport:上限與今日條目的邊界', () => {
   it('LLM_DAILY_CAP_USD = 0 是合法的「不設限」,不是壞值', () => {
-    const report = buildSpendReport(goodEnv({ LLM_DAILY_CAP_USD: '0' }), writeLog([openaiCall(1000, 2000)]), DAY);
+    const report = buildSpendReport(goodEnv({ LLM_DAILY_CAP_USD: '0' }), at(writeLog([openaiCall(1000, 2000)])), DAY);
     expect(report.kind).toBe('computed');
     if (report.kind !== 'computed') return;
     expect(report.capUsd).toBe(0);
   });
 
   it('LLM_DAILY_CAP_USD 是負數 → unknown,原因點得出變數名', () => {
-    const report = buildSpendReport(goodEnv({ LLM_DAILY_CAP_USD: '-1' }), writeLog([openaiCall(1000, 2000)]), DAY);
+    const report = buildSpendReport(goodEnv({ LLM_DAILY_CAP_USD: '-1' }), at(writeLog([openaiCall(1000, 2000)])), DAY);
     expect(report.kind).toBe('unknown');
     if (report.kind !== 'unknown') return;
     expect(report.reason).toContain('LLM_DAILY_CAP_USD');
@@ -302,7 +319,7 @@ describe('buildSpendReport:上限與今日條目的邊界', () => {
       otherEvent(),
       openaiCall(1000, 2000),
     ]);
-    const report = buildSpendReport(goodEnv(), log, DAY);
+    const report = buildSpendReport(goodEnv(), at(log), DAY);
     expect(report.kind).toBe('computed');
     if (report.kind !== 'computed') return;
     expect(report.entriesToday).toBe(2);
@@ -314,7 +331,7 @@ describe('buildSpendReport:壞行 = 算不出來(P-22 的反轉)', () => {
   it('今日條目裡有一行 parse 失敗 → unknown,不是「跳過那行照常回答」', () => {
     // 舊行為會跳過壞行、回報 $0.0225(只算得出好的那筆),方向是低估。
     const log = writeLog([openaiCall(1000, 2000), '{"ts":"2026-09-04T11:00:00.000Z","type":"llm_ca']);
-    const report = buildSpendReport(goodEnv(), log, DAY);
+    const report = buildSpendReport(goodEnv(), at(log), DAY);
 
     expect(report.kind).toBe('unknown');
   });
@@ -327,7 +344,7 @@ describe('buildSpendReport:壞行 = 算不出來(P-22 的反轉)', () => {
       'THIS LINE IS NOT JSON',
       openaiCall(1000, 2000, '2025-01-02'),
     ]);
-    const report = buildSpendReport(goodEnv(), log, DAY);
+    const report = buildSpendReport(goodEnv(), at(log), DAY);
 
     expect(report.kind).toBe('unknown');
   });
@@ -335,7 +352,7 @@ describe('buildSpendReport:壞行 = 算不出來(P-22 的反轉)', () => {
   it('壞行的原因要帶「行號 / 前 80 字 / 怎麼修」三樣,少一樣 fail-closed 就會被繞過', () => {
     const long = `{"ts":"2026-09-04T11:00:00.000Z","type":"llm_call","provider":"openai","tokens_in":123456789,"note":"這一行故意超過八十個字元,好驗證訊息有截斷"`;
     const log = writeLog([otherEvent(), long]);
-    const report = buildSpendReport(goodEnv(), log, DAY);
+    const report = buildSpendReport(goodEnv(), at(log), DAY);
 
     expect(report.kind).toBe('unknown');
     if (report.kind !== 'unknown') return;
@@ -378,7 +395,7 @@ describe('buildSpendReport:整份檔都不是 JSONL,也是算不出來', () => {
       const path = join(tmpDir(), 'log.jsonl');
       writeFileSync(path, content, 'utf8');
 
-      const report = buildSpendReport(goodEnv(), path, DAY);
+      const report = buildSpendReport(goodEnv(), at(path), DAY);
       expect(report.kind).toBe('unknown');
       if (report.kind !== 'unknown') return;
 
@@ -401,7 +418,30 @@ describe('formatSpendReport / exitCodeFor', () => {
     entriesToday: 0,
     capUsd: 1,
     logPath: '/tmp/x/log.jsonl',
+    ledger: 'verified',
     ...over,
+  });
+
+  it('未驗證的帳本:第一行恰好是 ledger=unverified;驗證過的沒有這一行', () => {
+    const unverified = formatSpendReport(computed({ ledger: 'unverified', usd: 0.5 }));
+    expect(unverified.split('\n')[0]).toBe('ledger=unverified');
+    expect(unverified).toContain('今日 OpenAI 花費 $0.5000');
+    const verified = formatSpendReport(computed({ usd: 0.5 }));
+    expect(verified).not.toContain('ledger=');
+    expect(verified.split('\n')).toHaveLength(1);
+  });
+
+  it('exitCodeFor:未驗證的帳本一律 2——它不能被當成煞車的依據(未達、已達上限都一樣)', () => {
+    expect(exitCodeFor(computed({ ledger: 'unverified', usd: 0.5, capUsd: 1 }))).toBe(EXIT_CANNOT_COMPUTE);
+    expect(exitCodeFor(computed({ ledger: 'unverified', usd: 1.5, capUsd: 1 }))).toBe(EXIT_CANNOT_COMPUTE);
+    expect(exitCodeFor(computed({ ledger: 'unverified', usd: 0, capUsd: 0 }))).toBe(EXIT_CANNOT_COMPUTE);
+  });
+
+  it('buildSpendReport 標出把手的種類:ExplicitLedger → unverified', () => {
+    const report = buildSpendReport(goodEnv(), at(writeLog([])), DAY);
+    expect(report.kind).toBe('computed');
+    if (report.kind !== 'computed') return;
+    expect(report.ledger).toBe('unverified');
   });
 
   it('computed 的那一行帶得出 log 路徑、今日條目數、呼叫次數、上限', () => {
@@ -462,6 +502,26 @@ describe('formatSpendReport / exitCodeFor', () => {
 
 // ---------------------------------------------------------------- CLI:協調者真的看到的東西
 
+/**
+ * 一個帶合法指標與標記的沙箱(T5):沒有 --log 時,CLI 走指標解析出的 VerifiedLedger。
+ * `lines === null` 表示帳本檔不存在(全新安裝)。回傳要蓋進子程序的 env 與帳本路徑。
+ */
+function verifiedVault(lines: string[] | null): { env: Record<string, string>; logPath: string } {
+  const root = tmpDir();
+  const learning = join(root, 'learning');
+  mkdirSync(join(learning, 'config'), { recursive: true });
+  writeFileSync(join(learning, 'config', 'vault-id'), `${VAULT_ID}\n`);
+  const logPath = join(learning, 'state', 'log.jsonl');
+  if (lines !== null) {
+    mkdirSync(join(learning, 'state'), { recursive: true });
+    writeFileSync(logPath, lines.length ? `${lines.join('\n')}\n` : '', 'utf8');
+  }
+  const config = join(root, 'xdg-config');
+  mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+  writeFileSync(join(config, 'llm-learning-cards', 'vault.json'), JSON.stringify({ learning_dir: learning, vault_id: VAULT_ID }));
+  return { env: { HOME: root, XDG_CONFIG_HOME: config }, logPath };
+}
+
 describe('scripts/llm-spend.ts 的 CLI 三態', () => {
   it('log 檔不存在 → exit 2,而且一個「還有預算」的字都沒有', () => {
     const missing = join(tmpDir(), 'nope.jsonl');
@@ -481,15 +541,27 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     expect(output).not.toMatch(BUDGET_SENTENCE);
   }, SPAWN_TIMEOUT_MS);
 
-  it('log 存在、今天 0 次呼叫 → exit 0,而且看得出「有 log、今天沒花」', () => {
-    const log = writeLog([otherEvent(), otherEvent()]);
-    const { code, output, stdout, stderr } = runCli(['--day', DAY, '--log', log]);
+  it('(驗證過的帳本)log 存在、今天 0 次呼叫 → exit 0,而且看得出「有 log、今天沒花」', () => {
+    const vault = verifiedVault([otherEvent(), otherEvent()]);
+    const { code, output, stdout, stderr } = runCli(['--day', DAY], vault.env);
 
     expect(code).toBe(0);
-    expect(output).toContain(log);
+    expect(output).not.toContain('ledger=unverified');
+    expect(output).toContain(vault.logPath);
     expect(output).toMatch(/今日條目\s*2\s*筆/);
     // 算得出來的那一行走 stdout;stderr 乾淨。協調者接 stdout 就拿得到數字。
     expect(stdout).toContain('今日 OpenAI 花費');
+    expect(stderr).toBe('');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('明講 --log:報告第一行標 ledger=unverified,exit 2——未驗證的報告不能當煞車的依據', () => {
+    const log = writeLog([otherEvent(), otherEvent()]);
+    const { code, stdout, stderr } = runCli(['--day', DAY, '--log', log]);
+
+    expect(code).toBe(2);
+    expect(stdout.split('\n')[0]).toBe('ledger=unverified');
+    expect(stdout).toContain(log);
+    expect(stdout).toMatch(/今日條目\s*2\s*筆/);
     expect(stderr).toBe('');
   }, SPAWN_TIMEOUT_MS);
 
@@ -502,27 +574,46 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     expect(stderr).toContain('算不出來');
   }, SPAWN_TIMEOUT_MS);
 
-  it('--json 在算得出來時吐 day / usd / calls / entries_today / log / cap_usd', () => {
-    const log = writeLog([otherEvent(), openaiCall(1000, 2000)]);
-    const { code, output } = runCli(['--day', DAY, '--log', log, '--json']);
+  it('(驗證過的帳本)--json 在算得出來時吐 day / usd / calls / entries_today / log / cap_usd / ledger', () => {
+    const vault = verifiedVault([otherEvent(), openaiCall(1000, 2000)]);
+    const { code, output } = runCli(['--day', DAY, '--json'], vault.env);
 
     expect(code).toBe(0);
     const parsed = JSON.parse(output) as Record<string, unknown>;
+    expect(parsed.ledger).toBe('verified');
     expect(parsed.day).toBe(DAY);
     expect(parsed.usd).toBeCloseTo(0.0225, 10);
     expect(parsed.calls).toBe(1);
     expect(parsed.entries_today).toBe(2);
-    expect(parsed.log).toBe(log);
+    expect(parsed.log).toBe(vault.logPath);
     expect(parsed.cap_usd).toBe(1);
     expect(parsed).not.toHaveProperty('error');
   }, SPAWN_TIMEOUT_MS);
 
-  it('花費剛好等於上限 → exit 1(邊界,ADR-039)', () => {
+  it('明講 --log 的 --json:ledger 是 unverified,exit 2', () => {
+    const log = writeLog([otherEvent(), openaiCall(1000, 2000)]);
+    const { code, output } = runCli(['--day', DAY, '--log', log, '--json']);
+
+    expect(code).toBe(2);
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    expect(parsed.ledger).toBe('unverified');
+    expect(parsed.usd).toBeCloseTo(0.0225, 10);
+    expect(parsed.log).toBe(log);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('(驗證過的帳本)花費剛好等於上限 → exit 1(邊界,ADR-039)', () => {
     // cap = 0.0225,花費也是 0.0225。
+    const vault = verifiedVault([openaiCall(1000, 2000)]);
+    const { code } = runCli(['--day', DAY], { ...vault.env, LLM_DAILY_CAP_USD: '0.0225' });
+
+    expect(code).toBe(1);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('明講 --log 而花費達上限:仍然 exit 2,不是 1——未驗證的帳本連「停」都不能說', () => {
     const log = writeLog([openaiCall(1000, 2000)]);
     const { code } = runCli(['--day', DAY, '--log', log], { LLM_DAILY_CAP_USD: '0.0225' });
 
-    expect(code).toBe(1);
+    expect(code).toBe(2);
   }, SPAWN_TIMEOUT_MS);
 
   it('--json 在算不出來時不吐 usd / cap_usd,只吐 error', () => {
@@ -537,20 +628,22 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
     expect(parsed).not.toHaveProperty('cap_usd');
   }, SPAWN_TIMEOUT_MS);
 
-  it('log 不存在與 log 空檔的訊息不一樣(路徑正規化之後比,不是比輸出)', () => {
-    const missingPath = join(tmpDir(), 'nope.jsonl');
-    const emptyPath = writeLog([]);
-    const missing = runCli(['--day', DAY, '--log', missingPath]);
-    const empty = runCli(['--day', DAY, '--log', emptyPath]);
+  it('(驗證過的帳本)log 不存在與 log 空檔的訊息與退出碼都不一樣(路徑正規化之後比,不是比輸出)', () => {
+    const missingVault = verifiedVault(null);
+    const emptyVault = verifiedVault([]);
+    const missing = runCli(['--day', DAY], missingVault.env);
+    const empty = runCli(['--day', DAY], emptyVault.env);
 
     // 兩次跑用兩個不同的暫存路徑,不去掉路徑的話只要訊息印了路徑就永遠「不一樣」——
     // 把兩句話全部清空仍然綠。比的是訊息本身。
-    const missingMsg = withoutPath(missing.output, missingPath);
-    const emptyMsg = withoutPath(empty.output, emptyPath);
+    const missingMsg = withoutPath(missing.output, missingVault.logPath);
+    const emptyMsg = withoutPath(empty.output, emptyVault.logPath);
     expect(missingMsg.trim()).not.toBe('');
     expect(emptyMsg.trim()).not.toBe('');
     expect(missingMsg).not.toBe(emptyMsg);
-    expect(missing.code).not.toBe(empty.code);
+    // llm-spend 既有的 unknown 路徑不退步(工單第 9 條):帳本檔不存在仍是「算不出來」exit 2,空檔才是 0。
+    expect(missing.code).toBe(2);
+    expect(empty.code).toBe(0);
   }, SPAWN_TIMEOUT_MS);
 
   it('整份 log 是 "hello"(合法 JSON,但不是 JSONL 事件)→ exit 2,不是「有 log 但沒花」', () => {
@@ -574,6 +667,76 @@ describe('scripts/llm-spend.ts 的 CLI 三態', () => {
   }, SPAWN_TIMEOUT_MS);
 });
 
+describe('scripts/llm-spend.ts 的帳本解析(T5 第 3、7、9 條)', () => {
+  it('沒有指標、也沒有 --log → exit 2,stderr 含 init 與 show,stdout 一個字都沒有', () => {
+    const { code, stdout, stderr } = runCli(['--day', DAY]);
+
+    expect(code).toBe(2);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('算不出來');
+    expect(stderr).toContain('npx tsx scripts/vault.ts init');
+    expect(stderr).toContain('npx tsx scripts/vault.ts show');
+    expect(stderr).not.toMatch(BUDGET_SENTENCE);
+  }, SPAWN_TIMEOUT_MS);
+
+  it('標記不符 → exit 2,不是 0', () => {
+    const vault = verifiedVault([otherEvent()]);
+    writeFileSync(join(vault.logPath, '..', '..', 'config', 'vault-id'), '11111111-2222-4333-8444-555555555555\n');
+    const { code, stdout, stderr } = runCli(['--day', DAY], vault.env);
+
+    expect(code).toBe(2);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('npx tsx scripts/vault.ts init');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('指標檔是壞的,明講 --log 仍然算得出來——明確參數存在時不讀指標檔', () => {
+    const root = tmpDir();
+    const config = join(root, 'xdg-config');
+    mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+    writeFileSync(join(config, 'llm-learning-cards', 'vault.json'), '{ broken');
+    const log = writeLog([otherEvent(), openaiCall(1000, 2000)]);
+    const { code, stdout, stderr } = runCli(['--day', DAY, '--log', log], { HOME: root, XDG_CONFIG_HOME: config });
+
+    expect(code).toBe(2);
+    expect(stdout.split('\n')[0]).toBe('ledger=unverified');
+    expect(stdout).toContain('今日 OpenAI 花費 $0.0225');
+    expect(stderr).toBe('');
+  }, SPAWN_TIMEOUT_MS);
+
+  it('must_catch: 正式程式的預設路徑走 ExplicitLedger —— llm-spend 沒有 --log 時是指標驗證過的 VerifiedLedger', () => {
+    const vault = verifiedVault([]);
+    const resolved = resolveSpendLedger({
+      explicitLog: undefined,
+      env: vault.env,
+      homedir: () => vault.env.HOME ?? '',
+      readFile: (path) => readFileSync(path, 'utf8'),
+      exists: (path) => existsSync(path),
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.ledger.kind).toBe('verified');
+    expect(resolved.ledger.logPath).toBe(vault.logPath);
+  });
+
+  it('使用者明講 --log 時得到 ExplicitLedger,連指標檔都不探測', () => {
+    const resolved = resolveSpendLedger({
+      explicitLog: '/custom/log.jsonl',
+      env: {},
+      homedir: () => '/home/unused',
+      readFile: () => {
+        throw new Error('不該讀');
+      },
+      exists: () => {
+        throw new Error('不該探測');
+      },
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.ledger.kind).toBe('explicit');
+    expect(resolved.ledger.logPath).toBe('/custom/log.jsonl');
+  });
+});
+
 // 這個目錄是使用者好幾個月的記憶資料(CLAUDE.md 硬規則 2 / 5)。上面每一條測試都寫
 // 暫存目錄,沒有任何一條碰得到它——留這個常數是為了讓「有沒有人不小心寫進去」
 // 看得出來。
@@ -581,36 +744,4 @@ const FORBIDDEN = join(REPO_ROOT, 'learning');
 
 it('測試本身不碰 learning/', () => {
   expect(tmpDirs.every((d) => !d.startsWith(FORBIDDEN))).toBe(true);
-});
-
-/**
- * ADR-051:learning/ 是主簽出跨 worktree 共用的帳本,沒給 --log 時要指回主簽出,
- * 不是目前這個 git worktree 自己的一份。`resolveVaultLearningDir()` 本身跨
- * worktree 解析同一個路徑的保證在 packages/core/src/llm/vault.test.ts 驗過
- * (真的 git repo + worktree);這裡只驗 `resolveLogPath()` 這一層的決策邏輯
- * ——sentinel 沒被動過就解析、被使用者明講就原樣用——用注入的假 vaultLearningDir,
- * 不必真的 shell 出去、真的在 git worktree 裡跑一次子行程(那個手法會需要子行程
- * cwd 底下有一份完整的 tsconfig/node_modules 才能解析 @core/* 路徑別名,拿一個
- * 全新的臨時 git repo 當「假 worktree」裝不出這個環境;真的跨 worktree 證據見
- * ADR-051 交接的陽性對照,不是這裡)。
- */
-describe('scripts/llm-spend.ts — resolveLogPath (ADR-051)', () => {
-  it('sentinel(使用者沒給 --log)時,解析成 vaultLearningDir()/state/log.jsonl', () => {
-    const args: SpendCliArgs = { logPath: DEFAULT_LOG_PATH, json: false };
-    expect(resolveLogPath(args, () => '/fake/vault/learning')).toBe('/fake/vault/learning/state/log.jsonl');
-  });
-
-  it('使用者明講 --log 時,原樣用,不被 vault 解析蓋過去', () => {
-    const args: SpendCliArgs = { logPath: '/custom/log.jsonl', json: false };
-    const vaultLearningDir = vi.fn(() => '/fake/vault/learning');
-    expect(resolveLogPath(args, vaultLearningDir)).toBe('/custom/log.jsonl');
-    // 明講的路徑優先到「連 vault 解析都不用做」——不只是「算出來又被丟掉」。
-    expect(vaultLearningDir).not.toHaveBeenCalled();
-  });
-
-  it('不注入 vaultLearningDir 時,預設用真的 resolveVaultLearningDir()(這個 repo 本身也是一個 git repo/worktree,解析得出一個字串)', () => {
-    const args: SpendCliArgs = { logPath: DEFAULT_LOG_PATH, json: false };
-    const result = resolveLogPath(args);
-    expect(result.endsWith(join('learning', 'state', 'log.jsonl'))).toBe(true);
-  });
 });

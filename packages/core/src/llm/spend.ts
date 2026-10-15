@@ -35,8 +35,9 @@
  *   一律回 false——避免有人把變數設成 0 就整個系統停擺。
  * - `readSpendPrices(env)` / `readDailyCapUsd(env)`:契約 §11 的環境變數讀取,
  *   數值不合法(非數字 / 負數)就退回預設值,不丟錯。
- * - `readDailySpend(logPath, day, prices)`:讀 `log.jsonl` 檔案再算。檔案不存在
- *   回 `{ usd: 0, calls: 0 }`(還沒呼叫過就是沒花錢),不丟錯。
+ * - `readDailySpend(ledger, day, prices)`:讀帳本把手(`VerifiedLedger` / `ExplicitLedger`,不收裸字串)
+ *   上的 `log.jsonl` 再算。把手在、檔案不存在(ENOENT)= 全新安裝 = 0;沒有把手丟 `MissingLedgerError`;
+ *   其他讀檔錯誤(權限、是目錄…)原樣丟出——都是「不知道」,永遠不回 0。
  *
  * 本體先留空/丟 not implemented,邏輯留給下一輪開發 agent。測試見 spend.test.ts。
  */
@@ -44,6 +45,7 @@
 import { readFileSync } from 'node:fs';
 import { witness, witnessed } from '@contracts/witness.js';
 import type { LogEvent } from '@contracts/index.js';
+import type { LedgerHandle } from './ledger.js';
 
 export interface SpendPrices {
   /** 輸入 token 每百萬個的美元價 */
@@ -145,15 +147,31 @@ export function readDailyCapUsd(env: NodeJS.ProcessEnv): number {
   return readNonNegativeNumber(env.LLM_DAILY_CAP_USD, DEFAULT_DAILY_CAP_USD);
 }
 
-/** 讀 log.jsonl 再算。檔案不存在回 `{ usd: 0, calls: 0 }`,不丟錯。 */
-export function readDailySpend(logPath: string, day: string, prices: SpendPrices): DailySpend {
+/**
+ * 沒有帳本把手時查花費。花費是「不知道」,不是 0——0 的方向是「還可以繼續花」(T5 / ADR-066)。
+ * 取代 ADR-044 目錄裡「讀不到 log 當 0」(spend.log-unreadable-zero)與「沒給 logPath 當 0」
+ * (gateway-router.spend-no-log-zero)兩條退化分支;兩個訊號已隨 T5 從 packages/contracts/src/witness.ts 移除。
+ */
+export class MissingLedgerError extends Error {
+  constructor() {
+    super('沒有帳本把手:今日花費是不知道,不是 0。帳本位置只由指標檔決定(npx tsx scripts/vault.ts init / show)');
+    this.name = 'MissingLedgerError';
+  }
+}
+
+/**
+ * 讀帳本把手上的 log.jsonl 再算。
+ * 把手在、檔案不存在 = 全新安裝 = 0。沒有把手就丟錯,不回 0、不印 witness。
+ * 讀得到但不是「檔案不存在」(權限、IO)也丟錯——那是不知道,不是零。
+ */
+export function readDailySpend(ledger: LedgerHandle | undefined, day: string, prices: SpendPrices): DailySpend {
+  if (ledger === undefined) throw new MissingLedgerError();
   let content: string;
   try {
-    content = readFileSync(logPath, 'utf8');
-  } catch {
-    // 還沒呼叫過就是沒花錢——檔案不存在不是錯誤。
-    witness('llm.spend.log-unreadable-zero');
-    return { usd: 0, calls: 0 };
+    content = readFileSync(ledger.logPath, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { usd: 0, calls: 0 };
+    throw err;
   }
 
   // 壞掉的一行只跳過那一行,不整份放棄:整份放棄會把花費算成 0,而 0 的方向

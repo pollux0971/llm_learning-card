@@ -734,20 +734,33 @@ describe('runTests 全套時拿鎖', () => {
   });
 
   it('不給 lockPath 時用 strykerLockPath():跟 Stryker **同一把**,不是另一把', async () => {
+    // T5 第 12、15 條:XDG_RUNTIME_DIR / HOME 指到 mkdtemp,不碰真的;結束還原。
+    const saved = { HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR };
+    const runtime = tmp('run-tests-default-runtime');
+    const home = tmp('run-tests-default-home');
+    process.env.XDG_RUNTIME_DIR = runtime;
+    process.env.HOME = home;
     let seen: string | undefined;
-    await runTests({
-      argv: ['node', 'run-tests.ts'],
-      acquire: async (p) => {
-        seen = p;
-        return { lockPath: p, info: info(), release: () => {} };
-      },
-      runVitest: async () => 0,
-      installCleanup: () => () => {},
-      log: () => {},
-    });
+    try {
+      await runTests({
+        argv: ['node', 'run-tests.ts'],
+        acquire: async (p) => {
+          seen = p;
+          return { lockPath: p, info: info(), release: () => {} };
+        },
+        runVitest: async () => 0,
+        installCleanup: () => () => {},
+        log: () => {},
+      });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
     // 兩把不同的鎖 = 沒有互斥。這條是整張工單的地基。
-    expect(seen).toBe(strykerLockPath());
-    expect(seen?.endsWith('.stryker.lock')).toBe(true);
+    expect(seen).toBe(strykerLockPath({ env: { XDG_RUNTIME_DIR: runtime }, homedir: () => home }));
+    expect(seen).toBe(join(runtime, 'llm-learning-cards', 'stryker.lock'));
   });
 
   it('把 signal 清理掛上去,結束時再拆掉', async () => {
@@ -1170,12 +1183,14 @@ describe('不重新發明鎖', () => {
     expect(src).not.toContain('unlinkSync(');
     // 檔名字面值只准在 mutate.ts 出現一次(註解裡提到無妨,字串字面值不行)。
     expect(src).not.toContain("'.stryker.lock'");
+    expect(src).not.toContain("'stryker.lock'");
   });
 
   it('mutate.ts 還是鎖的唯一定義處(LOCK_FILENAME 只在那裡)', () => {
-    // 值從 import 驗、宣告從原始碼驗。不能比對「LOCK_FILENAME = '.stryker.lock'」整段字面:
+    // 值從 import 驗、宣告從原始碼驗。不能比對「LOCK_FILENAME = 'stryker.lock'」整段字面:
     // Stryker 的沙盒會把初始值包成 mutant 開關,那段字面就不在了,dry run 直接紅(審核輪 2026-09-05 踩到)。
-    expect(LOCK_FILENAME).toBe('.stryker.lock');
+    // T5(ADR-066):鎖搬到機器範圍的目錄,檔名是 stryker.lock(不再是 repo 根下的隱藏檔 .stryker.lock)。
+    expect(LOCK_FILENAME).toBe('stryker.lock');
     const src = readFileSync(MUTATE_MODULE, 'utf8');
     expect(src).toMatch(/export const LOCK_FILENAME\b/);
     expect(readFileSync(RUN_TESTS_MODULE, 'utf8')).not.toMatch(/const LOCK_FILENAME\b/);

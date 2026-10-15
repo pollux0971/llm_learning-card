@@ -407,7 +407,17 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
     process.env.LLM_CLOUD_PROVIDER = 'anthropic';
     process.env.LLM_CLOUD_MODEL = MODEL;
     process.env.ANTHROPIC_API_KEY = 'test-key';
-    const learningDir = tmpLearningDir();
+    const root = tmpLearningDir();
+    const learningDir = join(root, 'learning');
+    const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    mkdirSync(join(learningDir, 'config'), { recursive: true });
+    writeFileSync(join(learningDir, 'config', 'vault-id'), `${id}\n`);
+    const config = join(root, 'xdg');
+    mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+    writeFileSync(join(config, 'llm-learning-cards', 'vault.json'), JSON.stringify({ learning_dir: learningDir, vault_id: id }));
+    process.env.HOME = root;
+    process.env.XDG_CONFIG_HOME = config;
+    process.env.XDG_RUNTIME_DIR = join(root, 'runtime');
 
     const router = createDefaultLiveRouter(learningDir);
     const result = await router.call('grade.apply', '同源政策是什麼?');
@@ -427,12 +437,77 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
   });
 
   /**
-   * ADR-051 的 owner 必須以真的 createDefaultLiveRouter() 驗，不是比較兩個
-   * resolver 的字串。這裡建立一個完整的合成 git 主簽出與 worktree，讓子程序
-   * 從合成 worktree 載入同一份 source；故 vault resolver 在結構上只能回合成
-   * 主簽出。清理目標永遠是 mkdtemp 直接給的 sandbox，絕不解析真實 learning/。
+   * T5(ADR-066):帳本由使用者層指標決定。HOME / XDG_* 指到 mkdtemp(afterEach 還原整個 env),
+   * 合成指標 + 合成標記;不碰真的指標檔、不碰真的 learning/。
    */
-  it('ADR-051: 合成 worktree 的預設 router 把帳本接到合成主簽出，不是 worktree 自己', () => {
+  function syntheticVault(): { root: string; learningDir: string } {
+    const root = tmpLearningDir();
+    const learningDir = join(root, 'learning');
+    const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    mkdirSync(join(learningDir, 'config'), { recursive: true });
+    writeFileSync(join(learningDir, 'config', 'vault-id'), `${id}\n`);
+    const config = join(root, 'xdg');
+    mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+    writeFileSync(join(config, 'llm-learning-cards', 'vault.json'), JSON.stringify({ learning_dir: learningDir, vault_id: id }));
+    process.env.HOME = root;
+    process.env.XDG_CONFIG_HOME = config;
+    process.env.XDG_RUNTIME_DIR = join(root, 'runtime');
+    return { root, learningDir };
+  }
+
+  function readEvents(logPath: string): Record<string, unknown>[] {
+    return readFileSync(logPath, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  it('must_catch: 正式程式的預設路徑走 ExplicitLedger —— createDefaultLiveRouter() 零參數時,記帳進指標驗證過的那本', async () => {
+    installFakeCloud(true);
+    Object.assign(process.env, liveEnv());
+    const { learningDir } = syntheticVault();
+
+    const router = createDefaultLiveRouter();
+    await router.call('grade.apply', '同源政策是什麼?');
+
+    expect(readEvents(join(learningDir, 'state/log.jsonl'))).toHaveLength(1);
+  });
+
+  it('--live 的 learningDir 只管輸出(設定)位置,不管帳本:給別的目錄,事件仍進指標那本,別的目錄不長出 state/', async () => {
+    installFakeCloud(true);
+    Object.assign(process.env, liveEnv());
+    const { root, learningDir } = syntheticVault();
+    const outputDir = join(root, 'some-output');
+    mkdirSync(outputDir, { recursive: true });
+
+    const router = createDefaultLiveRouter(outputDir);
+    await router.call('grade.apply', '同源政策是什麼?');
+
+    expect(readEvents(join(learningDir, 'state/log.jsonl'))).toHaveLength(1);
+    expect(existsSync(join(outputDir, 'state'))).toBe(false);
+  });
+
+  it('沒有指標:createDefaultLiveRouter 丟錯(訊息含 init 與 show),不建 router、不建任何目錄', () => {
+    installFakeCloud(true);
+    Object.assign(process.env, liveEnv());
+    const root = tmpLearningDir();
+    process.env.HOME = root;
+    process.env.XDG_CONFIG_HOME = join(root, 'xdg');
+    process.env.XDG_RUNTIME_DIR = join(root, 'runtime');
+    const outputDir = join(root, 'learning');
+
+    expect(() => createDefaultLiveRouter(outputDir)).toThrow(/npx tsx scripts\/vault\.ts init[\s\S]*npx tsx scripts\/vault\.ts show/);
+    expect(readdirSync(root)).toEqual([]);
+    expect(requests).toEqual([]);
+  });
+
+  /**
+   * 原本是 ADR-051 的證明(帳本接到合成主簽出);T5(ADR-066)之後改成:合成 worktree 的
+   * 預設 router 把帳本接到**指標指向的那本**,worktree 與主簽出底下都不長出 learning/。
+   * 清理目標永遠是 mkdtemp 直接給的 sandbox,絕不解析真實 learning/。
+   */
+  it('ADR-066: 合成 worktree 的預設 router 把帳本接到指標指向的那本,不是 worktree 也不是主簽出自己的 learning/', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'pq-live-vault-'));
     const main = join(sandbox, 'main');
     const worktree = join(sandbox, 'worktree');
@@ -458,6 +533,17 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
       git(main, 'commit', '-q', '-m', 'synthetic source');
       git(main, 'worktree', 'add', '-q', '-b', 'synthetic-worktree', worktree);
       symlinkSync(join(ROOT, 'node_modules'), join(worktree, 'node_modules'));
+      const shared = join(sandbox, 'shared-learning');
+      const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+      mkdirSync(join(shared, 'config'), { recursive: true });
+      writeFileSync(join(shared, 'config', 'vault-id'), `${id}\n`);
+      const config = join(sandbox, 'xdg-config');
+      const home = join(sandbox, 'home');
+      const runtime = join(sandbox, 'xdg-runtime');
+      mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+      mkdirSync(home, { recursive: true });
+      mkdirSync(runtime, { recursive: true });
+      writeFileSync(join(config, 'llm-learning-cards', 'vault.json'), JSON.stringify({ learning_dir: shared, vault_id: id }));
 
       const runner = join(worktree, '.t1-create-live-router.ts');
       writeFileSync(
@@ -478,14 +564,20 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
         cwd: worktree,
         encoding: 'utf8',
         timeout: 60_000,
-        env: { PATH: process.env.PATH ?? '' },
+        env: {
+          PATH: process.env.PATH ?? '',
+          HOME: home,
+          XDG_CONFIG_HOME: config,
+          XDG_RUNTIME_DIR: runtime,
+        },
       });
       expect(child.status, child.stderr).toBe(0);
 
-      const mainLogPath = join(main, 'learning/state/log.jsonl');
-      expect(existsSync(mainLogPath)).toBe(true);
-      expect(readFileSync(mainLogPath, 'utf8')).toContain('"type":"llm_call"');
+      const sharedLog = join(shared, 'state/log.jsonl');
+      expect(existsSync(sharedLog)).toBe(true);
+      expect(readFileSync(sharedLog, 'utf8')).toContain('"type":"llm_call"');
       expect(existsSync(join(worktree, 'learning/state/log.jsonl'))).toBe(false);
+      expect(existsSync(join(main, 'learning/state/log.jsonl'))).toBe(false);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

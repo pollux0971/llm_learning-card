@@ -44,6 +44,7 @@ import {
   configPositionalIndex,
   installCleanup,
   isMainModule,
+  LOCK_FILENAME,
   mutationCommand,
   mutationRawReportPath,
   mutationSummaryFromReport,
@@ -105,7 +106,7 @@ function read(raw: string, mtimeMs = T0): { raw: string; mtimeMs: number } {
 const DEAD_PID = 0x7ffffffe;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1. 鎖的位置:跨 worktree 必須是同一個
+// 1. 鎖的位置:機器範圍(T5 / ADR-066),跨 worktree 與 clone 都是同一個
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** git init 一個 repo,再掛兩個 worktree。回主 repo 與兩個 worktree 的路徑。 */
@@ -132,34 +133,12 @@ function gitRepoWithWorktrees(): { main: string; wtA: string; wtB: string } {
 }
 
 describe('strykerLockPath', () => {
-  it('兩個不同 worktree 算出來是同一個鎖路徑', () => {
-    const { wtA, wtB } = gitRepoWithWorktrees();
-    // 這條是整個功能的地基。鎖放在各自的 worktree 根等於沒鎖——
-    // 三個 worktree 會各拿到一把自己的鎖,然後照樣同時跑 Stryker。
-    expect(strykerLockPath(wtA)).toBe(strykerLockPath(wtB));
-  });
-
-  it('worktree 與主 repo 算出來也是同一個', () => {
-    const { main, wtA } = gitRepoWithWorktrees();
-    expect(strykerLockPath(wtA)).toBe(strykerLockPath(main));
-  });
-
-  it('鎖就在主 repo 的 .git 旁邊,檔名 .stryker.lock', () => {
-    const { main, wtA } = gitRepoWithWorktrees();
-    expect(strykerLockPath(wtA)).toBe(join(main, '.stryker.lock'));
-  });
-
-  it('回的是絕對路徑(主 repo 裡 git 會回相對的 .git,不 resolve 就會算錯)', () => {
-    const { main } = gitRepoWithWorktrees();
-    const p = strykerLockPath(main);
-    expect(p).toBe(resolve(p));
-  });
-
-  it('worktree 的子目錄算出來還是同一個', () => {
-    const { main, wtA } = gitRepoWithWorktrees();
-    const sub = join(wtA, 'packages', 'core');
-    mkdirSync(sub, { recursive: true });
-    expect(strykerLockPath(sub)).toBe(join(main, '.stryker.lock'));
+  it('不再用 git cwd:同一組 env 算出同一把機器鎖', () => {
+    const home = tmp('lock-home');
+    const runtime = tmp('lock-runtime');
+    const deps = { env: { XDG_RUNTIME_DIR: runtime }, homedir: () => home };
+    expect(strykerLockPath(deps)).toBe(join(runtime, 'llm-learning-cards', 'stryker.lock'));
+    expect(strykerLockPath(deps)).toBe(strykerLockPath(deps));
   });
 });
 
@@ -903,7 +882,8 @@ describe('runMutate', () => {
 
 describe('.gitignore', () => {
   it('擋掉 .stryker.lock', () => {
-    // 鎖就放在主 repo 的根,沒 ignore 的話每次跑 mutate 都會多一個未追蹤檔案。
+    // T5 之前鎖放在主 repo 的根(.stryker.lock);現在搬到機器範圍的目錄,但舊的簽出裡可能還留著
+    // 一個殘鎖檔,ignore 留著,它才不會變成未追蹤檔案被誤加進 commit。
     const ignore = readFileSync(join(REPO_ROOT, '.gitignore'), 'utf8');
     expect(ignore.split('\n').map((l) => l.trim())).toContain('.stryker.lock');
   });
@@ -1059,28 +1039,37 @@ describe('acquireLock 的預設值(不注入 now / sleep / log 時)', () => {
 });
 
 describe('runMutate 的預設值與例外', () => {
-  it('不給 lockPath 時用 strykerLockPath(),以現在的 cwd 算', async () => {
+  it('不給 lockPath 時用機器範圍的 strykerLockPath(XDG_RUNTIME_DIR,不看 cwd)', async () => {
+    // T5 第 12、15 條:XDG_RUNTIME_DIR / HOME 指到 mkdtemp,不碰真的;結束還原。
+    const saved = { HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR };
+    const runtime = tmp('mutate-default-runtime');
+    process.env.XDG_RUNTIME_DIR = runtime;
+    process.env.HOME = tmp('mutate-default-home');
     let seen: string | undefined;
-    const code = await runMutate({
-      argv: ['node', 'mutate.ts'],
-      acquire: async (p) => {
-        seen = p;
-        return { lockPath: p, info: info(), release: () => {} };
-      },
-      runStryker: async () => 0,
-      installCleanup: () => () => {},
-      log: () => {},
-    });
+    let code: number;
+    try {
+      code = await runMutate({
+        argv: ['node', 'mutate.ts'],
+        acquire: async (p) => {
+          seen = p;
+          return { lockPath: p, info: info(), release: () => {} };
+        },
+        runStryker: async () => 0,
+        installCleanup: () => () => {},
+        log: () => {},
+      });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
     expect(code).toBe(0);
-    expect(seen).toBe(strykerLockPath());
-    expect(seen).toBe(strykerLockPath(process.cwd()));
-    // 「鎖在主 repo 的根,不是 worktree 自己的根」**不在這裡**用「套件現在跑在哪」推。
-    // 這裡曾寫成 `if (inWorktree) expect(seen).not.toBe(join(REPO_ROOT, '.stryker.lock'))`,
-    // 而 inWorktree 是拿被測的 strykerLockPath() 自己算的:函式算錯成 worktree 本地時,
-    // inWorktree 恰好變 false、斷言被跳過 —— 綠的是它自己,不是實作
-    // (2026-09-05 審核輪實測:把 strykerLockPath 改成回 worktree 本地路徑,這條在 worktree 裡照樣綠)。
-    // 那個保證由 §1 的 describe('strykerLockPath') 在臨時 git repo 裡蓋 worktree 直接驗,
-    // 再由 §12 的「從 worktree 裡起跑」在行程層級驗一次;兩條都不管套件本身在哪裡跑。
+    expect(seen).toBe(join(runtime, 'llm-learning-cards', 'stryker.lock'));
+    // 期望值是寫死的機器範圍路徑,不是拿被測的 strykerLockPath() 自己算——
+    // 2026-09-05 審核輪實測過「拿被測函式算期望值」會讓錯的實作照樣綠。
+    // 「主簽出 / worktree / clone 看到同一把」由 scripts/machine-lock.test.ts(T5 第 14 條)
+    // 在行程層級驗,§12 的「從 worktree 裡起跑」再驗一次;兩條都不管套件本身在哪裡跑。
   });
 
   it('不給 acquire 時走真的 acquireLock', async () => {
@@ -1526,18 +1515,27 @@ describe('SIGTERM 只收自己的 Stryker group,別的 worktree 的 worker 不�
 
 describe('鎖的位置不看測試套件自己在哪裡跑', () => {
   it(
-    '從 worktree 裡起跑、不給 lockPath:鎖落在主 repo 的根,不是那個 worktree 的根',
+    '從 worktree 裡起跑、不給 lockPath:鎖在機器範圍,不是 worktree 也不是主 repo 的根',
     async () => {
-      // 不靠「套件現在是在 main 還是在某個 worktree 裡跑」:自己 git init 一個主 repo、掛一個 worktree,
-      // 子行程的 cwd 就是那個 worktree。原本這件事是靠「套件正好在 worktree 裡跑」才測得到,
-      // 套件在 main 上跑就變成永遠紅(或加了守衛之後永遠綠)。這裡兩種位置都測到同一件事。
       const dir = tmp('mutate-lock-from-wt');
       const { main, wtA } = gitRepoWithWorktrees();
       const { runner, pidFile } = sandboxWithFakeStryker(dir);
+      const home = join(dir, 'home');
+      const runtime = join(dir, 'runtime');
+      mkdirSync(home, { recursive: true });
+      mkdirSync(runtime, { recursive: true });
+      const lock = join(runtime, 'llm-learning-cards', 'stryker.lock');
 
-      // 不傳 lockPath → runMutate 走 strykerLockPath(),用子行程的 cwd(= 那個 worktree)算。
-      // 用絕對路徑叫 tsx:cwd 在 /tmp 底下,bare specifier 找不到 node_modules。
-      const child = spawn(TSX_BIN, [runner], { cwd: wtA });
+      // 不傳 lockPath → runMutate 走機器範圍的 strykerLockPath(),不看 cwd。
+      const child = spawn(TSX_BIN, [runner], {
+        cwd: wtA,
+        env: {
+          PATH: process.env.PATH ?? '',
+          HOME: home,
+          XDG_CONFIG_HOME: join(dir, 'xdg'),
+          XDG_RUNTIME_DIR: runtime,
+        },
+      });
       let out = '';
       child.stdout.on('data', (c) => (out += String(c)));
       child.stderr.on('data', (c) => (out += String(c)));
@@ -1548,9 +1546,9 @@ describe('鎖的位置不看測試套件自己在哪裡跑', () => {
           await new Promise((r) => setTimeout(r, 100));
         }
         expect(existsSync(pidFile), `假 stryker 沒被叫起來:${out}`).toBe(true);
-        // 拿到鎖之後才會 spawn stryker,所以此刻鎖一定在。它必須在主 repo 的根,worktree 自己的根不能有。
-        expect(existsSync(join(main, '.stryker.lock')), `主 repo 的根沒有鎖:${out}`).toBe(true);
-        expect(existsSync(join(wtA, '.stryker.lock')), `鎖落在 worktree 自己的根:${out}`).toBe(false);
+        expect(existsSync(lock), `機器範圍沒有鎖:${out}`).toBe(true);
+        expect(existsSync(join(main, '.stryker.lock')), `鎖不該落在主 repo 根:${out}`).toBe(false);
+        expect(existsSync(join(wtA, '.stryker.lock')), `鎖不該落在 worktree 根:${out}`).toBe(false);
       } finally {
         child.kill('SIGTERM');
         await exited;
@@ -1923,10 +1921,10 @@ describe('清殘鎖時要印出理由', () => {
     expect(held.info.pid).toBe(process.pid);
     expect(logs).toHaveLength(1);
     // 鎖是共用的:不能叫「Stryker 鎖」(看的人會去找一個不存在的 Stryker),要講鎖檔名。
-    expect(logs[0]).toContain('清掉殘留的鎖 .stryker.lock');
+    expect(logs[0]).toContain(`清掉殘留的鎖 ${LOCK_FILENAME}`);
     expect(logs[0]).not.toContain('Stryker 鎖');
     // 冒號後面必須有東西——那就是 verdict.why。
-    const why = logs[0]!.split('.stryker.lock:')[1] ?? '';
+    const why = logs[0]!.split(`${LOCK_FILENAME}:`)[1] ?? '';
     expect(why.trim().length).toBeGreaterThan(0);
     expect(why).toContain(String(DEAD_PID));
   });
@@ -2032,7 +2030,7 @@ describe('waitingMessage:自己的鏈 vs 別人的', () => {
 
   it('第一行是事實:鎖檔名、持鎖者 pid、cwd', () => {
     const m = waitingMessage(holder, 6 * 60_000, { selfCwd: '/home/x/five-zero-guards', sameWorktree: same });
-    expect(m).toContain('等待 .stryker.lock');
+    expect(m).toContain(`等待 ${LOCK_FILENAME}`);
     expect(m).toContain('pid 2636796');
     expect(m).toContain('cwd=/home/x/five-zero-guards');
   });

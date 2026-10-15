@@ -74,7 +74,9 @@ const UNMARKED_CEILING = 152;
 const VITEST_JSON_FILE = 'vitest.json';
 const VITEST_EXIT_FILE = 'vitest-exit.json';
 
-const SIG_A: DegradedSignal = 'llm.gateway-router.spend-no-log-zero';
+// T5(ADR-066)刪掉了原本用的 llm.gateway-router.spend-no-log-zero(那條「沒 log 當 0」的分支已不存在,
+// 目錄也跟著移除);這裡只需要「目錄裡真的有的一個訊號」,換成同擁有者的另一條。
+const SIG_A: DegradedSignal = 'llm.gateway-router.probe-local-swallowed';
 const SIG_B: DegradedSignal = 'prompt-quality.fake.attempt-fallback-first';
 const SIG_C: DegradedSignal = 'llm.router-impl.local-prober-default';
 
@@ -563,7 +565,7 @@ describe('量尺 · 甲 · catalogDriftProblems:目錄與呼叫點必須一一�
     }
   });
 
-  it('現況:真實 repo 的目錄與呼叫點一一對上(30/30)。不綠就是發現——回報,不放寬', () => {
+  it('現況:真實 repo 的目錄與呼叫點一一對上。不綠就是發現——回報,不放寬', () => {
     const found = findCallSites(REPO_ROOT);
     expect(found.unknown).toEqual([]);
     expect(catalogDriftProblems(found)).toEqual([]);

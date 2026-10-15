@@ -7,7 +7,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { parse as yamlParse } from 'yaml';
-import { DEFAULT_SPEND_PRICES, LlmRouterImpl, resolveVaultLearningDir, type RouterSettings } from '@core/llm/index.js';
+import {
+  DEFAULT_SPEND_PRICES,
+  LlmRouterImpl,
+  defaultVaultDeps,
+  resolveVerifiedLedger,
+  type RouterSettings,
+  type VaultResolveDeps,
+} from '@core/llm/index.js';
 import { FakeLlmRouter } from './fake-llm.js';
 import { getGoldenSet, GOLDEN_SET_REGISTRY_FILE } from './golden-sets/registry.js';
 import { runStructuralChecks } from './structural-checks.js';
@@ -94,11 +101,11 @@ export interface RunGoldenOptions {
   prices?: ModelPriceTable;
   /**
    * 只有沒給 `router` / `createRouter`(用預設的 `createDefaultLiveRouter()`)時才有作用:
-   * 這次呼叫要記進哪個 learning/ 目錄(契約 §11 的 settings.llm、契約 §10 的 log.jsonl)。
-   * 不給就是 `resolveVaultLearningDir()`(ADR-051:主簽出的 learning/,不管現在
-   * 站在哪個 git worktree,一律指回同一份帳本——理由見 `packages/core/src/llm/vault.ts`)。
-   * **測試一律要傳暫存目錄**(ADR-032)——不然每跑一次測試就真的往主簽出的
-   * `learning/state/log.jsonl` 加一行,那是使用者的記帳資料,不是測試夾具。
+   * 讀哪個目錄的 `config/settings.yaml`(契約 §11 的 settings.llm)。**只管輸出 / 設定的位置,不管帳本**
+   * (T5 / ADR-066):帳本一律是使用者層指標檔指向、經身分標記驗證的那本,`--live --out /tmp/x`
+   * 不會把錢記進 `/tmp/x/state/log.jsonl`——那樣日上限又裂成兩本。不給就是帳本那本 learning/。
+   * **測試一律要用沙箱的 HOME / XDG_CONFIG_HOME 與合成指標**(ADR-032、T5 第 15 條)——
+   * 不然會讀到使用者真的指標檔,往真的帳本加一行。
    */
   learningDir?: string;
 }
@@ -294,31 +301,24 @@ function readLlmSettings(learningDir: string): RouterSettings {
  * 少了 logPath,`LlmRouterImpl.call()` 現在會直接丟 `UnaccountableLlmCallError`
  * ——這是故意的煞車,不是退化。
  *
- * `learningDir` 不給就是 `resolveVaultLearningDir()`——主簽出的 learning/,不是
- * 目前這個 git worktree 自己的一份(ADR-051:learning/ 是使用者跨 worktree 共用的
- * 帳本,每個 worktree 各自一份會讓每日預算上限變成「每個簽出各算一次」,而且
- * worktree 被清掉時那份花費紀錄會永久消失)。`RunGoldenOptions.learningDir`
- * 的測試一律要傳暫存目錄(ADR-032),理由見那個欄位的註解。
+ * 帳本(T5 / ADR-066,契約 §12 1.4.0):**只**來自使用者層指標檔與身分標記驗證過的那本
+ * (`resolveVerifiedLedger`)——不是主簽出的 learning/(ADR-051 用 git 位置解析的那一半已被取代:
+ * 它在 clone 之間各算各的),也不是 `learningDir`。指標不存在、讀不到、learning_dir 不存在、
+ * 標記不符:丟錯(訊息帶 `npx tsx scripts/vault.ts init` / `show`),**不建 router、不建任何目錄**。
+ * `learningDir` 只決定讀哪裡的 `config/settings.yaml`(見 `RunGoldenOptions.learningDir`)。
+ *
+ * `deps` 只在測試注入;零參數的預設值是入口層,才拿真的 `process.env` / `os.homedir()`。
  */
-/**
- * `learningDir` 不給時的實際決策,拆成獨立函式方便測——不用真的呼叫
- * `createDefaultLiveRouter()`(那會真的 `mkdirSync` 一次)就能斷言「沒給的話
- * 退回哪裡」,跟 scripts/llm-spend.ts 的 `resolveLogPath()` 同一個理由。
- */
-export function resolveLiveLearningDir(learningDir?: string): string {
-  return learningDir ?? resolveVaultLearningDir(ROOT);
-}
-
-export function createDefaultLiveRouter(learningDir?: string): LlmRouter {
-  const dir = resolveLiveLearningDir(learningDir);
-  const logPath = join(dir, 'state/log.jsonl');
-  // learning/ 整個目錄是 gitignored(使用者的資料),第一次跑在這台機器上可能
-  // 還不存在——append-only 的 log 寫入(atomic-write.ts 的 appendLineAtomic())
-  // 只開檔不建目錄,建不起來就先建好,不要讓「目錄不存在」偽裝成別的錯誤。
-  mkdirSync(join(dir, 'state'), { recursive: true });
+export function createDefaultLiveRouter(learningDir?: string, deps: VaultResolveDeps = defaultVaultDeps()): LlmRouter {
+  const resolved = resolveVerifiedLedger(deps);
+  if (!resolved.ok) throw new Error(resolved.message);
+  const settingsDir = learningDir ?? resolved.ledger.learningDir;
+  // 驗證過的 learning/ 一定存在;全新安裝時 state/ 可能還沒有——append-only 的 log 寫入
+  // (atomic-write.ts 的 appendLineAtomic())只開檔不建目錄,所以先建好。只建在驗證過的那本底下。
+  mkdirSync(join(resolved.ledger.learningDir, 'state'), { recursive: true });
   return new LlmRouterImpl({
-    settings: readLlmSettings(dir),
-    logPath,
+    settings: readLlmSettings(settingsDir),
+    logPath: resolved.ledger.logPath,
   });
 }
 

@@ -1,5 +1,5 @@
 /**
- * 跨 worktree 的 Stryker 檔案鎖(P-29)。
+ * 機器範圍的 Stryker 檔案鎖(P-29;T5 / ADR-066 起跨 worktree 也跨 clone)。
  *
  * 為什麼有這支:三個 worktree 的審核輪同時跑 Stryker,把彼此 OOM 掉(exit 144)。
  * 那一輪三個審核跑了 84 / 45 / 40 分鐘,一大半燒在互相踩踏。更危險的是被 OOM
@@ -19,7 +19,10 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import {
+  accessSync,
+  chmodSync,
   closeSync,
+  constants,
   existsSync,
   fsyncSync,
   mkdirSync,
@@ -30,11 +33,12 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** 鎖檔名。放在主 repo 的 `.git/` 旁邊(不是各 worktree 自己的根)。 */
-export const LOCK_FILENAME = '.stryker.lock';
+/** 鎖檔名。放在機器範圍的目錄(`strykerLockPath`,T5 / ADR-066),不是任何簽出自己的根。 */
+export const LOCK_FILENAME = 'stryker.lock';
 
 /** 拿不到鎖時的重試間隔。 */
 export const RETRY_INTERVAL_MS = 15_000;
@@ -144,19 +148,48 @@ function errnoCode(err: unknown): string | undefined {
   return (err as { code?: string } | null | undefined)?.code;
 }
 
+export interface LockPathDeps {
+  env: NodeJS.ProcessEnv;
+  homedir: () => string;
+}
+
 /**
- * 算鎖的路徑。
+ * 算鎖的路徑:**機器範圍**(T5 / ADR-066)。
  *
- * **這條最容易寫錯**:每個 worktree 有自己的根,鎖放在自己的根等於沒鎖。
- * `git rev-parse --git-common-dir` 在任何 worktree 裡都指向**主 repo 的 `.git/`**,
- * 取它的上一層就是主 repo 的工作目錄——所有 worktree 算出來會是同一個路徑。
- *
- * 主 repo 裡 git 可能回相對路徑(`.git`),所以先 resolve 再 dirname。
+ * `${XDG_RUNTIME_DIR}/llm-learning-cards/stryker.lock`;`XDG_RUNTIME_DIR` 未設或空字串 →
+ * `~/.cache/llm-learning-cards/stryker.lock`。不看 git、不看 cwd:主簽出、worktree、另一個 clone
+ * 算出同一把。以前用 `git rev-parse --git-common-dir` 的上一層——它在 worktree 之間是同一把,
+ * 在 clone 之間各一把,而變異測試與整鏈搶的是同一台機器(T0 量到、T3 phase-a 的負載紀錄)。
+ * 鎖不牽涉錢,不需要身分標記。純函式:env / homedir 由呼叫端注入,入口層才給真的(`defaultLockPath`)。
  */
-export function strykerLockPath(cwd: string = process.cwd()): string {
-  // Stryker disable next-line MethodExpression: `.trim()` 拿掉,尾巴的 `\n` 落在最後一段、被下一行的 dirname() 整段吃掉,輸出位元組完全相同(P-29 審核輪判定)
-  const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd, encoding: 'utf8' }).trim();
-  return join(dirname(resolve(cwd, common)), LOCK_FILENAME);
+export function strykerLockPath(deps: LockPathDeps): string {
+  const runtime = deps.env.XDG_RUNTIME_DIR;
+  if (runtime !== undefined && runtime !== '') return join(runtime, 'llm-learning-cards', LOCK_FILENAME);
+  return join(deps.homedir(), '.cache', 'llm-learning-cards', LOCK_FILENAME);
+}
+
+/**
+ * 鎖目錄不存在就建(權限 0700);**建不出來或寫不進去就丟錯**——呼叫端必須拒絕開始跑,
+ * 不是沒鎖繼續跑(沒有鎖的靜默 = 互撞又回來)。
+ *
+ * 只對這次新建的目錄設 0700(`mkdir` 的 mode 會被 umask 吃掉一部分);本來就在的目錄不動它的權限——
+ * 寫不進去就是寫不進去,不替使用者改回來。
+ */
+export function ensureLockDir(lockPath: string): void {
+  const dir = dirname(lockPath);
+  try {
+    const created = mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (created !== undefined) chmodSync(dir, 0o700);
+    accessSync(dir, constants.W_OK);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`鎖目錄建不出來或寫不進去:${dir}(${message})。拒絕開始跑:沒有鎖就會跟別的簽出互撞。`);
+  }
+}
+
+/** 入口層:真的 process.env / os.homedir()。 */
+export function defaultLockPath(): string {
+  return strykerLockPath({ env: process.env, homedir: () => homedir() });
 }
 
 /**
@@ -422,7 +455,7 @@ export function sameWorktree(a: string, b: string): boolean {
  * 這個目錄所在的 worktree 根(`git rev-parse --show-toplevel`)。問不到回 null,**不丟**。
  *
  * 要用 `--show-toplevel` 而不是 `--git-common-dir`:後者對同一個主 repo 底下的所有 worktree
- * 都回同一個 `.git/`(strykerLockPath 正是靠這點算出同一把鎖),拿它來判會把所有 worktree
+ * 都回同一個 `.git/`(T5 之前的 strykerLockPath 正是靠這點算出同一把鎖),拿它來判會把所有 worktree
  * 都判成自己的——那就是這個函式要防的誤判本身。
  */
 function worktreeRoot(dir: string): string | null {
@@ -859,7 +892,15 @@ export async function runMutate(deps: RunDeps = {}): Promise<number> {
   // 它們測的是鎖與退出碼透傳,不該被這層加料(見 withReportEnforcement 上面的說明)。
   const runStryker = deps.runStryker ?? withReportEnforcement(spawnStryker, log);
   const install = deps.installCleanup ?? ((release: () => void) => installCleanup(release));
-  const lockPath = deps.lockPath ?? strykerLockPath();
+  const lockPath = deps.lockPath ?? defaultLockPath();
+  if (deps.acquire === undefined) {
+    try {
+      ensureLockDir(lockPath);
+    } catch (err) {
+      log(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
+  }
 
   let held: HeldLock;
   try {

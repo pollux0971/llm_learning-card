@@ -4,7 +4,13 @@
  *   npx tsx scripts/llm-spend.ts --today            # 印出今日金額與筆數
  *   npx tsx scripts/llm-spend.ts --today --json     # 同上,JSON 格式
  *   npx tsx scripts/llm-spend.ts --day 2026-09-03   # 指定某一天
- *   npx tsx scripts/llm-spend.ts --today --log path/to/log.jsonl
+ *   npx tsx scripts/llm-spend.ts --today --log path/to/log.jsonl   # 未驗證的帳本:只能看,不能當煞車
+ *
+ * **帳本是哪一本**(T5 / ADR-066,契約 §12 1.4.0):沒有 `--log` 時,帳本由使用者層指標檔決定
+ * (`npx tsx scripts/vault.ts init` 建立、`show` 檢查),經身分標記驗證的才算(`VerifiedLedger`)。
+ * 指標不存在、讀不到、learning_dir 不存在、標記不符——一律 exit 2(算不出來),訊息帶 init / show。
+ * 給了 `--log` 就是**未驗證的帳本**(`ExplicitLedger`):不讀指標檔,報告第一行標 `ledger=unverified`,
+ * 而且退出碼一律 2——它不能被當成煞車的依據(煞車只消費 `VerifiedLedger`)。
  *
  * **三態,三個退出碼**(不是兩態)。這支是 autopilot 每輪的預算煞車,也是「超過上限就
  * 問使用者」的唯一判斷依據,所以「算不出來」必須跟「還有預算」分得開:
@@ -41,10 +47,18 @@
  */
 import './_env.js';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { computeDailySpend, dayOf, isBudgetExhausted, resolveVaultLearningDir } from '../packages/core/src/llm/index.js';
-import type { SpendPrices } from '../packages/core/src/llm/index.js';
+import {
+  ExplicitLedger,
+  computeDailySpend,
+  dayOf,
+  defaultVaultDeps,
+  isBudgetExhausted,
+  resolveVerifiedLedger,
+  type LedgerHandle,
+  type SpendPrices,
+  type VaultResolveDeps,
+} from '../packages/core/src/llm/index.js';
 
 /**
  * `computeDailySpend` 收的事件型別。直接寫 `LogEvent` 要從 @contracts import,
@@ -67,10 +81,9 @@ export const EXIT_CANNOT_COMPUTE = 2;
 export const EXIT_USAGE_ERROR = EXIT_CANNOT_COMPUTE;
 
 /**
- * 跟 scripts/llm.ts 用同一個預設路徑字面值。這是 parseSpendArgs()（純函式,
- * 不碰 git/檔案系統)的 sentinel——main() 看到 logPath 還是這個值,才知道使用者
- * 沒有明講 --log,要在真的做 I/O 之前把它解析成 resolveVaultLearningDir()
- * 的絕對路徑(ADR-051)。這個常數本身不是「最後會用到的路徑」。
+ * parseSpendArgs()(純函式,不碰檔案系統)的 sentinel——main() 看到 logPath 還是這個值,
+ * 才知道使用者沒有明講 --log,要改由指標檔解析帳本(T5 / ADR-066)。
+ * 這個常數本身不是「最後會用到的路徑」,也從來不會被讀。
  */
 export const DEFAULT_LOG_PATH = 'learning/state/log.jsonl';
 
@@ -116,13 +129,31 @@ export function parseSpendArgs(argv: string[]): SpendCliArgs {
 }
 
 /**
- * ADR-051:`args.logPath` 還是 `parseSpendArgs()` 填的 sentinel(使用者沒有明講
- * `--log`)時,解析成主簽出 `learning/` 底下的絕對路徑;使用者明講了就原樣用,
- * 不蓋過去。`vaultLearningDir` 可注入——測試不必真的 shell 出去、真的在 git repo
- * 裡跑,傳一個假的回傳值就測得到「有沒有解析、解析了什麼」。
+ * 這次報告讀哪一本帳(T5 / ADR-066)。`explicitLog` 是使用者明講的 `--log`;其餘是指標解析的注入
+ * (env / homedir / 讀檔),入口層才給真的——測試注入合成的,不會讀到真的指標檔。
  */
-export function resolveLogPath(args: SpendCliArgs, vaultLearningDir: () => string = resolveVaultLearningDir): string {
-  return args.logPath === DEFAULT_LOG_PATH ? join(vaultLearningDir(), 'state/log.jsonl') : args.logPath;
+export interface SpendLedgerInput extends VaultResolveDeps {
+  explicitLog: string | undefined;
+}
+
+export type SpendLedgerResult =
+  | { ok: true; ledger: LedgerHandle }
+  | { ok: false; exitCode: 2; message: string };
+
+/**
+ * 明確 `--log` 優先,而且**不讀指標檔**(指標壞掉也照樣看得到那本帳),得到未驗證把手;
+ * 沒有 `--log` 才解析指標,四種拒絕一律 exit 2。
+ */
+export function resolveSpendLedger(input: SpendLedgerInput): SpendLedgerResult {
+  if (input.explicitLog !== undefined) {
+    return {
+      ok: true,
+      ledger: ExplicitLedger.unverified(input.explicitLog, 'llm-spend --log:讀取報告,不能當煞車(exit 一律 2)'),
+    };
+  }
+  const resolved = resolveVerifiedLedger(input);
+  if (!resolved.ok) return { ok: false, exitCode: 2, message: resolved.message };
+  return { ok: true, ledger: resolved.ledger };
 }
 
 /**
@@ -137,6 +168,8 @@ export interface ComputedSpend {
   entriesToday: number;
   capUsd: number;
   logPath: string;
+  /** 帳本的身分。`unverified`(明講 `--log`)的報告第一行標出來,退出碼一律 2,不能當煞車。 */
+  ledger: 'verified' | 'unverified';
 }
 
 /** 算不出來。`reason` 是給人看的完整原因,`formatSpendReport` 只在前面加「算不出來:」。 */
@@ -217,7 +250,10 @@ function isLogEvent(value: unknown): value is SpendEvents[number] {
   return ts === undefined || typeof ts === 'string';
 }
 
-export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: string): SpendReport {
+/** 帳本把手(不收裸字串,T5 第 8 條)→ 三態的報告。 */
+export function buildSpendReport(env: NodeJS.ProcessEnv, ledger: LedgerHandle, day: string): SpendReport {
+  const logPath = ledger.logPath;
+  const ledgerStatus = ledger.kind === 'verified' ? 'verified' : 'unverified';
   // 先讀環境變數:沒有上限與價格就算把 log 讀完也換算不出金額。
   const capUsd = strictNumberEnv(env, 'LLM_DAILY_CAP_USD');
   if (typeof capUsd !== 'number') return { kind: 'unknown', reason: capUsd.reason };
@@ -287,11 +323,13 @@ export function buildSpendReport(env: NodeJS.ProcessEnv, logPath: string, day: s
   // 守著這個 typeof 是給型別(dayOf 收 string),不是給行為。
   const entriesToday = events.filter((e) => typeof e.ts === 'string' && dayOf(e.ts) === day).length;
 
-  return { kind: 'computed', usd, calls, entriesToday, capUsd, logPath };
+  return { kind: 'computed', usd, calls, entriesToday, capUsd, logPath, ledger: ledgerStatus };
 }
 
 export function formatSpendReport(report: SpendReport): string {
   if (report.kind === 'unknown') return `算不出來:${report.reason}`;
+  // 未驗證的帳本:第一行先講清楚,看的人才不會把下面的數字當成煞車的依據。
+  const prefix = report.ledger === 'unverified' ? 'ledger=unverified\n' : '';
 
   // 上限跟花費用同樣的四位小數,兩個數字才直接比得起來。舊的兩位小數會把
   // `cap = 0.0225` 印成 `$0.02`,於是「剛好用完」那一行看起來像「超支了一截」。
@@ -300,18 +338,29 @@ export function formatSpendReport(report: SpendReport): string {
     `今日 OpenAI 花費 $${report.usd.toFixed(4)}` +
     `(${report.calls} 次呼叫,log: ${report.logPath},今日條目 ${report.entriesToday} 筆)` +
     `,上限 ${cap}`;
-  return isBudgetExhausted(report.usd, report.capUsd) ? `${line} — 今日預算已用完` : line;
+  const body = isBudgetExhausted(report.usd, report.capUsd) ? `${line} — 今日預算已用完` : line;
+  return `${prefix}${body}`;
 }
 
 export function exitCodeFor(report: SpendReport): number {
   if (report.kind === 'unknown') return EXIT_CANNOT_COMPUTE;
+  // 未驗證的帳本,數字算得出來也不是「這台機器今天花了多少」:不給 0(還可以花)也不給 1(停)。
+  if (report.ledger === 'unverified') return EXIT_CANNOT_COMPUTE;
   return isBudgetExhausted(report.usd, report.capUsd) ? EXIT_AT_OR_OVER_CAP : EXIT_UNDER_CAP;
 }
 
 async function main(): Promise<void> {
   const args = parseSpendArgs(process.argv.slice(2));
   const day = args.day ?? dayOf(new Date().toISOString());
-  const report = buildSpendReport(process.env, resolveLogPath(args), day);
+  const explicitLog = args.logPath === DEFAULT_LOG_PATH ? undefined : args.logPath;
+  // 入口層:只有這裡拿真的 process.env / os.homedir()(經 defaultVaultDeps)。
+  const resolved = resolveSpendLedger({ ...defaultVaultDeps(), explicitLog });
+  if (!resolved.ok) {
+    console.error(`算不出來:${resolved.message}`);
+    process.exitCode = resolved.exitCode;
+    return;
+  }
+  const report = buildSpendReport(process.env, resolved.ledger, day);
 
   if (args.json) {
     // 算不出來時**不吐 usd / cap_usd**:下游拿 `.usd` 要拿到 `undefined`,不是 0。
@@ -326,6 +375,7 @@ async function main(): Promise<void> {
               entries_today: report.entriesToday,
               log: report.logPath,
               cap_usd: report.capUsd,
+              ledger: report.ledger,
             }
           : { day, error: report.reason },
         null,
@@ -342,14 +392,12 @@ async function main(): Promise<void> {
 }
 
 /**
- * ADR-051 實測到的附帶問題:這支檔案是唯一一支**既是 CLI 入口、又被自己的測試檔
- * 直接 import 純函式**(buildSpendReport / parseSpendArgs / DEFAULT_LOG_PATH 等)
- * 的 scripts/*.ts。`main()` 原本沒有這個 guard 就無條件執行,之前因為預設 log
- * 路徑只是一個相對字串,對 llm-spend.test.ts 來說撞不到什麼(讀不到檔案就悄悄
- * 算不出來);現在預設路徑會真的 shell 出去解析主簽出的 learning/,如果每次
- * `import { buildSpendReport } from './llm-spend.js'` 都真的執行一次 main(),
- * 等於**每次跑這個檔案的測試都真的去讀使用者的花費帳本**——只是讀,不會寫壞,
- * 但完全不必要,而且會把真的資料印進測試輸出。只在真的被當 CLI 執行時才跑。
+ * ADR-051 實測到的附帶問題:這支檔案**既是 CLI 入口、又被自己的測試檔直接 import 純函式**
+ * (buildSpendReport / parseSpendArgs / DEFAULT_LOG_PATH 等)。預設路徑會真的去讀使用者層的
+ * 指標檔與它指向的帳本(T5 之前是 shell 出去解析主簽出的 learning/),如果每次
+ * `import { buildSpendReport } from './llm-spend.js'` 都真的執行一次 main(),等於**每次跑這個
+ * 檔案的測試都真的去讀使用者的指標與花費帳本**——只是讀,不會寫壞,但完全不必要,
+ * 而且會把真的資料印進測試輸出。只在真的被當 CLI 執行時才跑。
  */
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   main().catch((err: unknown) => {

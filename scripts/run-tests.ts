@@ -50,8 +50,9 @@ import {
   acquireLock,
   installCleanup,
   isMainModule,
+  defaultLockPath,
+  ensureLockDir,
   selfLockInfo,
-  strykerLockPath,
   type AcquireDeps,
   type HeldLock,
 } from './mutate.js';
@@ -214,7 +215,15 @@ export async function runTests(deps: RunTestsDeps = {}): Promise<number> {
     return runVitest ? runVitest(args) : spawnVitest(args, false, log);
   }
 
-  const lockPath = deps.lockPath ?? strykerLockPath();
+  const lockPath = deps.lockPath ?? defaultLockPath();
+  if (deps.acquire === undefined) {
+    try {
+      ensureLockDir(lockPath);
+    } catch (err) {
+      log(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
+  }
   const acquire =
     deps.acquire ??
     ((path: string) =>

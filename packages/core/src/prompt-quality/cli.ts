@@ -128,9 +128,10 @@ async function runGoldenCommand(argv: string[], log: (s: string) => void, lines:
 
   for (const set of sets) {
     try {
-      // --out 給的話,live 模式這次呼叫的 settings/log 也記到同一個目錄底下
-      // (呼應 scripts/ingest.ts 的 outDir 慣例),不要預設一律落到 repo 的
-      // learning/(ADR-032:測試傳的暫存 --out 不該漏寫真的 log 到 repo 裡)。
+      // --out 給的話,live 模式的 settings 從同一個目錄讀(呼應 scripts/ingest.ts 的 outDir 慣例)。
+      // 帳本**不跟著 --out**(T5 / ADR-066):--live 的帳本只來自使用者層指標檔驗證過的那本——
+      // `--out /tmp/x --live` 若把錢記進 /tmp/x/state/log.jsonl,日上限又裂成兩本。
+      // 測試一律用沙箱的 HOME / XDG_CONFIG_HOME 與合成指標(ADR-032、T5 第 15 條)。
       const result = await runGolden({ set, mode, ...(outDir ? { baseDir: outDir, learningDir: outDir } : {}) });
       totalInputs += result.outputs.length;
       log(`✓ golden run ${set} → ${result.dir}(${result.outputs.length} 個輸入)`);

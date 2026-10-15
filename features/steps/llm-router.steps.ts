@@ -484,10 +484,13 @@ Then('no other change was needed to make that happen', function () {
 
 import {
   DailyBudgetExceededError,
+  ExplicitLedger,
   GatewayLlmRouter,
   GatewayModelRejectedError,
+  anthropicAdapter,
   computeDailySpend,
   isBudgetExhausted,
+  openaiAdapter,
   type DailySpend,
   type SpendPrices,
 } from '../../packages/core/src/llm/index.js';
@@ -691,7 +694,10 @@ function materializeLog(): string {
 function buildGatewayRouter(): GatewayLlmRouter {
   return new GatewayLlmRouter({
     env: gatewayEnv(),
-    logPath: materializeLog(),
+    // 未驗證的帳本(T5 第 8 條)只准配明講的 adapter。這裡明講用真的 adapter 程式碼,
+    // 因為這些場景要走真的 SDK 請求格式;網路由上面的假 globalThis.fetch 接走,不會打到任何 provider。
+    adapters: { openai: openaiAdapter, anthropic: anthropicAdapter },
+    ledger: ExplicitLedger.unverified(materializeLog(), 'cucumber:假 globalThis.fetch 的閘道場景'),
     defaultTimeoutMs: 5_000,
     onlineProber: async () => !gw.offline,
     dailyCapUsd: CAP_USD,
