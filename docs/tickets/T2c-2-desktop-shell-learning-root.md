@@ -84,6 +84,7 @@ must_catch:
 5. **不寫檔**:靜態檢查 `apps/desktop/src-tauri/src` 的非測試程式碼,對 `vault.json` 與 `vault-id` 只有讀取。
    行為測試:五種狀態各跑一次啟動,前後 `XDG_CONFIG_HOME` 目錄與 learning 目錄的檔案清單與內容雜湊不變。
 6. **`@manual`(UI/Tauri 負責人截圖,技術顧問判)**:五種狀態各一張截圖;四種失敗畫面的 init 指令可以直接複製貼上執行。
+   截圖與 console 都用 `tauri build` 的產物,不用 `tauri dev`(理由見驗收 11)。
 7. cargo-mutants:本張新增的 Rust(指標檔解析、身分比對、啟動狀態)納入,沿用地板棘輪。**由驗收者在拿到重活位子之後跑**
    (拿協調者指定的鎖、指令前面加 `CARGO_BUILD_JOBS=2`);開發 worker 不跑,只把新檔補進 `.cargo/mutants.toml` 的 `examine_globs`。
 8. **刪掉 T2b 留下的兩個「自我回報」函式**(T2c-1 驗收證據的 F-4;技術顧問 2026-10-15 派令)。
@@ -116,7 +117,9 @@ must_catch:
    - `tauri build --debug --no-bundle` 印的是 `Built application at: …/target/debug/lc-fs`:打包會把 probe 當成 app。
 
    要求:`Cargo.toml` 的 `[package]` 加 `default-run = "learning-cards-desktop"`。
-   只加這行之後 `tauri build` 若仍印 `lc-fs`,worker 停下回報,不自己改 bin 名或 `tauri.conf.json`,由技術顧問裁。
+   UI/Tauri 負責人 2026-10-15 16:19 實測過只加這一行就夠(scratch worktree,沒有 commit):`npm run tauri dev` 不帶 `--bin`
+   跑起來的是 `learning-cards-desktop`;`tauri build --debug --no-bundle` 印 `Built application at: …/target/debug/learning-cards-desktop`。
+   不改 bin 名、不改 `tauri.conf.json`。結果跟這個實測不同,worker 停下回報,由技術顧問裁。
 
    驗收:
    - 靜態(測試 agent 寫):`cargo metadata --no-deps --format-version 1` 裡這個 package 的 `default_run` 是 `"learning-cards-desktop"`。
@@ -146,6 +149,20 @@ must_catch:
     | `<根>/state` 是一般檔案(建不了目錄,也開不了 log) | 拒絕照樣是拒絕;stderr 含 `could not append a warning event` |
     | 指標檔的 `learning_dir` 不存在,`read("raw/x.md")` | 照驗收 3 回「未設定」的錯誤,不是拒絕、不寫 warning;**根沒有被建出來** |
     | 啟動(驗收 3 的五種狀態) | 驗收 5 照舊:前後檔案清單與雜湊不變,沒有因為這條多出 `state/` |
+
+11. **`tauri dev` 下沒有 CSP,是已知限制;跟 CSP 有關的檢查一律用 `tauri build` 的產物**(T2c-1 `@manual` 的發現 2;技術顧問 2026-10-15)。
+    - 原因:沒有設 `devUrl` 時,tauri CLI 自己開一個 dev server(`http://127.0.0.1:1430/`)服務 `frontendDist`。
+      Tauri 2.11.5 只在內嵌資產(`tauri://localhost`)的回應加 CSP header;dev server 的回應沒有 CSP,頁面也沒有 CSP meta。
+    - **不加 `devCsp`,加了也沒用。** UI/Tauri 負責人 2026-10-15 16:19 實測(scratch worktree,沒有 commit):`tauri.conf.json` 加
+      `devCsp`(內容同 `csp`)之後,`tauri dev` 的兩個視窗仍然沒有 CSP header、沒有 CSP meta;頁面計時器裡的 `new Function`
+      與動態插入的 inline script 都照跑,`securitypolicyviolation` 0 次。同一批檢查在 `tauri build` 的產物上會被 `script-src` 與 `connect-src` 擋下。
+    - 更正 T2c-1 實作報告:那裡說「`tauri dev` 吃的是跟正式版同一份 `frontendDist`……因此不需要 `devCsp`」
+      (`../reviews/T2c-1-2026-10-15.md:106-109`)。檔案是同一份,來源不是同一個:dev 頁面在 `http://127.0.0.1:1430/`,沒有 CSP。
+      「不需要 `devCsp`」碰巧對(加了也沒用),理由不對。T2c-2 的實作報告與驗收證據不再寫「dev 也有 CSP」。
+    - 規則:驗收 6 的截圖,以及任何「console 沒有 CSP 違規」「CSP 有擋住 X」的檢查,一律在
+      `npm run tauri -- build --debug --no-bundle` 的產物上做(頁面網址是 `tauri://localhost/…`),報告寫明用的是哪一個。
+      `tauri dev` 只用來看畫面與驗收 9 的「開得起來」。
+    - 沒有自動測試(dev 下沒有 CSP 可以測)。開發 worker 不改 `tauri.conf.json` 的 `app.security`。
 
 ## 重活規則(技術顧問 2026-10-15 12:5x;開發 worker 自己跑 cargo-mutants,24 個行程把負載推到 34 之後補上)
 
