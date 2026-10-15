@@ -192,9 +192,26 @@ export interface GalleryPage {
 
 /** 起 vite dev server 與 headless Chrome,開好展示頁。呼叫端負責 close()。 */
 export async function openGallery(): Promise<GalleryPage> {
+  return openApp(join(HUD_DIR, 'gallery'));
+}
+
+export interface OpenAppOptions {
+  /** 視窗大小,預設 720 × 900(展示頁);卡片用 360 × 480 */
+  viewport?: { width: number; height: number };
+  /** reset() 等到這個選擇器出現才算載好(最多 5 秒,到時不丟錯,讓後面的檢查自己報「找不到」);預設面板 */
+  ready?: string;
+}
+
+/**
+ * 通用版:起 `appDir`(有 index.html 與 vite.config.ts 的目錄)的 vite dev server 與 headless Chrome。
+ * T15 起卡片(apps/teach-card、apps/test-card)也用它;傳目錄路徑,不 import 卡片的模組。
+ */
+export async function openApp(appDir: string, opts: OpenAppOptions = {}): Promise<GalleryPage> {
   const chrome = findChrome();
-  const galleryDir = join(HUD_DIR, 'gallery');
-  if (!existsSync(join(galleryDir, 'index.html'))) throw new Error('hud/gallery/index.html 不存在');
+  const galleryDir = appDir;
+  const viewport = opts.viewport ?? VIEWPORT;
+  const ready = opts.ready ?? '[data-hud="panel"]';
+  if (!existsSync(join(galleryDir, 'index.html'))) throw new Error(`${galleryDir}/index.html 不存在`);
   const { createServer } = await import('vite');
   const configFile = existsSync(join(galleryDir, 'vite.config.ts')) ? join(galleryDir, 'vite.config.ts') : false;
   const server = await createServer({
@@ -245,7 +262,7 @@ export async function openGallery(): Promise<GalleryPage> {
     if (!pageWs) throw new Error('Chrome 沒有 page target');
     cdp = await Cdp.connect(pageWs);
     for (const d of ['Page.enable', 'Runtime.enable', 'DOM.enable', 'CSS.enable']) await cdp.send(d);
-    await cdp.send('Emulation.setDeviceMetricsOverride', { ...VIEWPORT, deviceScaleFactor: 1, mobile: false });
+    await cdp.send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: false });
   } catch (e) {
     await cleanup();
     throw e;
@@ -265,7 +282,7 @@ export async function openGallery(): Promise<GalleryPage> {
       await c.send('Page.navigate', { url });
       await loaded;
       await evaluate(`(async () => {
-        for (let i = 0; i < 100 && !document.querySelector('[data-hud="panel"]'); i += 1) await new Promise((r) => setTimeout(r, 50));
+        for (let i = 0; i < 100 && !document.querySelector(${JSON.stringify(ready)}); i += 1) await new Promise((r) => setTimeout(r, 50));
         await document.fonts.ready;
         await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined)));
         await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -402,7 +419,7 @@ export function galleryOnlyProblems(): string[] {
 }
 
 /** 一個元素四條直邊的線寬(在每條邊的正中間,跨邊各量 3 像素) */
-function edgeInk(img: Image, rect: Rect): Record<'top' | 'bottom' | 'left' | 'right', number> {
+export function edgeInk(img: Image, rect: Rect): Record<'top' | 'bottom' | 'left' | 'right', number> {
   const cx = rect.x + rect.width / 2; const cy = rect.y + rect.height / 2;
   const line = (from: [number, number], step: [number, number], n: number): [number, number][] =>
     Array.from({ length: n }, (_, i) => [from[0] + step[0] * i, from[1] + step[1] * i] as [number, number]);
