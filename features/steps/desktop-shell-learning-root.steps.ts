@@ -325,10 +325,35 @@ Then('the screen shows the full command {string} followed by a path placeholder'
   assert.match(viewText(ctx(this)), new RegExp(`${command.replaceAll('.', '\\.')}\\s+\\S+`));
 });
 
-Then('the application wrote no file anywhere', function (this: LearningWorld) {
+/**
+ * 「Left as they were」只管指標檔、身分標記、learning 資料夾:這三個地方(沙箱裡的 xdg/ 與 learning/ 兩棵樹)
+ * 啟動前後的檔案清單、內容雜湊、模式都一樣,什麼都沒新增、沒消失。殼自己保存的東西(視窗位置,
+ * window-state 外掛在結束時寫進 Tauri 的 app config 目錄)不在範圍內;probe 不開視窗,本來就不會寫那裡。
+ * HOME、TMPDIR、cwd 仍然會被快照,但這句話不用它們做斷言。
+ */
+Then('the pointer file, the identity marker and the learning directory are left as they were', function (this: LearningWorld) {
   const c = ctx(this);
   assert.ok(c.before && c.after, '沒有前後快照');
-  assert.deepEqual(diffSnapshots(c.before, c.after), []);
+  const scope = (snap: Snapshot): Snapshot =>
+    new Map([...snap].filter(([path]) => path === 'xdg' || path === 'learning' || path.startsWith('xdg/') || path.startsWith('learning/')));
+  assert.deepEqual(diffSnapshots(scope(c.before), scope(c.after)), []);
+  // 指標檔與標記個別也要一樣(含「本來就不存在,現在也不存在」)
+  for (const p of [c.sb.pointer, c.sb.marker]) {
+    const rel = relative(c.sb.parent, p);
+    assert.deepEqual(c.after.get(rel), c.before.get(rel), `${rel} 被改了`);
+  }
+});
+
+Then('the screen shows a chmod command for that pointer file to run first when the problem is a permission', function (this: LearningWorld) {
+  const c = ctx(this);
+  const text = viewText(c);
+  const shellWord = /^[A-Za-z0-9/._+,:@%=-]+$/.test(c.sb.pointer) ? c.sb.pointer : `'${c.sb.pointer.replaceAll("'", "'\\''")}'`;
+  const chmod = `chmod u+rw ${shellWord}`;
+  assert.ok(text.includes(chmod), `畫面沒有 ${chmod}:\n${text}`);
+  // 先跑 chmod,再跑 show / init:chmod 那一行要在兩個指令之前
+  const at = text.indexOf(chmod);
+  assert.ok(at < text.indexOf('npx tsx scripts/vault.ts show'), 'chmod 要在 show 之前');
+  assert.ok(at < text.indexOf('npx tsx scripts/vault.ts init'), 'chmod 要在 init 之前');
 });
 
 Then('the screen says the settings file cannot be read', function (this: LearningWorld) {

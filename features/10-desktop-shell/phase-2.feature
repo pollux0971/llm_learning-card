@@ -15,14 +15,18 @@ Feature: The file boundary and the learning directory
   # The names are the reasons used by the shared file contracts/fixtures/vault-pointer-vectors.json.
   # The pointer path is ${XDG_CONFIG_HOME:-~/.config}/llm-learning-cards/vault.json (an empty
   # XDG_CONFIG_HOME counts as unset). It is not the Tauri application config directory.
+  # "Left as they were" covers the pointer file, the marker and the learning directory: same file list
+  # and the same bytes before and after, nothing created. Files the shell keeps for itself are not
+  # covered, for example the window positions that the window-state plugin saves under the Tauri
+  # application config directory on exit (design section 4.1; ruled 2026-10-15 after the manual run).
 
-  Scenario: First run without a pointer file shows how to set up and writes nothing
+  Scenario: First run without a pointer file shows how to set up and creates no pointer file
     Given the user-level pointer file does not exist
     When the application starts
     Then the start state is pointer-missing
     And the screen says the learning directory is not set up yet
     And the screen shows the full command "npx tsx scripts/vault.ts init --learning-dir" followed by a path placeholder
-    And the application wrote no file anywhere
+    And the pointer file, the identity marker and the learning directory are left as they were
 
   Scenario: A directory named by an environment variable is not a second source
     Given the user-level pointer file does not exist
@@ -36,8 +40,9 @@ Feature: The file boundary and the learning directory
     Then the start state is pointer-unreadable
     And the screen says the settings file cannot be read
     And the screen shows the absolute path of the pointer file
+    And the screen shows a chmod command for that pointer file to run first when the problem is a permission
     And the pointer file is byte-identical to before
-    And the application wrote no file anywhere
+    And the pointer file, the identity marker and the learning directory are left as they were
 
     Examples:
       | problem                                   |
@@ -52,7 +57,7 @@ Feature: The file boundary and the learning directory
     Then the start state is learning-dir-missing
     And the screen says the folder could not be found
     And the screen shows that path and the full init command
-    And the application wrote no file anywhere
+    And the pointer file, the identity marker and the learning directory are left as they were
 
   Scenario Outline: A directory that is not the one the pointer was made for is not opened
     Given the pointer file names an existing learning directory
@@ -61,7 +66,7 @@ Feature: The file boundary and the learning directory
     Then the start state is marker-mismatch
     And the screen says this is not the same folder
     And neither the pointer file nor the marker is changed
-    And the application wrote no file anywhere
+    And the pointer file, the identity marker and the learning directory are left as they were
 
     Examples:
       | marker                                       |
@@ -77,7 +82,7 @@ Feature: The file boundary and the learning directory
     When the application starts
     Then the start state is ok
     And the teach card window and the test card window are opened
-    And the application wrote no file anywhere
+    And the pointer file, the identity marker and the learning directory are left as they were
 
   # The commands and the asset protocol must use one resolved result, not each read the pointer file.
   Scenario: The commands and the asset protocol share one resolved learning directory

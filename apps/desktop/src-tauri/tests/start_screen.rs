@@ -170,3 +170,67 @@ fn the_window_url_uses_the_dedicated_scheme_not_lc() {
         assert_eq!(start_screen::url(), "lc-start://localhost/");
     }
 }
+
+// ---------------------------------------------------------------- T2c-2 @manual 小修補(F1、F2):權限畫面的 chmod、折行
+
+fn resolved_with_pointer(state: StartState, pointer_path: &str) -> Resolved {
+    Resolved {
+        state,
+        root: None,
+        pointer_path: PathBuf::from(pointer_path),
+        pointer: None,
+    }
+}
+
+fn line_starting_with<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.lines().find(|l| l.starts_with(prefix))
+}
+
+#[test]
+fn the_permission_screen_has_a_chmod_line_with_the_plain_pointer_path() {
+    let t = start_screen::text(&resolved(StartState::PointerUnreadable, None));
+    assert_eq!(start_screen::CHMOD_COMMAND, "chmod u+rw");
+    let line = line_starting_with(&t, start_screen::CHMOD_COMMAND).expect("a chmod line");
+    assert_eq!(line, "chmod u+rw /home/u/.config/llm-learning-cards/vault.json");
+}
+
+#[test]
+fn the_chmod_line_quotes_a_pointer_path_a_shell_would_split_or_expand() {
+    for (path, expect) in [
+        ("/home/my user/.config/llm-learning-cards/vault.json", "chmod u+rw '/home/my user/.config/llm-learning-cards/vault.json'"),
+        ("/home/u/$(rm -rf x)/vault.json", "chmod u+rw '/home/u/$(rm -rf x)/vault.json'"),
+        ("/home/it's/vault.json", "chmod u+rw '/home/it'\\''s/vault.json'"),
+        ("/home/日本/vault.json", "chmod u+rw '/home/日本/vault.json'"),
+    ] {
+        let t = start_screen::text(&resolved_with_pointer(StartState::PointerUnreadable, path));
+        let line = line_starting_with(&t, start_screen::CHMOD_COMMAND).unwrap_or_else(|| panic!("no chmod line for {path}"));
+        assert_eq!(line, expect);
+    }
+}
+
+#[test]
+fn the_chmod_line_comes_before_show_and_init_and_says_it_is_for_a_permission_problem() {
+    let t = start_screen::text(&resolved(StartState::PointerUnreadable, None));
+    let chmod = t.find(start_screen::CHMOD_COMMAND).expect("chmod");
+    assert!(chmod < t.find(SHOW_COMMAND).expect("show"), "{t}");
+    assert!(chmod < t.find(INIT_COMMAND).expect("init"), "{t}");
+    assert!(t.contains("權限"), "the lead-in names the permission case: {t}");
+}
+
+#[test]
+fn only_the_unreadable_screen_has_a_chmod_line() {
+    for s in [StartState::PointerMissing, StartState::LearningDirMissing, StartState::MarkerMismatch] {
+        let t = start_screen::text(&resolved(s, Some("/data/learning")));
+        assert!(!t.contains("chmod"), "{s:?} must not suggest chmod: {t}");
+    }
+    assert_eq!(start_screen::text(&resolved(StartState::Ok, None)), "");
+}
+
+#[test]
+fn the_page_wraps_long_paths_with_overflow_wrap_anywhere_and_not_break_all() {
+    let page = start_screen::page(&resolved(StartState::LearningDirMissing, Some("/data/a-very-long-path/that/keeps/going")));
+    assert!(page.contains("overflow-wrap:anywhere"), "{page}");
+    assert!(!page.contains("word-break:break-all"), "break-all splits short words such as --force: {page}");
+    assert!(page.contains("white-space:pre-wrap"), "line breaks of the text are kept: {page}");
+    assert!(page.contains("user-select:text"), "the commands stay selectable: {page}");
+}
