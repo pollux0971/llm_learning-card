@@ -1048,12 +1048,15 @@ describe('T8 E:init 寫出的指標檔是 0600', () => {
    * worker 裡 `process.umask(mask)` 會丟 ERR_WORKER_UNSUPPORTED_OPERATION —— 那時候沒辦法換,
    * 用當下的 umask 跑(一般是 022,仍然分得出 0600 和 0644)。一般的 vitest(forks)照指定的 mask 跑。
    */
+  let effectiveMask = 0;
   function withUmask<T>(mask: number, fn: () => T): T {
     let old: number | undefined;
     try {
       old = process.umask(mask);
+      effectiveMask = mask;
     } catch {
       old = undefined;
+      effectiveMask = process.umask(); // 讀(不設)在 worker 裡是允許的
     }
     try {
       return fn();
@@ -1095,6 +1098,7 @@ describe('T8 E:init 寫出的指標檔是 0600', () => {
     const box = sandbox();
     const a = learningDir(box.root, 'A');
     withUmask(0o022, () => initReal(box, a));
-    expect(statSync(join(a, 'config', 'vault-id')).mode & 0o777).toBe(0o644);
+    // 標記檔沿用 umask(022 下是 0644);在 worker threads 裡換不了 umask,就用當下的那個算
+    expect(statSync(join(a, 'config', 'vault-id')).mode & 0o777).toBe(0o666 & ~effectiveMask);
   });
 });
