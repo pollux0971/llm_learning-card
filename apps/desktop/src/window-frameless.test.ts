@@ -12,9 +12,9 @@ import { describe, expect, it } from 'vitest';
 import { readTauriConf } from './test-support/frontend-dist.js';
 import {
   CARGO_LOCK, CARGO_TOML, MAIN_RS, REQUIRED_PERMISSIONS, assembleInitScript, builderProblems, callGraphProblems, capabilityProblems, deadCodeProblems, decorationsProblems,
-  focusWiringProblems, gdkCfgProblems, gdkDependencyProblems, hiddenUntilLoadedProblems, hudSolidFromCss, layoutClassNames, mainRsProblems, mainRsUnchangedProblems,
-  modeVariableProblems, notifiesAfterShow, readCapability, readWindowModeJs, runInitScript, rustByteArrayConst, rustCallCount, rustFnBody, solidBackgroundProblems,
-  startupFocusConst, startupFocusTargetProblems, stateFlagsProblems, stripRustComments, surfaceWiringProblems, transparencyLeftToAppProblems,
+  gdkCfgProblems, gdkDependencyProblems, hiddenUntilLoadedProblems, hudSolidFromCss, layoutClassNames, mainRsProblems, mainRsUnchangedProblems,
+  modeVariableProblems, readCapability, readWindowModeJs, runInitScript, rustByteArrayConst, rustCallCount, rustFnBody, solidBackgroundProblems,
+  actionExecutorProblems, legacyStartupApiProblems, rustSecsConst, rustStrConst, startupOrderConstantsProblems, startupWiringProblems, stateFlagsProblems, stripRustComments, surfaceWiringProblems, transparencyLeftToAppProblems,
   windowModeJsBehaviourProblems, windowModeJsStaticProblems,
 } from './test-support/window-frame.js';
 
@@ -168,8 +168,8 @@ describe('不退步:done phase 的 .feature 沒改(驗收 10)', () => {
   const PINNED: [string, string][] = [
     ['features/10-desktop-shell/phase-1.feature', '39b0cf091a2309fc12033471652ba3d9389652e2f38900ebf9b3192612290f66'],
     ['features/10-desktop-shell/phase-2.feature', '73c22987e9565f1893a97b9f2fe8bd71dcdb56b7724e86638572e81d04fab505'],
-    // T21 之後的內容(2026-10-16,工單 T21 的場景一併進來)
-    ['features/10-desktop-shell/phase-6.feature', 'c499e3d96062684606512fcce5ed99942d697bf5a45b9843a80a58943944d04c'],
+    // T21 第 3 輪之後的內容(2026-10-16,啟動順序的場景一併進來;第 1、2 輪的是 c499e3d9…)
+    ['features/10-desktop-shell/phase-6.feature', 'b182777cb5fa5beaf07550ac3c72287b41837897adddcdaf8329e09d73501c83'],
     ['features/14-hud-skin/phase-1.feature', '7bddbc8f67fb626a39770a403af365b508ed65ece345cd23fcdc2e178659633a'],
     ['features/14-hud-skin/phase-2.feature', 'fd79522575336c324bef608e47a8ce790c3f7d53422b7c3cb4fc1255409cccd4'],
   ];
@@ -219,18 +219,33 @@ describe('色值:SOLID_BACKGROUND = hud.css 的 --hud-solid(驗收 2)', () => {
   });
 });
 
-describe('啟動焦點的目標(驗收 8)', () => {
-  it('STARTUP_FOCUS 是 "test",而且是 tauri.conf.json 裡的視窗標籤', () => {
-    expect(startupFocusTargetProblems()).toEqual([]);
+describe('啟動順序的常數(驗收 8,第 3 輪)', () => {
+  it('STARTUP_FOCUS = "test"、SHOW_FIRST = "teach"(都是 tauri.conf.json 的視窗標籤)、ORDER_BACKSTOP = 5 秒', () => {
+    expect(startupOrderConstantsProblems()).toEqual([]);
   });
-  it('量尺自測:不是 test、不在設定檔、沒有常數 → 紅', () => {
-    const conf = { app: { windows: [{ label: 'teach' }, { label: 'test' }] } };
-    expect(startupFocusTargetProblems('pub const STARTUP_FOCUS: &str = "test";', conf)).toEqual([]);
-    expect(startupFocusTargetProblems('pub const STARTUP_FOCUS: &str = "teach";', conf).join('\n')).toMatch(/要是 "test"/);
-    expect(startupFocusTargetProblems('pub const STARTUP_FOCUS: &str = "";', conf).join('\n')).toMatch(/不是 tauri\.conf\.json/);
-    expect(startupFocusTargetProblems('pub const STARTUP_FOCUS: &str = "test";', { app: { windows: [{ label: 'teach' }] } }).join('\n')).toMatch(/不是 tauri\.conf\.json/);
-    expect(startupFocusTargetProblems('const X: u8 = 1;', conf).join('\n')).toMatch(/沒有/);
-    expect(startupFocusConst("// pub const STARTUP_FOCUS: &str = \"test\";")).toBeUndefined();
+  it('第 2 輪的 on_shown 被取代:window_mode.rs 與 main.rs 都不留', () => {
+    expect(legacyStartupApiProblems(mainSrc())).toEqual([]);
+  });
+  const conf = { app: { windows: [{ label: 'teach' }, { label: 'test' }] } };
+  const rs = (focus: string, first: string, secs: string) =>
+    `pub const STARTUP_FOCUS: &str = "${focus}";\npub const SHOW_FIRST: &str = "${first}";\npub const ORDER_BACKSTOP: Duration = Duration::from_secs(${secs});`;
+  it('量尺自測:任一個常數不對、不在設定檔、沒有常數 → 紅', () => {
+    expect(startupOrderConstantsProblems(rs('test', 'teach', '5'), conf)).toEqual([]);
+    expect(startupOrderConstantsProblems(rs('teach', 'teach', '5'), conf).join('\n')).toMatch(/STARTUP_FOCUS 是 "teach",要是 "test"/);
+    expect(startupOrderConstantsProblems(rs('test', 'test', '5'), conf).join('\n')).toMatch(/SHOW_FIRST 是 "test",要是 "teach"/);
+    expect(startupOrderConstantsProblems(rs('test', '', '5'), conf).join('\n')).toMatch(/SHOW_FIRST/);
+    expect(startupOrderConstantsProblems(rs('test', 'teach', '3'), conf).join('\n')).toMatch(/要是 5 秒/);
+    expect(startupOrderConstantsProblems(rs('test', 'teach', '0'), conf).join('\n')).toMatch(/要是 5 秒/);
+    expect(startupOrderConstantsProblems(rs('test', 'teach', '5'), { app: { windows: [{ label: 'test' }] } }).join('\n')).toMatch(/SHOW_FIRST "teach" 不是 tauri\.conf\.json/);
+    expect(startupOrderConstantsProblems('const X: u8 = 1;', conf).join('\n')).toMatch(/沒有/);
+    expect(rustStrConst('// pub const SHOW_FIRST: &str = "teach";', 'SHOW_FIRST')).toBeUndefined();
+    expect(rustSecsConst('pub const ORDER_BACKSTOP: Duration = Duration::from_millis(5000);', 'ORDER_BACKSTOP')).toBeUndefined();
+  });
+  it('量尺自測:留著 on_shown → 紅', () => {
+    expect(legacyStartupApiProblems('fn a() { f.on_ready(l); }', 'pub fn on_ready() {}')).toEqual([]);
+    expect(legacyStartupApiProblems('fn a() { f.on_shown(l); }', '').join('\n')).toMatch(/main\.rs 還在用/);
+    expect(legacyStartupApiProblems('', 'pub fn on_shown() {}').join('\n')).toMatch(/window_mode\.rs 還留著/);
+    expect(legacyStartupApiProblems('// on_shown 以前的名字', '/// 取代 on_shown')).toEqual([]);
   });
 });
 
@@ -238,8 +253,8 @@ describe('main.rs 的接線:取函式本體再斷言(驗收 3、8)', () => {
   it('卡片視窗接線:desktop_is_composited 一次、surface_for 與 init_script 同一個 mode、.transparent(surface.transparent)、有條件的 .background_color、都在 .build() 之前', () => {
     expect(surfaceWiringProblems(mainSrc())).toEqual([]);
   });
-  it('啟動焦點接線:一個 StartupFocus、兩個顯示的地方都通知、set_focus 只有一處且對 on_shown 回的標籤', () => {
-    expect(focusWiringProblems(mainSrc())).toEqual([]);
+  it('啟動順序接線:Finished 與 3 秒退路只走 on_ready、show / set_focus 只在執行動作的函式、ORDER_BACKSTOP 計時只在回傳不是空的才 warn', () => {
+    expect(startupWiringProblems(mainSrc())).toEqual([]);
   });
   it('setup 視窗那段:不加 transparent / background_color / 初始化腳本 / 先藏起來,也沒有建窗後才改外觀(擴大版)', () => {
     expect(mainRsUnchangedProblems(mainSrc())).toEqual([]);
@@ -307,41 +322,52 @@ describe('量尺自測:mode 變數與 builder(最小合成片段)', () => {
   });
 });
 
-describe('量尺自測:焦點的接線(最小合成片段)', () => {
-  it('顯示之後有通知(直接或經 helper);只在一邊通知、參數寫死字串、沒有 .show() → 紅', () => {
-    expect(notifiesAfterShow('{ let _ = w.show(); f.on_shown(w.label()); }', [])).toBeUndefined();
-    expect(notifiesAfterShow('{ let _ = w.show(); notify(&f, w.label()); }', ['notify'])).toBeUndefined();
-    expect(notifiesAfterShow('{ let _ = w.show(); }', [])).toMatch(/沒有通知/);
-    expect(notifiesAfterShow('{ f.on_shown(l); let _ = w.show(); }', [])).toMatch(/沒有通知/);
-    expect(notifiesAfterShow('{ let _ = w.show(); f.on_shown("test"); }', [])).toMatch(/字串字面/);
-    expect(notifiesAfterShow('{ x(); }', [])).toMatch(/沒有 \.show/);
+describe('量尺自測:啟動順序的接線(最小合成片段)', () => {
+  it('執行動作的函式:.show() 與 .set_focus() 各一處、同一個函式、依 Show / Focus 分開', () => {
+    const ok = 'fn run(a: A) { match a { Show(l) => { w(l).show(); } Focus(l) => { w(l).set_focus(); } } }';
+    expect(actionExecutorProblems(ok)).toEqual([[], 'run']);
+    expect(actionExecutorProblems(`${ok}\nfn other() { x.show(); }`)[0].join('\n')).toMatch(/.show\(\) 要剛好一處/);
+    expect(actionExecutorProblems(`${ok}\nfn other() { x.set_focus(); }`)[0].join('\n')).toMatch(/set_focus 要剛好一處/);
+    expect(actionExecutorProblems('fn a() { w.show(); } fn b() { w.set_focus(); }')[0].join('\n')).toMatch(/要在同一個執行動作的函式裡/);
+    expect(actionExecutorProblems('fn run() { w.show(); w.set_focus(); }')[0].join('\n')).toMatch(/Show \/ Focus 兩種動作/);
+    expect(actionExecutorProblems('fn run(a: A) { match a { Show(l) => w.get_webview_window("test").show(), Focus(l) => w.get_webview_window(l).set_focus() } }')[0].join('\n')).toMatch(/寫死的標籤/);
   });
-  const skeleton = (extra: { loop?: string; fallback?: string; pageLoad?: string; focus?: string }) => `
-fn arm_show_fallback(w: &W, f: F) { if gate.on_timeout() { let _ = w.show(); ${extra.fallback ?? 'f.on_shown(l);'} } }
-fn go(f: F) { if let Some(l) = f.on_shown(n) { app.get_webview_window(l).map(|w| w.set_focus()); } }
-fn open_windows(app: &App, state: S) { let focus = Arc::new(Mutex::new(StartupFocus::new(start_screen::windows(state)))); for label in x { b.on_page_load(|w, p| { if gate.on_page_finished() { let _ = w.show(); ${extra.pageLoad ?? 'f.on_shown(l);'} } }).build()?; } }`;
+  const frame = (o: { pageLoad?: string; fallback?: string; backstop?: string; head?: string }) => `
+fn run(a: A) { match a { Show(l) => { w(l).show(); } Focus(l) => { w(l).set_focus(); } } }
+fn arm_show_fallback(w: &W) { if gate.on_timeout() { ${o.fallback ?? 'run_all(f.on_ready(l));'} } }
+fn open_windows(app: &App, state: S) {
+  ${o.head ?? 'let focus = Arc::new(Mutex::new(StartupFocus::new(start_screen::windows(state))));'}
+  if has(SHOW_FIRST) && has(STARTUP_FOCUS) { thread::sleep(ORDER_BACKSTOP); ${o.backstop ?? 'let a = f.on_backstop(); if !a.is_empty() { log::warn!("x"); run_all(a); }'} }
+  for label in x { b.on_page_load(|w, p| { if gate.on_page_finished() { ${o.pageLoad ?? 'run_all(f.on_ready(l));'} } }).build()?; }
+}`;
+  const withExec = (s: string) => s.replace(/run_all\(/g, 'run(');
   it('最小骨架通過(只有這幾條判斷的最小量,不是實作)', () => {
-    expect(focusWiringProblems(skeleton({}))).toEqual([]);
+    expect(startupWiringProblems(withExec(frame({})))).toEqual([]);
   });
-  it('只有 Finished 那條通知(3 秒退路那條忘了)→ 紅', () => {
-    expect(focusWiringProblems(skeleton({ fallback: '' })).join('\n')).toMatch(/arm_show_fallback 的逾時那條/);
+  it('Finished 或 3 秒退路直接 show(不經 on_ready 的動作)→ 紅', () => {
+    expect(startupWiringProblems(withExec(frame({ pageLoad: 'w.show();' }))).join('\n')).toMatch(/Finished 那條/);
+    expect(startupWiringProblems(withExec(frame({ fallback: 'w.show();' }))).join('\n')).toMatch(/逾時那條/);
   });
-  it('只有 3 秒退路那條通知(Finished 那條忘了)→ 紅', () => {
-    expect(focusWiringProblems(skeleton({ pageLoad: '' })).join('\n')).toMatch(/Finished 那條/);
+  it('on_ready 回的動作沒交給執行函式、或參數寫死字串 → 紅', () => {
+    expect(startupWiringProblems(withExec(frame({ pageLoad: 'f.on_ready(l);' }))).join('\n')).toMatch(/沒有交給 run/);
+    expect(startupWiringProblems(withExec(frame({ fallback: 'run(f.on_ready("test"));' }))).join('\n')).toMatch(/字串字面/);
   });
-  it('建窗後直接 set_focus、或 set_focus 兩處 → 紅', () => {
-    const direct = skeleton({}).replace('let _ = w.show();', 'let _ = w.show(); w.set_focus();');
-    expect(focusWiringProblems(direct).join('\n')).toMatch(/set_focus 要剛好一處|不在「on_shown/);
-    expect(focusWiringProblems(skeleton({}) + '\nfn z() { w.set_focus(); }').join('\n')).toMatch(/set_focus 要剛好一處/);
+  it('沒有 ORDER_BACKSTOP 計時或沒呼叫 on_backstop → 紅', () => {
+    expect(startupWiringProblems(withExec(frame({ backstop: '' }))).join('\n')).toMatch(/on_backstop/);
+    expect(startupWiringProblems(withExec(frame({})).replace('thread::sleep(ORDER_BACKSTOP);', '').replace(/ORDER_BACKSTOP/g, 'X')).join('\n')).toMatch(/ORDER_BACKSTOP/);
   });
-  it('對寫死的標籤 set_focus → 紅', () => {
-    expect(focusWiringProblems(skeleton({}).replace('get_webview_window(l)', 'get_webview_window("test")')).join('\n')).toMatch(/get_webview_window\(l\)|寫死的標籤/);
+  it('on_backstop 回傳是空的也 warn、或回傳沒判斷空、或根本不 warn → 紅', () => {
+    expect(startupWiringProblems(withExec(frame({ backstop: 'let a = f.on_backstop(); log::warn!("x"); if !a.is_empty() { run(a); }' }))).join('\n')).toMatch(/is_empty 判斷之前/);
+    expect(startupWiringProblems(withExec(frame({ backstop: 'let a = f.on_backstop(); run(a);' }))).join('\n')).toMatch(/is_empty/);
+    expect(startupWiringProblems(withExec(frame({ backstop: 'let a = f.on_backstop(); if !a.is_empty() { run(a); }' }))).join('\n')).toMatch(/沒有 log::warn!/);
   });
-  it('StartupFocus 建在迴圈裡 / 標籤不是 start_screen::windows 那份 / 沒放進 Arc<Mutex> → 紅', () => {
-    const inLoop = skeleton({}).replace('for label in x {', 'for label in x { let focus2 = StartupFocus::new(start_screen::windows(state));').replace(/let focus = Arc::new\(Mutex::new\(StartupFocus::new\(start_screen::windows\(state\)\)\)\);/, '');
-    expect(focusWiringProblems(inLoop).join('\n')).toMatch(/for 迴圈裡面或之後/);
-    expect(focusWiringProblems(skeleton({}).replace('start_screen::windows(state)', '["teach", "test"]')).join('\n')).toMatch(/start_screen::windows/);
-    expect(focusWiringProblems(skeleton({}).replace('Arc::new(Mutex::new(', 'Some((').replace('Arc', 'Rc')).join('\n')).toMatch(/Arc<Mutex/);
+  it('兩張都開才起計時:沒有 SHOW_FIRST / STARTUP_FOCUS 的判斷 → 紅', () => {
+    expect(startupWiringProblems(withExec(frame({})).replace('has(SHOW_FIRST) && has(STARTUP_FOCUS)', 'true')).join('\n')).toMatch(/SHOW_FIRST 與 STARTUP_FOCUS/);
+  });
+  it('StartupFocus 建在迴圈裡 / 標籤寫死 / 沒放進 Arc<Mutex> → 紅', () => {
+    expect(startupWiringProblems(withExec(frame({ head: '' })).replace('for label in x {', 'for label in x { let f2 = StartupFocus::new(start_screen::windows(state));')).join('\n')).toMatch(/for 迴圈裡面或之後/);
+    expect(startupWiringProblems(withExec(frame({})).replace('start_screen::windows(state)', '["teach", "test"]')).join('\n')).toMatch(/start_screen::windows/);
+    expect(startupWiringProblems(withExec(frame({})).replace('Arc::new(Mutex::new(', 'Some((').replace('Arc', 'Rc')).join('\n')).toMatch(/Arc<Mutex/);
   });
 });
 

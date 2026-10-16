@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use learning_cards_desktop::window_mode::{
-    init_script, mode_for, surface_for, ShowGate, StartupFocus, WindowMode, WindowSurface, SHOW_FALLBACK, SOLID_BACKGROUND, STARTUP_FOCUS,
+    init_script, mode_for, surface_for, ShowGate, StartupAction, StartupFocus, WindowMode, WindowSurface, ORDER_BACKSTOP, SHOW_FALLBACK, SHOW_FIRST,
+    SOLID_BACKGROUND, STARTUP_FOCUS,
 };
 
 fn manifest_dir() -> PathBuf {
@@ -274,79 +275,188 @@ fn the_css_reader_ignores_comments() {
     assert!(parse_hud_solid(":root { --hud-solid: /* x */ #fff; }").is_err(), "拿掉註解之後仍是三碼");
 }
 
-// ═════════════════════════════ T21:啟動焦點(驗收 8)
+// ═════════════════════════════ T21 第 3 輪:啟動時的顯示順序(驗收 8,第 3 輪)
+
+use StartupAction::{Focus, Show};
 
 #[test]
-fn the_startup_focus_target_is_the_test_card() {
-    assert_eq!(STARTUP_FOCUS, "test");
+fn the_startup_constants_are_fixed() {
+    assert_eq!(SHOW_FIRST, "teach", "先顯示的是教學卡");
+    assert_eq!(STARTUP_FOCUS, "test", "最後顯示、拿焦點的是考試卡");
+    assert_eq!(ORDER_BACKSTOP, Duration::from_secs(5), "教學卡一直沒顯示時,考試卡最晚 5 秒後顯示");
+    assert!(ORDER_BACKSTOP > SHOW_FALLBACK, "5 秒的順序退路要比每個視窗自己的 3 秒顯示退路晚,不然 3 秒那條永遠輪不到");
+}
+
+fn both() -> StartupFocus {
+    StartupFocus::new(&["teach", "test"])
 }
 
 #[test]
-fn focus_goes_to_the_test_card_when_the_teach_card_is_shown_first() {
-    let mut focus = StartupFocus::new(&["teach", "test"]);
-    assert_eq!(focus.on_shown("teach"), None, "還有一個視窗沒顯示");
-    assert_eq!(focus.on_shown("test"), Some("test"), "兩個都顯示了");
+fn the_teach_card_first_then_the_test_card() {
+    let mut s = both();
+    assert_eq!(s.on_ready("teach"), vec![Show("teach")]);
+    assert_eq!(s.on_ready("test"), vec![Show("test"), Focus("test")]);
 }
 
 #[test]
-fn focus_goes_back_to_the_test_card_when_the_teach_card_is_shown_last() {
-    let mut focus = StartupFocus::new(&["teach", "test"]);
-    assert_eq!(focus.on_shown("test"), None, "教學卡還沒顯示");
-    assert_eq!(focus.on_shown("teach"), Some("test"), "教學卡後顯示、搶走焦點,要拿回來");
+fn a_test_card_that_is_ready_first_waits_for_the_teach_card() {
+    let mut s = both();
+    assert_eq!(s.on_ready("test"), vec![], "考試卡先準備好:等著,不顯示");
+    assert_eq!(s.on_ready("teach"), vec![Show("teach"), Show("test"), Focus("test")], "順序就是這樣:教學卡、考試卡、焦點");
 }
 
 #[test]
-fn showing_the_same_window_twice_does_not_count_twice() {
-    let mut focus = StartupFocus::new(&["teach", "test"]);
-    assert_eq!(focus.on_shown("teach"), None);
-    assert_eq!(focus.on_shown("teach"), None, "同一個標籤第二次不算,不會提早回 Some");
-    assert_eq!(focus.on_shown("test"), Some("test"));
+fn the_backstop_shows_the_test_card_when_the_teach_card_never_shows() {
+    let mut s = both();
+    assert_eq!(s.on_ready("test"), vec![]);
+    assert_eq!(s.on_backstop(), vec![Show("test"), Focus("test")], "教學卡還沒顯示,考試卡也不能永遠不顯示");
 }
 
 #[test]
-fn focus_is_given_only_once() {
-    let mut focus = StartupFocus::new(&["teach", "test"]);
-    assert_eq!(focus.on_shown("teach"), None);
-    assert_eq!(focus.on_shown("test"), Some("test"));
-    for label in ["teach", "test", "teach", "test"] {
-        assert_eq!(focus.on_shown(label), None, "已經給過一次,之後不跟使用者搶焦點:{label}");
+fn the_backstop_works_even_when_nothing_was_ready() {
+    let mut s = both();
+    assert_eq!(s.on_backstop(), vec![Show("test"), Focus("test")]);
+}
+
+#[test]
+fn a_teach_card_that_shows_after_the_backstop_gets_the_focus_taken_back_by_the_test_card() {
+    let mut s = both();
+    assert_eq!(s.on_backstop(), vec![Show("test"), Focus("test")]);
+    assert_eq!(s.on_ready("teach"), vec![Show("teach"), Focus("test")], "教學卡後 map 會搶焦點,補一次保險");
+}
+
+#[test]
+fn after_both_are_shown_nothing_more_happens() {
+    for first in [vec!["teach", "test"], vec!["test", "teach"]] {
+        let mut s = both();
+        for label in &first {
+            s.on_ready(label);
+        }
+        assert_eq!(s.on_ready("teach"), vec![], "{first:?}:兩個都顯示之後 on_ready(teach)");
+        assert_eq!(s.on_ready("test"), vec![], "{first:?}:兩個都顯示之後 on_ready(test)");
+        assert_eq!(s.on_backstop(), vec![], "{first:?}:兩個都顯示之後 on_backstop");
     }
+    let mut via_backstop = both();
+    via_backstop.on_backstop();
+    via_backstop.on_ready("teach");
+    assert_eq!(via_backstop.on_backstop(), vec![], "退路顯示之後教學卡也顯示了:再來的 on_backstop 什麼都不做");
+    assert_eq!(via_backstop.on_ready("test"), vec![]);
+}
+
+#[test]
+fn the_same_window_ready_twice_does_nothing_the_second_time() {
+    let mut s = both();
+    assert_eq!(s.on_ready("teach"), vec![Show("teach")]);
+    assert_eq!(s.on_ready("teach"), vec![], "同一個標籤第二次");
+    let mut s = both();
+    assert_eq!(s.on_ready("test"), vec![]);
+    assert_eq!(s.on_ready("test"), vec![], "考試卡等著的時候又來一次,也不能提早顯示");
+    assert_eq!(s.on_ready("teach"), vec![Show("teach"), Show("test"), Focus("test")]);
+}
+
+#[test]
+fn a_set_with_only_the_test_card_does_not_wait_for_the_teach_card() {
+    let mut s = StartupFocus::new(&["test"]);
+    assert_eq!(s.on_ready("test"), vec![Show("test"), Focus("test")]);
+    assert_eq!(s.on_backstop(), vec![]);
+    let mut s = StartupFocus::new(&["test"]);
+    assert_eq!(s.on_backstop(), vec![Show("test"), Focus("test")], "只有考試卡時,退路也讓它顯示(它沒有東西好等)");
+}
+
+#[test]
+fn a_set_with_only_the_teach_card_never_gets_a_focus_action() {
+    let mut s = StartupFocus::new(&["teach"]);
+    assert_eq!(s.on_ready("teach"), vec![Show("teach")]);
+    assert_eq!(s.on_backstop(), vec![]);
+    let mut s = StartupFocus::new(&["teach"]);
+    assert_eq!(s.on_backstop(), vec![], "沒有考試卡:退路沒有東西要顯示");
+    assert_eq!(s.on_ready("teach"), vec![Show("teach")]);
+}
+
+#[test]
+fn an_empty_set_never_does_anything() {
+    let mut s = StartupFocus::new(&[]);
+    for label in ["teach", "test", "setup"] {
+        assert_eq!(s.on_ready(label), vec![], "四種失敗只開 setup,labels 是空的:{label}");
+    }
+    assert_eq!(s.on_backstop(), vec![]);
 }
 
 #[test]
 fn a_label_that_is_not_in_the_set_is_ignored() {
-    let mut focus = StartupFocus::new(&["teach", "test"]);
-    assert_eq!(focus.on_shown("setup"), None);
-    assert_eq!(focus.on_shown("teach"), None, "setup 不算進去");
-    assert_eq!(focus.on_shown("test"), Some("test"));
-}
-
-#[test]
-fn a_set_that_does_not_contain_the_target_never_gives_focus() {
-    let mut only_teach = StartupFocus::new(&["teach"]);
-    assert_eq!(only_teach.on_shown("teach"), None);
-    assert_eq!(only_teach.on_shown("test"), None);
-    let mut nothing = StartupFocus::new(&[]);
-    for label in ["teach", "test", "setup"] {
-        assert_eq!(nothing.on_shown(label), None, "四種失敗只開 setup,labels 是空的:{label}");
-    }
-}
-
-#[test]
-fn a_single_card_window_set_gives_focus_when_that_window_is_shown() {
-    let mut focus = StartupFocus::new(&["test"]);
-    assert_eq!(focus.on_shown("test"), Some("test"));
-    assert_eq!(focus.on_shown("test"), None);
+    let mut s = both();
+    assert_eq!(s.on_ready("setup"), vec![]);
+    assert_eq!(s.on_ready("teach"), vec![Show("teach")], "setup 不算進去");
+    assert_eq!(s.on_ready("other"), vec![]);
+    assert_eq!(s.on_ready("test"), vec![Show("test"), Focus("test")]);
 }
 
 #[test]
 fn each_startup_focus_is_independent() {
-    let mut a = StartupFocus::new(&["teach", "test"]);
-    let mut b = StartupFocus::new(&["teach", "test"]);
-    assert_eq!(a.on_shown("teach"), None);
-    assert_eq!(b.on_shown("test"), None);
-    assert_eq!(a.on_shown("test"), Some("test"));
-    assert_eq!(b.on_shown("teach"), Some("test"), "另一個實例的狀態不影響這一個");
+    let mut a = both();
+    let mut b = both();
+    assert_eq!(a.on_ready("teach"), vec![Show("teach")]);
+    assert_eq!(b.on_ready("test"), vec![]);
+    assert_eq!(a.on_ready("test"), vec![Show("test"), Focus("test")]);
+    assert_eq!(b.on_ready("teach"), vec![Show("teach"), Show("test"), Focus("test")], "另一個實例的狀態不影響這一個");
+}
+
+/// 把事件接在一起試(窮舉長度 ≤ 5、四種事件的所有序列),只看「不管事件怎麼排,下面這些都成立」。
+#[test]
+fn whatever_the_order_of_events_the_invariants_hold() {
+    #[derive(Clone, Copy, Debug)]
+    enum Ev {
+        Ready(&'static str),
+        Backstop,
+    }
+    let evs = [Ev::Ready("teach"), Ev::Ready("test"), Ev::Backstop, Ev::Ready("setup")];
+    let mut seqs: Vec<Vec<Ev>> = vec![vec![]];
+    let mut level: Vec<Vec<Ev>> = vec![vec![]];
+    for _ in 0..5 {
+        let mut next = Vec::new();
+        for s in &level {
+            for e in evs {
+                let mut t = s.clone();
+                t.push(e);
+                next.push(t);
+            }
+        }
+        seqs.extend(next.iter().cloned());
+        level = next;
+    }
+    for seq in seqs {
+        let mut focus = both();
+        let mut all: Vec<StartupAction> = Vec::new();
+        let mut used_backstop = false;
+        for ev in &seq {
+            let out = match ev {
+                Ev::Ready(l) => focus.on_ready(l),
+                Ev::Backstop => {
+                    used_backstop = true;
+                    focus.on_backstop()
+                }
+            };
+            all.extend(out);
+        }
+        let ctx = format!("事件 {seq:?} → 動作 {all:?}");
+        let shows = |l: &str| all.iter().filter(|a| **a == Show(match l { "teach" => "teach", _ => "test" })).count();
+        assert!(shows("teach") <= 1 && shows("test") <= 1, "每個視窗最多顯示一次。{ctx}");
+        assert!(!all.contains(&Show("setup")) && !all.contains(&Focus("teach")) && !all.contains(&Focus("setup")), "只會對考試卡下 Focus。{ctx}");
+        if let Some(f) = all.iter().position(|a| *a == Focus("test")) {
+            let shown = all[..f].iter().any(|a| *a == Show("test"));
+            assert!(shown, "Focus(test) 之前考試卡一定已經顯示。{ctx}");
+        }
+        let teach_at = all.iter().position(|a| *a == Show("teach"));
+        let test_at = all.iter().position(|a| *a == Show("test"));
+        if !used_backstop {
+            if let Some(t) = test_at {
+                assert!(teach_at.is_some_and(|h| h < t), "沒有用退路時,考試卡一定在教學卡之後才顯示。{ctx}");
+            }
+        }
+        if let Some(t) = test_at {
+            assert_eq!(all.get(t + 1), Some(&Focus("test")), "Focus(test) 緊接在 Show(test) 之後。{ctx}");
+        }
+    }
 }
 
 // ───────────────────────────── 給 cucumber 場景用(沒設環境變數時什麼都不做)
@@ -368,17 +478,42 @@ fn emit_surface_for_the_scenarios() {
     println!("LC-SURFACE-BEGIN\n{json}\nLC-SURFACE-END");
 }
 
-/// 場景「The test card gets the keyboard focus once both windows are shown」:
-/// `LC_STARTUP_FIRST=teach|test cargo test --test window_mode emit_startup_focus_for_the_scenarios -- --exact --nocapture`
-/// 先顯示 `LC_STARTUP_FIRST` 那個,再顯示另一個,然後兩個各再顯示一次;印出每一次 `on_shown` 的回傳(JSON 陣列,四個)。
+/// 場景「The test card is shown after the teach card…」與兩個退路 / 單張場景:
+/// `LC_STARTUP_SCENARIO=ready-teach-first|ready-test-first|backstop|single-test cargo test --test window_mode emit_startup_order_for_the_scenarios -- --exact --nocapture`
+/// 印出每個事件(`on_ready(label)` / `on_backstop()`)與 Rust 真的回傳的動作(JSON)。
 #[test]
-fn emit_startup_focus_for_the_scenarios() {
-    let Ok(first) = std::env::var("LC_STARTUP_FIRST") else {
+fn emit_startup_order_for_the_scenarios() {
+    let Ok(scenario) = std::env::var("LC_STARTUP_SCENARIO") else {
         return;
     };
-    let other = if first == "teach" { "test" } else { "teach" };
-    let mut focus = StartupFocus::new(&["teach", "test"]);
-    let calls = [first.as_str(), other, first.as_str(), other];
-    let results: Vec<Option<&str>> = calls.iter().map(|label| focus.on_shown(label)).collect();
-    println!("LC-STARTUP-FOCUS-BEGIN\n{}\nLC-STARTUP-FOCUS-END", serde_json::json!({ "calls": calls, "results": results }));
+    let name = |a: StartupAction| match a {
+        Show(l) => format!("Show({l})"),
+        Focus(l) => format!("Focus({l})"),
+    };
+    let mut steps: Vec<serde_json::Value> = Vec::new();
+    let mut record = |event: &str, actions: Vec<StartupAction>| {
+        steps.push(serde_json::json!({ "event": event, "actions": actions.into_iter().map(name).collect::<Vec<_>>() }));
+    };
+    match scenario.as_str() {
+        "ready-teach-first" => {
+            let mut s = both();
+            record("on_ready(teach)", s.on_ready("teach"));
+            record("on_ready(test)", s.on_ready("test"));
+        }
+        "ready-test-first" => {
+            let mut s = both();
+            record("on_ready(test)", s.on_ready("test"));
+            record("on_ready(teach)", s.on_ready("teach"));
+        }
+        "backstop" => {
+            let mut s = both();
+            record("on_backstop()", s.on_backstop());
+        }
+        "single-test" => {
+            let mut s = StartupFocus::new(&["test"]);
+            record("on_ready(test)", s.on_ready("test"));
+        }
+        other => panic!("不認得的 LC_STARTUP_SCENARIO:{other}"),
+    }
+    println!("LC-STARTUP-ORDER-BEGIN\n{}\nLC-STARTUP-ORDER-END", serde_json::json!({ "steps": steps }));
 }
