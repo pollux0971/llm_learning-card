@@ -46,6 +46,7 @@ npx tsx scripts/review.ts --dir contracts/fixtures/learning-minimal --dry-run --
 |---|---|---|
 | 1 | 04 三個 phase、05 phase-2、01 phase-2 | 這一層本來就是組合層,沒有獨立的 Wave 0 版本 |
 | 2 | 自身 phase-1、I2 自動驗收通過(ADR-073) | 續答與跨日邊界要在真的用過之後才知道怎麼設計 |
+| 3 | 自身 phase-2 | 連錯兩次的卡沒有縮短版時退回原卡(T25);縮短版現在沒有任何管線在產,這個炸點每個人都會踩到 |
 
 **注意**:這是唯一沒有 Wave 0 phase-1 的資料夾。組合層在被組合的東西存在之前無法獨立,
 硬造一個吃 stub 的版本只是在寫兩次。這是 ADR-021 的一個明確例外。
