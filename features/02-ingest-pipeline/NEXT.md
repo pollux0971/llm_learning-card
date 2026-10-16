@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-1(2026-09-03)、phase-2(2026-09-03) |
+| 已完成 | phase-4(2026-10-17:子卡生成時看得到同分類其他卡 `already_covered`、`--overlap-siblings`、非資安泛化 golden 輸入;工單 T18,-ed 驗收無阻擋項,真 cucumber @phase-4 5/5,Stryker 93.04%,golden 第 1 輪六個輸入技術顧問評 5/5,證據見 docs/reviews/acceptance-T18.md 與 T18-2026-10-17.md)。phase-1(2026-09-03)、phase-2(2026-09-03) |
 | 進行中 | 無 |
-| 下一個 | phase-3(卡在 I4,見 Gate);phase-4(T18,等 T12 合併) |
+| 下一個 | phase-3(卡在 I4,見 Gate) |
 
 ## Gate
 
@@ -24,8 +24,8 @@
 
 **phase-4** 需要:
 - [x] 自身:phase-2 `done`
-- [ ] 跨資料夾:12 phase-2 `done`,而且 T12(`children.md` 的子卡不得重述父卡,量法見 ADR-043)已合併
-- [ ] 契約:無(摘要由 body 算出,不新增欄位,見 `docs/tickets/T18-children-sees-sibling-cards.md`)
+- [x] 跨資料夾:12 phase-2 `done`,而且 T12(`children.md` 的子卡不得重述父卡,量法見 ADR-043)已合併(2026-10-17)
+- [x] 契約:無(摘要由 body 算出,不新增欄位,見 `docs/tickets/T18-children-sees-sibling-cards.md`)
 
 ## Gate 未滿足時
 

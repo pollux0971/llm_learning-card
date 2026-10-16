@@ -62,7 +62,7 @@ npx tsx scripts/ingest.ts --fake --file contracts/fixtures/raw/security-basics.m
 | 1 | raw → level 0 卡片(FakeLlm)、字數重試、去重 | Wave 0 | done | 2026-09-03 |
 | 2 | 考題、level 1、依賴圖 | I1 | done | 2026-09-03 |
 | 3 | require_raw、無 raw 生成、增量與 stale | I4 | todo | |
-| 4 | level 1 子卡生成時看得到同分類的其他卡(`already_covered`,T18) | 不綁整合點 | todo | |
+| 4 | level 1 子卡生成時看得到同分類的其他卡(`already_covered`,T18) | 不綁整合點 | done | 2026-10-17 |
 
 ## 驗收方式
 
