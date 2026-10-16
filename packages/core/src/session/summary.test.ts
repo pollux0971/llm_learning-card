@@ -58,15 +58,36 @@ describe('renderSummary', () => {
     expect(text).toContain('2');
   });
 
-  it('mentions grading errors when any occurred', () => {
-    const text = renderSummary({
-      passed: 1,
-      failed: 0,
-      errors: 1,
-      tomorrow: { total: 0, capped: false, shown: 0, overflow: 0 },
-    });
-    expect(text.length).toBeGreaterThan(0);
-    expect(text).toMatch(/error|失敗|錯誤/i);
+  // T17:SessionSummaryInput 多了 answeredThisRun、retryLater(取代 errors 那一行)。基底的型別還沒有這兩欄,
+  // 所以用 cast 餵進去,tsc 才會是 0 錯。
+  const tomorrow = { total: 0, capped: false, shown: 0, overflow: 0 };
+  const render = (input: Record<string, unknown>): string => renderSummary({ ...input } as unknown as Parameters<typeof renderSummary>[0]);
+
+  it('prints how many questions were answered in this run', () => {
+    const text = render({ passed: 4, failed: 1, errors: 0, answeredThisRun: 3, retryLater: 0, tomorrow });
+    expect(text).toMatch(/4 passed, 1 returned\./);
+    expect(text).toMatch(/Answered this run: 3\./);
+  });
+
+  it('prints Answered this run: 0. when nothing was answered in this run', () => {
+    const text = render({ passed: 5, failed: 0, errors: 0, answeredThisRun: 0, retryLater: 0, tomorrow });
+    expect(text).toMatch(/Answered this run: 0\./);
+  });
+
+  it('lists the questions left to retry, and the old grading-error line is gone', () => {
+    const text = render({ passed: 2, failed: 0, errors: 1, answeredThisRun: 3, retryLater: 1, tomorrow });
+    expect(text).toMatch(/Retry later: 1 question\(s\)\./);
+    expect(text).not.toMatch(/grading error/);
+  });
+
+  it('omits the retry line entirely when nothing is left to retry', () => {
+    const text = render({ passed: 3, failed: 0, errors: 0, answeredThisRun: 3, retryLater: 0, tomorrow });
+    expect(text).not.toMatch(/Retry later/);
+  });
+
+  it('keeps the tomorrow line as before', () => {
+    const text = render({ passed: 1, failed: 1, errors: 0, answeredThisRun: 2, retryLater: 0, tomorrow: { total: 6, capped: true, shown: 4, overflow: 2 } });
+    expect(text).toMatch(/Tomorrow: 4 due \(daily cap reached, 2 more waiting\)\./);
   });
 });
 

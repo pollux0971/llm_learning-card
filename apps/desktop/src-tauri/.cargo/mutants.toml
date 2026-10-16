@@ -29,6 +29,7 @@ examine_globs = [
   "src/event_log.rs",
   "src/learning_root.rs",
   "src/start_screen.rs",
+  "src/window_mode.rs",
 ]
 copy_target = true
 minimum_test_timeout = 30

@@ -917,7 +917,7 @@ Then("the card remains in today's list", function (this: LearningWorld) {
 export async function assertI2GradingFailedReported(world: LearningWorld): Promise<void> {
   const run = await ensureRun(world);
   assert.equal(run.status, 0, `批改失敗不該讓整個指令失敗:\n${run.output}`);
-  assert.match(run.output, /1 question\(s\) had a grading error/, `小結應該報告有一題批改失敗:\n${run.output}`);
+  assert.match(run.output, /Retry later: 1 question\(s\)\./, `小結應該報告有一題待重試(批改失敗):\n${run.output}`);
   assert.match(run.output, /0 passed, 0 returned\./);
   // 雲端被問了剛好兩次(第一次無法解析,重試一次,仍無法解析才放棄)
   assert.equal(cloudRequests(world).length, 2, `應該問了兩次:${cloudRequests(world).length}`);
@@ -951,7 +951,9 @@ Then('the session resumes at the third card', function (this: LearningWorld) {
   void answered;
   assert.equal(second.length, 3, `第二輪應該只剩 3 張:${JSON.stringify(second)}`);
   const firstLine = questionLines(s.runs[1]!.stdout)[0]!;
-  assert.ok(firstLine.startsWith('(1/3) '), `第二輪應該從 (1/3) 開始:${firstLine}`);
+  // T17:有當日快取 = 一天一個 session,續答的進度分母是整天的題數(5),第一題是第 3 題
+  assert.ok(firstLine.startsWith('(3/5) '), `第二輪應該從 (3/5) 開始:${firstLine}`);
+  assert.deepEqual(questionLines(s.runs[1]!.stdout).map((l) => /^\((\d+\/\d+)\)/.exec(l)?.[1]), ['3/5', '4/5', '5/5']);
   for (const id of second) assert.ok(!first.slice(0, 2).includes(id), `${id} 在第一輪已經答過,不該再問`);
 });
 

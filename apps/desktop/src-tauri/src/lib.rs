@@ -9,6 +9,7 @@ pub mod learning_root;
 pub mod path_guard;
 pub mod session;
 pub mod start_screen;
+pub mod window_mode;
 
 use std::path::PathBuf;
 
@@ -22,11 +23,20 @@ pub fn pointer_env() -> (Option<String>, PathBuf) {
     (xdg_config_home, home)
 }
 
-/// main.rs 與 probe(`src/bin/lc-fs.rs`)共用的 logger(T2c-2 驗收 10):`log::error!` 寫到 stderr,
-/// 例如 warning 事件寫不進 `state/log.jsonl` 的那一行。沒設 `RUST_LOG` 時只印 error;重複呼叫不算錯。
+/// main.rs 與 probe(`src/bin/lc-fs.rs`)共用的 logger(T2c-2 驗收 10):寫到 stderr。
+/// 沒設 `RUST_LOG` 時,依賴只印 error,本 crate 的 warn 也印(T16 逾時退路);設了就完全照它。重複呼叫不算錯。
 pub fn init_logging() {
-    let env = env_logger::Env::default().default_filter_or("error");
-    let _ = env_logger::Builder::from_env(env)
+    let filter = log_filter(std::env::var("RUST_LOG").ok().as_deref());
+    let _ = env_logger::Builder::new()
+        .parse_filters(&filter)
         .target(env_logger::Target::Stderr)
         .try_init();
+}
+
+/// 沒設 `RUST_LOG` 時讓本 crate 的 warn 看得到,別的 crate 仍只印 error。設了就原樣採用,不加預設。
+pub fn log_filter(rust_log: Option<&str>) -> String {
+    match rust_log {
+        Some(value) => value.to_string(),
+        None => "error,learning_cards_desktop=warn".to_string(),
+    }
 }

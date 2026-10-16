@@ -6,9 +6,19 @@
   import HudField from '../HudField.svelte';
   import HudPanel from '../HudPanel.svelte';
   import { FRAMELESS_CLASS, SOLID_CLASS } from '../layout.js';
-  import { createWindowControls } from '../window-controls.js';
+  import { createWindowControls, type WindowControls } from '../window-controls.js';
 
   const controls = createWindowControls();
+  let fakeWindowControls = $state(false);
+  const idle = (): Promise<void> => Promise.resolve();
+  const drawnControls: WindowControls = {
+    available: true,
+    minimize: idle,
+    close: idle,
+    startDragging: idle,
+    startResizeDragging: () => Promise.resolve(),
+  };
+  const panelControls = $derived(fakeWindowControls ? drawnControls : controls);
 
   function cardFromFixture(raw: string): { title: string; body: string } {
     const matched = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(raw);
@@ -42,7 +52,11 @@
     <div class="switches">
       <label>
         <input type="checkbox" onchange={onFramelessChange} />
-        無框(標題列與縮放把手;瀏覽器裡沒有縮小與關閉鈕)
+        無框(標題列與縮放把手)
+      </label>
+      <label>
+        <input type="checkbox" data-gallery="fake-window-controls" bind:checked={fakeWindowControls} />
+        假視窗按鈕(瀏覽器裡畫出縮小與關閉)
       </label>
       <label>
         <input type="checkbox" onchange={onSolidChange} />
@@ -54,13 +68,14 @@
       </label>
     </div>
   </div>
-  <HudPanel title={card.title} {frameless} {solid} {controls}>
+  <HudPanel title={card.title} {frameless} {solid} controls={panelControls}>
     <p class="kicker">教學卡 · fixture</p>
     <p class="copy">{card.body}</p>
     <div class="actions">
       <HudButton>上一張</HudButton>
       <HudButton>記住了</HudButton>
       <HudButton>下一張</HudButton>
+      <HudButton disabled>停用</HudButton>
     </div>
     <div class="meters">
       <div>
@@ -85,6 +100,11 @@
       <div>
         <HudField>
           <textarea rows="2"></textarea>
+        </HudField>
+      </div>
+      <div>
+        <HudField>
+          <input type="text" disabled />
         </HudField>
       </div>
     </div>

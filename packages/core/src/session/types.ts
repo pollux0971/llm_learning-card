@@ -118,10 +118,20 @@ export interface EstimateResult {
   overflow: number;
 }
 
-/** renderSummary 的輸入。同樣是純資料,不吃 Session,方便單獨測文字格式。 */
+/**
+ * renderSummary 的輸入。同樣是純資料,不吃 Session,方便單獨測文字格式。
+ *
+ * `answeredThisRun` / `retryLater` 是 phase-2 加的,而且是可選:
+ * 沒續答的 session 不傳 `answeredThisRun`(小結跟 phase-1 位元組相同);
+ * 舊的呼叫端不傳 `retryLater` 時,仍用 `errors` 印舊的 grading-error 那行。
+ */
 export interface SessionSummaryInput {
   passed: number;
   failed: number;
   errors: number;
   tomorrow: EstimateResult;
+  /** 這一次執行送出的題數。只有續答(當日快取在這次之前就存在)才傳,0 也要印。 */
+  answeredThisRun?: number;
+  /** 名單裡沒有今天 history 的卡數。0 時整行不出現。有傳就取代 errors 那一行。 */
+  retryLater?: number;
 }

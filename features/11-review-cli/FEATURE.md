@@ -68,7 +68,7 @@ npx tsx scripts/review.ts --dir contracts/fixtures/learning-minimal --dry-run --
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | session 建立、作答、落地、小結 | I2 | done | 2026-09-03 |
-| 2 | 續答、跨日、暫停、dry-run 完整化、結束時 snapshot(ADR-042) | I3 | todo | |
+| 2 | 續答、跨日、暫停、dry-run 完整化、結束時 snapshot(ADR-042) | I3 | done | 2026-10-16 |
 
 ## 驗收方式
 
