@@ -80,6 +80,11 @@
     "reason": "ADR-050:scripts/prompt-check.ts 補上 ADR-034 的 .env 載入(side-effect import scripts/_env.ts)——之前漏了這行,--live 從來讀不到 .env 的 LLM_CLOUD_PROVIDER/OPENAI_API_KEY,落回 config/settings.yaml 的舊設定再丟 MissingCredentialError,跟 scripts/ingest.ts / llm-spend.ts / review.ts 同一個模式"
   },
   {
+    "from": "12-prompt-quality",
+    "to": "02-ingest-pipeline",
+    "reason": "T18 (d):golden 的 already_covered 跟 children 管線共用 ingest/siblings.ts 的 cardSummary / formatAlreadyCovered,工單要求不另寫一份"
+  },
+  {
     "from": "06-test-card",
     "to": "14-hud-skin",
     "reason": "ADR-071:06 考試卡 的畫面改用 14-hud-skin 的 packages/ui-shared/src/hud/ 元件(面板、按鈕、標題列、HP 條)。外觀只有一份,兩邊各抄一份會長得不一樣。只開這一條單向 import(沒有 14→06 考試卡),hud/ 歸 14 不歸 07,所以不碰 ADR-035 第 2 點守的 07 的圍欄插件。依賴與理由見 features/14-hud-skin/FEATURE.md「依賴」"

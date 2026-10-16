@@ -8,6 +8,11 @@
  * 這條抓的是「逐字照抄」。改寫式的重述(基準上顧問人判的那一對只有 0.074)
  * 分不開、也不該為了抓它把門檻從 0.3 往下調——同一個門檻會多抓人判沒問題的對。
  * 「0 對」不是語意重複解決了。
+ *
+ * T18 的跨卡重疊(`checkGoldenSiblings`)是同一把尺、另一張網:子卡對別的 key 的
+ * L0 與子卡,不比自己的 key。門檻 0.5 只抓逐字照抄;0.3–0.5 只進觀察清單,不擋。
+ * 改寫式的跨主題重複(顧問點名、字面 < 0.1 的那對)抓不到,也不該為了抓它把門檻往下調。
+ * 「0 對」不是語意重複解決了。真正的判斷歸顧問。
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,6 +27,15 @@ import type { StructuralCheckResult, StructuralIssue } from './types.js';
 
 /** >= 才算一對。剛好 0.3 要報,不要改成 >。低於 0.15 會誤報基準上人判沒問題的對。 */
 export const PARENT_CHILD_OVERLAP_THRESHOLD = 0.3;
+
+/**
+ * 跨卡(別的 key)字面重疊。>= 才算一對,不要改成 >。
+ * 0.3 在共用大量標頭名的主題上會誤報,所以擋的門檻是 0.5,不是 T12 的 0.3。
+ */
+export const CROSS_CARD_OVERLAP_THRESHOLD = 0.5;
+
+/** >= 進觀察清單,< 門檻才留在觀察(不擋)。剛好 0.3 要進觀察,不要改成 >。 */
+export const CROSS_CARD_OBSERVE_THRESHOLD = 0.3;
 
 /** 跟 checkDuplicates 同一個 n。兩邊各算各的會讓「同一段文字」對不出來。 */
 export const PARENT_CHILD_NGRAM_SIZE = DUPLICATE_NGRAM_SIZE;
@@ -280,4 +294,127 @@ export function checkGoldenParentChild(args: {
   });
 
   return { inputs, totalPairs, totalChildren, maxOverlap };
+}
+
+export interface SiblingSide {
+  key: string;
+  kind: 'L0' | 'child';
+  /** 在那個 output 檔陣列裡的位置(0 起)。 */
+  index: number;
+  title: string;
+}
+
+/** child 一定是子卡。兩邊都是子卡時,child 是 `${key}#${index}` 字典序較小的那張。 */
+export interface SiblingPair {
+  child: SiblingSide;
+  other: SiblingSide;
+  overlap: number;
+}
+
+export interface GoldenSiblingsResult {
+  /** 重疊 >= 門檻(預設 0.5)。 */
+  pairs: SiblingPair[];
+  /** 0.3 <= 重疊 < 門檻。只列,不擋。 */
+  observe: SiblingPair[];
+  /** 實際比過的不重複對(含沒過門檻的)。不是 pairs.length。 */
+  totalPairsChecked: number;
+  /** 所有比過的對之中最大的重疊。沒有任何一對時是 0。不能從 pairs / observe 裡取。 */
+  maxOverlap: number;
+}
+
+interface PreparedSide {
+  key: string;
+  kind: 'L0' | 'child';
+  index: number;
+  title: string;
+  grams: Set<string>;
+}
+
+function prepareSide(
+  byKey: Map<string, { title: string; body: string }[]>,
+  kind: 'L0' | 'child',
+  ngramSize: number,
+): PreparedSide[] {
+  const out: PreparedSide[] = [];
+  for (const [key, cards] of byKey) {
+    cards.forEach((card, index) => {
+      out.push({
+        key,
+        kind,
+        index,
+        title: card.title,
+        grams: charNgrams(normalizeBody(card.body), ngramSize),
+      });
+    });
+  }
+  return out;
+}
+
+function sideOf(card: PreparedSide): SiblingSide {
+  return { key: card.key, kind: card.kind, index: card.index, title: card.title };
+}
+
+function childChildOrder(a: PreparedSide, b: PreparedSide): [PreparedSide, PreparedSide] {
+  const aId = `${a.key}#${a.index}`;
+  const bId = `${b.key}#${b.index}`;
+  return aId < bId ? [a, b] : [b, a];
+}
+
+/**
+ * 子卡對**別的 key** 的 L0 與子卡。不比自己的 key(那是 `--overlap`);
+ * 同一個 key 的子卡彼此不比(那是 `checkDuplicates`)。A↔B 只算一次。
+ *
+ * `opts.threshold` 改的是 pairs 的門檻;observe 固定是 0.3 <= 重疊 < 門檻。
+ * 兩邊 key 集合不同、目錄不存在、沒有 output 檔:跟 `--overlap` 同一句錯。
+ */
+export function checkGoldenSiblings(args: {
+  childrenDir: string;
+  cardsDir: string;
+  opts?: ParentChildOptions;
+}): GoldenSiblingsResult {
+  const cardsByKey = loadSide(args.cardsDir);
+  const childrenByKey = loadSide(args.childrenDir);
+  const onlyCards = [...cardsByKey.keys()].filter((key) => !childrenByKey.has(key));
+  const onlyChildren = [...childrenByKey.keys()].filter((key) => !cardsByKey.has(key));
+  const missing = [...onlyCards, ...onlyChildren].sort();
+  if (missing.length > 0) {
+    throw new Error(`key 只在一邊有:${missing.join(', ')}`);
+  }
+
+  const threshold = args.opts?.threshold ?? CROSS_CARD_OVERLAP_THRESHOLD;
+  const ngramSize = args.opts?.ngramSize ?? PARENT_CHILD_NGRAM_SIZE;
+  const l0 = prepareSide(cardsByKey, 'L0', ngramSize);
+  const children = prepareSide(childrenByKey, 'child', ngramSize);
+
+  const pairs: SiblingPair[] = [];
+  const observe: SiblingPair[] = [];
+  let totalPairsChecked = 0;
+  let maxOverlap = 0;
+
+  const record = (child: PreparedSide, other: PreparedSide): void => {
+    const overlap = overlapCoefficient(child.grams, other.grams);
+    totalPairsChecked += 1;
+    if (overlap > maxOverlap) maxOverlap = overlap;
+    const pair: SiblingPair = { child: sideOf(child), other: sideOf(other), overlap };
+    if (overlap >= threshold) pairs.push(pair);
+    else if (overlap >= CROSS_CARD_OBSERVE_THRESHOLD && overlap < threshold) observe.push(pair);
+  };
+
+  for (const child of children) {
+    for (const other of l0) {
+      if (other.key === child.key) continue;
+      record(child, other);
+    }
+  }
+  for (let i = 0; i < children.length; i += 1) {
+    for (let j = i + 1; j < children.length; j += 1) {
+      const a = children[i]!;
+      const b = children[j]!;
+      if (a.key === b.key) continue;
+      const [lo, hi] = childChildOrder(a, b);
+      record(lo, hi);
+    }
+  }
+
+  return { pairs, observe, totalPairsChecked, maxOverlap };
 }

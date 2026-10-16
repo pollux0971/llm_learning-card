@@ -12,8 +12,10 @@
  *
  * ## 輸入從哪裡來
  *
- * 全部從 `contracts/fixtures/raw/security-basics.md` 切(見 `raw-slices.ts` 的理由與
- * 三個切片的選法)。那是 I1 真跑用的來源,基準才對應真實使用。**沒有自己編的例子。**
+ * 資安切片從 `contracts/fixtures/raw/security-basics.md` 切(見 `raw-slices.ts`)。
+ * 那是 I1 真跑用的來源,基準才對應真實使用。
+ * T18 (d2) 的三個泛化輸入從 `fixtures/golden-generalization/` 切
+ * (見 `generalization-slices.ts`):自擬的公開常識,不取自 `raw/`、`learning/`、帳本。
  *
  * ## prompt 怎麼組
  *
@@ -30,8 +32,11 @@
  * 它評的是 `golden-sets/` 自己的佔位 prompt 檔,不是真的任務,
  * 因此被 `REAL_TASK_GOLDEN_SET_IDS` 排除。
  */
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
+import type { Card } from '@contracts/index.js';
+import { formatAlreadyCovered, listSiblings } from '@core/ingest/siblings.js';
+import { GENERALIZATION_SLICES, generalizationSliceBody, type GeneralizationSlice } from './generalization-slices.js';
 import { RAW_SLICES, sliceBody, sliceRaw, type RawSlice } from './raw-slices.js';
 import type { GoldenInput, GoldenSet, GoldenSetId } from '../types.js';
 
@@ -62,13 +67,98 @@ function cardsInput(slice: RawSlice): GoldenInput {
   };
 }
 
+/** T12 合併後的 children 基準(2026-10-16)複本。sha256 由紅測試釘死,這裡只讀。 */
+const T18_CHILDREN_DIR = 'packages/core/src/prompt-quality/fixtures/golden-t18';
+const L0_CARDS_DIR = 'packages/core/src/prompt-quality/golden/ingest.cards/2026-10-15';
+const GEN_L0_DIR = 'packages/core/src/prompt-quality/fixtures/golden-generalization/ingest.cards';
+
+/** 泛化輸入的分類。不要沿用資安的 `security`。 */
+const GEN_CATEGORY = 'chemistry';
+
+function readOutputCards(relFromRoot: string): { title: string; body: string }[] {
+  const envelope = JSON.parse(readFileSync(join(ROOT, relFromRoot), 'utf8')) as { text?: unknown };
+  const text = envelope.text;
+  const parsed: unknown = typeof text === 'string' ? JSON.parse(text) : text;
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map((item) => {
+    const obj = item as { title?: unknown; body?: unknown };
+    return {
+      title: typeof obj.title === 'string' ? obj.title : '',
+      body: typeof obj.body === 'string' ? obj.body : '',
+    };
+  });
+}
+
+/** listSiblings 要的是 Card。golden 的卡沒有真的 id,這裡自己配,不寫進 prompt。 */
+function stubCard(id: string, category: string, title: string, body: string): Card {
+  return {
+    frontmatter: {
+      id,
+      category,
+      title,
+      level: 0,
+      source: 'llm',
+      created: '2026-10-16',
+      parent: category === GEN_CATEGORY ? 'chm-0001' : 'sec-0001',
+      prereqs: [],
+      provisional: false,
+      stale: false,
+      source_missing: false,
+    },
+    body,
+    examples: [],
+  };
+}
+
+function toSiblingCards(raws: { title: string; body: string }[], category: string, prefix: string): Card[] {
+  return raws.map((raw, i) => stubCard(`${prefix}-${String(i + 1).padStart(4, '0')}`, category, raw.title, raw.body));
+}
+
+/**
+ * 工單 (d):另外兩個切片的 L0 + 排在前面的切片的子卡。
+ * 行由 listSiblings 的輸出經 formatAlreadyCovered 組出,不另寫一份摘要。
+ */
+function securityCovered(slice: RawSlice): string[] {
+  const order = RAW_SLICES.map((s) => s.key);
+  const idx = order.indexOf(slice.key);
+  const others = order.filter((k) => k !== slice.key);
+  const before = order.slice(0, idx < 0 ? 0 : idx);
+  const raws = [
+    ...others.flatMap((k) => readOutputCards(`${L0_CARDS_DIR}/cards-${k}.output.json`)),
+    ...before.flatMap((k) => readOutputCards(`${T18_CHILDREN_DIR}/children-${k}.output.json`)),
+  ];
+  const parent = stubCard('sec-9000', CATEGORY, slice.heading, '');
+  return formatAlreadyCovered(listSiblings(toSiblingCards(raws, CATEGORY, 'sec'), parent));
+}
+
+/** 工單 (d2):另外兩個切片的手寫 L0。不含前面切片的子卡。 */
+function generalizationCovered(slice: GeneralizationSlice): string[] {
+  const raws = GENERALIZATION_SLICES.filter((s) => s.key !== slice.key).flatMap((s) =>
+    readOutputCards(`${GEN_L0_DIR}/cards-gen-${s.key}.output.json`),
+  );
+  const parent = stubCard('chm-9000', GEN_CATEGORY, slice.heading, '');
+  return formatAlreadyCovered(listSiblings(toSiblingCards(raws, GEN_CATEGORY, 'chm'), parent));
+}
+
 function childrenInput(slice: RawSlice): GoldenInput {
   const id = `children-${slice.key}`;
   return {
     id,
     prompt: block(
-      [`golden: ${id}`, `parent_id: ${cardId(slice)}`, `parent_title: ${slice.heading}`],
+      [`golden: ${id}`, `parent_id: ${cardId(slice)}`, `parent_title: ${slice.heading}`, ...securityCovered(slice)],
       sliceBody(slice),
+    ),
+  };
+}
+
+function generalizationInput(slice: GeneralizationSlice): GoldenInput {
+  const id = `children-gen-${slice.key}`;
+  return {
+    id,
+    group: 'generalization',
+    prompt: block(
+      [`golden: ${id}`, `parent_id: chm-golden-${slice.key}`, `parent_title: ${slice.heading}`, ...generalizationCovered(slice)],
+      generalizationSliceBody(slice),
     ),
   };
 }
@@ -128,10 +218,10 @@ const INGEST_CARDS: GoldenSet = {
 
 const INGEST_CHILDREN: GoldenSet = {
   id: 'ingest.children',
-  // children.ts:126 用的是 'ingest.cards'——契約 §7 沒有 ingest.children 這個任務。
+  // generateChildren 用的是 'ingest.cards'——契約 §7 沒有 ingest.children 這個任務。
   task: 'ingest.cards',
   promptFile: `${PROMPTS_DIR}/ingest/children.md`,
-  inputs: RAW_SLICES.map(childrenInput),
+  inputs: [...RAW_SLICES.map(childrenInput), ...GENERALIZATION_SLICES.map(generalizationInput)],
 };
 
 const INGEST_REGENERATE: GoldenSet = {
