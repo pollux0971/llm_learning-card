@@ -1,17 +1,18 @@
 @desktop-shell @phase-6
 Feature: Frameless windows
   The person asked for windows without the system frame, so the HUD frame from
-  folder 14 is the only frame. The windows are also transparent so the cut corners
-  show the desktop behind them. When the desktop cannot draw transparency, the
-  page falls back to a solid background instead of black corners. The title bar
-  and resize handles are drawn by the HUD kit; this phase turns off the system
-  frame, grants the window permissions those controls need, and tells the page
-  which mode it is in.
+  folder 14 is the only frame. When the desktop can draw transparency, the
+  windows are transparent so the cut corners show the desktop behind them. When
+  it cannot, the windows open opaque in the solid fallback colour and the page
+  uses the solid background, so nothing is ever black. The title bar and resize
+  handles are drawn by the HUD kit; this phase turns off the system frame, grants
+  the window permissions those controls need, and tells the page which mode it
+  is in.
 
   Scenario: Both windows are configured without the system frame
     When the window configuration is read
     Then both windows have the system decorations turned off
-    And both windows are transparent
+    And the configuration leaves transparency to the app
 
   Scenario: The window permissions cover what the drawn controls need
     When the desktop capability file is read
@@ -26,11 +27,24 @@ Feature: Frameless windows
     Given a desktop that <can> draw transparency
     When a window opens
     Then the page root <has> the solid class
+    And the window <is> transparent
+    And the window background is <background>
 
     Examples:
-      | can    | has           |
-      | can    | does not have |
-      | cannot | has           |
+      | can    | has           | is     | background                |
+      | can    | does not have | is     | left clear                |
+      | cannot | has           | is not | the solid fallback colour |
+
+  Scenario Outline: The test card gets the keyboard focus once both windows are shown
+    Given the card windows are opening
+    When the <first> window is shown first and the other one after it
+    Then the keyboard focus is given to the test card
+    And it is given only once
+
+    Examples:
+      | first |
+      | teach |
+      | test  |
 
   @manual
   Scenario: Dragging and resizing without the system frame
@@ -59,7 +73,12 @@ Feature: Frameless windows
     Given a desktop session without compositing
     When the desktop app is built and started
     Then the corners are filled with the solid fallback colour
-    And no black area appears
+    And no black area appears, not even in the first frame after the window is shown
+
+  @manual
+  Scenario: The test card has the keyboard focus after every start
+    When the desktop app is built and started several times
+    Then each time the test card has the keyboard focus once both windows are shown
 
   @manual
   Scenario: Staying on top still works without the frame

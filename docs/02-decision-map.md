@@ -1411,7 +1411,8 @@ graph TD
   - `gdk` 是桌面殼的直接依賴,版本 `"0.18"`,lock 裡仍是 tao 已經在用的那一份 0.18.2,不另起第二份。
   - 第 2 輪(技術顧問 2026-10-16,不另開號):`gdk` 只放 `[target.'cfg(target_os = "linux")'.dependencies]`,不放一般 `[dependencies]`,否則 phase-4、phase-5 一 build 就壞。非 Linux 不偵測,直接走透明(`mode_for(true)`)。lock 仍是一份 0.18.2。
   - 第 2 輪:沒設 `RUST_LOG` 時 filter 是 `error,learning_cards_desktop=warn`,本 crate 的逾時 warn 預設印得出來;設了 `RUST_LOG` 就完全照它,不加預設。
-- **Related**: ADR-071(HUD 元件歸 14)、ADR-011(Linux 先做)、`features/10-desktop-shell/phase-6.feature`、`features/14-hud-skin/FEATURE.md`、`docs/tickets/T16-desktop-phase-6.md`
+  - 第 3 輪(T21,技術顧問 2026-10-16,不另開號):Decision 3「載入完才顯示,就不會先閃黑」不成立 —— 藏著的視窗 WebKit 不畫,map 之後第一張要再等約 0.1 秒,這段時間沒有合成器的螢幕上透明視窗是黑的(T16 `@manual` F1:5/5 次,20 ms 取樣黑 105–145 ms)。改成:透明不寫在 `tauri.conf.json`,建窗時由 `window_mode::surface_for(mode)` 決定;沒有合成器時 `transparent(false)`、底色 `SOLID_BACKGROUND`(= `hud.css` 的 `--hud-solid`,測試釘住兩邊相等);有合成器時照舊透明、不塗底色。頁面 class、載入完才顯示、3 秒退路都不變。
+- **Related**: ADR-071(HUD 元件歸 14)、ADR-011(Linux 先做)、`features/10-desktop-shell/phase-6.feature`、`features/14-hud-skin/FEATURE.md`、`docs/tickets/T16-desktop-phase-6.md`、`docs/tickets/T21-solid-window-without-compositor.md`
 
 ## ADR-073 · I2 不打 tag:自動驗收通過、人工確認延到 I4(不加 CLI 的學新卡指令)
 

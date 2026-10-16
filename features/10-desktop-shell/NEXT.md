@@ -30,13 +30,16 @@
 - [ ] 整合:無
 - [ ] 契約:無(不動磁碟格式)
 
-  要動的只有 `apps/desktop/`:`tauri.conf.json` 兩個視窗設 `decorations: false`、`transparent: true`;
+  要動的只有 `apps/desktop/`:`tauri.conf.json` 兩個視窗設 `decorations: false`;透明由程式依合成器決定,設定檔不寫(T21,沒有合成器時視窗不透明、底色 `--hud-solid`);
   `capabilities/default.json` 加開始拖曳、開始縮放拖曳、縮小、關閉四個視窗權限;頁面根元素加 `hud-frameless`,
   偵測不到合成器(compositor)時再加 `hud-solid`(Linux 的 WebKitGTK 沒有合成器時透明區會變黑,所以要退回實心底)。
   偵測放 Rust 端,怎麼把結果交給頁面由工單定,目標是第一次畫面之前就決定,不要先黑再變。
   - **關閉走同一條路**:自畫的關閉鈕呼叫視窗的 `close()`,跟系統關閉鈕送同一個關閉請求。phase-3 的「關閉縮到系統列」
     攔的是同一個事件,所以 phase-3 不用為自畫的按鈕另寫一次。
   - **已知限制**:切角外面看起來透明,點擊還是會被視窗吃掉(視窗實際上是長方形)。使用者選這個做法時已知道。
+  - **已知限制**(T16 `@manual` O2,技術顧問 2026-10-16):沒有視窗管理員的 Xvfb 裡,拖曳 / 縮放之後下一次按下會被吃掉(GDK 的模擬拖曳)。
+    真的桌面走視窗管理員,沒驗;I3 的 `@manual` 由使用者在真桌面試。
+  - 啟動後鍵盤焦點固定給考試卡(T21,T16 `@manual` O1):兩個視窗都顯示之後才給,只給一次。
   - **CSP**:截圖與 console 一律用 `tauri build` 的產物(`tauri dev` 沒有 CSP,見 T2c-2 工單驗收 11)。
   - macOS 的透明視窗要 `macOSPrivateApi`,Windows 另有行為差異:跟 phase-4、phase-5 一起在實機上驗,phase-6 只驗 Linux。
 
