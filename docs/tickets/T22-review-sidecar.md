@@ -1,7 +1,7 @@
 ---
 id: T22
 deps: [T21, T26]
-touches: [packages/core/src/session/engine.ts, packages/core/src/session/protocol.ts, packages/core/src/session/handler.ts, packages/core/src/session/answer.ts, packages/core/src/session/index.ts, scripts/review.ts, scripts/review-sidecar.ts, scripts/boundaries.allow.json, apps/desktop/src-tauri/src/review_sidecar.rs, apps/desktop/src-tauri/src/commands.rs, apps/desktop/src-tauri/src/lib.rs, apps/desktop/src-tauri/src/main.rs, apps/desktop/src/webview/review-client.ts]
+touches: [packages/core/src/session/engine.ts, packages/core/src/session/protocol.ts, packages/core/src/session/handler.ts, packages/core/src/session/answer.ts, packages/core/src/session/index.ts, scripts/review.ts, scripts/review-sidecar.ts, scripts/review-sidecar-stdio.ts, scripts/boundaries.allow.json, scripts/boundaries.owners.json, apps/desktop/src-tauri/src/review_sidecar.rs, apps/desktop/src-tauri/src/commands.rs, apps/desktop/src-tauri/src/lib.rs, apps/desktop/src-tauri/src/main.rs, apps/desktop/src/webview/review-client.ts]
 cpu: heavy
 budget_usd: 5
 status: todo
@@ -45,6 +45,7 @@ must_catch:
 > 決策:**ADR-075**(`../02-decision-map.md`;同一個分支寫入)。
 > 規格:`features/06-test-card/phase-2.feature`(同一個分支加了側車的五個場景,見「規格」)。
 > 基底:origin/main `6e2e71f`。**派工時基底要含 T21 與 T26 合併後的 main**(T21 也動 `main.rs`;兩張落點都是 10-desktop-shell,R2 不能同時跑。T26 是 core 寫 `reviews.json` 前的樂觀檢查,這張要把它的錯誤轉成 kind)。
+> (2026-10-17 補)main `891f228` 已含 T26 與 T21 第 3 輪。紅測試作者(-e5)在測試裡固定的名字與細節見**驗收 9**,跟前面衝突的兩處(驗收 1 的靜態清單、驗收 4 的 import 順序)已在原處標明以驗收 9 為準。
 
 ## 為什麼有這張
 
@@ -89,6 +90,7 @@ export function snapshotAfterReview(opts: { learningDir: string; today: string; 
 - `sessionFromCache`、`buildAndStore`、`cacheFromSession`、`tallyToday` 加明天估計那幾行、`snapshotQuietly` 的判斷,都搬進這裡。`refusingRouter` 跟著搬(`pauseDay` 用)。
 - `scripts/review.ts` 改成呼叫這幾個函式。**CLI 的輸出(每一行字)、退出碼、寫的檔、snapshot 的時機都不變。** 讀 stdin、印字、`--dry-run` 的列印留在 CLI。
 - 靜態檢查:`scripts/review.ts` 不再直接呼叫 `readSessionCache`、`writeSessionCache`、`buildTodaySession`、`tallyToday`、`estimateTomorrow`、`snapshotLearningDir`(`--dry-run` 的唯讀路徑可以留 `readSessionCache` 與 `buildTodaySession`,其餘不行)。
+  **(2026-10-17 改,以驗收 9 的 D 為準)**`readSessionCache` 另外可以多一處:「暫停日不需要帳本」的預檢。
 
 ### 2. `submitAnswer` 給側車的兩個小改(`packages/core/src/session/answer.ts`)
 
@@ -160,6 +162,7 @@ export async function submitAnswer(session: Session, answer: string | string[], 
 ### 4. Node 端的側車(`scripts/review-sidecar.ts`,方法在 `packages/core/src/session/handler.ts`)
 
 - 入口:`node --import tsx scripts/review-sidecar.ts --dir <learning 根>`。第一行 `import './_env.js'`(ADR-034,金鑰只在這裡讀)。
+  **(2026-10-17 改,以驗收 9 的 C 為準)**第一個 import 是 `./review-sidecar-stdio.js`(把 console 導到 stderr),`./_env.js` 排第二。
 - **stdout 只准協定行**:任何 import 之前,先把 `console.log`、`console.info`、`console.debug`、`console.warn` 導到 stderr;協定的那一行只由框線程式用 `process.stdout.write` 寫。core 或依賴印出的任何字都只會到 stderr。
 - 啟動:
   1. `LC_REVIEW_FAKE_CLOUD` 有值 → `await import(那個路徑)`(它換掉 `fetch`),stderr 印 `[review-sidecar] 正在用假 router`。
@@ -265,6 +268,73 @@ export function createReviewClient(opts?: { invoke?: InvokeFn; handler?: (line: 
 | app 被強制結束也不留 | 對 app 送 SIGKILL | 3 秒內側車自己結束(stdin EOF) |
 | 側車死掉可以重來 | 對側車送 SIGKILL,再呼叫 `status` 兩次 | 第一次 `sidecar-exited`,第二次正常(新的側車) |
 | 金鑰不出側車 | 上面每一次的 app stderr、`log.jsonl`、檢查器拿到的每個回應 | `grep` 不到 `.env` 裡任何值的前 8 個字元(只比對,不印出值) |
+
+### 9. 紅測試作者固定的名字與細節(-e5 2026-10-17;worker 照做,跟前面衝突時以這裡為準)
+
+前面沒定、紅測試裡已經寫死的東西。測試檔是正本,這裡是索引;覺得哪一條錯了就停下回報協調者,不改測試。
+
+**A. `protocol.ts` 的匯出**(全文在 `packages/core/src/session/protocol.test.ts` 檔頭)
+
+- `PROTOCOL_VERSION = 1`、`MAX_LINE_BYTES = 262144`、`REQUEST_METHODS`(`start`、`next`、`submit`、`summary`、`status`,照這個順序)。
+- `ERROR_KINDS`:固定 19 個 = 驗收 3 那張表的側車 12 個 + Rust 7 個。`ERROR_MESSAGES`:kind → 固定的中文句子;`review-record-changed` 逐字是 T26 的全文。
+- `RequestSchema`、`ResponseSchema`、`HelloSchema`:全部 `z.strictObject`;`submit` 的 params 是 `{ fill }` 或 `{ apply }` 二選一。
+- `classifyRequestLine(line)` → `{ ok: true, request } | { ok: false, kind, id: number | null }`。判斷順序:
+  1. 大小:UTF-8 位元組,不含結尾換行,≤ 262144 才往下,否則 `too-large`;
+  2. 是不是 JSON;
+  3. 一行裡有 `\r` → `bad-request`;
+  4. `v` 存在但不是 `1` → `unsupported-version`(`v` 不存在是 `bad-request`);
+  5. method 不在五個裡 → `unknown-method`;
+  6. 其餘信封或 params 不合 → `bad-request`。
+  失敗時讀得出 `id` 就帶,讀不出是 `null`。
+- `parseResponseLine(line)`、`parseHelloLine(line)` → `{ ok: true, value } | { ok: false }`。
+- 向量檔 `packages/core/src/session/protocol.vectors.json`(紅測試作者寫,TS 與 Rust 共讀):每一列有 `ts`(TS 的預期)與 `rust`(`accept` / `reject` / `either` / `n/a`)。
+  `either` 是這張工單沒規定 Rust 怎麼判、測試不斷言(例:請求多一個頂層欄位——Rust 只看信封五項,側車一定擋;回應內容的語意不合——Rust 不看內容,client 擋)。`n/a` 是 Rust 的輸入是 JSON 值、那一行不適用(例:CRLF)。
+
+**B. `handler.ts`**
+
+- `createReviewHandler({ learningDir, today, routerFactory, env })` 回的字串是**不含換行**的一行 JSON;`\n` 由框線程式加。
+- `start` 的 `fakeCloud` = `Boolean(env.LC_REVIEW_FAKE_CLOUD)`。
+- `routerFactory`:第一次 `start` 才呼叫,拿到 router 之後不再呼叫;`status` 不呼叫。
+  (前端補,紅測試沒釘)呼叫失敗(`root-mismatch`、`router-unavailable`)時手上沒有 router,下一次 `start` 再呼叫一次——使用者修好帳本不用重開 app。
+- `next` 的 reteach 結果 = `{ kind: 'reteach', card, path, short }`(同驗收 3;沒有 `shortBody`、沒有任何內文)。
+- `submit` 的 `correctAnswers`:填空題、而且這一次 `pass === false` 就帶。stage 2 的填空答錯時 `status` 是 `partial`,也要帶。
+- 批改失敗 = `ok: true`、`status: 'error'`、`cardDone: false`,題目留在原地。
+- 紀錄被改過 → `review-record-changed`,丟掉記憶體裡的 session(之後 `next` / `submit` / `summary` 回 `no-session`)。
+- `engine.ts`、`handler.ts` 不寫 stdout、不呼叫 `process.exit`。
+
+**C. 側車行程(`scripts/review-sidecar.ts`)**
+
+- `LC_REVIEW_TODAY` 不合 `YYYY-MM-DD` → stderr 印 `[review-sidecar] bad-today`、退出碼 2、stdout 一行都沒有(連 `hello` 都不印)。
+- 回錯誤時 stderr 只印 `[review-sidecar] <kind>`。
+- `console.log` / `info` / `debug` / `warn` 要在**任何依賴載入之前**導到 stderr(測試用一個會吵的假雲端驗)。ESM 的 `import` 會先於本檔的程式執行,所以導向寫在**第一個 import 的獨立模組** `scripts/review-sidecar-stdio.ts`(已加進 touches;`boundaries.owners.json` 登記成 11-review-cli),`./_env.js` 排第二。
+- 請求依序處理,一次一個;stdin EOF → 退出碼 0。
+- `root-mismatch` 由 `routerFactory` 檢查:`resolveVerifiedLedger` 給的 learning 目錄跟 `--dir` 的真實路徑不同。帳本身分驗不過 → `router-unavailable`。
+
+**D. `engine.ts` 與 `scripts/review.ts` 的靜態檢查**
+
+- 簽名照驗收 1;`summarizeDay` 不收 `env`。
+- 「暫停日不需要帳本」(CLI 現在的行為)要 CLI 在叫 `liveRouterOrExit` 之前先看一眼快取是不是暫停。所以 `scripts/review.ts`:
+  - `readSessionCache` 最多 2 處(`--dry-run`,以及這個預檢);
+  - `buildTodaySession` 只剩 `--dry-run` 那 1 處;
+  - `writeSessionCache`、`tallyToday`、`estimateTomorrow`、`snapshotLearningDir`、`buildAndStore`、`sessionFromCache`、`cacheFromSession`、`snapshotQuietly`、`warnInvalidSessionCache` 一處都不准出現。
+
+**E. Rust**(`tests/review_sidecar.rs` 是測試;`src/review_sidecar.rs` 的簽名 stub 由紅測試作者放好,worker 填函式體、**不改簽名**)
+
+- `SidecarHost::new(provider: Box<dyn Fn() -> Result<SidecarSpec, ReviewError> + Send + Sync>, timeouts: SidecarTimeouts { hello, request, exit_grace })`;
+  `call(&self, &Value) -> Result<Value, ReviewError>`、`shutdown(&self)`、`child_pid(&self) -> Option<u32>`。
+- `provider` 在每次要(重)起側車時呼叫;回 `Err`(例如 `not-configured`)就不起,`call` 回那個錯。
+- `SidecarSpec { program, args, cwd, env }`;子行程 `env_clear` 之後只帶 `spec.env`(`child_env` 的結果放在這裡)。
+- `EnvelopeError { kind }`、`ReviewError { kind: String }`(`Serialize`)。`request_line` 失敗的 kind 是 `bad-envelope`;`parse_response_line` 失敗的 kind 是 `bad-response`。
+  host 拿到非協定行照驗收 5 丟掉、記一行、繼續等;只有超長的那一行才讓等中的請求回 `bad-response`。
+- 請求 `id` 要比上一個大:在 host 這一層檢查,被拒的不送。
+- 第一次 `call` 才起;逾時或側車結束都 kill + wait,下一次 `call` 重起。
+- 忙的時候**馬上**回 `busy`(`try_lock`,不排隊等)。
+
+**F. touches 補的檔**
+
+- `scripts/boundaries.owners.json`:`scripts/review-sidecar.ts` 與 `scripts/review-sidecar-stdio.ts` 登記成 11-review-cli,不然 `npm run boundaries` 擋。三個新的 scripts 測試由紅測試作者登記成 steps(同 `review-session.test.ts`)。
+- `scripts/review-sidecar-stdio.ts`:見 C。
+- `main.rs` 的 `.manage(SidecarHost)` 與 `RunEvent::Exit` 的靜態檢查,紅測試作者在 T21 第 3 輪併入(main `891f228`)之後補。
 
 ## 規格(同一個分支另一個 commit,技術顧問一起審)
 
