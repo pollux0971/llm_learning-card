@@ -1,4 +1,4 @@
 {
-  "id": "cards-titration",
+  "id": "cards-gen-titration",
   "text": "[\n  {\n    \"title\": \"滴定求濃度\",\n    \"body\": \"把已知濃度的溶液逐滴加入待測溶液，直到反應剛好完成，就能算出待測溶液的濃度。\",\n    \"examples\": [],\n    \"lines\": [\n      13,\n      13\n    ]\n  },\n  {\n    \"title\": \"滴定曲線的當量點\",\n    \"body\": \"記錄加入的體積與 pH 畫成滴定曲線，曲線在當量點附近 pH 變化最陡。\",\n    \"examples\": [],\n    \"lines\": [\n      13,\n      13\n    ]\n  }\n]"
 }

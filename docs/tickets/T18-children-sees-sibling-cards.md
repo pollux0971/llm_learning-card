@@ -119,7 +119,7 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
 **為什麼**:T12 的 `children.md` 新加的範例剛好對應現有 golden 的三個資安主題(顧問判:「照著考題教」),golden 分數代表不了泛化;T12 第 3 輪會把範例換成無關主題。這張工單要確認「children 看得到同分類其他卡」在**非資安主題**也成立。
 
 - (紅測試作者補記)下面列的 `chemistry.md`、三個手寫 L0 檔、`--fake` 回應,**已由紅測試作者寫好**(顧問 2026-10-17 裁決 A)。sha256:
-  `chemistry.md` `1a1d5270…8e0ff5`、`cards-acid-base` `999882f0…68535ac`、`cards-buffer` `6d3b4f33…2d53`、`cards-titration` `21016c2b…7ae53`(全文在測試裡)。
+  `chemistry.md` `1a1d5270…8e0ff5`、`cards-gen-acid-base` `4fb358fb…dd206d0`、`cards-gen-buffer` `23953366…5ba9d1`、`cards-gen-titration` `4513a605…6adac8`(全文在測試裡)。
   三個小節的行號:`酸與鹼` [3, 5]、`緩衝溶液` [7, 9]、`滴定` [11, 13](`##` 標題行 + 空行 + 一段正文)。`--fake` 回應:`fixtures/llm/ingest.cards.golden-children-gen-<key>.json`。
   worker 寫 `generalization-slices.ts` 與登記表,**不改這些檔**。
 - **輸入來源(符合 CLAUDE.md 硬規則 2 與「報告不得含使用者資料」)**:**自擬的公開常識短文,不取自 `raw/`、不取自 `learning/`、不取自帳本或任何使用者資料。** 主題用**化學:酸、鹼與緩衝**(三個小節:`酸與鹼`、`緩衝溶液`、`滴定`),每節 3–4 句,形狀仿原三個切片(定義+列舉 / 機制+例外 / 流程順序)。
@@ -128,6 +128,7 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
 - **放哪**(全新檔,不動 `raw/`、不動 `contracts/`):
   - `packages/core/src/prompt-quality/fixtures/golden-generalization/chemistry.md`:三個小節的原文(`##` 標題+正文)。
   - `packages/core/src/prompt-quality/fixtures/golden-generalization/ingest.cards/cards-<key>.output.json`(`<key>` = `acid-base`、`buffer`、`titration`):**手寫的 L0 卡**,形狀與 `golden/ingest.cards/<日期>/cards-<key>.output.json` 相同(`{ "id": "cards-<key>", "text": "<卡片 JSON 陣列的字串>" }`,每張卡 `title`/`body`/`examples`/`lines`;先讀一個既有檔照抄),每個切片 1–2 張,body ≤ 100 字(§2)。手寫而不是跑 cards 的 golden:省一輪真呼叫、位元組固定。**這些卡也是自擬的公開常識。**
+    - (紅測試作者補記,顧問 2026-10-17 裁決 A)檔名與 id 改成 **`cards-gen-<key>`**(`cards-gen-acid-base.output.json`,id `cards-gen-acid-base`)。理由:`--overlap` 與 `--overlap-siblings` 的 key 是 id 第一個 `-` 之後那段;子卡輸入是 `children-gen-<key>`(key = `gen-<key>`),L0 檔若叫 `cards-<key>`(key = `<key>`)兩邊永遠對不上,會被「key 只在一邊有」擋下。內容一個字都沒改,只改 id 那一行。
   - `packages/core/src/prompt-quality/golden-sets/generalization-slices.ts`:`GENERALIZATION_SLICES`(key、heading、行號)與讀檔函式,結構仿 `raw-slices.ts`;**讀檔唯讀**。
 - **進登記表**:`ingest.children` 這組**多三個輸入** `children-gen-acid-base`、`children-gen-buffer`、`children-gen-titration`(加在原三個之後;先讀 `registry.ts` 與 `GoldenInput` 型別,若需要區分「基準輸入」與「泛化輸入」就加一個 optional 欄位,例如 `group: 'generalization'`,不要改原三個輸入的 id 與 prompt 一個位元組)。它們的 `already_covered` 用同一套規則組出:**同分類的另外兩個切片的 L0 卡**(上面手寫的固定檔;泛化組不含「前面切片的子卡」,所以和處理順序無關),category 與 source 標籤也用自己的(不要沿用資安的 `CATEGORY`)。
   - `--fake` 的 fixture(`golden-fake/` 底下)要為這三個輸入各補一個(`prompt_contains` 標記唯一,規則同現有的)。
@@ -163,6 +164,23 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
 1. **顧問重新評分**(children **六個輸入**:原三個資安輸入 + 三個泛化輸入):「是一個概念嗎」維持 ≥ 4、正確性維持 5(T12 已達標,不能退步)。**泛化輸入一定要跑、一定要評分**;只有原三個過、泛化的沒跑或沒過,不算達標。
 2. **跨主題重複對數 = 0**——**由顧問判**(資安:顧問點名的兩組:cors×preflight 的預檢兩對、same-origin 放行權 × CORS「權限決定權在伺服器」;化學:同一個判法,對 `buffer` × `titration` 的 pH 相關子卡特別看)。
 3. 機器:`--overlap`(自己的父卡)0 對、`--overlap-siblings` 0 對(門檻 0.5),資安與泛化**各跑一次**(泛化的 `cardsDir` = `fixtures/golden-generalization/ingest.cards/`);觀察清單印出來給顧問看。
+   - (紅測試作者補記,顧問 2026-10-17 裁決 A)**先把 children run 分成兩個目錄再跑。** golden run 把六個輸出寫進同一個 `<out>/ingest.children/<日期>/`;兩個工具都是「兩邊 key 集合不同 → 退出碼 1」(T12 特意留的守門,不拆),整個目錄直接丟進去一定報錯。分目錄放 golden/ 以外,不要在 `golden/ingest.children/` 底下多開目錄:
+
+     ```bash
+     RUN=<golden run 寫出的 ingest.children/<日期> 目錄>
+     SPLIT=$(mktemp -d)
+     mkdir "$SPLIT/sec" "$SPLIT/gen"
+     cp "$RUN"/children-{same-origin,cors,preflight}.output.json "$SPLIT/sec/"
+     cp "$RUN"/children-gen-{acid-base,buffer,titration}.output.json "$SPLIT/gen/"
+     SEC_CARDS=packages/core/src/prompt-quality/golden/ingest.cards/2026-10-15
+     GEN_CARDS=packages/core/src/prompt-quality/fixtures/golden-generalization/ingest.cards
+     npx tsx scripts/prompt-check.ts --overlap          "$SPLIT/sec" "$SEC_CARDS"
+     npx tsx scripts/prompt-check.ts --overlap-siblings "$SPLIT/sec" "$SEC_CARDS"
+     npx tsx scripts/prompt-check.ts --overlap          "$SPLIT/gen" "$GEN_CARDS"
+     npx tsx scripts/prompt-check.ts --overlap-siblings "$SPLIT/gen" "$GEN_CARDS"
+     ```
+
+     忘了分、或 cp 少一個檔 → 守門報「key 只在一邊有」,退出碼 1,不會靜悄悄過。四條都要退出碼 0 才算這一項過。
    **污染檢查**:泛化三個輸出的全文不含 `CORS`、`同源`、`預檢`、`Origin`、`Access-Control`(`grep -E`,命中 = 模型把 prompt 範例的主題照搬,不達標,回報顧問)。
 4. 每個父卡仍然產出 2–3 張子卡(T12 的規則):看到 `already_covered` 之後模型不能因為「都講過了」就回空陣列或只回 1 張(`parseChildCandidates` 要求 1..3;回 0 張會丟錯)。
 5. 預算:children 每個輸入約 $0.01–0.02。原三個 + 泛化三個 = **每輪約 $0.07–0.10**(原估 $0.04 是只有三個輸入),**最多三輪 ≈ $0.30**;協調者跑前先看 `llm-spend --today`(日上限 $1)。不達標就停,回報顧問,不要為了湊分數放寬任何一條。

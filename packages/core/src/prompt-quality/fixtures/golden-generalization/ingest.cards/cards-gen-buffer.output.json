@@ -1,4 +1,4 @@
 {
-  "id": "cards-buffer",
+  "id": "cards-gen-buffer",
   "text": "[\n  {\n    \"title\": \"緩衝溶液的組成\",\n    \"body\": \"緩衝溶液由弱酸和它的共軛鹼組成，加入少量強酸或強鹼時，pH 只會小幅改變。\",\n    \"examples\": [],\n    \"lines\": [\n      9,\n      9\n    ]\n  },\n  {\n    \"title\": \"緩衝能力有上限\",\n    \"body\": \"加入的酸或鹼超過緩衝能力時，緩衝溶液的 pH 仍會大幅變化。\",\n    \"examples\": [],\n    \"lines\": [\n      9,\n      9\n    ]\n  }\n]"
 }
