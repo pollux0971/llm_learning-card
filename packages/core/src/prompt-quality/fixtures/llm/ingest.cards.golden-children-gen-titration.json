@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: children-gen-titration",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"指示劑判斷終點\", \"body\": \"酸鹼滴定常用指示劑判斷終點，例如酚酞在鹼性時變成粉紅色。\", \"examples\": []}, {\"title\": \"弱酸滴定的平緩區\", \"body\": \"用強鹼滴定弱酸時，曲線中段有一段 pH 變化平緩的區域。\", \"examples\": []}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

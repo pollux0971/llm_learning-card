@@ -1,0 +1,8 @@
+{
+  "id": "children-preflight",
+  "text": "[\n  {\n    \"title\": \"哪些請求會跳過預檢\",\n    \"body\": \"符合簡單請求條件的請求可直接送出，例如 GET、HEAD，或使用簡單標頭與指定內容型別的 POST。PUT、DELETE 或送 JSON 通常會觸發預檢。\",\n    \"examples\": [\"`fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } })` 通常會先預檢。\"]\n  },\n  {\n    \"title\": \"預檢請求帶什麼資訊\",\n    \"body\": \"瀏覽器以 OPTIONS 發送 Origin、Access-Control-Request-Method，以及可能的 Access-Control-Request-Headers，讓伺服器逐項表明允許的來源、方法與標頭。\",\n    \"examples\": [\"預檢可帶 `Access-Control-Request-Method: DELETE`，伺服器則以 `Access-Control-Allow-Methods: DELETE` 回應。\"]\n  },\n  {\n    \"title\": \"預檢遭拒的結果\",\n    \"body\": \"若預檢回應未允許所需來源、方法或標頭，瀏覽器不會送出真正請求；發起端通常只看見 CORS 網路錯誤，不能讀取伺服器回應。\",\n    \"examples\": [\"伺服器未允許 `DELETE` 時，瀏覽器會攔下後續 DELETE，而不是讓伺服器收到它。\"]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

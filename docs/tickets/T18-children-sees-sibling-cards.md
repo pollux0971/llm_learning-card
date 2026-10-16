@@ -1,7 +1,7 @@
 ---
 id: T18
 deps: [T12]
-touches: [packages/core/src/ingest/children.ts, packages/core/src/ingest/siblings.ts, packages/core/src/ingest/index.ts, packages/core/prompts/ingest/children.md, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/parent-child-overlap.ts, packages/core/src/prompt-quality/cli.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/index.ts, packages/core/src/prompt-quality/golden-sets/generalization-slices.ts, packages/core/src/prompt-quality/fixtures/golden-generalization/**]
+touches: [packages/core/src/ingest/children.ts, packages/core/src/ingest/siblings.ts, packages/core/src/ingest/index.ts, packages/core/prompts/ingest/children.md, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/parent-child-overlap.ts, packages/core/src/prompt-quality/cli.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/index.ts, packages/core/src/prompt-quality/golden-sets/generalization-slices.ts]
 cpu: light
 budget_usd: 1
 status: todo
@@ -25,7 +25,8 @@ must_catch:
 # 工單 T18:子卡生成時看得到同分類的其他卡(跨主題不重述)
 
 > 狀態:草稿,待技術顧問審(派令來自顧問,經協調者 2026-10-16)。**基底 = T12 合併之後的 main**(T12 的 `children.md` 與 `parent-child-overlap.ts` 是這張的前提)。
-> 作者:統籌·契約(規格)。紅測試:-ed。開發:worker-grok。評分:顧問。派工:協調者。
+> 作者:統籌·契約(規格)。紅測試:前端(顧問 2026-10-17 改派;原寫 -ed)。開發:worker-grok。評分:顧問。派工:協調者。
+> **2026-10-17 紅測試作者補記(顧問裁決)**:(d) 的 golden-t18 複本、(d2) 的泛化 fixture 與 `--fake` 回應改由**紅測試作者**寫成測試資料(紅測試才能真的釘 sha256;評分用的輸入不該由要被評分的一方挑),已從 touches 拿掉;(e) 的「之前」對照改用 `golden/ingest.children/2026-10-16`(T12 第 2 輪的暫存輸出已遺失);(b)、(e) 補了紅測試要用的名字與形狀。改動都標「(紅測試作者補記)」。
 > 規格:`features/02-ingest-pipeline/phase-4.feature`(5 個場景,本工單同批新增;02 的 phase-2 已 done,不動它的 .feature)。
 > 這份檔是工單唯一的正本。**改的是 `prompts/` 與管線程式,屬硬規則 4:每一輪都要跑 golden run。**
 
@@ -87,6 +88,8 @@ already_covered:
 ```
 
 (`:` 是全形冒號;一張卡一行;標題與摘要裡的換行已在 `cardSummary` 壓掉,標題的換行同樣壓成空格。)**沒有 sibling 時整段省略**(不印空的 `already_covered:`),此時 prompt 與 T12 之後的版本逐字相同。
+
+(紅測試作者補記)「同一個格式函式」的名字:`siblings.ts` 匯出 `formatAlreadyCovered(siblings: { id: string; title: string; summary: string }[]): string[]`——沒有 sibling 回 `[]`;有的話回 `['already_covered:', '- <title>:<summary>', …]`(標題的換行壓成一個空格)。`buildChildrenPrompt` 與 `registry.ts` 都用它。
 `children.md` 裡對 `already_covered:` 的那一行說明改成「同分類**已有卡片(含子卡)**的標題與一句摘要」;**其他規則不動**(T12 的 2–3 張、不重述父卡、標準細節要出……)。
 
 ### (c) 管線:每個父卡都重新讀
@@ -105,13 +108,20 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
   - preflight:same-origin、cors 的 L0 + same-origin、cors 的子卡。
 - 「排在前面的切片的子卡」= **T12 合併後最後一次 golden run 寫進 `golden/ingest.children/<日期>/` 的 `children-<key>.output.json`,複製成固定檔**:放 `packages/core/src/prompt-quality/fixtures/golden-t18/children-<key>.output.json`(原檔複本,sha256 寫在 commit 說明,之後不再更新)。
   日期以 T12 合併後 `golden/ingest.children/` 底下的目錄為準(協調者派工時告訴 worker)。
+  - (紅測試作者補記)日期是 **2026-10-16**(顧問評分通過的乾淨 main 基準)。三個複本已由紅測試作者放好、sha256 釘在測試裡:
+    `children-cors` `cc8e0e52…8b188fe6`、`children-preflight` `6b888d44…edab7a9e`、`children-same-origin` `8cbac35a…af1ded26`。worker 只讀不改。
 - 組字串的程式與生產路徑**共用同一個 `cardSummary`、同一個格式函式**(不另寫一份),`already_covered` 的行由 `listSiblings` 的輸出組出。
+  - (紅測試作者補記)golden 的卡沒有真的 id;`listSiblings` 要的 id 由 registry 自己給(例如 `sec-golden-<key>-<n>`),**紅測試只比「行的集合」與每行的格式**,不比順序以外的 id 細節。
 - 登記表其他四組(cards、questions、deps、regenerate)**不動**;新增的泛化輸入見 (d2)。
 
 ### (d2) 泛化 golden 輸入:非資安主題(顧問 2026-10-16 加)
 
 **為什麼**:T12 的 `children.md` 新加的範例剛好對應現有 golden 的三個資安主題(顧問判:「照著考題教」),golden 分數代表不了泛化;T12 第 3 輪會把範例換成無關主題。這張工單要確認「children 看得到同分類其他卡」在**非資安主題**也成立。
 
+- (紅測試作者補記)下面列的 `chemistry.md`、三個手寫 L0 檔、`--fake` 回應,**已由紅測試作者寫好**(顧問 2026-10-17 裁決 A)。sha256:
+  `chemistry.md` `1a1d5270…8e0ff5`、`cards-acid-base` `999882f0…68535ac`、`cards-buffer` `6d3b4f33…2d53`、`cards-titration` `21016c2b…7ae53`(全文在測試裡)。
+  三個小節的行號:`酸與鹼` [3, 5]、`緩衝溶液` [7, 9]、`滴定` [11, 13](`##` 標題行 + 空行 + 一段正文)。`--fake` 回應:`fixtures/llm/ingest.cards.golden-children-gen-<key>.json`。
+  worker 寫 `generalization-slices.ts` 與登記表,**不改這些檔**。
 - **輸入來源(符合 CLAUDE.md 硬規則 2 與「報告不得含使用者資料」)**:**自擬的公開常識短文,不取自 `raw/`、不取自 `learning/`、不取自帳本或任何使用者資料。** 主題用**化學:酸、鹼與緩衝**(三個小節:`酸與鹼`、`緩衝溶液`、`滴定`),每節 3–4 句,形狀仿原三個切片(定義+列舉 / 機制+例外 / 流程順序)。
   - 若 T12 第 3 輪換的範例剛好用到化學酸鹼,改選歷史(例如:工業革命的三個小節)——**請顧問審工單時對一下 T12 第 3 輪的範例主題**,泛化主題必須和 prompt 裡出現過的任何範例都不同。
   - 文章內容要有「會被兩個切片同時講到」的地方(例如 `緩衝溶液` 與 `滴定` 都會提到 pH 變化),這樣才量得到跨卡重述;但**不要故意寫成逐字重複**。
@@ -134,6 +144,19 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
   重疊係數、n-gram、`normalizeBody` 全部沿用 T12 的函式。
 - CLI:`prompt-check.ts --overlap-siblings <children run 目錄> <cards run 目錄> [--threshold <0..1>]`:`pairs` 為空 → 退出碼 0,否則 1;錯誤(路徑、key 對不起來、`--threshold` 不合法)→ 1 並講原因;輸出一律列出觀察清單。
 - 這條是**回歸網**(逐字照抄),不是語意判斷;這個限制要寫在檔頭註解(同 T12 的寫法)。
+- (紅測試作者補記)回傳的形狀(紅測試直接用):
+
+  ```ts
+  interface SiblingSide { key: string; kind: 'L0' | 'child'; index: number; title: string }   // index = 在那個 output 檔陣列裡的位置(0 起)
+  interface SiblingPair { child: SiblingSide; other: SiblingSide; overlap: number }         // child 一定是子卡;兩邊都是子卡時,child 是 `${key}#${index}` 字典序較小的那張
+  interface GoldenSiblingsResult { pairs: SiblingPair[]; observe: SiblingPair[]; totalPairsChecked: number; maxOverlap: number }
+  ```
+
+  `--threshold <x>` 改的是 `pairs` 的門檻;`observe` = 0.3 ≤ 重疊 < 門檻。`childrenDir` 與 `cardsDir` 的 key 集合不同 → 錯誤(同 T12 的 `--overlap`)。
+- (紅測試作者補記)**「之前」對照的資料改用 2026-10-16**(`cardsDir` = `golden/ingest.cards/2026-10-15`、`childrenDir` = `fixtures/golden-t18`):
+  上面那張表的 0.613、0.242 是 T12 第 2 輪的暫存輸出,已遺失,只留作歷史。紅測試釘的是 2026-10-16 上實際量到的:
+  總共 93 對;**被抓**:cors 子卡 #0「預檢請求的觸發」↔ same-origin 子卡 #1「預檢請求的觸發」= 0.745;觀察清單是空的(0.3–0.5 沒有);
+  **已知限制(真重複、抓不到)**:same-origin 子卡 #0「CORS 的伺服器授權」↔ cors L0 #1「伺服器以標頭授權」字面 < 0.1(顧問點名);邊界參考:cors #0 / same-origin #1 ↔ preflight L0 #0「預檢請求的觸發時機」= 0.294,剛好不進觀察清單。觀察清單的邊界用手造的小向量測。
 
 ## 怎樣才算改善
 
@@ -150,7 +173,7 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
 跟 T12 一樣:worker 只跑 `--fake`、不跑 `--live`;真呼叫由協調者在主簽出跑(跑前跑後各記 `llm-spend --today`,日上限 $1);`--out` 指到 `golden/` 以外直到最後一輪達標,prompt commit 後再用乾淨的 prompt 寫進 `golden/`(T11 的規則)。
 真的 `learning/` 前後不變(基準 64 個檔 / `c5aa80b18b474ed4` / 帳本只准在尾端追加)。
 
-## 測試(-ed 寫)
+## 測試(前端寫;原寫 -ed,顧問 2026-10-17 改派)
 
 | 驗收 | 量什麼 | 怎麼量 |
 |---|---|---|
@@ -159,7 +182,7 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
 | (b)(c) | **phase-4 的 5 個場景**(步驟定義 -ed 寫);`generateChildren` 送給 router 的 prompt:有 sibling 時有 `already_covered:` 且在 header 的 `---` 之內、格式逐行;沒有 sibling 時整段省略且與 T12 版逐字相同;`generateChildrenForCards` 第二個父卡的 prompt 含第一個父卡剛寫的子卡標題 | 假 router 記錄 prompt |
 | (d2) | 泛化輸入:`chemistry.md` 與三個 L0 檔 sha256 釘死;三個 `children-gen-*` 輸入各自的 `already_covered` 是「另外兩個切片的 L0 卡」(標題清單釘死);原三個資安輸入的 prompt 位元組不變;L0 卡 body ≤ 100 字(§2,用 `validateCard` 同一條路);泛化檔裡沒有 `raw/`、`learning/` 的路徑字樣;`--fake` 對三個新輸入都有對得上的 fixture | `registry.test.ts` 風格 |
 | (d) | golden 輸入:三個 children 輸入各自的 `already_covered` 內容(標題清單)釘死;fixture 的 sha256 釘死;其他四組輸入位元組不變 | `registry.test.ts` 風格 |
-| (e) | 門檻 0.5 剛好(`>=`)、0.3–0.5 只進觀察、不比自己的 key、A↔B 只算一次、基準與 T12 第 2 輪輸出(把 r2 的 7 個輸出放進 fixture)上的數字(0.613 的那對被抓、0.242 的不被抓——**已知限制**,測試要釘住這件事,同 T12 的做法)、CLI 退出碼與錯誤 | 同 T12 的 `parent-child-*.test.ts` |
+| (e) | 門檻 0.5 剛好(`>=`)、0.3–0.5 只進觀察、不比自己的 key、A↔B 只算一次、2026-10-16 上的數字(0.745 那對被抓、「CORS 的伺服器授權」↔「伺服器以標頭授權」不被抓——**已知限制**,測試要釘住這件事,同 T12 的做法;T12 第 2 輪的 0.613 / 0.242 已遺失,不釘)、CLI 退出碼與錯誤 | 同 T12 的 `parent-child-*.test.ts` |
 | 不退步 | T12 的 `parent-child-*.test.ts`、`prompt-quality` 與 `ingest` 資料夾既有測試全綠;`npm run boundaries` | |
 
 - 紅測試用暫存目錄,不碰真的 `learning/`;不呼叫真的 LLM(`--fake` 與假 router)。
