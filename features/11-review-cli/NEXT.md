@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-1(2026-09-03) |
+| 已完成 | phase-2(2026-10-16:當日快取、續答、跨日、暫停、dry-run、結束時 snapshot;工單 T17,-ed 驗收無阻擋項,session 三檔 Stryker 96.67%,證據見 docs/reviews/acceptance-T17.md 與 T17-2026-10-16.md)。phase-1(2026-09-03) |
 | 進行中 | 無 |
-| 下一個 | phase-2(卡在 I2 通過,見 Gate) |
+| 下一個 | 無(兩個 phase 都完成;I3 整合等 06 phase-2 與 phase-3) |
 
 ## Gate
 
