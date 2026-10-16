@@ -11,9 +11,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readTauriConf } from './test-support/frontend-dist.js';
 import {
-  CARGO_LOCK, CARGO_TOML, MAIN_RS, REQUIRED_PERMISSIONS, assembleInitScript, capabilityProblems, decorationsProblems, gdkCfgProblems, gdkDependencyProblems,
-  hiddenUntilLoadedProblems, layoutClassNames, mainRsProblems, mainRsUnchangedProblems, readCapability, readWindowModeJs, runInitScript, stateFlagsProblems,
-  transparentProblems, windowModeJsBehaviourProblems, windowModeJsStaticProblems,
+  CARGO_LOCK, CARGO_TOML, MAIN_RS, REQUIRED_PERMISSIONS, assembleInitScript, builderProblems, callGraphProblems, capabilityProblems, deadCodeProblems, decorationsProblems,
+  focusWiringProblems, gdkCfgProblems, gdkDependencyProblems, hiddenUntilLoadedProblems, hudSolidFromCss, layoutClassNames, mainRsProblems, mainRsUnchangedProblems,
+  modeVariableProblems, notifiesAfterShow, readCapability, readWindowModeJs, runInitScript, rustByteArrayConst, rustCallCount, rustFnBody, solidBackgroundProblems,
+  startupFocusConst, startupFocusTargetProblems, stateFlagsProblems, stripRustComments, surfaceWiringProblems, transparencyLeftToAppProblems,
+  windowModeJsBehaviourProblems, windowModeJsStaticProblems,
 } from './test-support/window-frame.js';
 
 const REPO = join(import.meta.dirname, '../../..');
@@ -22,8 +24,8 @@ describe('兩個視窗的設定(驗收 1、場景 1)', () => {
   it('兩個視窗都沒有系統外框:decorations 明寫 false', () => {
     expect(decorationsProblems()).toEqual([]);
   });
-  it('兩個視窗都透明:transparent 明寫 true', () => {
-    expect(transparentProblems()).toEqual([]);
+  it('設定檔不寫 transparent(T21):透明由程式依合成器決定,teach、test 都沒有這個鍵', () => {
+    expect(transparencyLeftToAppProblems()).toEqual([]);
   });
   it('兩個視窗都先藏起來:visible 明寫 false,載入完才由 Rust 顯示', () => {
     expect(hiddenUntilLoadedProblems()).toEqual([]);
@@ -162,15 +164,198 @@ describe('日誌預設 filter(驗收 1 逾時退路的 warn 要看得到)', () =
 });
 
 describe('不退步:done phase 的 .feature 沒改(驗收 10)', () => {
-  // 雜湊是基底(t16-base)時的內容。10 phase-6 的 .feature 工單說「不改」。
+  // 雜湊是這一批(T21 紅測試)落地時的內容;done phase 的 .feature 不改,phase-6 的以 T21 的最終檔為準。
   const PINNED: [string, string][] = [
     ['features/10-desktop-shell/phase-1.feature', '39b0cf091a2309fc12033471652ba3d9389652e2f38900ebf9b3192612290f66'],
     ['features/10-desktop-shell/phase-2.feature', '73c22987e9565f1893a97b9f2fe8bd71dcdb56b7724e86638572e81d04fab505'],
-    ['features/10-desktop-shell/phase-6.feature', '1740f3361559555f1574344a7e1d351332b1b445e08e36f4f105726acb4af281'],
+    // T21 之後的內容(2026-10-16,工單 T21 的場景一併進來)
+    ['features/10-desktop-shell/phase-6.feature', 'c499e3d96062684606512fcce5ed99942d697bf5a45b9843a80a58943944d04c'],
     ['features/14-hud-skin/phase-1.feature', '7bddbc8f67fb626a39770a403af365b508ed65ece345cd23fcdc2e178659633a'],
     ['features/14-hud-skin/phase-2.feature', 'fd79522575336c324bef608e47a8ce790c3f7d53422b7c3cb4fc1255409cccd4'],
   ];
   it.each(PINNED)('%s 內容沒變', (file, sha) => {
     expect(createHash('sha256').update(readFileSync(join(REPO, file))).digest('hex')).toBe(sha);
+  });
+});
+
+// ═════════════════════════════ T21:沒有合成器時的實心底(驗收 1–4)與啟動焦點(驗收 8)
+// 自測用的片段一律是最小的合成片段(只為了讓量尺的某一個判斷出聲),不放可以直接抄的完整實作。
+
+const WINDOW_MODE_RS = join(REPO, 'apps/desktop/src-tauri/src/window_mode.rs');
+const rustSrc = () => readFileSync(WINDOW_MODE_RS, 'utf8');
+const mainSrc = () => readFileSync(MAIN_RS, 'utf8');
+
+describe('色值:SOLID_BACKGROUND = hud.css 的 --hud-solid(驗收 2)', () => {
+  it('window_mode.rs 的 SOLID_BACKGROUND 的 RGB 等於 hud.css :root 的 --hud-solid,alpha 是 255', () => {
+    expect(solidBackgroundProblems()).toEqual([]);
+  });
+  it('hud.css 現在讀得到 #rrggbb(量尺不跳過:格式變了就要改量尺)', () => {
+    expect(hudSolidFromCss(readFileSync(join(REPO, 'packages/ui-shared/src/hud/hud.css'), 'utf8'))).toBeDefined();
+  });
+  it('量尺自測:兩邊任一邊改了、alpha 不是 255、讀不到 → 紅', () => {
+    const css = ':root { --hud-solid: #f4f6f8; }';
+    const rs = (arr: string) => `pub const SOLID_BACKGROUND: [u8; 4] = ${arr};`;
+    expect(solidBackgroundProblems(rs('[0xf4, 0xf6, 0xf8, 0xff]'), css)).toEqual([]);
+    expect(solidBackgroundProblems(rs('[244, 246, 248, 255]'), css)).toEqual([]);
+    expect(solidBackgroundProblems(rs('[0xf4, 0xf6, 0xf9, 0xff]'), css).join('\n')).toMatch(/兩邊要一樣/);
+    expect(solidBackgroundProblems(rs('[0xf4, 0xf6, 0xf8, 0xff]'), ':root { --hud-solid: #f4f6f9; }').join('\n')).toMatch(/兩邊要一樣/);
+    expect(solidBackgroundProblems(rs('[0xf4, 0xf6, 0xf8, 0x80]'), css).join('\n')).toMatch(/alpha/);
+    expect(solidBackgroundProblems('pub const OTHER: u8 = 1;', css).join('\n')).toMatch(/沒有/);
+    expect(solidBackgroundProblems(rs('[0xf4, 0xf6, 0xf8, 0xff]'), ':root { --hud-ink: #000000; }').join('\n')).toMatch(/讀不到/);
+  });
+  it('hud.css 解析的邊角:別的區塊同名、三碼、!important、註解', () => {
+    expect(hudSolidFromCss(':root { --hud-solid: #f4f6f8; }')).toEqual([0xf4, 0xf6, 0xf8]);
+    expect(hudSolidFromCss('.hud-dark { --hud-solid: #000000; }\n:root { --hud-solid: #f4f6f8; }')).toEqual([0xf4, 0xf6, 0xf8]);
+    expect(hudSolidFromCss('.hud-dark { --hud-solid: #000000; }\n:root { --hud-ink: #111111; }')).toBeUndefined();
+    expect(hudSolidFromCss(':root { --hud-solid: #FFF; }')).toBeUndefined();
+    expect(hudSolidFromCss(':root { --hud-solid: #f4f6f8 !important; }')).toBeUndefined();
+    expect(hudSolidFromCss(':root { /* --hud-solid: #000000; */ }')).toBeUndefined();
+    expect(hudSolidFromCss(':root { /* --hud-solid: #000000; */ --hud-solid: #f4f6f8; }')).toEqual([0xf4, 0xf6, 0xf8]);
+  });
+  it('rustByteArrayConst:十六進位與十進位都讀,註解裡的不算,看不懂的項目回 undefined', () => {
+    expect(rustByteArrayConst('pub const X: [u8; 4] = [0xf4, 246, 0xF8, 0xff];', 'X')).toEqual([0xf4, 246, 0xf8, 255]);
+    expect(rustByteArrayConst('// pub const X: [u8; 4] = [1, 2, 3, 4];', 'X')).toBeUndefined();
+    expect(rustByteArrayConst('pub const X: [u8; 4] = [1, A, 3, 4];', 'X')).toBeUndefined();
+  });
+});
+
+describe('啟動焦點的目標(驗收 8)', () => {
+  it('STARTUP_FOCUS 是 "test",而且是 tauri.conf.json 裡的視窗標籤', () => {
+    expect(startupFocusTargetProblems()).toEqual([]);
+  });
+  it('量尺自測:不是 test、不在設定檔、沒有常數 → 紅', () => {
+    const conf = { app: { windows: [{ label: 'teach' }, { label: 'test' }] } };
+    expect(startupFocusTargetProblems('pub const STARTUP_FOCUS: &str = "test";', conf)).toEqual([]);
+    expect(startupFocusTargetProblems('pub const STARTUP_FOCUS: &str = "teach";', conf).join('\n')).toMatch(/要是 "test"/);
+    expect(startupFocusTargetProblems('pub const STARTUP_FOCUS: &str = "";', conf).join('\n')).toMatch(/不是 tauri\.conf\.json/);
+    expect(startupFocusTargetProblems('pub const STARTUP_FOCUS: &str = "test";', { app: { windows: [{ label: 'teach' }] } }).join('\n')).toMatch(/不是 tauri\.conf\.json/);
+    expect(startupFocusTargetProblems('const X: u8 = 1;', conf).join('\n')).toMatch(/沒有/);
+    expect(startupFocusConst("// pub const STARTUP_FOCUS: &str = \"test\";")).toBeUndefined();
+  });
+});
+
+describe('main.rs 的接線:取函式本體再斷言(驗收 3、8)', () => {
+  it('卡片視窗接線:desktop_is_composited 一次、surface_for 與 init_script 同一個 mode、.transparent(surface.transparent)、有條件的 .background_color、都在 .build() 之前', () => {
+    expect(surfaceWiringProblems(mainSrc())).toEqual([]);
+  });
+  it('啟動焦點接線:一個 StartupFocus、兩個顯示的地方都通知、set_focus 只有一處且對 on_shown 回的標籤', () => {
+    expect(focusWiringProblems(mainSrc())).toEqual([]);
+  });
+  it('setup 視窗那段:不加 transparent / background_color / 初始化腳本 / 先藏起來,也沒有建窗後才改外觀(擴大版)', () => {
+    expect(mainRsUnchangedProblems(mainSrc())).toEqual([]);
+  });
+  it('T16 既有的接線檢查仍成立(GDK、initialization_script、ShowGate、warn、StateFlags)', () => {
+    expect(mainRsProblems(mainSrc())).toEqual([]);
+  });
+});
+
+describe('量尺自測:取函式本體(最小合成片段)', () => {
+  it('大括號配對,字串字面裡的大括號不算;找不到回 undefined', () => {
+    expect(rustFnBody('fn a() { x }', 'a')).toBe(' x ');
+    expect(rustFnBody('fn a() { let s = "}"; y }', 'a')).toBe(' let s = "}"; y ');
+    expect(rustFnBody('fn a() { if p { b } c }', 'a')).toBe(' if p { b } c ');
+    expect(rustFnBody('fn a() { x }', 'b')).toBeUndefined();
+    expect(rustFnBody('fn a() { "\\"}" }', 'a')).toBe(' "\\"}" ');
+  });
+  it('呼叫次數不算 fn 定義;註解先拿掉', () => {
+    expect(rustCallCount('fn f() {} fn g() { f(); f(); }', 'f')).toBe(2);
+    expect(rustCallCount(stripRustComments('fn f() {} // f();\n/* f(); */ fn g() {}'), 'f')).toBe(0);
+  });
+  it('定義還在、呼叫被拿掉 → 呼叫圖檢查紅(T16 驗收時存活的那一種)', () => {
+    const call = 'fn open_windows() { arm_show_fallback(&w); let m = desktop_is_composited(); }\nfn arm_show_fallback() {}\nfn desktop_is_composited() -> bool { true }\nx.setup(move |a| open_windows(a));';
+    expect(callGraphProblems(call)).toEqual([]);
+    expect(callGraphProblems(call.replace('arm_show_fallback(&w); ', '')).join('\n')).toMatch(/沒有呼叫 arm_show_fallback/);
+    expect(callGraphProblems(call.replace('let m = desktop_is_composited();', 'let m = desktop_is_composited(); let n = desktop_is_composited();')).join('\n')).toMatch(/剛好呼叫一次/);
+    expect(callGraphProblems(call.replace('x.setup(move |a| open_windows(a));', '')).join('\n')).toMatch(/\.setup/);
+    expect(callGraphProblems(call + '\nfn other() { desktop_is_composited(); }').join('\n')).toMatch(/之外也被呼叫/);
+  });
+  it('寫在死程式碼裡 → 紅', () => {
+    expect(deadCodeProblems('if false { a(); }').join('\n')).toMatch(/if false/);
+    expect(deadCodeProblems('#[allow(dead_code)]\nfn f() {}').join('\n')).toMatch(/dead_code/);
+    expect(deadCodeProblems('#[cfg(test)]\nfn f() {}').join('\n')).toMatch(/cfg/);
+    expect(deadCodeProblems('fn f() { a(); }')).toEqual([]);
+  });
+});
+
+describe('量尺自測:mode 變數與 builder(最小合成片段)', () => {
+  const ok = 'let mode = mode_for(c); let script = init_script(mode); let surface = surface_for(mode);';
+  it('同一個 mode、來自 mode_for;換一個變數或傳呼叫 → 紅', () => {
+    expect(modeVariableProblems(ok)).toEqual([]);
+    expect(modeVariableProblems(ok.replace('surface_for(mode)', 'surface_for(other)')).join('\n')).toMatch(/不是同一個 mode/);
+    expect(modeVariableProblems(ok.replace('surface_for(mode)', 'surface_for(mode_for(c))')).join('\n')).toMatch(/沒有 surface_for\(<變數>\)/);
+    expect(modeVariableProblems('let mode = Default(); let a = init_script(mode); let b = surface_for(mode);').join('\n')).toMatch(/不是 mode_for/);
+  });
+  const chain = (mid: string, tail = '') =>
+    `let surface = surface_for(mode); let b = WebviewWindowBuilder::from_config(h, &c)?${mid}; ${tail} let w = b.build()?;`;
+  it('.transparent 的參數:來自 surface.transparent 才過;字面 true / false 或別的值 → 紅', () => {
+    const bg = 'if let Some(c) = surface.background { b = b.background_color(Color(c[0], c[1], c[2], c[3])); }';
+    expect(builderProblems(chain('.transparent(surface.transparent)', bg))).toEqual([]);
+    expect(builderProblems(chain('.transparent(true)', bg)).join('\n')).toMatch(/參數要是 surface\.transparent/);
+    expect(builderProblems(chain('.transparent(false)', bg)).join('\n')).toMatch(/參數要是 surface\.transparent/);
+    expect(builderProblems(chain('.transparent(mode.solid)', bg)).join('\n')).toMatch(/參數要是 surface\.transparent/);
+    expect(builderProblems(chain('', bg)).join('\n')).toMatch(/沒有 \.transparent/);
+  });
+  it('.background_color:要有條件、不能寫死數字、不能在 .build() 之後', () => {
+    const t = '.transparent(surface.transparent)';
+    expect(builderProblems(chain(t)).join('\n')).toMatch(/沒有 \.background_color/);
+    expect(builderProblems(chain(`${t}.background_color(Color(244, 246, 248, 255))`)).join('\n')).toMatch(/寫死的數字/);
+    expect(builderProblems(chain(`${t}.background_color(Color(r, g, b, a))`)).join('\n')).toMatch(/只在 surface\.background 是 Some 時/);
+    expect(builderProblems(`${chain(t)} w.set_transparent(true); b.build()?.background_color(x);`).join('\n')).toMatch(/沒有 \.background_color|\.build\(\) 之後/);
+  });
+  it('寫死 .transparent(true) 且沒有 surface_for 變數 → 紅', () => {
+    expect(builderProblems('let b = WebviewWindowBuilder::from_config(h, &c)?.transparent(true); b.build()?;').join('\n')).toMatch(/surface_for/);
+  });
+});
+
+describe('量尺自測:焦點的接線(最小合成片段)', () => {
+  it('顯示之後有通知(直接或經 helper);只在一邊通知、參數寫死字串、沒有 .show() → 紅', () => {
+    expect(notifiesAfterShow('{ let _ = w.show(); f.on_shown(w.label()); }', [])).toBeUndefined();
+    expect(notifiesAfterShow('{ let _ = w.show(); notify(&f, w.label()); }', ['notify'])).toBeUndefined();
+    expect(notifiesAfterShow('{ let _ = w.show(); }', [])).toMatch(/沒有通知/);
+    expect(notifiesAfterShow('{ f.on_shown(l); let _ = w.show(); }', [])).toMatch(/沒有通知/);
+    expect(notifiesAfterShow('{ let _ = w.show(); f.on_shown("test"); }', [])).toMatch(/字串字面/);
+    expect(notifiesAfterShow('{ x(); }', [])).toMatch(/沒有 \.show/);
+  });
+  const skeleton = (extra: { loop?: string; fallback?: string; pageLoad?: string; focus?: string }) => `
+fn arm_show_fallback(w: &W, f: F) { if gate.on_timeout() { let _ = w.show(); ${extra.fallback ?? 'f.on_shown(l);'} } }
+fn go(f: F) { if let Some(l) = f.on_shown(n) { app.get_webview_window(l).map(|w| w.set_focus()); } }
+fn open_windows(app: &App, state: S) { let focus = Arc::new(Mutex::new(StartupFocus::new(start_screen::windows(state)))); for label in x { b.on_page_load(|w, p| { if gate.on_page_finished() { let _ = w.show(); ${extra.pageLoad ?? 'f.on_shown(l);'} } }).build()?; } }`;
+  it('最小骨架通過(只有這幾條判斷的最小量,不是實作)', () => {
+    expect(focusWiringProblems(skeleton({}))).toEqual([]);
+  });
+  it('只有 Finished 那條通知(3 秒退路那條忘了)→ 紅', () => {
+    expect(focusWiringProblems(skeleton({ fallback: '' })).join('\n')).toMatch(/arm_show_fallback 的逾時那條/);
+  });
+  it('只有 3 秒退路那條通知(Finished 那條忘了)→ 紅', () => {
+    expect(focusWiringProblems(skeleton({ pageLoad: '' })).join('\n')).toMatch(/Finished 那條/);
+  });
+  it('建窗後直接 set_focus、或 set_focus 兩處 → 紅', () => {
+    const direct = skeleton({}).replace('let _ = w.show();', 'let _ = w.show(); w.set_focus();');
+    expect(focusWiringProblems(direct).join('\n')).toMatch(/set_focus 要剛好一處|不在「on_shown/);
+    expect(focusWiringProblems(skeleton({}) + '\nfn z() { w.set_focus(); }').join('\n')).toMatch(/set_focus 要剛好一處/);
+  });
+  it('對寫死的標籤 set_focus → 紅', () => {
+    expect(focusWiringProblems(skeleton({}).replace('get_webview_window(l)', 'get_webview_window("test")')).join('\n')).toMatch(/get_webview_window\(l\)|寫死的標籤/);
+  });
+  it('StartupFocus 建在迴圈裡 / 標籤不是 start_screen::windows 那份 / 沒放進 Arc<Mutex> → 紅', () => {
+    const inLoop = skeleton({}).replace('for label in x {', 'for label in x { let focus2 = StartupFocus::new(start_screen::windows(state));').replace(/let focus = Arc::new\(Mutex::new\(StartupFocus::new\(start_screen::windows\(state\)\)\)\);/, '');
+    expect(focusWiringProblems(inLoop).join('\n')).toMatch(/for 迴圈裡面或之後/);
+    expect(focusWiringProblems(skeleton({}).replace('start_screen::windows(state)', '["teach", "test"]')).join('\n')).toMatch(/start_screen::windows/);
+    expect(focusWiringProblems(skeleton({}).replace('Arc::new(Mutex::new(', 'Some((').replace('Arc', 'Rc')).join('\n')).toMatch(/Arc<Mutex/);
+  });
+});
+
+describe('量尺自測:setup 視窗與建窗後改外觀(擴大版)', () => {
+  const setup = (mid: string) => `fn x() { WebviewWindowBuilder::new(app, start_screen::WINDOW_LABEL, u)${mid}.build()?; }\nset_always_on_top(true); Focused(true)`;
+  it('setup 視窗被加 transparent(任何參數)/ background_color / 初始化腳本 / on_page_load / visible → 紅', () => {
+    expect(mainRsUnchangedProblems(setup('.title(t)'))).toEqual([]);
+    for (const bad of ['.transparent(false)', '.transparent(s.transparent)', '.background_color(c)', '.initialization_script(s)', '.on_page_load(f)', '.visible(false)']) {
+      expect(mainRsUnchangedProblems(setup(bad)).join('\n'), bad).toMatch(/setup 視窗/);
+    }
+  });
+  it('建窗之後才 set_background_color / set_transparent → 紅;註解裡提到不算', () => {
+    expect(mainRsUnchangedProblems(`${setup('')} w.set_background_color(c);`).join('\n')).toMatch(/建窗之後才改外觀/);
+    expect(mainRsUnchangedProblems(`${setup('')} w.set_transparent(true);`).join('\n')).toMatch(/建窗之後才改外觀/);
+    expect(mainRsUnchangedProblems(`${setup('')} // 不用 set_background_color`)).toEqual([]);
   });
 });

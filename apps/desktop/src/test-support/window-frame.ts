@@ -1,5 +1,5 @@
 /**
- * 10-desktop-shell phase-6(工單 T16)的量尺:視窗設定、權限、頁面那段程式(window_mode.js)、main.rs 與 Cargo 的靜態檢查。
+ * 10-desktop-shell phase-6(工單 T16、T21)的量尺:視窗設定、權限、頁面那段程式(window_mode.js)、main.rs 與 Cargo 的靜態檢查。
  * 測試 agent 寫;開發 worker 不改。vitest(window-frameless.test.ts)與 cucumber(desktop-shell-phase6.steps.ts)共用。
  *
  * 不 import 14-hud-skin 的任何模組(boundaries):layout.ts 的 class 名字用讀文字的方式取。
@@ -45,7 +45,16 @@ export function windowFlagProblems(conf: TauriConf, key: string, want: boolean, 
   return problems;
 }
 export const decorationsProblems = (conf: TauriConf = readTauriConf()) => windowFlagProblems(conf, 'decorations', false, '沒有系統外框');
-export const transparentProblems = (conf: TauriConf = readTauriConf()) => windowFlagProblems(conf, 'transparent', true, '透明視窗');
+/** T21:透明由程式依合成器決定,設定檔不寫 `transparent`(true、false 都算寫了) */
+export function transparencyLeftToAppProblems(conf: TauriConf = readTauriConf()): string[] {
+  const problems: string[] = [];
+  for (const label of CARD_WINDOWS) {
+    const w = windowOf(conf, label);
+    if (!w) { problems.push(`tauri.conf.json 沒有 label 是 ${label} 的視窗`); continue; }
+    if ('transparent' in w) problems.push(`視窗 ${label} 寫了 transparent: ${JSON.stringify(w['transparent'])}:透明由程式依合成器決定(surface_for),設定檔不寫`);
+  }
+  return problems;
+}
 export const hiddenUntilLoadedProblems = (conf: TauriConf = readTauriConf()) => windowFlagProblems(conf, 'visible', false, '載入完才由 Rust 顯示');
 
 // ───────────────────────────── 權限(驗收 2)
@@ -275,7 +284,12 @@ export function mainRsUnchangedProblems(mainRs: string): string[] {
   if (!/Focused\s*\(\s*true\s*\)/.test(mainRs)) problems.push('main.rs 不再處理 Focused(true)(拿到焦點時再置頂一次)');
   const setup = /WebviewWindowBuilder::new\s*\(\s*app\s*,\s*start_screen::WINDOW_LABEL[\s\S]*?\.build\s*\(\s*\)/.exec(mainRs)?.[0] ?? '';
   if (!setup) problems.push('main.rs 找不到 setup 視窗的建立(start_screen::WINDOW_LABEL)');
-  else if (/decorations\s*\(\s*false\s*\)|transparent\s*\(\s*true\s*\)|initialization_script/.test(setup)) problems.push('setup 視窗(啟動失敗的畫面)被改成無框/透明/帶模式了:它不改,照舊有系統外框');
+  else if (/decorations\s*\(|\btransparent\s*\(|background_color\s*\(|initialization_script|on_page_load|\bvisible\s*\(/.test(setup)) {
+    problems.push('setup 視窗(啟動失敗的畫面)被改成無框/透明/有底色/帶模式/先藏起來了:它不改,照舊有系統外框');
+  }
+  if (/set_background_color|set_transparent|set_decorations/.test(mainRs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''))) {
+    problems.push('main.rs 用了建窗之後才改外觀的 set_background_color / set_transparent / set_decorations(要在 builder 上、.build() 之前)');
+  }
   return problems;
 }
 
@@ -349,4 +363,286 @@ export function gdkCfgProblems(mainRs: string): string[] {
     }
   }
   return problems;
+}
+
+// ═════════════════════════════ T21:沒有合成器時的實心底、啟動焦點
+
+export const HUD_CSS = join(SRC_TAURI, '../../../packages/ui-shared/src/hud/hud.css');
+
+/** 拿掉 Rust 的註解(行註解、區塊註解)。字串裡的 `//` 不處理——main.rs 沒有那種字串,有的話量尺會寧可多報 */
+export function stripRustComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
+/**
+ * 取出 `fn <name>` 的本體(大括號配對,字串字面裡的大括號不算)。找不到回 undefined。
+ * 傳進來的字串要已經拿掉註解。
+ */
+export function rustFnBody(code: string, name: string): string | undefined {
+  const head = new RegExp(`\\bfn\\s+${name}\\b`).exec(code);
+  if (!head) return undefined;
+  let i = code.indexOf('{', head.index);
+  if (i < 0) return undefined;
+  const start = i + 1;
+  let depth = 0;
+  for (; i < code.length; i += 1) {
+    const ch = code[i]!;
+    if (ch === '"') { // 跳過字串字面(含跳脫)
+      i += 1;
+      while (i < code.length && code[i] !== '"') i += code[i] === '\\' ? 2 : 1;
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') { depth -= 1; if (depth === 0) return code.slice(start, i); }
+  }
+  return undefined;
+}
+
+/** 呼叫 `name(` 的次數,不算 `fn name(` 的定義 */
+export function rustCallCount(code: string, name: string): number {
+  return [...code.matchAll(new RegExp(`(?<!\\bfn\\s+)\\b${name}\\s*\\(`, 'g'))].length;
+}
+
+/** 永遠不會跑的程式:`if false`、`#[allow(dead_code)]`、`#[cfg(any())]`/`#[cfg(test)]` 包住的東西 */
+export function deadCodeProblems(code: string): string[] {
+  const problems: string[] = [];
+  if (/\bif\s+(false|0)\b/.test(code)) problems.push('有 `if false` 包住的程式(永遠不會跑)');
+  if (/#\[\s*allow\s*\(\s*(dead_code|unreachable_code|unused)\b/.test(code)) problems.push('有 #[allow(dead_code)] 一類的屬性(接線不能靠被允許的死程式)');
+  if (/#\[\s*cfg\s*\(\s*(any\s*\(\s*\)|test)\b/.test(code)) problems.push('有 #[cfg(any())] / #[cfg(test)] 包住的程式(release 不會編進去)');
+  return problems;
+}
+
+// ───────────────────────────── 色值:SOLID_BACKGROUND = hud.css 的 --hud-solid(驗收 2)
+
+/** `:root { … }` 裡 `--hud-solid` 的 #rrggbb;找不到、格式不對 → undefined(呼叫端報錯,不跳過) */
+export function hudSolidFromCss(css: string): [number, number, number] | undefined {
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const root of code.matchAll(/:root\s*\{([^}]*)\}/g)) {
+    for (const decl of root[1]!.split(';')) {
+      const m = /^\s*--hud-solid\s*:\s*(.*?)\s*$/s.exec(decl);
+      if (!m) continue;
+      const hex = /^#([0-9a-fA-F]{6})$/.exec(m[1]!);
+      if (!hex) return undefined;
+      const h = hex[1]!;
+      return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    }
+  }
+  return undefined;
+}
+
+/** window_mode.rs 的 `pub const NAME: [u8; 4] = [0x.., ...];`(十進位或十六進位都讀) */
+export function rustByteArrayConst(rs: string, name: string): number[] | undefined {
+  const m = new RegExp(`pub\\s+const\\s+${name}\\s*:\\s*\\[\\s*u8\\s*;\\s*4\\s*\\]\\s*=\\s*\\[([^\\]]*)\\]`).exec(stripRustComments(rs));
+  if (!m) return undefined;
+  const items = m[1]!.split(',').map((x) => x.trim()).filter((x) => x !== '');
+  const nums = items.map((x) => (/^0x[0-9a-fA-F]+$/.test(x) ? parseInt(x, 16) : /^\d+$/.test(x) ? parseInt(x, 10) : NaN));
+  return nums.some(Number.isNaN) ? undefined : nums;
+}
+
+export function solidBackgroundProblems(rs: string = readFileSync(WINDOW_MODE_RS, 'utf8'), css: string = readFileSync(HUD_CSS, 'utf8')): string[] {
+  const want = hudSolidFromCss(css);
+  if (!want) return ['hud.css 的 :root 裡讀不到 --hud-solid 的 #rrggbb(量尺不跳過,格式變了就要改量尺)'];
+  const got = rustByteArrayConst(rs, 'SOLID_BACKGROUND');
+  if (!got || got.length !== 4) return ['window_mode.rs 沒有 `pub const SOLID_BACKGROUND: [u8; 4] = [...]`(或有看不懂的項目)'];
+  const problems: string[] = [];
+  if (got[0] !== want[0] || got[1] !== want[1] || got[2] !== want[2]) {
+    problems.push(`SOLID_BACKGROUND 的 RGB 是 [${got.slice(0, 3).join(', ')}],hud.css 的 --hud-solid 是 [${want.join(', ')}]:兩邊要一樣`);
+  }
+  if (got[3] !== 255) problems.push(`SOLID_BACKGROUND 的 alpha 是 ${got[3]},要是 255(不透明)`);
+  return problems;
+}
+
+/** STARTUP_FOCUS 的值(window_mode.rs 的 `pub const STARTUP_FOCUS: &str = "…";`) */
+export function startupFocusConst(rs: string = readFileSync(WINDOW_MODE_RS, 'utf8')): string | undefined {
+  return /pub\s+const\s+STARTUP_FOCUS\s*:\s*&(?:'static\s+)?str\s*=\s*"([^"]*)"/.exec(stripRustComments(rs))?.[1];
+}
+
+/** 啟動焦點的目標是考試卡,而且是 tauri.conf.json 裡的一個視窗標籤 */
+export function startupFocusTargetProblems(rs: string = readFileSync(WINDOW_MODE_RS, 'utf8'), conf: TauriConf = readTauriConf()): string[] {
+  const value = startupFocusConst(rs);
+  if (value === undefined) return ['window_mode.rs 沒有 `pub const STARTUP_FOCUS: &str = "…";`'];
+  const problems: string[] = [];
+  if (value !== 'test') problems.push(`STARTUP_FOCUS 是 "${value}",要是 "test"(考試卡)`);
+  const labels = (conf.app?.windows ?? []).map((w) => w.label);
+  if (!labels.includes(value)) problems.push(`STARTUP_FOCUS "${value}" 不是 tauri.conf.json 裡的視窗標籤(${labels.join(', ')})`);
+  return problems;
+}
+
+// ───────────────────────────── main.rs 的接線(取函式本體再斷言)
+
+/** 這幾條都對「已經拿掉註解」的 main.rs 做 */
+const OPEN = 'open_windows';
+
+/** open_windows 被 .setup 呼叫;arm_show_fallback 與 desktop_is_composited 真的被呼叫(定義還在不算) */
+export function callGraphProblems(code: string): string[] {
+  const problems: string[] = [];
+  const body = rustFnBody(code, OPEN);
+  if (body === undefined) return [`main.rs 找不到 fn ${OPEN}`];
+  if (!/\.setup\s*\([^)]*\b(?:open_windows)\s*\(/.test(code)) problems.push('.setup(...) 沒有呼叫 open_windows');
+  if (rustCallCount(body, 'arm_show_fallback') < 1) problems.push('open_windows 沒有呼叫 arm_show_fallback(定義在、呼叫被拿掉:3 秒退路等於沒有)');
+  if (rustCallCount(body, 'desktop_is_composited') !== 1) problems.push(`open_windows 裡 desktop_is_composited 要剛好呼叫一次,實際 ${rustCallCount(body, 'desktop_is_composited')} 次`);
+  if (rustCallCount(code, 'desktop_is_composited') !== rustCallCount(body, 'desktop_is_composited')) problems.push('desktop_is_composited 在 open_windows 之外也被呼叫(只准問一次)');
+  return problems;
+}
+
+/** `let X = … surface_for(M) …` 的 X;`init_script(M2)` 的 M2;兩個 M 要是同一個識別字,而且是 `mode_for(` 的結果 */
+export function modeVariableProblems(body: string): string[] {
+  const problems: string[] = [];
+  const surfaceArg = /\bsurface_for\s*\(\s*([A-Za-z_]\w*)\s*\)/.exec(body)?.[1];
+  const scriptArg = /\binit_script\s*\(\s*([A-Za-z_]\w*)\s*\)/.exec(body)?.[1];
+  if (!surfaceArg) problems.push('open_windows 沒有 surface_for(<變數>)(參數要是一個變數,不是呼叫或字面)');
+  if (!scriptArg) problems.push('open_windows 沒有 init_script(<變數>)');
+  if (surfaceArg && scriptArg && surfaceArg !== scriptArg) problems.push(`surface_for(${surfaceArg}) 與 init_script(${scriptArg}) 用的不是同一個 mode`);
+  const modeVar = surfaceArg ?? scriptArg;
+  if (modeVar && !new RegExp(`\\blet\\s+(?:mut\\s+)?${modeVar}\\s*=[^;]*\\bmode_for\\s*\\(`).test(body)) {
+    problems.push(`${modeVar} 不是 mode_for(...) 的結果(模式只在一個地方決定)`);
+  }
+  return problems;
+}
+
+/** 卡片視窗的 builder:.transparent(<surface>.transparent) 與有條件的 .background_color(...),都在 .build() 之前 */
+export function builderProblems(body: string): string[] {
+  const problems: string[] = [];
+  const surfaceVar = /\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*=\s*(?:\w+::)*surface_for\s*\(/.exec(body)?.[1];
+  const from = body.search(/WebviewWindowBuilder\s*::\s*from_config\s*\(/);
+  if (from < 0) return ['open_windows 找不到卡片視窗的 WebviewWindowBuilder::from_config'];
+  const buildAt = body.slice(from).search(/\.build\s*\(\s*\)/);
+  if (buildAt < 0) return ['卡片視窗的 builder 沒有 .build()'];
+  const before = body.slice(from, from + buildAt);
+  const after = body.slice(from + buildAt);
+  if (!surfaceVar) { problems.push('open_windows 沒有 `let <變數> = surface_for(...)`'); return problems; }
+  const transparentCalls = [...before.matchAll(/\.transparent\s*\(([^)]*)\)/g)];
+  if (transparentCalls.length === 0) problems.push('卡片視窗的 builder 在 .build() 之前沒有 .transparent(...)');
+  for (const c of transparentCalls) {
+    if (c[1]!.trim() !== `${surfaceVar}.transparent`) problems.push(`.transparent(${c[1]!.trim()}):參數要是 ${surfaceVar}.transparent(來自 surface_for),不是字面或別的值`);
+  }
+  if (/\.(transparent|background_color)\s*\(/.test(after)) problems.push('.build() 之後才設 transparent 或 background_color(要在 builder 上、建窗之前)');
+  const bg = [...before.matchAll(/\.background_color\s*\(([^)]*(?:\([^)]*\))?[^)]*)\)/g)];
+  if (bg.length === 0) problems.push('卡片視窗的 builder 在 .build() 之前沒有 .background_color(...)(沒有合成器時要塗底色)');
+  for (const c of bg) {
+    if (/\d/.test(c[1]!.replace(/\[\s*\d\s*\]/g, ''))) problems.push(`.background_color(${c[1]!.trim()}) 有寫死的數字:底色要來自 ${surfaceVar}.background`);
+  }
+  const between = body.slice(from, from + buildAt + 1);
+  const conditional = new RegExp(
+    `if\\s+let\\s+Some\\s*\\([^)]*\\)\\s*=\\s*${surfaceVar}\\.background|match\\s+${surfaceVar}\\.background|${surfaceVar}\\.background\\s*\\.\\s*(?:map|map_or|map_or_else|filter|into_iter|iter|is_some)\\b`,
+  );
+  const wholeBefore = body.slice(0, from + buildAt);
+  if (bg.length > 0 && !conditional.test(wholeBefore) && !conditional.test(between)) {
+    problems.push(`.background_color 沒有「只在 ${surfaceVar}.background 是 Some 時」才呼叫(有合成器時不塗底色)`);
+  }
+  return problems;
+}
+
+/** 卡片視窗接線的全部(驗收 3) */
+export function surfaceWiringProblems(mainRs: string): string[] {
+  const code = stripRustComments(mainRs);
+  const body = rustFnBody(code, OPEN);
+  if (body === undefined) return [`main.rs 找不到 fn ${OPEN}`];
+  return [...callGraphProblems(code), ...modeVariableProblems(body), ...builderProblems(body), ...deadCodeProblems(code)];
+}
+
+// ───────────────────────────── 啟動焦點的接線(驗收 8)
+
+/** 本體裡有 `on_shown(` 的函式名(除了 open_windows):顯示的地方可以呼叫它代替直接叫 on_shown */
+function focusHelpers(code: string): string[] {
+  const names: string[] = [];
+  for (const m of code.matchAll(/\bfn\s+([A-Za-z_]\w*)/g)) {
+    const name = m[1]!;
+    if (name === OPEN) continue;
+    if (/\bon_shown\s*\(/.test(rustFnBody(code, name) ?? '')) names.push(name);
+  }
+  return names;
+}
+
+/** `region` 裡 `.show()` 之後有沒有通知(直接 on_shown,或叫會 on_shown 的函式);通知的參數不是字串字面 */
+export function notifiesAfterShow(region: string, helpers: string[]): string | undefined {
+  const show = region.search(/\.show\s*\(\s*\)/);
+  if (show < 0) return '這一段沒有 .show()';
+  const tail = region.slice(show);
+  const call = new RegExp(`\\b(?:on_shown${helpers.map((h) => `|${h}`).join('')})\\s*\\(([^)]*)\\)`).exec(tail);
+  if (!call) return '.show() 之後沒有通知 StartupFocus(on_shown 或會呼叫它的函式)';
+  if (/"[^"]*"/.test(call[1]!)) return `通知的參數 (${call[1]!.trim()}) 有字串字面:要傳這個視窗自己的標籤`;
+  return undefined;
+}
+
+export function focusWiringProblems(mainRs: string): string[] {
+  const code = stripRustComments(mainRs);
+  const body = rustFnBody(code, OPEN);
+  if (body === undefined) return [`main.rs 找不到 fn ${OPEN}`];
+  const problems: string[] = [];
+  const helpers = focusHelpers(code);
+
+  // 一個 StartupFocus,在迴圈之前,用 start_screen::windows 的那一份標籤
+  const news = [...body.matchAll(/\bStartupFocus\s*::\s*new\s*\(([^;]*?)\)\s*[;)]/g)];
+  if (news.length !== 1) problems.push(`open_windows 裡 StartupFocus::new 要剛好一個,實際 ${news.length} 個`);
+  else {
+    const loop = body.search(/\bfor\s+\w+\s+in\b/);
+    if (loop >= 0 && news[0]!.index! > loop) problems.push('StartupFocus::new 在 for 迴圈裡面或之後:每個視窗會各有一個,不是共用一個');
+    const arg = news[0]![1]!.trim();
+    const labelsVar = /\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*=[^;]*start_screen\s*::\s*windows\s*\(/.exec(body)?.[1];
+    if (!/start_screen\s*::\s*windows\s*\(/.test(arg) && !(labelsVar && new RegExp(`\\b${labelsVar}\\b`).test(arg))) {
+      problems.push(`StartupFocus::new(${arg}) 的標籤要是 start_screen::windows(state) 那一份`);
+    }
+  }
+  if (!/\bArc\b/.test(body) || !/\bMutex\b/.test(body) || !/StartupFocus/.test(body)) problems.push('open_windows 要把 StartupFocus 放進 Arc<Mutex<…>> 給每個視窗共用');
+
+  // 兩個顯示的地方:page load 的 Finished(on_page_finished → show)、arm_show_fallback 的逾時(on_timeout → show)
+  const pageLoad = /\.on_page_load\s*\(([\s\S]*?)\.build\s*\(\s*\)/.exec(body)?.[1];
+  if (!pageLoad) problems.push('open_windows 找不到 on_page_load(...) 到 .build() 的那一段');
+  else {
+    const finished = pageLoad.slice(Math.max(0, pageLoad.search(/\bon_page_finished\s*\(/)));
+    const why = notifiesAfterShow(finished, helpers);
+    if (why) problems.push(`page load 的 Finished 那條:${why}`);
+  }
+  const fallback = rustFnBody(code, 'arm_show_fallback');
+  if (fallback === undefined) problems.push('main.rs 找不到 fn arm_show_fallback');
+  else {
+    const timeout = fallback.slice(Math.max(0, fallback.search(/\bon_timeout\s*\(/)));
+    const why = notifiesAfterShow(timeout, helpers);
+    if (why) problems.push(`arm_show_fallback 的逾時那條:${why}`);
+  }
+
+  // set_focus 只有一處,而且在「on_shown 回 Some(標籤)」的分支裡、對 get_webview_window(<那個標籤>)
+  const focusCalls = [...code.matchAll(/\.set_focus\s*\(/g)];
+  if (focusCalls.length !== 1) problems.push(`main.rs 裡 set_focus 要剛好一處,實際 ${focusCalls.length} 處`);
+  else {
+    const at = focusCalls[0]!.index!;
+    const around = code.slice(Math.max(0, at - 500), at);
+    // on_shown 的回傳要先被拿來決定(Some 才動):它在 set_focus 之前的這一段裡,而且 get_webview_window 的參數是變數(on_shown 回的標籤),不是字面
+    if (!/\bon_shown\s*\(/.test(around) && !helpers.some((h) => new RegExp(`\\b${h}\\s*\\(`).test(around))) {
+      problems.push('set_focus 之前沒有 on_shown(...):不能不管兩個視窗都顯示了沒就給焦點');
+    }
+    const arg = /get_webview_window\s*\(\s*([^)]*?)\s*\)/.exec(around.slice(around.lastIndexOf('get_webview_window') >= 0 ? around.lastIndexOf('get_webview_window') : 0))?.[1];
+    if (arg === undefined) problems.push('set_focus 要對 get_webview_window(<on_shown 回的標籤>) 拿到的視窗');
+    else if (!/^[A-Za-z_]\w*$/.test(arg)) problems.push(`get_webview_window(${arg}):參數要是 on_shown 回的標籤(一個變數)`);
+    if (/get_webview_window\s*\(\s*"[^"]*"\s*\)/.test(around)) problems.push('set_focus 對寫死的標籤 get_webview_window("…")');
+  }
+  return problems;
+}
+
+// ───────────────────────────── Rust 端:給 cucumber 場景用(跑 tests/window_mode.rs 的 emit 測試)
+
+export interface SurfaceEmit { transparent: boolean; background: number[] | null; solidBackground: number[] }
+export interface StartupFocusEmit { calls: string[]; results: (string | null)[] }
+
+function cargoEmit(testName: string, env: Record<string, string>, begin: string, end: string): string {
+  const { NODE_OPTIONS: _drop, ...base } = process.env;
+  const r = spawnSync('cargo', ['test', '--test', 'window_mode', testName, '--', '--exact', '--nocapture'], {
+    cwd: SRC_TAURI, encoding: 'utf8', timeout: EMIT_TIMEOUT_MS, env: { ...base, ...env },
+  });
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  if (r.error || r.status !== 0) throw new Error(`cargo test --test window_mode ${testName} 失敗 status=${r.status ?? 'error'}\n${out.slice(-2500)}`);
+  const m = new RegExp(`${begin}\\n([\\s\\S]*?)\\n${end}`).exec(out);
+  if (!m) throw new Error(`輸出裡找不到 ${begin}:\n${out.slice(-1500)}`);
+  return m[1]!;
+}
+
+/** Rust 端真的算出來的 surface_for(mode_for(composited)) */
+export function rustSurface(composited: boolean): SurfaceEmit {
+  return JSON.parse(cargoEmit('emit_surface_for_the_scenarios', { LC_WINDOW_MODE_COMPOSITED: composited ? '1' : '0' }, 'LC-SURFACE-BEGIN', 'LC-SURFACE-END')) as SurfaceEmit;
+}
+
+/** 先顯示 first、再顯示另一個、然後兩個各再顯示一次,每次 on_shown 的回傳 */
+export function rustStartupFocus(first: 'teach' | 'test'): StartupFocusEmit {
+  return JSON.parse(cargoEmit('emit_startup_focus_for_the_scenarios', { LC_STARTUP_FIRST: first }, 'LC-STARTUP-FOCUS-BEGIN', 'LC-STARTUP-FOCUS-END')) as StartupFocusEmit;
 }

@@ -58,3 +58,41 @@ impl ShowGate {
         true
     }
 }
+
+// ───────────────────────────── T21(紅測試 stub:簽名固定,內容由開發 worker 依工單寫)
+
+/// 沒有合成器時視窗的底色。跟 packages/ui-shared/src/hud/hud.css 的 `--hud-solid` 同一個值(測試釘住)。
+/// (stub:故意不是正確的值,紅測試要因為「值不對」而紅。)
+pub const SOLID_BACKGROUND: [u8; 4] = [0, 0, 0, 0];
+
+/// 建窗時視窗的表面:透明與否、底色。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowSurface {
+    pub transparent: bool,
+    pub background: Option<[u8; 4]>,
+}
+
+/// 只看 `mode.solid`:有合成器 → 透明、不塗底色;沒有 → 不透明、`SOLID_BACKGROUND`。
+pub fn surface_for(_mode: WindowMode) -> WindowSurface {
+    unimplemented!("T21: surface_for")
+}
+
+/// 兩個卡片視窗都顯示之後,鍵盤焦點給這個視窗(考試卡)。(stub:空字串,值由開發 worker 依工單寫。)
+pub const STARTUP_FOCUS: &str = "";
+
+/// 啟動焦點:所有要開的卡片視窗都顯示之後,只給一次。
+#[derive(Debug)]
+pub struct StartupFocus {
+    _stub: (),
+}
+
+impl StartupFocus {
+    pub fn new(_labels: &[&str]) -> Self {
+        unimplemented!("T21: StartupFocus::new")
+    }
+
+    /// 某個視窗剛顯示。全部都顯示的那一次回 `Some(STARTUP_FOCUS)`,之後都回 `None`。
+    pub fn on_shown(&mut self, _label: &str) -> Option<&'static str> {
+        unimplemented!("T21: StartupFocus::on_shown")
+    }
+}
