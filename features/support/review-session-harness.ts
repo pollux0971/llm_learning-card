@@ -335,6 +335,11 @@ export interface RunOpts {
   env?: Record<string, string | undefined>;
   /** 不帶 --dir(給 rawArgs 以外的情況用不到,保留) */
   timeoutMs?: number;
+  /**
+   * 送出第 index 題(0 起算)的答案之前先跑這個(T26:在 session 建立之後、送出之前改寫磁碟上的 reviews.json)。
+   * 跑完才送答案;沒給就跟以前一樣。
+   */
+  beforeAnswer?: (info: { index: number; card: string }) => void | Promise<void>;
 }
 
 function fillAnswerFor(vault: Vault, card: string, wrong: boolean): string {
@@ -426,6 +431,7 @@ export async function runReview(vault: Vault, opts: RunOpts = {}): Promise<RunOu
       const index = answered;
       answered += 1;
       writing = writing.then(async () => {
+        if (opts.beforeAnswer) await opts.beforeAnswer({ index, card });
         if (isApply) {
           child.stdin.write(`${opts.applyText ?? 'PASSALL'}\n`);
           await new Promise((r) => setTimeout(r, 150));
