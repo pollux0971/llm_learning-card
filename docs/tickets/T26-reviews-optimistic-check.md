@@ -53,13 +53,24 @@ must_catch:
 5. **終端機**(`scripts/review.ts`):`ReviewsChangedError` 一路丟到 `main().catch`:印 `message` 到 stderr、**退出碼 1**、**不印小結、不做 snapshot**(磁碟狀態已和我們的對不上,不替它備份一份看似完整的快照)。已經寫進去的前幾題不受影響(每題立刻落地,phase-1 的保證)。再開一次 `review.ts` 就是「重新開始今天的複習」:快取的題目名單還在,已答的卡以 history 為準被剃掉(ADR-074)。
 6. **不加鎖、不改格式**:不新增任何 `learning/` 底下的檔案;`reviews.json` 的欄位、縮排、結尾換行不變;寫入仍走 `writeFileAtomic`(§11b)。
 
+### 「載入時」到底指哪一次(寫死,協調者/前端 2026-10-16 要求)
+
+| 問題 | 規定 |
+|---|---|
+| 雜湊何時記 | **session 建立時**:`buildTodaySession` 讀 `reviews.json` 的那一次(續答則是 `sessionFromCache` 還原 session 時重新讀的那一次)。**不是** submit 當下的 `loadReviews`——那只剩幾毫秒的空窗,視窗與終端機交錯答題幾乎都抓不到。整個 session 期間 `reviews.json` 只要被別處改過,**下一次寫入就拒絕**。 |
+| 記在哪 | 只在記憶體的 `Session.reviewsHash`。**不落地到 `learning/`、不寫進 ADR-074 的 session 快取**(快取格式 `SessionCacheSchema` 不動、§12 不動)。 |
+| 續答(T17 快取還原的 session) | 還原時**重新讀** `reviews.json` 並記雜湊(快取不存雜湊)。還原到第一次寫入之間的改動才會被抓;還原之前別人寫的已經在還原時讀進來了(`dropAnsweredToday` 用的就是那份)。 |
+| 寫成功之後 | 基準更新為**剛寫進去的位元組的雜湊**(`saveReviewsIfUnchanged` 的回傳值)。同一個 session 連續答題不會自己擋自己。 |
+| 外部改動發生在 submit 之前、載入之後 | 一律拒絕,即使改動的是別張卡(寧可多拒絕一次,也不靜默蓋掉)。 |
+| 錯誤類別 | 名字以本工單為準:**`ReviewsChangedError`**,從 `packages/core/src/session/io.ts` 匯出(也從 `session/index.ts` 再匯出);`code === 'reviews-changed'`;`message` 逐字「複習紀錄剛被別的地方改過,請重新開始今天的複習」。T22/T24 只依賴 `code` 與 `message`,不依賴 `instanceof`(側車是別的行程邊界)。 |
+
 ## 測試(前端寫;開發不改)
 
 | 驗收 | 量什麼 | 怎麼量 |
 |---|---|---|
 | 要求 1、2 | `readReviewsSnapshot`:雜湊 = 檔案位元組的 SHA-256;檔案不存在 → `'absent'`;`reviews` 與 `loadReviews` 的結果深度相等(同一份資料);壞格式照舊丟 zod 錯 | vitest,暫存目錄 |
 | 要求 2 | `saveReviewsIfUnchanged`:雜湊相同 → 寫入且回傳新雜湊(= 讀回檔案算的);不同 → 丟 `ReviewsChangedError`(`message` 與 `code` 逐字)、**磁碟檔案位元組不變、目錄裡沒有 `reviews.json.tmp`**;檔案原本不存在而基準是 `'absent'` → 可寫;基準是 `'absent'` 但別人已建檔 → 丟錯 | 同上 |
-| 要求 4 | 手法:`buildTodaySession` 之後、第一次 `submitAnswer` 之前,**直接改磁碟上的 `reviews.json`**(例如另一張卡的 history 多一筆)→ 回答最後一題 → 丟 `ReviewsChangedError`;檔案位元組仍是被改過的那份(不是我們的);`session.queue.length`、`passed`、`failed` 不變 | 同上,假 router |
+| 要求 4 | **確定的造法**:`buildTodaySession`(或 `sessionFromCache`)之後、最後一題 `submitAnswer` 之前,**直接改寫磁碟上的 `reviews.json`**(例如另一張卡的 history 多一筆)→ 回答最後一題 → 丟 `ReviewsChangedError`;檔案位元組仍是被改過的那份(不是我們的);`session.queue.length`、`passed`、`failed` 不變 | 同上,假 router |
 | 要求 4 | 兩張卡連續答:第一張成功寫入後,第二張**不會**誤報被改(基準已更新);兩張之間若有人改檔 → 第二張丟錯 | 同上 |
 | 要求 4 | `session.reviewsHash` 為 `undefined`(手工組的 session)→ 行為與現況相同,不丟錯 | 同上 |
 | 要求 3 | `buildTodaySession` 回的 session 有 `reviewsHash` 且等於磁碟雜湊;續答路徑(`sessionFromCache`)也有 | 同上 + 靜態檢查 `scripts/review.ts` 兩個建 session 的位置 |

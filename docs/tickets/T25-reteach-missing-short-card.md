@@ -50,6 +50,8 @@ must_catch:
 4. 不改 progress、不動 `session.current`、不動 passed/failed/errors(跟縮短版存在時一樣,見 `present.ts` 檔頭第 1 點)。
 5. 不自動補生縮短版(那是 `reteach.short` 任務與 ingest 的事,另開票)。
 
+**與桌面側車的對應(前端 2026-10-16)**:core 的欄位名固定為 `usedOriginal?: true`(上面要求 1)。側車回給視窗的 reteach 結果由 T22/T24 自己對應成 `{ path, short }`:`usedOriginal` 為真 → `short: false`(`path` 指原卡),否則 `short: true`(指縮短版)。T25 不定義側車的訊息形狀,只保證 core 這個欄位穩定、且縮短版存在時不帶它。
+
 ## 測試(-ed 寫;開發不改)
 
 | 驗收 | 量什麼 | 怎麼量 |
