@@ -81,7 +81,7 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
   const basename = opts.rawRelPath.split('/').pop()!;
   const t0 = Date.now();
 
-  let generated: { accepted: CardCandidate[]; parked: ParkedCandidate[]; regenerateEvents: number };
+  let generated: { accepted: CardCandidate[]; parked: ParkedCandidate[]; regenerateEvents: number; warnings: string[] };
   try {
     generated = await generateCards(opts.router, { relLabel: basename, category, content: raw });
   } catch (err) {
@@ -116,6 +116,15 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
     writeCardFile(cardsDir, id, frontmatter, candidate.body, candidate.examples);
     cardsCreated.push(id);
   });
+
+  for (const message of generated.warnings) {
+    appendLogEvent(join(opts.outDir, 'state/log.jsonl'), {
+      ts: new Date().toISOString(),
+      type: 'warning',
+      file: opts.rawRelPath,
+      message,
+    });
+  }
 
   if (generated.parked.length > 0) {
     const needsReviewPath = join(opts.outDir, 'state/needs-review.json');
