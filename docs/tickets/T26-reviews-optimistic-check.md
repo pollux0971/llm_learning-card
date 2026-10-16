@@ -9,7 +9,7 @@ owner: worker-grok
 must_catch:
   - 載入 `reviews.json` 之後、寫回之前,別的地方改過它(內容的雜湊變了),`submitAnswer` 仍然寫入並蓋掉別人的改動(現況)
   - 偵測到被改過時寫了一半、寫了暫存檔沒清、或把 session 的計數(passed/failed/queue)往前走了一步,卻沒寫進磁碟
-  - 偵測到被改過時錯誤訊息不是「複習紀錄剛被別的地方改過,請重新開始今天的複習」,或沒有穩定的 `code`(`reviews-changed`)讓側車對應
+  - 偵測到被改過時錯誤訊息不是「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」,或沒有穩定的 `code`(`reviews-changed`)讓側車對應
   - 自己剛寫的那一次也被當成「別人改的」(第二題起每題都失敗):每次成功寫入後 session 的基準雜湊沒有更新
   - 檔案不存在(第一次複習前)的情況沒有處理:不存在要有固定的基準值,別人在這期間建了檔也要偵測到
   - 用鎖檔、改 `reviews.json` 的格式或欄位、在 `learning/` 底下新增任何檔案(§12 硬約定);或寫入沒走 `writeFileAtomic`
@@ -40,7 +40,8 @@ must_catch:
 2. **`io.ts` 加一個讀取函式**(新增,**不改** `loadReviews`/`saveReviews` 的簽章與行為):`readReviewsSnapshot(learningDir): { reviews: Record<CardId, Review>; hash: string }`,一次讀檔、同一份位元組既解析(同 `loadReviews` 的 `ReviewSchema.parse` 規則)又算雜湊。再加 `saveReviewsIfUnchanged(learningDir, reviews, expectedHash): string`:
    - 寫之前**再讀一次**磁碟上的 `reviews.json`、算雜湊;與 `expectedHash` 不同 → **什麼都不寫**(不建暫存檔)、丟 `ReviewsChangedError`;
    - 相同 → 照 `saveReviews` 的格式(`JSON.stringify(reviews, null, 2) + '\n'`)用 `writeFileAtomic` 寫入,回傳**剛寫進去的位元組的雜湊**(呼叫端當下一次的基準)。
-   - `ReviewsChangedError`(新增,匯出):`message` 固定為 **`複習紀錄剛被別的地方改過,請重新開始今天的複習`**,`code` 固定為 `'reviews-changed'`(給側車對應成錯誤種類,T22/T24 自己處理)。
+   - `ReviewsChangedError`(新增,匯出):`message` 固定為 **`複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。`**,`code` 固定為 `'reviews-changed'`(給側車對應成錯誤種類,T22/T24 自己處理)。
+   - **訊息為什麼多一句**(顧問 2026-10-16):被拒絕的那一題**沒有存**(`reviews.json` 沒寫、queue 沒前進),重新開始後會再問一次;第二句讓使用者知道只有這一題要重答、沒有遺失其他東西(前面已經寫進去的題目不受影響)。**訊息是一整行**,兩句,中間句號,結尾句號,不換行;主句逐字不變,第二句逐字是「剛才那一題需要重答。」。T22/T24(側車、視窗)只依賴 `code` 與 `message`:視窗顯示 `message` 原文即可,**不必改它們自己的字串**(若它們另存一份同樣的文字,要跟著改成這個全文)。
    - 誠實的限制(寫進 `io.ts` 的註解):重讀比對到 rename 之間仍有微秒級的空窗,**樂觀檢查不是鎖**;顧問已接受,不再加碼。
 3. **`Session` 加一個選用欄位 `reviewsHash?: string`**(`types.ts`):這個 session 最後一次「確定與磁碟一致」的雜湊。
    - `buildTodaySession`:用 `readReviewsSnapshot` 取代 `loadReviews`,把 `hash` 放進 session。
@@ -62,7 +63,7 @@ must_catch:
 | 續答(T17 快取還原的 session) | 還原時**重新讀** `reviews.json` 並記雜湊(快取不存雜湊)。還原到第一次寫入之間的改動才會被抓;還原之前別人寫的已經在還原時讀進來了(`dropAnsweredToday` 用的就是那份)。 |
 | 寫成功之後 | 基準更新為**剛寫進去的位元組的雜湊**(`saveReviewsIfUnchanged` 的回傳值)。同一個 session 連續答題不會自己擋自己。 |
 | 外部改動發生在 submit 之前、載入之後 | 一律拒絕,即使改動的是別張卡(寧可多拒絕一次,也不靜默蓋掉)。 |
-| 錯誤類別 | 名字以本工單為準:**`ReviewsChangedError`**,從 `packages/core/src/session/io.ts` 匯出(也從 `session/index.ts` 再匯出);`code === 'reviews-changed'`;`message` 逐字「複習紀錄剛被別的地方改過,請重新開始今天的複習」。T22/T24 只依賴 `code` 與 `message`,不依賴 `instanceof`(側車是別的行程邊界)。 |
+| 錯誤類別 | 名字以本工單為準:**`ReviewsChangedError`**,從 `packages/core/src/session/io.ts` 匯出(也從 `session/index.ts` 再匯出);`code === 'reviews-changed'`;`message` 逐字「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」。T22/T24 只依賴 `code` 與 `message`,不依賴 `instanceof`(側車是別的行程邊界)。 |
 
 ## 測試(前端寫;開發不改)
 
