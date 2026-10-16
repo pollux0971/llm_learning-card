@@ -57,6 +57,10 @@ npx tsx scripts/prompt-check.ts --diff prompts/golden/ingest.cards/2026-09-10 pr
 | 1 | 無(用 FakeLlmRouter) | 框架本身不需要真模型 |
 | 2 | I1 通過、03 phase-1 | 要有真的 prompt 與真的輸出才有東西可評 |
 
+**跨資料夾的例外(T18 起)**:`packages/core/src/prompt-quality/golden-sets/registry.ts`(12)要 import `packages/core/src/ingest/siblings.ts`(02)的 `cardSummary` / `formatAlreadyCovered`。
+理由:golden 的 `already_covered` 要跟 children 管線用同一份組法,另寫一份就變成在量複本(顧問 2026-10-17)。
+只開「12→02」一條;02 沒有 → 12 的邊,不會繞成圈。`scripts/boundaries.allow.json` 那一條由 T18 的 worker 跟程式一起加(工單 `docs/tickets/T18-children-sees-sibling-cards.md` 的 (d))。
+
 ## 技術棧
 
 | 項目 | 選擇 | 備註 |

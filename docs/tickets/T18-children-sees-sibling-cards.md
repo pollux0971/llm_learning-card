@@ -1,7 +1,7 @@
 ---
 id: T18
 deps: [T12]
-touches: [packages/core/src/ingest/children.ts, packages/core/src/ingest/siblings.ts, packages/core/src/ingest/index.ts, packages/core/prompts/ingest/children.md, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/parent-child-overlap.ts, packages/core/src/prompt-quality/cli.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/index.ts, packages/core/src/prompt-quality/golden-sets/generalization-slices.ts]
+touches: [packages/core/src/ingest/children.ts, packages/core/src/ingest/siblings.ts, packages/core/src/ingest/index.ts, packages/core/prompts/ingest/children.md, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/parent-child-overlap.ts, packages/core/src/prompt-quality/cli.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/index.ts, packages/core/src/prompt-quality/golden-sets/generalization-slices.ts, scripts/boundaries.allow.json]
 cpu: light
 budget_usd: 1
 status: todo
@@ -111,6 +111,10 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
   - (紅測試作者補記)日期是 **2026-10-16**(顧問評分通過的乾淨 main 基準)。三個複本已由紅測試作者放好、sha256 釘在測試裡:
     `children-cors` `cc8e0e52…8b188fe6`、`children-preflight` `6b888d44…edab7a9e`、`children-same-origin` `8cbac35a…af1ded26`。worker 只讀不改。
 - 組字串的程式與生產路徑**共用同一個 `cardSummary`、同一個格式函式**(不另寫一份),`already_covered` 的行由 `listSiblings` 的輸出組出。
+  - (紅測試作者補記,顧問 2026-10-17 裁決 A)這需要一條新的 boundaries 例外:`registry.ts`(12-prompt-quality)import `ingest/siblings.ts`(02-ingest-pipeline),現在的 `scripts/boundaries.allow.json` 沒有 12 → 02,`npm run boundaries` 會擋。
+    **worker 跟程式一起加**這一條(已加進 touches),reason 照抄:
+    `{"from": "12-prompt-quality", "to": "02-ingest-pipeline", "reason": "T18 (d):golden 的 already_covered 跟 children 管線共用 ingest/siblings.ts 的 cardSummary / formatAlreadyCovered,工單要求不另寫一份"}`。
+    只開這一條;02 沒有 → 12 的邊,不會繞成圈。理由也寫在 `features/12-prompt-quality/FEATURE.md` 的「依賴」底下(CLAUDE.md:例外要在 FEATURE.md 說明理由)。
   - (紅測試作者補記)golden 的卡沒有真的 id;`listSiblings` 要的 id 由 registry 自己給(例如 `sec-golden-<key>-<n>`),**紅測試只比「行的集合」與每行的格式**,不比順序以外的 id 細節。
 - 登記表其他四組(cards、questions、deps、regenerate)**不動**;新增的泛化輸入見 (d2)。
 
