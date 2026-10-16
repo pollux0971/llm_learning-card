@@ -1486,21 +1486,26 @@ graph TD
   5. **金鑰只在側車行程**:`.env` 只由側車入口讀(`scripts/_env.ts`,ADR-034);Rust 不讀 `.env`、不經手金鑰。回給 webview 的錯誤只有固定的 `kind` 與固定的訊息,不帶例外原文、不帶 provider 回應;stderr 只印固定格式的一行(`[review-sidecar] <kind>`);`log.jsonl` 照 router 現有的帳(ADR-050),不多寫內容。§7 的 `LlmRouter` 簽章與路由表(硬約定)不動。
   6. **假 router 只能由啟動時的環境變數開**:`LC_REVIEW_FAKE_CLOUD=<模組的絕對路徑>`。側車啟動時 `import` 那個模組(它把 `fetch` 換掉;router、adapter、帳本照樣跑真的,跟 I2 的 `features/steps/_fake-review-cloud.mjs` 同一個做法)。
      測試用的日期同理:`LC_REVIEW_TODAY=<YYYY-MM-DD>`(沒設就是本機的今天)。
-     webview 與 command 都不能切換這兩個。**Rust 的 release build 起側車前,把這兩個變數從子行程的環境拿掉**(debug build 照原樣繼承,測試用 debug build)。
+     webview 與 command 都不能切換這兩個。**Rust 起側車時,子行程的環境用白名單重建**(`PATH`、`HOME`、`XDG_*` 這類;不帶 `NODE_OPTIONS`、金鑰、`LLM_*`),不是刪黑名單(ADR-062 的白名單原則);
+     這兩個變數只有 debug build 才另外帶入,release build 一律不帶(測試用 debug build)。router 的設定與金鑰只從 `.env` 來(側車入口讀)。
      開著假 router 時,側車的第一行 `hello` 帶 `fakeCloud: true`,stderr 另印一行 `[review-sidecar] 正在用假 router`,視窗顯示「測試模式」標記。正式路徑預設 live,照樣受帳本與 `LLM_DAILY_CAP_USD` 管。
   7. **寫入者**:
 
      | 檔 | 誰寫 | 怎麼寫 |
      |---|---|---|
      | `learning/state/reviews.json` | 側車(core `saveReviews`) | `writeFileAtomic`(§11b 四步) |
-     | `learning/state/log.jsonl` | Rust(§13 與 asset 的拒絕 warning,ADR-069)與側車(router 的帳、快取壞掉的 warning) | 兩邊都是 append、一次寫完一行、fsync;「同一個事件 TS 與 Rust 寫出來深度相等」照舊由 ADR-069 的向量測 |
+     | `learning/state/log.jsonl` | Rust(§13 與 asset 的拒絕 warning,ADR-069)與側車(router 的帳、快取壞掉的 warning) | 兩邊都是 `O_APPEND`、一次寫完一整行(TS 的 `appendLineAtomic` 是單次 `writeSync`,Rust 是單次 `write_all`)、fsync,所以不會交錯出半行;「同一個事件 TS 與 Rust 寫出來深度相等」照舊由 ADR-069 的向量測 |
      | `${XDG_CACHE_HOME:-~/.cache}/llm-learning-cards/<vault_id>/session-<日期>.json` | 側車(core `writeSessionCache`) | `writeFileAtomic`;路徑由側車照 ADR-074 算,Rust 不另算 |
      | `learning/` 的 git snapshot | 側車(core `snapshotLearningDir`),小結時、這一次有答題才做 | git(ADR-042) |
      | `LearningFs.write` | Rust(§11b) | 06 不呼叫 `write` |
 
   8. **生命週期**:第一次呼叫 review command 時起側車,等它的 `hello`(20 秒);一次只處理一個請求(忙的時候回 `busy`);一個請求 180 秒沒有回應就收掉側車、回 `timeout`;側車死掉時回 `sidecar-exited`,下一個請求重新起(視窗顯示錯誤、可以重試,不卡住);關 app(`RunEvent::Exit`)一定收掉側車並等它結束;側車讀到 stdin 結束(EOF)就自己結束,所以 app 被強制結束時也不留孤兒行程。
   9. **訊息形狀只有一份**:`packages/core/src/session/protocol.ts` 的 zod schema(軟約定,這裡登記)加上同目錄的 `protocol.vectors.json`;TS 的測試與 Rust 的測試讀同一份向量(仿 `atomic-write.vectors.json`,ADR-060 的教訓)。
-     信封有版本 `v: 1`;未知的 `method` 拒絕;一行最多 256 KiB(兩邊都檢查);不是合法 JSON 的一行回 `bad-request`,側車不崩。schema 不放 `contracts/`(要放就是改契約文字,另議)。
+     信封有版本 `v: 1`;`v` 不對回 `unsupported-version`、未知的 `method` 回 `unknown-method`、不是合法 JSON(或一行裡有 `\r`)回 `bad-request`,三種分開,側車不崩。
+     請求與回應都是一行最多 256 KiB、只用 `\n` 分行(字串裡的 U+2028 / U+2029 照常),兩邊都檢查;Rust 轉交前驗回應的信封。
+     **側車的 stdout 只准協定行**:啟動時把 `console.*` 導到 stderr;Rust 讀到非協定的一行就丟掉、只記一行固定格式,不轉給 webview。
+     **版本政策**:`v` 只在訊息形狀不相容時加一;加的那一批同時更新 `protocol.vectors.json`,兩邊的測試讀同一份。
+     schema 不放 `contracts/`,`contracts/types.md` 不加附註(§13 的「UI 不直接碰 fs」對 webview 仍成立,側車不是 UI;-e5 2026-10-16 審過)。
   10. **批改失敗時題目留在原地**:視窗裡批改回 error(`pass === null`)時,這一題不前進、不寫任何東西,使用者可以再送一次(06 phase-1、phase-2 的場景)。core 的 `submitAnswer` 加一個選項給側車用;CLI 照舊(失敗那張卡今天跳過,下次再問)。
 - **Alternatives**:
   - **A:webview 跑 session,側車只做 LLM** —— 不採用。core 的 session 要改成非同步、吃注入的 IO(CLI 也得換,T17 的測試要整批保住);ADR-074 的快取位置與 vault_id 雜湊要在 Rust 再寫一份(ADR-060 的漂移形狀);snapshot 在桌面版沒有人做。側車本來就躲不掉,A 只是多了兩份實作。
@@ -1511,7 +1516,8 @@ graph TD
 - **Consequences**:
   - 視窗與終端機是同一份程式碼,I3 的「window and terminal produce the same session」自然成立,沒有第二份實作。
   - 桌面程式要有 `node`:Rust 用 `node --import tsx scripts/review-sidecar.ts --dir <learning 根>`,工作目錄是 repo 根(現在本來就從 repo 跑)。**已知限制:打包(10 phase-4、phase-5)時要帶 Node runtime,或把側車編成單一執行檔,到時再決定。**
-  - 視窗與終端機同時開著、同時答題時,兩個 Node 寫者都對 `reviews.json` 讀改寫,可能丟掉一次更新(跟同時開兩個終端機一樣)。I3 的場景是先後,不是同時;這裡不加鎖。
+  - 視窗與終端機同時開著、同時答題時,兩個 Node 寫者都對 `reviews.json` 讀改寫,可能丟掉一次更新(跟同時開兩個終端機一樣)。丟的是同時那一題的 history,不會寫壞檔(`writeFileAtomic`);讀到寫之間沒有 LLM 呼叫,只有幾毫秒;側車不在記憶體留 reviews 的快照,每次都重讀。I3 的場景是先後,不是同時;這裡不加鎖。
+  - 子行程環境用白名單,所以只在 shell 裡 `export` 的 LLM 變數(沒寫進 `.env`)桌面版拿不到;CLI 照舊讀 shell 的環境。
   - 06 的單獨執行(ADR-022):vite dev server 用同一支側車,跑在 `contracts/fixtures/learning-minimal` 的暫存複本上,一律假 router;dev server 本身的埠是開發工具的,不是 app 的。
   - Rust 會多一個模組管行程;它的測試只測信封與生命週期,不測批改。
 - **Related**: ADR-022、ADR-034、ADR-042、ADR-050、ADR-060、ADR-062、ADR-069(refined)、ADR-074、`contracts/types.md` §7、§11b、§13、`features/06-test-card/FEATURE.md`、`docs/tickets/T22-review-sidecar.md`、`docs/tickets/T24-test-card-phase-2.md`
