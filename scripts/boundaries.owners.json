@@ -145,6 +145,18 @@
       "11-review-cli"
     ],
     [
+      "scripts/review-sidecar.ts",
+      "11-review-cli"
+    ],
+    [
+      "scripts/review-sidecar-stdio.ts",
+      "11-review-cli"
+    ],
+    [
+      "scripts/review-sidecar-stdio.js",
+      "11-review-cli"
+    ],
+    [
       "scripts/review.test.ts",
       "11-review-cli"
     ],

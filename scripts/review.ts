@@ -23,30 +23,20 @@ import {
   resolveVerifiedLedger,
 } from '../packages/core/src/llm/index.js';
 import type { LlmRouter } from '../packages/core/src/grading/types.js';
-import { buildDueList } from '../packages/core/src/scheduler/index.js';
-import { nextCalendarDay } from '../packages/core/src/schema/review.js';
-import { snapshotLearningDir } from '../packages/core/src/schema/git-repo.js';
-import { buildTodaySession, dropAnsweredToday, dueItemsFromCache } from '../packages/core/src/session/build.js';
-import {
-  readSessionCache,
-  toSessionCache,
-  warnInvalidSessionCache,
-  writeSessionCache,
-  type SessionCache,
-} from '../packages/core/src/session/cache.js';
+import { buildTodaySession } from '../packages/core/src/session/build.js';
+import { readSessionCache } from '../packages/core/src/session/cache.js';
+import { openDay, pauseDay, snapshotAfterReview, summarizeDay, unpauseDay } from '../packages/core/src/session/engine.js';
 import { presentNextCard } from '../packages/core/src/session/present.js';
 import { joinApplyLines, submitAnswer } from '../packages/core/src/session/answer.js';
-import { listCardIds, loadReviews, loadSettings, readReviewsSnapshot } from '../packages/core/src/session/io.js';
+import { listCardIds, loadReviews, loadSettings } from '../packages/core/src/session/io.js';
 import {
-  estimateTomorrow,
   renderDeferred,
   renderDryRun,
   renderDryRunHeader,
   renderNoCards,
   renderSummary,
-  tallyToday,
 } from '../packages/core/src/session/summary.js';
-import type { Session, SessionSummaryInput } from '../packages/core/src/session/types.js';
+import type { Session } from '../packages/core/src/session/types.js';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -146,44 +136,6 @@ async function runInteractive(session: Session, rl: ReturnType<typeof createInte
   return answered;
 }
 
-function cacheFromSession(session: Session, paused: boolean): SessionCache {
-  return toSessionCache({
-    date: session.today,
-    paused,
-    totalDue: session.totalDue,
-    deferred: session.deferred,
-    queue: session.queue,
-    reteach: session.reteachQueue,
-  });
-}
-
-async function buildAndStore(dir: string, today: string, router: LlmRouter, paused: boolean): Promise<SessionCache> {
-  const session = await buildTodaySession({ learningDir: dir, today, router });
-  const cache = cacheFromSession(session, paused);
-  writeSessionCache(dir, cache);
-  return cache;
-}
-
-function sessionFromCache(dir: string, today: string, router: LlmRouter, cache: SessionCache): Session {
-  const snap = readReviewsSnapshot(dir);
-  const settings = loadSettings(dir);
-  return {
-    learningDir: dir,
-    today,
-    dailyCap: settings.daily_cap,
-    router,
-    queue: dropAnsweredToday(dueItemsFromCache(cache.queue, snap.reviews), snap.reviews, today),
-    reteachQueue: [...cache.reteach],
-    totalDue: cache.total_due,
-    deferred: cache.deferred,
-    passed: 0,
-    failed: 0,
-    errors: 0,
-    reviewsHash: snap.hash,
-    current: undefined,
-  };
-}
-
 function printPhase1DryRun(dir: string, cardIds: string[], session: Session): void {
   const deferredLine = renderDeferred(session.deferred, session.dailyCap);
   if (deferredLine !== undefined) console.log(deferredLine);
@@ -215,19 +167,6 @@ async function runDryRun(dir: string, today: string, cardIds: string[]): Promise
   printPhase1DryRun(dir, cardIds, session);
 }
 
-/** snapshot 失敗不改退出碼、不丟錯。not-a-repo 的 hint 已含 cli.ts init。 */
-function snapshotQuietly(dir: string, today: string): void {
-  try {
-    const [y, m, d] = today.split('-').map(Number);
-    const result = snapshotLearningDir(dir, { today: new Date(y ?? 0, (m ?? 1) - 1, d ?? 1) });
-    if (result.status === 'committed' || result.status === 'no-changes') return;
-    console.error(result.hint ?? `snapshot 失敗:${result.status}`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`snapshot 失敗:${message}`);
-  }
-}
-
 async function main(): Promise<void> {
   const dir = arg('--dir');
   const today = arg('--today');
@@ -245,13 +184,7 @@ async function main(): Promise<void> {
   }
 
   if (pause) {
-    const prior = readSessionCache(dir, today);
-    if (prior.kind === 'ok') {
-      writeSessionCache(dir, { ...prior.cache, paused: true });
-    } else {
-      if (prior.kind === 'invalid') warnInvalidSessionCache(dir, today);
-      await buildAndStore(dir, today, refusingRouter(), true);
-    }
+    await pauseDay({ learningDir: dir, today, env: process.env });
     console.log('今天已暫停');
     return;
   }
@@ -261,28 +194,25 @@ async function main(): Promise<void> {
     return;
   }
 
-  const prior = readSessionCache(dir, today);
-  let resumed = prior.kind === 'ok';
-  let loaded: SessionCache | undefined = prior.kind === 'ok' ? prior.cache : undefined;
+  // 暫停日不需要帳本:查帳本之前先看一眼快取(只讀、不寫)。
   if (unpause) {
-    if (loaded) {
-      loaded = { ...loaded, paused: false };
-      writeSessionCache(dir, loaded);
-    }
+    unpauseDay({ learningDir: dir, today, env: process.env });
     console.log('已恢復今天的複習');
-  } else if (loaded?.paused) {
-    console.log('今天已暫停,要繼續請加 --unpause');
-    return;
+  } else {
+    const prior = readSessionCache(dir, today);
+    if (prior.kind === 'ok' && prior.cache.paused) {
+      console.log('今天已暫停,要繼續請加 --unpause');
+      return;
+    }
   }
 
   const router = liveRouterOrExit();
-  if (!loaded) {
-    if (prior.kind === 'invalid') warnInvalidSessionCache(dir, today);
-    loaded = await buildAndStore(dir, today, router, false);
-    resumed = false;
+  const opened = await openDay({ learningDir: dir, today, router, env: process.env });
+  if (opened.kind === 'paused') {
+    console.log('今天已暫停,要繼續請加 --unpause');
+    return;
   }
-
-  const session = sessionFromCache(dir, today, router, loaded);
+  const { session, cache, resumed } = opened;
   const deferredLine = renderDeferred(session.deferred, session.dailyCap);
   if (deferredLine !== undefined) console.log(deferredLine);
 
@@ -300,25 +230,17 @@ async function main(): Promise<void> {
     rl.close();
   }
 
-  const reviews = loadReviews(dir);
-  const tally = tallyToday(loaded.queue.map((item) => item.card), reviews, today);
-  const tomorrow = nextCalendarDay(today);
-  const dueTomorrowAll = buildDueList(reviews as unknown as Parameters<typeof buildDueList>[0], tomorrow).length;
-  const estimate = estimateTomorrow({
-    dueTomorrowExcludingReturns: Math.max(0, dueTomorrowAll - tally.returned),
-    returnedToday: tally.returned,
+  const summaryInput = summarizeDay({
+    learningDir: dir,
+    today,
+    cache,
     dailyCap: session.dailyCap,
+    answeredThisRun,
+    resumed,
   });
-  const summaryInput: SessionSummaryInput = {
-    passed: tally.passed,
-    failed: tally.returned,
-    errors: 0,
-    tomorrow: estimate,
-    retryLater: tally.retryLater,
-  };
-  if (resumed) summaryInput.answeredThisRun = answeredThisRun;
   console.log(`\n${renderSummary(summaryInput)}`);
-  if (answeredThisRun >= 1) snapshotQuietly(dir, today);
+  const snap = snapshotAfterReview({ learningDir: dir, today, answeredThisRun });
+  if (snap.status === 'failed') console.error(snap.hint ?? `snapshot 失敗:${snap.status}`);
 }
 
 // ReviewsChangedError 一路丟到這裡:印 message 到 stderr、退出碼 1。

@@ -88,5 +88,10 @@
     "from": "07-teach-card",
     "to": "14-hud-skin",
     "reason": "ADR-071:07 教學卡 的畫面改用 14-hud-skin 的 packages/ui-shared/src/hud/ 元件(面板、按鈕、標題列、HP 條)。外觀只有一份,兩邊各抄一份會長得不一樣。只開這一條單向 import(沒有 14→07 教學卡),hud/ 歸 14 不歸 07,所以不碰 ADR-035 第 2 點守的 07 的圍欄插件。依賴與理由見 features/14-hud-skin/FEATURE.md「依賴」"
+  },
+  {
+    "from": "10-desktop-shell",
+    "to": "11-review-cli",
+    "reason": "ADR-075:webview 的複習 client 只 import session/protocol.ts 的訊息形狀(zod schema),跟側車共用同一份。不 import engine、handler、io(那些會碰 node:fs)。Rust 只起、傳、收、關,視窗不自己組協定。"
   }
 ]

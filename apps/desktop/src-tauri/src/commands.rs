@@ -15,6 +15,7 @@ use tauri::{Runtime, State};
 
 use crate::learning_fs::{self, FsError, NotConfigured, Outcome};
 use crate::learning_root::Resolved;
+use crate::review_sidecar::{ReviewError, SidecarHost};
 
 /// learning 根(Tauri managed state)。T2c-2 起只有一個來源:啟動時解析一次的指標檔(`learning_root::resolve`)。
 /// 四個 command 與 `lc` 協定都讀這一份,不各自讀環境或指標檔。
@@ -61,7 +62,13 @@ pub fn exists(root: State<'_, LearningRoot>, rel_path: String) -> Result<Value, 
     learning_fs::exists(root.dir()?, &rel_path).map(Outcome::into_value)
 }
 
+/// 複習側車的轉手(ADR-075):不看內容,原樣交給 SidecarHost。
+#[tauri::command]
+async fn review(request: serde_json::Value, host: State<'_, SidecarHost>) -> Result<serde_json::Value, ReviewError> {
+    host.call(&request)
+}
+
 /// main.rs 與 tests/commands.rs 用的同一個 handler。
 pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![read, write, list, exists]
+    tauri::generate_handler![read, write, list, exists, review]
 }

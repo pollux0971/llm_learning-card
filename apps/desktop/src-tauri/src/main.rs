@@ -1,13 +1,15 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use learning_cards_desktop::asset_protocol::{self, SCHEME};
 use learning_cards_desktop::commands::{self, LearningRoot};
 use learning_cards_desktop::event_log::AssetRefusalLimiter;
 use learning_cards_desktop::learning_root::{self, StartState};
+use learning_cards_desktop::review_sidecar::{self, SidecarHost, SidecarSpec, SidecarTimeouts};
 use learning_cards_desktop::session::{self, SessionType};
 use learning_cards_desktop::start_screen;
 use learning_cards_desktop::window_mode;
@@ -175,6 +177,15 @@ fn open_windows(app: &App, state: StartState) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+/// `apps/desktop/src-tauri` 往上三層是 repo 根。打包怎麼帶 Node 是已知限制,這張不做。
+fn repo_root() -> PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("CARGO_MANIFEST_DIR has no repo root")
+        .to_path_buf()
+}
+
 fn main() {
     learning_cards_desktop::init_logging();
     // learning 根只有一個來源:使用者層指標檔。啟動時解析這一次,之後 command 與 lc 協定都讀 Tauri state 裡的這一份。
@@ -185,6 +196,23 @@ fn main() {
     // lc 協定的拒絕限流器:整個行程共用一個,結束時把沒寫出的次數補寫進 log。
     let limiter = Arc::new(Mutex::new(AssetRefusalLimiter::new()));
     let lc_limiter = Arc::clone(&limiter);
+    let sidecar_root = LearningRoot::new(resolved.clone());
+    let host = SidecarHost::new(
+        Box::new(move || {
+            let learning = (&sidecar_root as &LearningRoot).dir().map_err(|_| review_sidecar::ReviewError {
+                kind: "not-configured".to_string(),
+            })?;
+            let repo = repo_root();
+            let (program, args, cwd) = review_sidecar::sidecar_command(&repo, learning);
+            let env = review_sidecar::child_env(cfg!(debug_assertions), std::env::vars());
+            Ok(SidecarSpec { program, args, cwd, env })
+        }),
+        SidecarTimeouts {
+            hello: review_sidecar::HELLO_TIMEOUT,
+            request: review_sidecar::REQUEST_TIMEOUT,
+            exit_grace: Duration::from_secs(3),
+        },
+    );
 
     let app = tauri::Builder::default()
         .plugin(
@@ -196,6 +224,7 @@ fn main() {
                 .build(),
         )
         .manage(LearningRoot::new(resolved))
+        .manage(host)
         .invoke_handler(commands::handler())
         // 內建 asset: 即使 protocol-asset feature 以後被打開,這裡先佔掉 scheme,內建 handler 不會掛上。
         .register_uri_scheme_protocol("asset", |_ctx, _request| {
@@ -222,6 +251,7 @@ fn main() {
 
     app.run(move |app, event| {
         if let RunEvent::Exit = event {
+            app.state::<SidecarHost>().shutdown();
             if let Ok(root) = app.state::<LearningRoot>().dir() {
                 let mut limiter = limiter.lock().unwrap_or_else(PoisonError::into_inner);
                 asset_protocol::flush_refusals(root, &mut limiter, SystemTime::now());

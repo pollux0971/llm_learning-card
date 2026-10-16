@@ -52,8 +52,9 @@ export function joinApplyLines(lines: string[]): string {
  * 前置:session.current 必須已由 presentNextCard 設定好(否則丟錯,呼叫順序
  * 用錯了)。rawAnswer 已經是 splitFillAnswer/joinApplyLines 處理過的形式——
  * fill 傳「切好的答案陣列要再轉成」還是直接傳原始單行由呼叫端決定,這裡的簽章
- * 統一吃 `string`,型別是 fill 就在函式內部呼叫 splitFillAnswer(rawAnswer)、
- * apply 就直接把 rawAnswer 當成整段答案——呼叫端不用知道兩者內部怎麼分。
+ * 吃 `string | string[]`。fill 收到字串就 splitFillAnswer;收到陣列就當作
+ * 每個空格的答案(不再用逗號切)。apply 收到陣列是呼叫端寫錯,直接丟錯。
+ * `keepOnError` 給側車:批改回 pass === null 時題目留在原地。沒給 opts 時跟以前一樣。
  *
  * 步驟:
  * 1. 依 session.current.types[typeIndex] 決定呼叫 05 的哪個函式:
@@ -101,17 +102,31 @@ export function joinApplyLines(lines: string[]): string {
  *    e. 回傳 `{ status: overallPass ? 'passed' : 'failed', pass: overallPass,
  *       feedback, cardDone: true, newStage: 更新後的 review.stage }`。
  */
-export async function submitAnswer(session: Session, rawAnswer: string): Promise<AnswerOutcome> {
+export async function submitAnswer(
+  session: Session,
+  rawAnswer: string | string[],
+  opts?: { keepOnError?: boolean },
+): Promise<AnswerOutcome> {
   const current = session.current;
   if (!current) {
     throw new Error('submitAnswer 呼叫順序錯誤:session.current 還沒由 presentNextCard 設定');
   }
 
   const type = current.types[current.typeIndex]!;
-  const result =
-    type === 'fill'
-      ? await gradeFillQuestion(current.fillQuestion!, splitFillAnswer(rawAnswer), session.router)
-      : await gradeApply(current.applyQuestion!, rawAnswer, session.router);
+  let result;
+  if (type === 'apply') {
+    if (Array.isArray(rawAnswer)) {
+      throw new Error('應用題的答案必須是一整段字串,不能是陣列');
+    }
+    result = await gradeApply(current.applyQuestion!, rawAnswer, session.router);
+  } else {
+    const answers = Array.isArray(rawAnswer) ? rawAnswer.map((part) => part.trim()) : splitFillAnswer(rawAnswer);
+    result = await gradeFillQuestion(current.fillQuestion!, answers, session.router);
+  }
+
+  if (result.pass === null && opts?.keepOnError === true) {
+    return { status: 'error', pass: null, feedback: result.feedback, cardDone: false };
+  }
 
   if (result.pass === null) {
     current.hadError = true;
