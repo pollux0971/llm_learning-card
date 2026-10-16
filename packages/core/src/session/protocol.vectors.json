@@ -1,0 +1,923 @@
+{
+ "_about": "T22 訊息形狀向量。TS(packages/core/src/session/protocol.test.ts)與 Rust(apps/desktop/src-tauri/tests/review_sidecar.rs)讀同一份。紅測試作者寫,開發 worker 不改。 line 是一行(不含結尾換行);parts 是組出一行的片段:字串照抄、{\"cp\":n} 是碼點 n 的字元、{\"repeat\":s,\"times\":n} 是 s 重複 n 次(為了不在檔案裡寫跳脫序列或超長字串)。 ts = TS 的 classifyRequestLine / parseResponseLine / parseHelloLine 的預期;rust = Rust 的 request_line / parse_response_line 的預期:accept、reject、either(不斷言)、n/a(Rust 的輸入是 JSON 值,這一行不適用)。",
+ "maxLineBytes": 262144,
+ "requests": [
+  {
+   "name": "valid start {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"start\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid next {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"next\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid summary {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"summary\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid status {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid submit {\"fill\": [\"協定\", \"主機\", \"埠號\"]}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"fill\":[\"協定\",\"主機\",\"埠號\"]}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid submit {\"apply\": \"答案 a, b\"}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"apply\":\"答案 a, b\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid submit {\"fill\": [\"a,b\"]}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"fill\":[\"a,b\"]}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid id 2^53-1",
+   "line": "{\"v\":1,\"id\":9007199254740991,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid non-ascii in apply text",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"apply\":\"中文 日本語 😀\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid U+2028 inside the apply text is not a line break",
+   "parts": [
+    "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"apply\":\"a",
+    {
+     "cp": 8232
+    },
+    "b\"}}"
+   ],
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept",
+   "note": "JSON 合法;照常處理,不當成換行"
+  },
+  {
+   "name": "valid U+2029 inside the apply text is not a line break",
+   "parts": [
+    "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"apply\":\"a",
+    {
+     "cp": 8233
+    },
+    "b\"}}"
+   ],
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "empty line",
+   "line": "",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "n/a"
+  },
+  {
+   "name": "not json",
+   "line": "not json",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "n/a"
+  },
+  {
+   "name": "truncated json",
+   "line": "{\"v\":1,\"id\":1,",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "n/a"
+  },
+  {
+   "name": "json array",
+   "line": "[]",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "json null",
+   "line": "null",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "json string",
+   "line": "\"status\"",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "crlf line ending",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"status\",\"params\":{}}\r",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "n/a",
+   "note": "一行裡有 \\r(CRLF 結尾)→ bad-request"
+  },
+  {
+   "name": "cr in the middle",
+   "parts": [
+    "{\"v\":1,\"id\":1,",
+    {
+     "cp": 13
+    },
+    "\"method\":\"status\",\"params\":{}}"
+   ],
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "n/a"
+  },
+  {
+   "name": "v 2",
+   "line": "{\"v\":2,\"id\":7,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unsupported-version",
+    "id": 7
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "v 0",
+   "line": "{\"v\":0,\"id\":7,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unsupported-version",
+    "id": 7
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "v string \"1\"",
+   "line": "{\"v\":\"1\",\"id\":7,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unsupported-version",
+    "id": 7
+   },
+   "rust": "reject",
+   "note": "v 不是整數 1 就算版本不對"
+  },
+  {
+   "name": "v missing",
+   "line": "{\"id\":7,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 7
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "id string \"1\"",
+   "line": "{\"v\":1,\"id\":\"1\",\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "id zero",
+   "line": "{\"v\":1,\"id\":0,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "id negative",
+   "line": "{\"v\":1,\"id\":-1,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "id fraction",
+   "line": "{\"v\":1,\"id\":1.5,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "id null",
+   "line": "{\"v\":1,\"id\":null,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "id true",
+   "line": "{\"v\":1,\"id\":true,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "id missing",
+   "line": "{\"v\":1,\"method\":\"status\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": null
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "method Start (case differs)",
+   "line": "{\"v\":1,\"id\":3,\"method\":\"Start\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 3
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method STATUS",
+   "line": "{\"v\":1,\"id\":3,\"method\":\"STATUS\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 3
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "method pause (not in the five)",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"pause\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "method empty string",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "method with trailing space",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"status \",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "method containing U+2028",
+   "parts": [
+    "{\"v\":1,\"id\":5,\"method\":\"st",
+    {
+     "cp": 8232
+    },
+    "atus\",\"params\":{}}"
+   ],
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 5
+   },
+   "rust": "accept",
+   "note": "U+2028 不會把一行切成兩行"
+  },
+  {
+   "name": "method not a string (number)",
+   "line": "{\"v\":1,\"id\":6,\"method\":5,\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 6
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "method missing",
+   "line": "{\"v\":1,\"id\":6,\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 6
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "params missing",
+   "line": "{\"v\":1,\"id\":6,\"method\":\"status\"}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 6
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "params null",
+   "line": "{\"v\":1,\"id\":6,\"method\":\"status\",\"params\":null}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 6
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "params array",
+   "line": "{\"v\":1,\"id\":6,\"method\":\"status\",\"params\":[]}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 6
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "params string",
+   "line": "{\"v\":1,\"id\":6,\"method\":\"status\",\"params\":\"x\"}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 6
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "extra top-level field",
+   "line": "{\"v\":1,\"id\":8,\"method\":\"status\",\"params\":{},\"x\":1}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 8
+   },
+   "rust": "either",
+   "note": "TS 是 strictObject;Rust 只檢查信封的五個欄位,多欄位歸誰擋工單沒定,不斷言"
+  },
+  {
+   "name": "params content: status {\"path\": \"cards/security/sec-0001.md\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"status\",\"params\":{\"path\":\"cards/security/sec-0001.md\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "params 不帶路徑(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: start {\"card\": \"sec-0001\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"start\",\"params\":{\"card\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "params 不帶卡 id(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: next {\"x\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"next\",\"params\":{\"x\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "next 的 params 是空物件(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: summary {\"dir\": \"/tmp\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"summary\",\"params\":{\"dir\":\"/tmp\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "summary 的 params 是空物件(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {\"fill\": [\"a\"], \"card\": \"sec-0001\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{\"fill\":[\"a\"],\"card\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "submit 不帶卡 id(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {\"apply\": \"a\", \"path\": \"x\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{\"apply\":\"a\",\"path\":\"x\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "submit 不帶路徑(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {\"fill\": \"a\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{\"fill\":\"a\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "fill 要是字串陣列(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {\"fill\": [1]}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{\"fill\":[1]}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "fill 的項目要是字串(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {\"fill\": [\"a\", null]}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{\"fill\":[\"a\",null]}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "fill 的項目不能是 null(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "submit 要有 fill 或 apply(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {\"fill\": [\"a\"], \"apply\": \"b\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{\"fill\":[\"a\"],\"apply\":\"b\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "fill 與 apply 只能給一個(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {\"apply\": [\"a\"]}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{\"apply\":[\"a\"]}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "apply 要是字串(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "params content: submit {\"apply\": 5}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"submit\",\"params\":{\"apply\":5}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "apply 要是字串(Rust 不看 params 的內容)"
+  },
+  {
+   "name": "line of exactly MAX_LINE_BYTES bytes",
+   "parts": [
+    "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"apply\":\"",
+    {
+     "repeat": "a",
+     "times": 262090
+    },
+    "\"}}"
+   ],
+   "ts": {
+    "ok": true
+   },
+   "rust": "either",
+   "note": "一行最多 262144 位元組(不含結尾換行):剛好等於上限要接受"
+  },
+  {
+   "name": "line of MAX_LINE_BYTES + 1 bytes",
+   "parts": [
+    "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"apply\":\"",
+    {
+     "repeat": "a",
+     "times": 262091
+    },
+    "\"}}"
+   ],
+   "ts": {
+    "ok": false,
+    "kind": "too-large",
+    "id": null
+   },
+   "rust": "either",
+   "note": "超過一個位元組就是 too-large;too-large 時 id 讀不出來也沒關係(null)"
+  },
+  {
+   "name": "multi-byte text under the char limit but over the byte limit",
+   "parts": [
+    "{\"v\":1,\"id\":1,\"method\":\"submit\",\"params\":{\"apply\":\"",
+    {
+     "repeat": "中",
+     "times": 100000
+    },
+    "\"}}"
+   ],
+   "ts": {
+    "ok": false,
+    "kind": "too-large",
+    "id": null
+   },
+   "rust": "reject",
+   "note": "上限是位元組,不是字元(10 萬個中文字 = 30 萬位元組)"
+  },
+  {
+   "name": "line far over the limit that is not even json",
+   "parts": [
+    {
+     "repeat": "x",
+     "times": 300000
+    }
+   ],
+   "ts": {
+    "ok": false,
+    "kind": "too-large",
+    "id": null
+   },
+   "rust": "n/a",
+   "note": "先判大小,再判 JSON"
+  }
+ ],
+ "responses": [
+  {
+   "name": "success with empty result",
+   "line": "{\"v\":1,\"id\":1,\"ok\":true,\"result\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "success with nested result",
+   "line": "{\"v\":1,\"id\":2,\"ok\":true,\"result\":{\"kind\":\"question\",\"card\":\"sec-0001\",\"progress\":{\"index\":1,\"total\":3},\"blanks\":3}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "failure with kind and message",
+   "line": "{\"v\":1,\"id\":3,\"ok\":false,\"error\":{\"kind\":\"bad-request\",\"message\":\"請求格式不正確。\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "failure with null id",
+   "line": "{\"v\":1,\"id\":null,\"ok\":false,\"error\":{\"kind\":\"bad-request\",\"message\":\"請求格式不正確。\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "success result keeps non-ascii text",
+   "line": "{\"v\":1,\"id\":4,\"ok\":true,\"result\":{\"feedback\":\"中文 😀\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "v 2",
+   "line": "{\"v\":2,\"id\":1,\"ok\":true,\"result\":{}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "v missing",
+   "line": "{\"id\":1,\"ok\":true,\"result\":{}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "not json",
+   "line": "hello world",
+   "ts": {
+    "ok": false
+   },
+   "rust": "reject",
+   "note": "非協定行:Rust 丟掉並只記一行固定的字"
+  },
+  {
+   "name": "json array",
+   "line": "[]",
+   "ts": {
+    "ok": false
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "json number",
+   "line": "5",
+   "ts": {
+    "ok": false
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "empty line",
+   "line": "",
+   "ts": {
+    "ok": false
+   },
+   "rust": "reject"
+  },
+  {
+   "name": "id string",
+   "line": "{\"v\":1,\"id\":\"1\",\"ok\":true,\"result\":{}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "id zero",
+   "line": "{\"v\":1,\"id\":0,\"ok\":true,\"result\":{}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "ok missing",
+   "line": "{\"v\":1,\"id\":1,\"result\":{}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "ok true but no result",
+   "line": "{\"v\":1,\"id\":1,\"ok\":true}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "ok true with error as well",
+   "line": "{\"v\":1,\"id\":1,\"ok\":true,\"result\":{},\"error\":{\"kind\":\"x\",\"message\":\"y\"}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "ok false without error",
+   "line": "{\"v\":1,\"id\":1,\"ok\":false}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "ok false with result",
+   "line": "{\"v\":1,\"id\":1,\"ok\":false,\"result\":{},\"error\":{\"kind\":\"x\",\"message\":\"y\"}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "error without kind",
+   "line": "{\"v\":1,\"id\":1,\"ok\":false,\"error\":{\"message\":\"y\"}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "error with extra field",
+   "line": "{\"v\":1,\"id\":1,\"ok\":false,\"error\":{\"kind\":\"x\",\"message\":\"y\",\"stack\":\"z\"}}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either",
+   "note": "例外原文 / stack 不出側車"
+  },
+  {
+   "name": "result is not an object",
+   "line": "{\"v\":1,\"id\":1,\"ok\":true,\"result\":[1]}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "extra top-level field",
+   "line": "{\"v\":1,\"id\":1,\"ok\":true,\"result\":{},\"x\":1}",
+   "ts": {
+    "ok": false
+   },
+   "rust": "either"
+  },
+  {
+   "name": "line over the limit",
+   "parts": [
+    "{\"v\":1,\"id\":1,\"ok\":true,\"result\":{\"t\":\"",
+    {
+     "repeat": "a",
+     "times": 262144
+    },
+    "\"}}"
+   ],
+   "ts": {
+    "ok": false
+   },
+   "rust": "reject",
+   "note": "超過 256 KiB:整行丟掉(Rust 回 bad-response)"
+  }
+ ],
+ "hello": [
+  {
+   "name": "valid hello fakeCloud false",
+   "line": "{\"v\":1,\"kind\":\"hello\",\"fakeCloud\":false,\"today\":\"2026-09-10\"}",
+   "ts": {
+    "ok": true
+   }
+  },
+  {
+   "name": "valid hello fakeCloud true",
+   "line": "{\"v\":1,\"kind\":\"hello\",\"fakeCloud\":true,\"today\":\"2026-09-10\"}",
+   "ts": {
+    "ok": true
+   }
+  },
+  {
+   "name": "hello without fakeCloud",
+   "line": "{\"v\":1,\"kind\":\"hello\",\"today\":\"2026-09-10\"}",
+   "ts": {
+    "ok": false
+   }
+  },
+  {
+   "name": "hello fakeCloud as string",
+   "line": "{\"v\":1,\"kind\":\"hello\",\"fakeCloud\":\"true\",\"today\":\"2026-09-10\"}",
+   "ts": {
+    "ok": false
+   }
+  },
+  {
+   "name": "hello without today",
+   "line": "{\"v\":1,\"kind\":\"hello\",\"fakeCloud\":false}",
+   "ts": {
+    "ok": false
+   }
+  },
+  {
+   "name": "hello today wrong shape",
+   "line": "{\"v\":1,\"kind\":\"hello\",\"fakeCloud\":false,\"today\":\"2026-9-1\"}",
+   "ts": {
+    "ok": false
+   }
+  },
+  {
+   "name": "hello v 2",
+   "line": "{\"v\":2,\"kind\":\"hello\",\"fakeCloud\":false,\"today\":\"2026-09-10\"}",
+   "ts": {
+    "ok": false
+   }
+  },
+  {
+   "name": "hello extra field",
+   "line": "{\"v\":1,\"kind\":\"hello\",\"fakeCloud\":false,\"today\":\"2026-09-10\",\"pid\":1}",
+   "ts": {
+    "ok": false
+   }
+  },
+  {
+   "name": "hello wrong kind",
+   "line": "{\"v\":1,\"kind\":\"ready\",\"fakeCloud\":false,\"today\":\"2026-09-10\"}",
+   "ts": {
+    "ok": false
+   }
+  },
+  {
+   "name": "hello is not a response",
+   "line": "{\"v\":1,\"id\":1,\"ok\":true,\"result\":{}}",
+   "ts": {
+    "ok": false
+   }
+  }
+ ]
+}

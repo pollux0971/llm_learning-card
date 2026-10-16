@@ -157,6 +157,18 @@
       "11-review-cli"
     ],
     [
+      "scripts/review-engine.test.ts",
+      "steps"
+    ],
+    [
+      "scripts/review-handler.test.ts",
+      "steps"
+    ],
+    [
+      "scripts/review-sidecar.test.ts",
+      "steps"
+    ],
+    [
       "scripts/prompt-check.ts",
       "12-prompt-quality"
     ],
