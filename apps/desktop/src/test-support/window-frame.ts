@@ -452,19 +452,41 @@ export function solidBackgroundProblems(rs: string = readFileSync(WINDOW_MODE_RS
   return problems;
 }
 
-/** STARTUP_FOCUS 的值(window_mode.rs 的 `pub const STARTUP_FOCUS: &str = "…";`) */
-export function startupFocusConst(rs: string = readFileSync(WINDOW_MODE_RS, 'utf8')): string | undefined {
-  return /pub\s+const\s+STARTUP_FOCUS\s*:\s*&(?:'static\s+)?str\s*=\s*"([^"]*)"/.exec(stripRustComments(rs))?.[1];
+/** `pub const NAME: &str = "…";` 的值(拿掉註解再找) */
+export function rustStrConst(rs: string, name: string): string | undefined {
+  return new RegExp(`pub\\s+const\\s+${name}\\s*:\\s*&(?:'static\\s+)?str\\s*=\\s*"([^"]*)"`).exec(stripRustComments(rs))?.[1];
 }
 
-/** 啟動焦點的目標是考試卡,而且是 tauri.conf.json 裡的一個視窗標籤 */
-export function startupFocusTargetProblems(rs: string = readFileSync(WINDOW_MODE_RS, 'utf8'), conf: TauriConf = readTauriConf()): string[] {
-  const value = startupFocusConst(rs);
-  if (value === undefined) return ['window_mode.rs 沒有 `pub const STARTUP_FOCUS: &str = "…";`'];
+/** `pub const NAME: Duration = Duration::from_secs(N);` 的秒數 */
+export function rustSecsConst(rs: string, name: string): number | undefined {
+  const m = new RegExp(`pub\\s+const\\s+${name}\\s*:\\s*Duration\\s*=\\s*Duration\\s*::\\s*from_secs\\s*\\(\\s*(\\d+)\\s*\\)`).exec(stripRustComments(rs));
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * 啟動順序的常數(第 3 輪):STARTUP_FOCUS = "test"(後顯示、拿焦點)、SHOW_FIRST = "teach"(先顯示),
+ * 兩個都是 tauri.conf.json 裡的視窗標籤;ORDER_BACKSTOP = 5 秒,比每個視窗自己的 3 秒顯示退路晚。
+ */
+export function startupOrderConstantsProblems(rs: string = readFileSync(WINDOW_MODE_RS, 'utf8'), conf: TauriConf = readTauriConf()): string[] {
   const problems: string[] = [];
-  if (value !== 'test') problems.push(`STARTUP_FOCUS 是 "${value}",要是 "test"(考試卡)`);
   const labels = (conf.app?.windows ?? []).map((w) => w.label);
-  if (!labels.includes(value)) problems.push(`STARTUP_FOCUS "${value}" 不是 tauri.conf.json 裡的視窗標籤(${labels.join(', ')})`);
+  for (const [name, want] of [['STARTUP_FOCUS', 'test'], ['SHOW_FIRST', 'teach']] as const) {
+    const value = rustStrConst(rs, name);
+    if (value === undefined) { problems.push(`window_mode.rs 沒有 \`pub const ${name}: &str = "…";\``); continue; }
+    if (value !== want) problems.push(`${name} 是 "${value}",要是 "${want}"`);
+    if (!labels.includes(value)) problems.push(`${name} "${value}" 不是 tauri.conf.json 裡的視窗標籤(${labels.join(', ')})`);
+  }
+  const backstop = rustSecsConst(rs, 'ORDER_BACKSTOP');
+  if (backstop === undefined) problems.push('window_mode.rs 沒有 `pub const ORDER_BACKSTOP: Duration = Duration::from_secs(N);`');
+  else if (backstop !== 5) problems.push(`ORDER_BACKSTOP 是 ${backstop} 秒,要是 5 秒`);
+  return problems;
+}
+
+/** 第 2 輪的 on_shown 被 on_ready / on_backstop 取代:window_mode.rs 與 main.rs 都不准留著 */
+export function legacyStartupApiProblems(mainRs: string, windowModeRs: string = readFileSync(WINDOW_MODE_RS, 'utf8')): string[] {
+  const problems: string[] = [];
+  if (/\bon_shown\b/.test(stripRustComments(mainRs))) problems.push('main.rs 還在用第 2 輪的 on_shown(要改成 on_ready / on_backstop)');
+  if (/\bon_shown\b/.test(stripRustComments(windowModeRs))) problems.push('window_mode.rs 還留著第 2 輪的 on_shown(被 on_ready / on_backstop 取代,要拿掉)');
   return problems;
 }
 
@@ -541,38 +563,48 @@ export function surfaceWiringProblems(mainRs: string): string[] {
   return [...callGraphProblems(code), ...modeVariableProblems(body), ...builderProblems(body), ...deadCodeProblems(code)];
 }
 
-// ───────────────────────────── 啟動焦點的接線(驗收 8)
+// ───────────────────────────── 啟動順序的接線(驗收 8,第 3 輪)
 
-/** 本體裡有 `on_shown(` 的函式名(除了 open_windows):顯示的地方可以呼叫它代替直接叫 on_shown */
-function focusHelpers(code: string): string[] {
-  const names: string[] = [];
-  for (const m of code.matchAll(/\bfn\s+([A-Za-z_]\w*)/g)) {
-    const name = m[1]!;
-    if (name === OPEN) continue;
-    if (/\bon_shown\s*\(/.test(rustFnBody(code, name) ?? '')) names.push(name);
-  }
-  return names;
+/** 包住 `index` 的最近一個 `fn <name>` */
+function enclosingFn(code: string, index: number): string | undefined {
+  const heads = [...code.slice(0, index).matchAll(/\bfn\s+([A-Za-z_]\w*)/g)];
+  return heads.at(-1)?.[1];
 }
 
-/** `region` 裡 `.show()` 之後有沒有通知(直接 on_shown,或叫會 on_shown 的函式);通知的參數不是字串字面 */
-export function notifiesAfterShow(region: string, helpers: string[]): string | undefined {
-  const show = region.search(/\.show\s*\(\s*\)/);
-  if (show < 0) return '這一段沒有 .show()';
-  const tail = region.slice(show);
-  const call = new RegExp(`\\b(?:on_shown${helpers.map((h) => `|${h}`).join('')})\\s*\\(([^)]*)\\)`).exec(tail);
-  if (!call) return '.show() 之後沒有通知 StartupFocus(on_shown 或會呼叫它的函式)';
-  if (/"[^"]*"/.test(call[1]!)) return `通知的參數 (${call[1]!.trim()}) 有字串字面:要傳這個視窗自己的標籤`;
-  return undefined;
+/** 卡片視窗的 .show() 與 .set_focus() 各只有一處,而且在同一個函式裡;那個函式處理 Show(..) 與 Focus(..) 兩種動作。回傳 [問題, 執行動作的函式名] */
+export function actionExecutorProblems(code: string): [string[], string | undefined] {
+  const problems: string[] = [];
+  const shows = [...code.matchAll(/\.show\s*\(\s*\)/g)];
+  const focuses = [...code.matchAll(/\.set_focus\s*\(/g)];
+  if (shows.length !== 1) problems.push(`main.rs 裡卡片視窗的 .show() 要剛好一處(在執行動作的那個函式裡),實際 ${shows.length} 處`);
+  if (focuses.length !== 1) problems.push(`main.rs 裡 set_focus 要剛好一處(在執行動作的那個函式裡),實際 ${focuses.length} 處`);
+  if (shows.length !== 1 || focuses.length !== 1) return [problems, undefined];
+  const a = enclosingFn(code, shows[0]!.index!);
+  const b = enclosingFn(code, focuses[0]!.index!);
+  if (!a || a !== b) { problems.push(`.show() 在 ${a ?? '(沒有函式)'}、.set_focus() 在 ${b ?? '(沒有函式)'}:兩個要在同一個執行動作的函式裡`); return [problems, undefined]; }
+  const body = rustFnBody(code, a) ?? '';
+  if (!/\bShow\b/.test(body) || !/\bFocus\b/.test(body)) problems.push(`${a} 要依 StartupAction::Show / Focus 兩種動作分別 show 與 set_focus`);
+  if (/get_webview_window\s*\(\s*"[^"]*"\s*\)/.test(body)) problems.push(`${a} 對寫死的標籤 get_webview_window("…")(要用動作帶的標籤)`);
+  return [problems, a];
 }
 
-export function focusWiringProblems(mainRs: string): string[] {
+/** 一段程式裡 on_ready(…) 的結果要交給執行動作的函式 */
+function readyThenExecute(region: string, exec: string | undefined, what: string): string[] {
+  const problems: string[] = [];
+  if (!/\bon_ready\s*\(/.test(region)) problems.push(`${what}:沒有呼叫 on_ready(<這個視窗的標籤>)`);
+  if (/\.show\s*\(|\.set_focus\s*\(/.test(region)) problems.push(`${what}:直接 .show() / .set_focus()(要經 on_ready 回的動作)`);
+  if (/\bon_ready\s*\(\s*"[^"]*"/.test(region)) problems.push(`${what}:on_ready 的參數是字串字面(要傳這個視窗自己的標籤)`);
+  if (exec && !new RegExp(`\\b${exec}\\s*\\(`).test(region)) problems.push(`${what}:on_ready 回的動作沒有交給 ${exec}(...) 執行`);
+  return problems;
+}
+
+export function startupWiringProblems(mainRs: string): string[] {
   const code = stripRustComments(mainRs);
   const body = rustFnBody(code, OPEN);
   if (body === undefined) return [`main.rs 找不到 fn ${OPEN}`];
   const problems: string[] = [];
-  const helpers = focusHelpers(code);
 
-  // 一個 StartupFocus,在迴圈之前,用 start_screen::windows 的那一份標籤
+  // 一個 StartupFocus,在迴圈之前,用 start_screen::windows 的那一份標籤,放進 Arc<Mutex<…>> 共用
   const news = [...body.matchAll(/\bStartupFocus\s*::\s*new\s*\(([^;]*?)\)\s*[;)]/g)];
   if (news.length !== 1) problems.push(`open_windows 裡 StartupFocus::new 要剛好一個,實際 ${news.length} 個`);
   else {
@@ -586,36 +618,31 @@ export function focusWiringProblems(mainRs: string): string[] {
   }
   if (!/\bArc\b/.test(body) || !/\bMutex\b/.test(body) || !/StartupFocus/.test(body)) problems.push('open_windows 要把 StartupFocus 放進 Arc<Mutex<…>> 給每個視窗共用');
 
-  // 兩個顯示的地方:page load 的 Finished(on_page_finished → show)、arm_show_fallback 的逾時(on_timeout → show)
+  const [execProblems, exec] = actionExecutorProblems(code);
+  problems.push(...execProblems);
+
+  // Finished 與 3 秒退路:都只走 on_ready,不再直接 show
   const pageLoad = /\.on_page_load\s*\(([\s\S]*?)\.build\s*\(\s*\)/.exec(body)?.[1];
   if (!pageLoad) problems.push('open_windows 找不到 on_page_load(...) 到 .build() 的那一段');
-  else {
-    const finished = pageLoad.slice(Math.max(0, pageLoad.search(/\bon_page_finished\s*\(/)));
-    const why = notifiesAfterShow(finished, helpers);
-    if (why) problems.push(`page load 的 Finished 那條:${why}`);
-  }
+  else problems.push(...readyThenExecute(pageLoad.slice(Math.max(0, pageLoad.search(/\bon_page_finished\s*\(/))), exec, 'page load 的 Finished 那條'));
   const fallback = rustFnBody(code, 'arm_show_fallback');
   if (fallback === undefined) problems.push('main.rs 找不到 fn arm_show_fallback');
-  else {
-    const timeout = fallback.slice(Math.max(0, fallback.search(/\bon_timeout\s*\(/)));
-    const why = notifiesAfterShow(timeout, helpers);
-    if (why) problems.push(`arm_show_fallback 的逾時那條:${why}`);
-  }
+  else problems.push(...readyThenExecute(fallback.slice(Math.max(0, fallback.search(/\bon_timeout\s*\(/))), exec, 'arm_show_fallback 的逾時那條'));
 
-  // set_focus 只有一處,而且在「on_shown 回 Some(標籤)」的分支裡、對 get_webview_window(<那個標籤>)
-  const focusCalls = [...code.matchAll(/\.set_focus\s*\(/g)];
-  if (focusCalls.length !== 1) problems.push(`main.rs 裡 set_focus 要剛好一處,實際 ${focusCalls.length} 處`);
+  // ORDER_BACKSTOP:兩張都開時另起計時,到了呼叫 on_backstop,回傳不是空的才 warn 並執行
+  if (!/\bORDER_BACKSTOP\b/.test(code)) problems.push('main.rs 沒有用 ORDER_BACKSTOP 起計時');
+  if (!/\bSHOW_FIRST\b/.test(body) || !/\bSTARTUP_FOCUS\b/.test(body)) problems.push('open_windows 沒有「labels 同時有 SHOW_FIRST 與 STARTUP_FOCUS 才起 ORDER_BACKSTOP 計時」的判斷(兩個常數都要出現)');
+  const at = code.search(/\bon_backstop\s*\(/);
+  if (at < 0) problems.push('main.rs 沒有呼叫 on_backstop()');
   else {
-    const at = focusCalls[0]!.index!;
-    const around = code.slice(Math.max(0, at - 500), at);
-    // on_shown 的回傳要先被拿來決定(Some 才動):它在 set_focus 之前的這一段裡,而且 get_webview_window 的參數是變數(on_shown 回的標籤),不是字面
-    if (!/\bon_shown\s*\(/.test(around) && !helpers.some((h) => new RegExp(`\\b${h}\\s*\\(`).test(around))) {
-      problems.push('set_focus 之前沒有 on_shown(...):不能不管兩個視窗都顯示了沒就給焦點');
-    }
-    const arg = /get_webview_window\s*\(\s*([^)]*?)\s*\)/.exec(around.slice(around.lastIndexOf('get_webview_window') >= 0 ? around.lastIndexOf('get_webview_window') : 0))?.[1];
-    if (arg === undefined) problems.push('set_focus 要對 get_webview_window(<on_shown 回的標籤>) 拿到的視窗');
-    else if (!/^[A-Za-z_]\w*$/.test(arg)) problems.push(`get_webview_window(${arg}):參數要是 on_shown 回的標籤(一個變數)`);
-    if (/get_webview_window\s*\(\s*"[^"]*"\s*\)/.test(around)) problems.push('set_focus 對寫死的標籤 get_webview_window("…")');
+    const region = code.slice(Math.max(0, at - 300), at + 700);
+    if (!/\bORDER_BACKSTOP\b/.test(code.slice(Math.max(0, at - 400), at))) problems.push('on_backstop() 之前沒有等 ORDER_BACKSTOP(sleep / 計時)');
+    const emptyAt = region.indexOf('is_empty');
+    const warnAt = region.search(/log\s*::\s*warn\s*!/);
+    if (emptyAt < 0) problems.push('on_backstop() 的回傳沒有判斷是不是空的(is_empty):空的不能 warn');
+    else if (warnAt < 0) problems.push('on_backstop() 回傳不是空的時沒有 log::warn!(考試卡在教學卡之前被顯示)');
+    else if (warnAt < emptyAt) problems.push('log::warn! 在 is_empty 判斷之前:回傳是空的時也會 warn');
+    if (exec && !new RegExp(`\\b${exec}\\s*\\(`).test(region)) problems.push(`on_backstop 回的動作沒有交給 ${exec}(...) 執行`);
   }
   return problems;
 }
@@ -623,7 +650,7 @@ export function focusWiringProblems(mainRs: string): string[] {
 // ───────────────────────────── Rust 端:給 cucumber 場景用(跑 tests/window_mode.rs 的 emit 測試)
 
 export interface SurfaceEmit { transparent: boolean; background: number[] | null; solidBackground: number[] }
-export interface StartupFocusEmit { calls: string[]; results: (string | null)[] }
+export interface StartupOrderEmit { steps: { event: string; actions: string[] }[] }
 
 function cargoEmit(testName: string, env: Record<string, string>, begin: string, end: string): string {
   const { NODE_OPTIONS: _drop, ...base } = process.env;
@@ -642,7 +669,7 @@ export function rustSurface(composited: boolean): SurfaceEmit {
   return JSON.parse(cargoEmit('emit_surface_for_the_scenarios', { LC_WINDOW_MODE_COMPOSITED: composited ? '1' : '0' }, 'LC-SURFACE-BEGIN', 'LC-SURFACE-END')) as SurfaceEmit;
 }
 
-/** 先顯示 first、再顯示另一個、然後兩個各再顯示一次,每次 on_shown 的回傳 */
-export function rustStartupFocus(first: 'teach' | 'test'): StartupFocusEmit {
-  return JSON.parse(cargoEmit('emit_startup_focus_for_the_scenarios', { LC_STARTUP_FIRST: first }, 'LC-STARTUP-FOCUS-BEGIN', 'LC-STARTUP-FOCUS-END')) as StartupFocusEmit;
+/** Rust 端真的算出來的 StartupFocus 回傳:`ready-teach-first` / `ready-test-first` / `backstop` / `single-test` */
+export function rustStartupOrder(scenario: 'ready-teach-first' | 'ready-test-first' | 'backstop' | 'single-test'): StartupOrderEmit {
+  return JSON.parse(cargoEmit('emit_startup_order_for_the_scenarios', { LC_STARTUP_SCENARIO: scenario }, 'LC-STARTUP-ORDER-BEGIN', 'LC-STARTUP-ORDER-END')) as StartupOrderEmit;
 }

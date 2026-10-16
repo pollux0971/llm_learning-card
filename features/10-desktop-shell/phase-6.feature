@@ -35,16 +35,28 @@ Feature: Frameless windows
       | can    | does not have | is     | left clear                |
       | cannot | has           | is not | the solid fallback colour |
 
-  Scenario Outline: The test card gets the keyboard focus once both windows are shown
+  Scenario Outline: The test card is shown after the teach card, so it gets the keyboard focus
     Given the card windows are opening
-    When the <first> window is shown first and the other one after it
-    Then the keyboard focus is given to the test card
-    And it is given only once
+    When the <first> window is ready first and the other one after it
+    Then the teach card is shown before the test card
+    And the keyboard focus is given to the test card right after it is shown
 
     Examples:
       | first |
       | teach |
       | test  |
+
+  Scenario: The test card does not wait forever for the teach card
+    Given the card windows are opening
+    And the teach card has not been shown
+    When the backstop time has passed
+    Then the test card is shown anyway
+    And a warning says the test card was shown before the teach card
+
+  Scenario: A single card window does not wait for the other one
+    Given only the test card window is opening
+    When it is ready
+    Then it is shown at once and gets the keyboard focus
 
   @manual
   Scenario: Dragging and resizing without the system frame
@@ -77,8 +89,8 @@ Feature: Frameless windows
 
   @manual
   Scenario: The test card has the keyboard focus after every start
-    When the desktop app is built and started several times
-    Then each time the test card has the keyboard focus once both windows are shown
+    When the desktop app is built and started ten times
+    Then each time the teach card appears first and the test card has the keyboard focus
 
   @manual
   Scenario: Staying on top still works without the frame

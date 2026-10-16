@@ -8,15 +8,17 @@
  */
 import { Given, Then, When } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import type { LearningWorld } from './_world.js';
 import { openedWindows, type OpenedWindow } from './_phase6-window.js';
 import { readTauriConf, type TauriConf } from '../../apps/desktop/src/test-support/frontend-dist.js';
 import {
   EMIT_TIMEOUT_MS, REQUIRED_PERMISSIONS, capabilityProblems, decorationsProblems, layoutClassNames, readCapability, runInitScript,
-  rustInitScript, rustStartupFocus, rustSurface, transparencyLeftToAppProblems, type StartupFocusEmit,
+  rustInitScript, rustStartupOrder, rustSurface, transparencyLeftToAppProblems, type StartupOrderEmit,
+  MAIN_RS, actionExecutorProblems, rustFnBody, stripRustComments,
 } from '../../apps/desktop/src/test-support/window-frame.js';
 
-interface Phase6State { conf?: TauriConf; capability?: ReturnType<typeof readCapability>; composited?: boolean; windowsOpening?: boolean; focus?: StartupFocusEmit }
+interface Phase6State { conf?: TauriConf; capability?: ReturnType<typeof readCapability>; composited?: boolean; windowsOpening?: boolean; teachNotShown?: boolean; onlyTest?: boolean; order?: StartupOrderEmit }
 const states = new WeakMap<LearningWorld, Phase6State>();
 function st(w: LearningWorld): Phase6State {
   let s = states.get(w);
@@ -108,26 +110,82 @@ Then(/^the window background is (left clear|the solid fallback colour)$/, functi
   }
 });
 
-// ---------------------------------------------------------------- Scenario Outline:啟動焦點
+// ---------------------------------------------------------------- 啟動順序:教學卡先、考試卡後(T21 第 3 輪)
+/** 把 Rust 回的動作依事件順序攤平成一串 */
+const flatten = (order: StartupOrderEmit) => order.steps.flatMap((step) => step.actions);
+
 Given('the card windows are opening', function (this: LearningWorld) {
   st(this).windowsOpening = true;
 });
 
-When(/^the (teach|test) window is shown first and the other one after it$/, { timeout: EMIT_TIMEOUT_MS + 30_000 }, function (this: LearningWorld, first: string) {
+Given('the teach card has not been shown', function (this: LearningWorld) {
+  st(this).teachNotShown = true;
+});
+
+Given('only the test card window is opening', function (this: LearningWorld) {
+  st(this).windowsOpening = true;
+  st(this).onlyTest = true;
+});
+
+When(/^the (teach|test) window is ready first and the other one after it$/, { timeout: EMIT_TIMEOUT_MS + 30_000 }, function (this: LearningWorld, first: string) {
   assert.ok(st(this).windowsOpening, '少了 Given the card windows are opening');
-  st(this).focus = rustStartupFocus(first as 'teach' | 'test');
+  st(this).order = rustStartupOrder(first === 'teach' ? 'ready-teach-first' : 'ready-test-first');
 });
 
-Then('the keyboard focus is given to the test card', function (this: LearningWorld) {
-  const focus = st(this).focus;
-  assert.ok(focus, '還沒顯示視窗(少了 When … is shown first …)');
-  assert.equal(focus.results.length, 4);
-  assert.equal(focus.results[0], null, '只有一個視窗顯示時還不能給焦點');
-  assert.equal(focus.results[1], 'test', '兩個都顯示之後,焦點給考試卡');
+When('the backstop time has passed', { timeout: EMIT_TIMEOUT_MS + 30_000 }, function (this: LearningWorld) {
+  assert.ok(st(this).teachNotShown, '少了 Given the teach card has not been shown');
+  st(this).order = rustStartupOrder('backstop');
 });
 
-Then('it is given only once', function (this: LearningWorld) {
-  const focus = st(this).focus;
-  assert.ok(focus, '還沒顯示視窗');
-  assert.equal(focus.results.filter((r) => r !== null).length, 1, `焦點只給一次;實際 ${JSON.stringify(focus.results)}`);
+When('it is ready', { timeout: EMIT_TIMEOUT_MS + 30_000 }, function (this: LearningWorld) {
+  assert.ok(st(this).onlyTest, '少了 Given only the test card window is opening');
+  st(this).order = rustStartupOrder('single-test');
+});
+
+Then('the teach card is shown before the test card', function (this: LearningWorld) {
+  const order = st(this).order;
+  assert.ok(order, '還沒有事件(少了 When … is ready first …)');
+  const actions = flatten(order);
+  const teach = actions.indexOf('Show(teach)');
+  const test = actions.indexOf('Show(test)');
+  assert.ok(teach >= 0, `教學卡沒有被顯示:${JSON.stringify(actions)}`);
+  assert.ok(test >= 0, `考試卡沒有被顯示:${JSON.stringify(actions)}`);
+  assert.ok(teach < test, `教學卡要先於考試卡顯示:${JSON.stringify(actions)}`);
+  assert.equal(actions.filter((a) => a.startsWith('Show(')).length, 2, '每個視窗只顯示一次');
+});
+
+Then('the keyboard focus is given to the test card right after it is shown', function (this: LearningWorld) {
+  const order = st(this).order;
+  assert.ok(order, '還沒有事件');
+  const actions = flatten(order);
+  const test = actions.indexOf('Show(test)');
+  assert.ok(test >= 0, `考試卡沒有被顯示:${JSON.stringify(actions)}`);
+  assert.equal(actions[test + 1], 'Focus(test)', `Focus(test) 要緊接在 Show(test) 之後:${JSON.stringify(actions)}`);
+  assert.equal(actions.filter((a) => a.startsWith('Focus(')).length, 1, `焦點只給一次、只給考試卡:${JSON.stringify(actions)}`);
+});
+
+Then('the test card is shown anyway', function (this: LearningWorld) {
+  const order = st(this).order;
+  assert.ok(order, '還沒有事件');
+  assert.deepEqual(flatten(order), ['Show(test)', 'Focus(test)'], '教學卡一直沒顯示:退路讓考試卡照樣顯示並拿焦點');
+});
+
+Then('a warning says the test card was shown before the teach card', function () {
+  // 警告是 main.rs 的事(Rust 純函式不寫 log):靜態看接線,回傳不是空的才 warn。
+  const mainRs = stripRustComments(readFileSync(MAIN_RS, 'utf8'));
+  const at = mainRs.search(/\bon_backstop\s*\(/);
+  assert.ok(at >= 0, 'main.rs 沒有呼叫 on_backstop()');
+  const region = mainRs.slice(Math.max(0, at - 300), at + 700);
+  const empty = region.indexOf('is_empty');
+  const warn = region.search(/log\s*::\s*warn\s*!/);
+  assert.ok(empty >= 0 && warn > empty, 'on_backstop() 回傳不是空的時,要在 is_empty 判斷之後 log::warn!(考試卡在教學卡之前被顯示)');
+  const [problems] = actionExecutorProblems(mainRs);
+  none(problems);
+  assert.ok(rustFnBody(mainRs, 'open_windows'), 'main.rs 找不到 open_windows');
+});
+
+Then('it is shown at once and gets the keyboard focus', function (this: LearningWorld) {
+  const order = st(this).order;
+  assert.ok(order, '還沒有事件');
+  assert.deepEqual(flatten(order), ['Show(test)', 'Focus(test)'], '只開考試卡時不等教學卡');
 });

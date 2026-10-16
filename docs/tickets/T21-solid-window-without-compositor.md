@@ -17,9 +17,13 @@ must_catch:
   - tauri.conf.json 的 teach 或 test 還寫著 transparent(true 或 false 都算):「透明由程式決定,設定檔不寫」必須紅
   - setup 視窗(啟動失敗的畫面)被加上透明或底色:T16 既有的「setup 視窗不改」必須紅
   - 沒有合成器時頁面不再加 hud-solid、visible 改回 true、拿掉 3 秒退路:T16 既有的檢查照舊紅
-  - 啟動焦點不固定:StartupFocus 在兩個視窗都顯示之前就回焦點、永遠不回、回兩次、或回的不是 test:StartupFocus 的單元測試必須紅
-  - main.rs 只有一個顯示的地方通知 StartupFocus(例如 3 秒退路那條忘了),或建窗後直接 set_focus、不管兩個都顯示了沒、或對寫死的標籤 set_focus:焦點接線的靜態檢查必須紅
-  - STARTUP_FOCUS 不是 test,或不是 tauri.conf.json 裡的視窗標籤:焦點目標檢查必須紅
+  - (第 3 輪)教學卡還沒顯示就先顯示考試卡(考試卡先準備好、或考試卡的 3 秒退路先到):StartupFocus 的單元測試必須紅
+  - (第 3 輪)教學卡顯示時,已經準備好的考試卡沒有跟著顯示(卡住),或考試卡顯示了兩次:單元測試必須紅
+  - (第 3 輪)教學卡一直沒顯示時,考試卡沒有退路(ORDER_BACKSTOP 到了還不顯示),或 ORDER_BACKSTOP 不是 5 秒:單元測試必須紅
+  - (第 3 輪)只開一張卡時還在等另一張(只有考試卡卻等教學卡、只有教學卡卻等考試卡),或四種失敗(labels 空)時有任何動作:單元測試必須紅
+  - (第 3 輪)Focus(test) 沒有緊接在 Show(test) 之後、少了、或對教學卡下 Focus:單元測試必須紅
+  - (第 3 輪)main.rs 有卡片視窗的 .show() 不經 StartupFocus 回傳的動作(例如 Finished 或 3 秒退路直接 show)、或沒有起 ORDER_BACKSTOP 的計時:接線的靜態檢查必須紅
+  - STARTUP_FOCUS 不是 test、SHOW_FIRST 不是 teach,或任一個不是 tauri.conf.json 裡的視窗標籤:焦點目標檢查必須紅
 ---
 
 # 工單 T21:10-desktop-shell phase-6 後續 —— 沒有合成器時,視窗一出現就是實心底,不先黑;啟動後焦點固定給考試卡
@@ -32,6 +36,8 @@ must_catch:
 > 規格:`features/10-desktop-shell/phase-6.feature`(這張的工單分支另有一個 commit 改它,見「規格的改動」)。
 > 基底:origin/main `4fdf666`(含 T16、T17)。
 > 第 2 輪(技術顧問 2026-10-16 批准第 1 輪後追加,協調者轉達):併進 T16 `@manual` 的 O1 —— 啟動後焦點固定給考試卡(驗收 8)。
+> **第 3 輪**(技術顧問 2026-10-16,T21 `@manual` 之後):第 2 輪的做法(兩個都顯示後 `set_focus`)在 `:1` 開 10 次只有 6 次焦點在考試卡(證據 docs/reviews/T21-manual-2026-10-16.md,分支 pollux0971/t21-manual-evidence @ 83034df)。
+>   改成**管顯示順序**:考試卡一定在教學卡之後顯示,焦點自然落在後 map 的考試卡;`set_focus` 留著當保險。見驗收 8 之後的「8(第 3 輪)」。驗收 1–7 不變(第 1、2 輪已合併,6e39a01)。
 
 ## 為什麼有這張
 
@@ -63,6 +69,7 @@ T16 的 `@manual` 量到:沒有合成器時,兩個卡片視窗出現後的第一
 6. `tauri.conf.json` 裡寫死的 `transparent: true` 改成由程式決定。
 7. 改實作,不改契約。不需要新的 ADR(ADR-072 補一段,見「補記到 ADR-072 的文字」;顧問已批准)。
 8. (第 2 輪)兩個視窗都顯示之後,固定把鍵盤焦點給考試卡,不要「誰後載入完就給誰」。
+9. (第 3 輪)用**顯示順序**做到第 8 點,不是事後搶焦點:視窗管理器的通則是「新 map 的視窗拿焦點」,考試卡最後 map,焦點自然在它身上,不用跟視窗管理器搶;事後搶回焦點會撞各家的「防止搶焦點」規則,各桌面環境表現不一。教學卡一準備好就顯示;考試卡要等自己準備好**而且**教學卡已經顯示;3 秒退路照舊,也守這個順序;最後的 `set_focus(test)` 保留當保險。
 
 ## 驗收條件
 
@@ -148,13 +155,15 @@ pub fn surface_for(mode: WindowMode) -> WindowSurface;
 | 視窗的位元深度 | `xwininfo` | 沒有合成器:卡片視窗 Depth 24;有合成器:Depth 32 |
 | 3 秒退路還在,而且卡住時不黑 | 沒有合成器;WebKitWebProcess 一出現就 `SIGSTOP`,5 秒才 `SIGCONT` | 兩個視窗 3 秒多一點出現,各一行 warn、各只 map 一次;**停住的那段時間視窗是 (244, 246, 248),不是黑的**;解凍後照常畫出來 |
 | `:1` 冒煙 | GNOME,開一次;不送輸入 | 兩個視窗 `_NET_WM_STATE_ABOVE`;根元素 `hud-frameless`;DOM click 兩顆關閉鈕後 exit 0 |
-| `:1` 啟動焦點(驗收 8) | GNOME,開 **5 次**(每次新的暫存根);兩個都出現後 2 秒讀;不送輸入 | 5/5 次:`_NET_ACTIVE_WINDOW` 是考試卡的視窗、考試卡有 `_NET_WM_STATE_FOCUSED`;檢查器 `document.hasFocus()` 考試卡 true、教學卡 false |
-| `:1` 啟動焦點,頁面卡住那一次 | 同上,WebKitWebProcess `SIGSTOP` 5 秒(有合成器,停住時視窗是透明的,看不到) | 兩個靠 3 秒退路出現之後,焦點在考試卡 |
-| `:1` 焦點的後果 | 接著跑 T15 那套步驟裡的作答欄 `focus()`(真的 DOM 焦點,不是 CSSOM 複製) | 作答欄框線四邊中點 (231, 119, 31) ±10(T16 `@manual` 那次因為考試卡沒焦點,是黑的) |
+| ~~`:1` 啟動焦點(驗收 8)~~ | 第 3 輪取代 | 見「8(第 3 輪)」的 `@manual` 表 |
+| ~~`:1` 啟動焦點,頁面卡住那一次~~ | 第 3 輪取代 | 見「8(第 3 輪)」的 `@manual` 表 |
+| ~~`:1` 焦點的後果~~ | 第 3 輪取代 | 見「8(第 3 輪)」的 `@manual` 表 |
 
 - 沒有合成器時,第一張之後頁面才畫出卡片內容(約 140 ms 是整片 `--hud-solid`),這是預期,不算問題。
 
-### 8. 啟動後鍵盤焦點固定給考試卡(第 2 輪,T16 `@manual` O1)
+### 8. 啟動後鍵盤焦點固定給考試卡(第 2 輪,T16 `@manual` O1)—— **介面與接線已被下一節「8(第 3 輪)」取代**
+
+> 這一節留著當紀錄(第 2 輪已合併)。`STARTUP_FOCUS` 不變;`StartupFocus::on_shown` 與「兩個都顯示之後才 `set_focus`」由第 3 輪的 `on_ready` / `on_backstop` 取代。
 
 純函式加在 `window_mode.rs`,名字照這裡寫(紅測試直接用):
 
@@ -191,12 +200,79 @@ impl StartupFocus {
 - 執行中使用者自己點別的視窗,焦點照使用者的;這裡只管啟動那一次。
 - 只驗 X11(`:1` 的 GNOME)。Wayland 上視窗能不能自己拿焦點由合成器決定,這張不驗。
 
+### 8(第 3 輪). 用顯示順序讓焦點落在考試卡
+
+純函式在 `window_mode.rs`,名字照這裡寫(紅測試直接用)。`StartupFocus` 這個型別名字不變,但改成管**顯示順序**:
+
+```rust
+pub const STARTUP_FOCUS: &str = "test";                        // 不變:最後顯示、拿焦點的那一個
+pub const SHOW_FIRST: &str = "teach";                          // 先顯示的那一個
+pub const ORDER_BACKSTOP: Duration = Duration::from_secs(5);   // 教學卡一直沒顯示時,考試卡最晚在建窗後這麼久顯示
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupAction {
+    Show(&'static str),
+    Focus(&'static str),
+}
+
+impl StartupFocus {
+    /// labels:這次要開的卡片視窗(start_screen::windows(state);ok 時是 teach、test;四種失敗是空的)。
+    pub fn new(labels: &[&'static str]) -> Self;
+    /// 這個視窗準備好了:它的 ShowGate 第一次回 true(頁面載入完,或它自己的 3 秒退路到了;每個視窗只來一次)。
+    /// 回傳現在要依序執行的動作。
+    pub fn on_ready(&mut self, label: &str) -> Vec<StartupAction>;
+    /// ORDER_BACKSTOP 到了。教學卡還沒顯示時,考試卡照樣顯示(呼叫端寫一行 warn)。
+    pub fn on_backstop(&mut self) -> Vec<StartupAction>;
+}
+```
+
+| labels | 事件順序 | 每一次回傳 |
+|---|---|---|
+| `[teach, test]` | `on_ready(teach)` → `on_ready(test)` | `[Show(teach)]` → `[Show(test), Focus(test)]` |
+| `[teach, test]` | `on_ready(test)` → `on_ready(teach)` | `[]`(考試卡先等著)→ `[Show(teach), Show(test), Focus(test)]`(順序就是這樣) |
+| `[teach, test]` | `on_ready(test)` → `on_backstop()`(教學卡還沒顯示) | `[]` → `[Show(test), Focus(test)]` |
+| `[teach, test]` | `on_backstop()` 時考試卡還沒準備好、教學卡也還沒顯示 | `[Show(test), Focus(test)]`(不能永遠不顯示) |
+| `[teach, test]` | 考試卡被退路顯示之後,`on_ready(teach)` | `[Show(teach), Focus(test)]`(教學卡後 map 會搶焦點,補一次保險) |
+| `[teach, test]` | 兩個都顯示之後,任何 `on_ready` / `on_backstop` | `[]` |
+| `[teach, test]` | 同一個標籤 `on_ready` 兩次 | 第二次 `[]` |
+| `[test]`(只開考試卡) | `on_ready(test)` | `[Show(test), Focus(test)]`(不等教學卡) |
+| `[teach]`(只開教學卡) | `on_ready(teach)`;`on_backstop()` | `[Show(teach)]`;`[]`(沒有 Focus) |
+| `[]`(四種失敗,只開 setup) | 任何 | `[]` |
+| 任何 | 不在 labels 裡的標籤 | `[]` |
+
+- **教學卡載入失敗或卡住**:教學卡自己的 3 秒退路一定會讓它 `on_ready`(T16),所以考試卡最晚跟著它在 3 秒多一點顯示;萬一教學卡一直沒顯示,`ORDER_BACKSTOP`(5 秒)讓考試卡照樣顯示。考試卡不會永遠不顯示。
+- 每個視窗還是只顯示一次(ShowGate 不變)。`Focus` 只在 `Show(test)` 之後出現。
+- **3 秒退路與 5 秒 `ORDER_BACKSTOP` 的關係**:兩條管的事不一樣,不重複。
+  - 3 秒顯示退路(`SHOW_FALLBACK`,T16)是**每個視窗自己的**:頁面 3 秒還沒載入完,這個視窗也算「準備好了」(`on_ready`)。所以正常情況下,教學卡最晚 3 秒多一點就會顯示,考試卡跟著它顯示。
+  - 5 秒 `ORDER_BACKSTOP` 只管**考試卡等教學卡**這件事:只有教學卡整個出不來(例如它的視窗沒有建成、或它的退路也沒有觸發)時才會用到。正常的載入慢、載入卡住都由 3 秒退路處理,5 秒那條不會被走到。
+  - 所以 5 秒那條觸發時一定寫 warn(那是不正常的情況);`@manual` 的十次啟動與凍住測試都**不應該**看到這一行 warn。
+
+`main.rs` 的接線:
+
+- `open_windows` 在迴圈前建一個 `StartupFocus::new(start_screen::windows(state))`(`Arc<Mutex<…>>` 共用)。
+- `on_page_load` 的 Finished 與 `arm_show_fallback` 的 on_timeout:ShowGate 回 true 時**不再直接 `window.show()`**,改成呼叫 `on_ready(<這個視窗的標籤>)`,把回傳的動作依序執行:
+  `Show(l)` → `get_webview_window(l)` 的 `show()`;`Focus(l)` → 那個視窗的 `set_focus()`。執行動作的地方是一個函式,卡片視窗的 `show()` 與 `set_focus()` **只出現在那個函式裡**。
+- `labels` 同時有 `SHOW_FIRST` 與 `STARTUP_FOCUS` 時,另開一個計時(`ORDER_BACKSTOP`),到了呼叫 `on_backstop()`;回傳不是空的就寫一行 `log::warn!`(說考試卡在教學卡顯示之前就被顯示了、等了多久),再執行動作。
+- 3 秒退路的 `log::warn!` 照舊(每個視窗自己的)。setup 視窗不經過這些。
+
+`@manual`(併進驗收 7 的表,取代第 2 輪那三列):
+
+| 場景 | 怎麼拍 | 過的條件 |
+|---|---|---|
+| `:1` 啟動焦點 | GNOME,開 **10 次**(每次新的暫存根);兩個都可見後 2 秒讀;每 20 ms 記一次 `_NET_ACTIVE_WINDOW` 的時間線;不送輸入 | **10/10** 焦點在考試卡(`_NET_ACTIVE_WINDOW`、`_NET_WM_STATE_FOCUSED`、`document.hasFocus()` 一致);時間線上考試卡是最後拿到焦點的 |
+| 顯示順序 | Xvfb 沒有合成器,記 `MapNotify`,開 5 次 | 5/5 教學卡的 map 早於考試卡 |
+| 頁面卡住那一次 | `:1`,兩個 WebKitWebProcess 都 `SIGSTOP` 5 秒 | 兩個都靠 3 秒退路出現;教學卡先、考試卡後;焦點在考試卡 |
+| 只卡教學卡 | Xvfb,只凍住教學卡的 WebKitWebProcess(由載入順序對應) | 考試卡等到教學卡的 3 秒退路之後才顯示;warn 照實記 |
+| 焦點的後果 | 考試卡作答欄真的 `focus()` | 框線四邊中點 (231, 119, 31) ±10 |
+| 黑幀不退步 | Xvfb 沒有合成器,20 ms × 3 秒 × 1 次 | 黑幀 0(第 1 輪的結果不變) |
+
 ## 使用者看得到的差別
 
 - 沒有合成器的桌面上,開 app 時兩個視窗一出現就是淺灰的實心底,接著卡片內容出來;不會再先閃一下黑的。
 - 頁面卡住超過 3 秒的那一次,沒有合成器時視窗也是淺灰的,不是黑的。
 - 有合成器的桌面(一般的 GNOME、KDE)看不出差別:切角照舊看得到桌面。
 - 開 app 之後,鍵盤焦點一定在考試卡,直接打字就打進作答欄(跟 T16 之前一樣)。
+- (第 3 輪)教學卡總是先出現、考試卡緊接在後;考試卡先準備好時會多等教學卡一下(最多到教學卡的 3 秒退路;最壞 5 秒)。
 
 ## 規格的改動(工單分支另一個 commit,技術顧問一起審)
 
@@ -241,7 +317,10 @@ T16 的測試裡要跟著改的(紅測試作者改,開發 worker 不改):
 | 3 | 接線 | vitest 靜態讀 `main.rs`(照 T16 `window-frame.ts` 的寫法):`open_windows` 裡 `desktop_is_composited()` 一次;`surface_for(mode)` 與 `init_script(mode)` 同一個變數;卡片 builder 鏈在 `.build()` 前有 `.transparent(` 而且參數不是字面 `true`/`false`、有條件地 `.background_color(`;沒有 `set_background_color`;setup 視窗那段沒有 `transparent`、`background_color` | 紅 |
 | 3 | 量尺自測 | 最小合成片段:寫死 `transparent(true)`、`.build()` 之後才 `set_background_color`、呼叫兩次 `desktop_is_composited` → 各自報錯 | 綠 |
 | 4 | 設定檔 | 讀 `tauri.conf.json`:teach、test 沒有 `transparent` 鍵;`decorations`、`visible` 照舊 | 紅 |
-| 8 | `StartupFocus` | `tests/window_mode.rs`:驗收 8 表的每一列;`STARTUP_FOCUS` 是 `"test"` | 紅(沒有這個型別) |
+| 8 | `StartupFocus` | ~~第 2 輪的 `on_shown`~~(第 3 輪取代;那幾條測試由紅測試作者改寫或刪) | — |
+| 8(第 3 輪) | 顯示順序 | `tests/window_mode.rs`:「8(第 3 輪)」表逐列;`SHOW_FIRST`、`STARTUP_FOCUS`、`ORDER_BACKSTOP` 的值;`Focus` 一定在 `Show(test)` 之後 | 紅(沒有 `on_ready`、`on_backstop`、`StartupAction`) |
+| 8(第 3 輪) | 接線 | vitest 靜態讀 `main.rs`:Finished 與 3 秒退路的分支都呼叫 `on_ready(`、不直接 `.show()`;卡片視窗的 `.show()` / `.set_focus()` 只在執行動作的那個函式裡;有 `ORDER_BACKSTOP` 的計時並呼叫 `on_backstop(`,回傳不是空的才 `log::warn!` | 紅 |
+| 8(第 3 輪) | 步驟 | cucumber 新的 Outline 與退路場景,用 Rust 測試檔印出 `on_ready` / `on_backstop` 的回傳(照 `emit_init_script_for_the_scenarios` 的做法) | 紅 |
 | 8 | 焦點目標 | 讀 `tauri.conf.json`:`STARTUP_FOCUS` 是 `app.windows` 裡的一個 label | 紅 |
 | 8 | 焦點接線 | vitest 靜態讀 `main.rs`:`open_windows` 一個 `StartupFocus::new(`(在迴圈之前);`on_page_load` 的 Finished 分支與 `arm_show_fallback` 的 on_timeout 分支,都在 `show()` 之後 `on_shown(`;`set_focus()` 只有一處,而且在 `on_shown` 回 `Some` 的分支裡、對 `get_webview_window(<回傳值>)`;沒有對字串字面的 `get_webview_window("test")` 呼叫 `set_focus` | 紅 |
 | 8 | 量尺自測 | 最小合成片段:只有 Finished 那邊通知、建窗後直接 `set_focus()`、`set_focus` 出現兩次 → 各自報錯 | 綠 |

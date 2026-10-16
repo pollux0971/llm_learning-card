@@ -86,47 +86,64 @@ pub fn surface_for(mode: WindowMode) -> WindowSurface {
     }
 }
 
-/// 兩個卡片視窗都顯示之後,鍵盤焦點給這個視窗(考試卡:使用者開 app 之後要在這裡打字)。
+/// 最後顯示、拿到焦點的那個視窗(考試卡:使用者開 app 之後要在這裡打字)。
 pub const STARTUP_FOCUS: &str = "test";
 
-/// 啟動焦點:所有要開的卡片視窗都顯示之後,只給一次。不開視窗、不碰時鐘。
+/// 先顯示的那個視窗(教學卡)。(T21 第 3 輪 stub:空字串,值由開發 worker 依工單寫,紅測試要因為「值不對」而紅。)
+pub const SHOW_FIRST: &str = "";
+
+/// 教學卡一直沒顯示時,考試卡最晚在建窗後這麼久顯示。(stub:0 秒,值由開發 worker 依工單寫。)
+pub const ORDER_BACKSTOP: Duration = Duration::from_secs(0);
+
+/// 啟動時要依序執行的視窗動作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupAction {
+    Show(&'static str),
+    Focus(&'static str),
+}
+
+/// 啟動焦點。第 3 輪起管「顯示順序」:考試卡一定在教學卡之後顯示。不開視窗、不碰時鐘。
 #[derive(Debug)]
 pub struct StartupFocus {
-    /// 還沒顯示過的標籤。只有 labels 裡有 `STARTUP_FOCUS` 才記;沒有就留空,永遠不給焦點。
+    /// 還沒顯示過的標籤(第 2 輪的狀態;第 3 輪由開發 worker 換成自己的狀態)。
     pending: Vec<String>,
     given: bool,
 }
 
 impl StartupFocus {
     /// labels:這次要開的卡片視窗(open_windows 的那一份,ok 時是 teach、test;四種失敗是空的)。
-    pub fn new(labels: &[&str]) -> Self {
+    pub fn new(labels: &[&'static str]) -> Self {
         let mut pending = Vec::new();
-        if labels.iter().any(|label| *label == STARTUP_FOCUS) {
-            for label in labels {
-                if !pending.iter().any(|seen| seen == label) {
-                    pending.push((*label).to_string());
-                }
+        for label in labels {
+            if !pending.iter().any(|seen| seen == label) {
+                pending.push((*label).to_string());
             }
         }
-        Self {
-            pending,
-            given: false,
-        }
+        Self { pending, given: false }
     }
 
-    /// 某個視窗剛顯示。全部都顯示的那一次回 `Some(STARTUP_FOCUS)`,之後都回 `None`。
+    /// 第 2 輪的介面,**第 3 輪取代**(由 on_ready / on_backstop)。stub 先留著,不然 main.rs 編不過;
+    /// 開發 worker 要把它和 main.rs 裡的呼叫一起拿掉(靜態檢查會抓還留著)。
     pub fn on_shown(&mut self, label: &str) -> Option<&'static str> {
         if self.given {
             return None;
         }
-        let Some(at) = self.pending.iter().position(|pending| pending == label) else {
-            return None;
-        };
+        let at = self.pending.iter().position(|pending| pending == label)?;
         self.pending.swap_remove(at);
         if !self.pending.is_empty() {
             return None;
         }
         self.given = true;
         Some(STARTUP_FOCUS)
+    }
+
+    /// 這個視窗準備好了(ShowGate 第一次回 true)。回傳現在要依序執行的動作。
+    pub fn on_ready(&mut self, _label: &str) -> Vec<StartupAction> {
+        unimplemented!("T21 round 3: on_ready")
+    }
+
+    /// ORDER_BACKSTOP 到了。教學卡還沒顯示時,考試卡照樣顯示。
+    pub fn on_backstop(&mut self) -> Vec<StartupAction> {
+        unimplemented!("T21 round 3: on_backstop")
     }
 }
