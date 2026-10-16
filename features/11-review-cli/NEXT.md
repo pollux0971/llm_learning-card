@@ -5,7 +5,7 @@
 | 欄位 | 值 |
 |---|---|
 | 已完成 | phase-2(2026-10-16:當日快取、續答、跨日、暫停、dry-run、結束時 snapshot;工單 T17,-ed 驗收無阻擋項,session 三檔 Stryker 96.67%,證據見 docs/reviews/acceptance-T17.md 與 T17-2026-10-16.md)。phase-1(2026-09-03) |
-| 進行中 | 無 |
+| 進行中 | phase-3(T25:連錯兩次的卡沒有縮短版時退回原卡,不讓複習停掉) |
 | 下一個 | 無(兩個 phase 都完成;I3 整合等 06 phase-2 與 phase-3) |
 
 ## Gate
@@ -17,6 +17,8 @@
 
 **phase-2** 需要:phase-1 done、I2 自動驗收通過(ADR-073:I2 不打 tag,人工確認延到 I4)、01-data-layer phase-4 done(ADR-042 的
 `snapshotLearningDir()` 要先能用)
+
+**phase-3** 需要:phase-2 done
 
 ## Gate 未滿足時
 
