@@ -1,6 +1,6 @@
 ---
 id: T24
-deps: [T22]
+deps: [T22, T26]
 touches: [apps/test-card/src/App.svelte, apps/test-card/src/session.ts, apps/test-card/src/types.ts, apps/test-card/src/main.ts, apps/test-card/src/stubs/fixtures.ts, apps/test-card/src/stubs/grader.ts, apps/test-card/src/stubs/loader.ts, apps/test-card/src/stubs/memory-fs.ts, apps/test-card/src/stubs/scheduler.ts, apps/test-card/src/stubs/.gitkeep, apps/test-card/vite.config.ts, apps/test-card/package.json, apps/test-card/dev/standalone.ts, apps/test-card/dev/fake-cloud.mjs, apps/test-card/dev/reviews.seed.json, scripts/boundaries.allow.json]
 cpu: heavy
 budget_usd: 5
@@ -15,8 +15,9 @@ must_catch:
   - start 回 paused 時還出題、或 next 被呼叫:暫停的測試必須紅
   - start 回 no-cards 時顯示「今天沒有到期」:P-28 的測試必須紅
   - 側車錯誤(sidecar-exited、timeout、sidecar-unavailable、internal)時畫面卡住、沒有重試、或重試不是重新 start:錯誤處理的測試必須紅
+  - review-record-changed 時沒有顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習」、或沒有「重新開始」、或不重新 start 就繼續出題:錯誤處理的測試必須紅
   - start 回 fakeCloud true 時沒有「測試模式」標記,或 false 時有:標記的測試必須紅
-  - reteach 的縮短版不是經 LearningFs 讀(例如經側車、fetch、寫死內容),或 shortPath 是 null 時卡住:reteach 的測試必須紅
+  - reteach 的檔不是經 LearningFs 讀(例如經側車、fetch、寫死內容),或 short 是 false 時沒有說明「先看原卡」:reteach 的測試必須紅
   - 縮短版的內容用 innerHTML / {@html} 塞進畫面:靜態檢查必須紅
   - header 的「已答 / 總數」跟 next 的 progress 對不上(例如用 index 而不是 index - 1):header 的測試必須紅
   - 單獨執行(npm run dev)寫進 contracts/fixtures/ 本身、不是暫存複本,或沒有開假 router:單獨執行的測試必須紅
@@ -29,7 +30,7 @@ must_catch:
 > 作者:UI/Tauri 負責人(06 規格作者,不是實作者)。編號:協調者配(T24)。派工:協調者。
 > 實作:worker-grok(opencode grok-4.7)。紅測試:另一個角色(協調者指定,不是前端、不是開發者)。驗收:-ed。觀感:前端拍、技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
-> 決策:ADR-075(`../02-decision-map.md`)。依賴:**T22**(側車、`review` command、`ReviewClient`、`createReviewHandler`)。
+> 決策:ADR-075(`../02-decision-map.md`)。依賴:**T22**(側車、`review` command、`ReviewClient`、`createReviewHandler`)、**T26**(core 寫 `reviews.json` 前的樂觀檢查;這張要顯示它的錯誤)。
 > 規格:`features/06-test-card/phase-2.feature`(T22 加的五個場景以外的六個,是這張的)、`features/06-test-card/phase-1.feature`(done,**不改**,防退步)。
 > 基底:T22 合併後的 main。
 
@@ -65,7 +66,7 @@ export interface SessionDeps {
 |---|---|
 | `init()` | `client.start()`。`paused` → 畫面狀態 `paused`;`empty` → `empty`;`ready` → 呼叫 `client.next()` |
 | `next()` 的結果 `question` | 畫面顯示題目;填空的輸入格數 = `blanks`;header = `progress.index - 1` / `progress.total` |
-| `next()` 的結果 `reteach` | `shortPath` 有值 → `fs.read(shortPath)`,去掉開頭的 frontmatter(第一行是 `---` 時,到下一個只有 `---` 的行為止),其餘當**純文字**顯示,下面一顆「繼續」;按了再 `client.next()`。`shortPath` 是 `null` → 顯示一句「這張卡連續答錯兩次,縮短版還沒有產生。」加「繼續」 |
+| `next()` 的結果 `reteach` | `fs.read(path)`,去掉開頭的 frontmatter(第一行是 `---` 時,到下一個只有 `---` 的行為止),其餘當**純文字**顯示,下面一顆「繼續」;按了再 `client.next()`。`short` 是 false 時,上面加一句「這張卡連續答錯兩次;縮短版還沒有產生,先看原卡。」 |
 | `next()` 的結果 `done` | 呼叫 `client.summary()`(側車在這裡 snapshot),畫面狀態 `done`(文字照 phase-1:「今天的複習都做完了。」;小結的數字是 T23) |
 | `submitFill(answers)` | `client.submit({ fill: answers })`,陣列原樣送,不接成字串 |
 | `submitApply(text)` | `client.submit({ apply: text })` |
@@ -91,6 +92,7 @@ export interface SessionDeps {
 | `no-cards` | 「掃描到 0 張卡 —— 這個 learning 資料夾沒有卡片。」(**不能**說成「今天沒有到期」,P-28) |
 | `router-unavailable` | 「帳本身分驗不過,批改不能用。請在終端機執行 `npx tsx scripts/vault.ts show` 看原因。」 |
 | `paused` | 同 `start` 回 `paused` 的畫面:「今天已暫停。要繼續,在終端機執行 `npx tsx scripts/review.ts --dir <learning 目錄> --today <今天> --unpause`。」 |
+| `review-record-changed` | 「複習紀錄剛被別的地方改過,請重新開始今天的複習。」加一顆「重新開始」;按了重新 `init()`。這一題**沒有**被記下(T26 拒絕寫入),重新開始後會再問 |
 | `sidecar-exited`、`timeout`、`sidecar-unavailable`、`internal`、`busy` | 「複習程式停了。」加一顆「重新開始」;按了重新 `init()`(從 `start` 開始;T22 的 Rust 會重起側車) |
 | 其他 | 同上 |
 
@@ -126,6 +128,7 @@ export interface SessionDeps {
 | phase-2 `@manual`「A full session end to end」 | 暫存 learning 有 5 張到期(learning-minimal 複製再補兩張);答完五張 | `reviews.json` 五張都有今天的 history;關掉再開,顯示「今天沒有到期的複習」;`learning/` 有一個新的 snapshot commit |
 | 視窗與終端機看到同一份 | 視窗答兩張後關掉;終端機跑 `scripts/review.ts --dry-run` | 列出剩下的三張,順序跟視窗原本的一樣 |
 | 批改失敗留在原地 | fake cloud 回不合法的回應兩次 | 畫面顯示「評分失敗,請再試一次」,同一題、輸入還在;`reviews.json` 那張卡不變 |
+| 視窗與終端機同時寫 | 視窗出題後,用終端機答一題(T26 的觸發方式),再在視窗送出 | 視窗顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。」與「重新開始」;`reviews.json` 只有終端機那一筆;按「重新開始」後正常出題 |
 | 測試模式標記 | 帶 / 不帶 `LC_REVIEW_FAKE_CLOUD` | 帶的時候有那一行;不帶時沒有(不帶時用沒有 `.env` 的簽出,`start` 回 `router-unavailable` 或正常開始) |
 | 側車停了 | 對側車送 SIGKILL,再按「下一題」 | 顯示「複習程式停了」;按「重新開始」回到題目(續答,header 是已答 / 總數) |
 | 長相 | 檢查器截圖:題目、結果、錯誤、暫停、reteach 五種畫面 | console 0 則;送出鍵不捲動可見(T15 的量法) |
@@ -145,7 +148,7 @@ export interface SessionDeps {
 | 1 | 拿掉 stubs | 靜態掃 `apps/test-card/src`(驗收 1 的清單) | 紅 |
 | 2 | `TestSession` 的每一列 | vitest:假的 `ReviewClient`(記下每次呼叫與參數)與假的 `fs`;驗收 2 表逐列;陣列含逗號原樣送;error 時題目與 view 的輸入不變 | 紅 |
 | 2 | 程序內跑真的 core | vitest / cucumber:`createReviewClient({ handler: createReviewHandler({ … routerFactory: 假 router }) })`,暫存根(learning-minimal 複本);phase-2 的「real scheduler」「answers written immediately」「interface and terminal agree」「grading error」四個場景 | 紅 |
-| 2 | 縮短版 | 假 `fs` 記錄讀了哪個路徑;`shortPath: null` 不卡住;靜態:`App.svelte` 沒有 `{@html`、`session.ts` 沒有 `innerHTML` | 紅 |
+| 2 | 縮短版 | 假 `fs` 記錄讀了哪個路徑;`short: false` 時讀的是原卡的 path、畫面有那一句說明;靜態:`App.svelte` 沒有 `{@html`、`session.ts` 沒有 `innerHTML` | 紅 |
 | 3 | 測試模式標記 | vitest:`fakeCloud` true / false 兩種的 view | 紅 |
 | 4 | 錯誤 | vitest:每個 kind 的畫面狀態;重試時重新 `start` | 紅 |
 | 4 | path 防護 | cucumber `A file outside the learning directory cannot be reached`:考試卡用的那個 `fs`(桌面版的 `LearningFs`,經 T2c-1 的 probe)讀 `../x` 被拒絕 | 紅 |
@@ -184,10 +187,10 @@ npm run build -w apps/test-card
 - 不改任何測試檔與 `.feature`。覺得測試錯了就停下回報協調者。
 - 不開網路埠(單獨執行的 vite dev server 是開發工具本來的埠)。
 
-## 已知的問題(另報,不在這張修)
+## 相關的另一張(不在這張修)
 
-- 縮短版不存在時,core 的 `presentNextCard` 會丟錯(`findCardFile` 找不到 `.short.md`)。真 vault 目前沒有縮短版(05 phase-3 還沒做),
-  所以**終端機的 `review` 遇到連錯兩次的卡會整個停掉**。T22 的側車接住了(回 `shortPath: null`),CLI 沒有。要不要另開票修 CLI,請顧問判。
+- 縮短版不存在時,core 的 `presentNextCard` 會丟錯(`findCardFile` 找不到 `.short.md`),終端機的 `review` 遇到連錯兩次的卡會整個停掉。
+  顧問裁決另開 **T25**:不丟錯、退回只顯示原卡、記一筆 warning。側車(T22)照同一個規則回原卡的 `path`,所以這張不受 T25 先後影響。
 
 ## 預算
 

@@ -1481,7 +1481,7 @@ graph TD
   3. **側車只收高階動作**:`start`(開今天)、`next`(下一個要顯示的東西)、`submit`(送出答案)、`summary`(小結)、`status`(今天是否暫停)。
      - 訊息不帶路徑,也不帶卡 id。learning 目錄只在啟動時由 Rust 用命令列傳一次(Rust 自己 `LearningRoot` 的那一份 canonical 路徑);側車再用 `resolveVerifiedLedger` 確認使用者層指標檔指向同一個目錄(真實路徑相等),不同就拒絕開始。
      - 側車內讀寫的路徑全由 core 從磁碟上的資料組出來(跟 CLI 完全一樣),沒有任何來自 webview 的路徑或 id,所以不另做一份 §13 白名單。
-     - 圖片與縮短版這類「視窗自己要讀的檔」照舊走 webview 的 `LearningFs`(Rust 的 §13 防護,ADR-062、ADR-069 不變):側車在回應裡只給縮短版在 learning/ 裡的相對路徑,不送內容;視窗用 `LearningFs` 讀,讀的那一次照樣過白名單。
+     - 圖片與縮短版這類「視窗自己要讀的檔」照舊走 webview 的 `LearningFs`(Rust 的 §13 防護,ADR-062、ADR-069 不變):側車在回應裡只給要讀的那個檔(縮短版,沒有就退回原卡,T25)在 learning/ 裡的相對路徑,不送內容;視窗用 `LearningFs` 讀,讀的那一次照樣過白名單。
   4. **不開任何網路埠**,只用 stdio,一行一則 JSON。
   5. **金鑰只在側車行程**:`.env` 只由側車入口讀(`scripts/_env.ts`,ADR-034);Rust 不讀 `.env`、不經手金鑰。回給 webview 的錯誤只有固定的 `kind` 與固定的訊息,不帶例外原文、不帶 provider 回應;stderr 只印固定格式的一行(`[review-sidecar] <kind>`);`log.jsonl` 照 router 現有的帳(ADR-050),不多寫內容。§7 的 `LlmRouter` 簽章與路由表(硬約定)不動。
   6. **假 router 只能由啟動時的環境變數開**:`LC_REVIEW_FAKE_CLOUD=<模組的絕對路徑>`。側車啟動時 `import` 那個模組(它把 `fetch` 換掉;router、adapter、帳本照樣跑真的,跟 I2 的 `features/steps/_fake-review-cloud.mjs` 同一個做法)。
@@ -1493,7 +1493,7 @@ graph TD
 
      | 檔 | 誰寫 | 怎麼寫 |
      |---|---|---|
-     | `learning/state/reviews.json` | 側車(core `saveReviews`) | `writeFileAtomic`(§11b 四步) |
+     | `learning/state/reviews.json` | 側車與 CLI(core `saveReviews`) | `writeFileAtomic`(§11b 四步);**寫之前重讀、比對載入時的雜湊,不一樣就不寫、回錯誤(T26)** |
      | `learning/state/log.jsonl` | Rust(§13 與 asset 的拒絕 warning,ADR-069)與側車(router 的帳、快取壞掉的 warning) | 兩邊都是 `O_APPEND`、一次寫完一整行(TS 的 `appendLineAtomic` 是單次 `writeSync`,Rust 是單次 `write_all`)、fsync,所以不會交錯出半行;「同一個事件 TS 與 Rust 寫出來深度相等」照舊由 ADR-069 的向量測 |
      | `${XDG_CACHE_HOME:-~/.cache}/llm-learning-cards/<vault_id>/session-<日期>.json` | 側車(core `writeSessionCache`) | `writeFileAtomic`;路徑由側車照 ADR-074 算,Rust 不另算 |
      | `learning/` 的 git snapshot | 側車(core `snapshotLearningDir`),小結時、這一次有答題才做 | git(ADR-042) |
@@ -1516,8 +1516,9 @@ graph TD
 - **Consequences**:
   - 視窗與終端機是同一份程式碼,I3 的「window and terminal produce the same session」自然成立,沒有第二份實作。
   - 桌面程式要有 `node`:Rust 用 `node --import tsx scripts/review-sidecar.ts --dir <learning 根>`,工作目錄是 repo 根(現在本來就從 repo 跑)。**已知限制:打包(10 phase-4、phase-5)時要帶 Node runtime,或把側車編成單一執行檔,到時再決定。**
-  - 視窗與終端機同時開著、同時答題時,兩個 Node 寫者都對 `reviews.json` 讀改寫,可能丟掉一次更新(跟同時開兩個終端機一樣)。丟的是同時那一題的 history,不會寫壞檔(`writeFileAtomic`);讀到寫之間沒有 LLM 呼叫,只有幾毫秒;側車不在記憶體留 reviews 的快照,每次都重讀。I3 的場景是先後,不是同時;這裡不加鎖。
+  - 視窗與終端機同時開著、同時答題時,**後寫的一方會被拒絕、不寫**(見 T26:core 寫 `reviews.json` 前重讀、比對載入時的雜湊),視窗與終端機都顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習」。
+    不靜默丟資料(`reviews.json` 是幾個月的記憶資料,硬規則 5 的精神;技術顧問 2026-10-16 裁決),也不鎖檔(鎖檔放在 `learning/state/` 底下就是改 §12)。
   - 子行程環境用白名單,所以只在 shell 裡 `export` 的 LLM 變數(沒寫進 `.env`)桌面版拿不到;CLI 照舊讀 shell 的環境。
   - 06 的單獨執行(ADR-022):vite dev server 用同一支側車,跑在 `contracts/fixtures/learning-minimal` 的暫存複本上,一律假 router;dev server 本身的埠是開發工具的,不是 app 的。
   - Rust 會多一個模組管行程;它的測試只測信封與生命週期,不測批改。
-- **Related**: ADR-022、ADR-034、ADR-042、ADR-050、ADR-060、ADR-062、ADR-069(refined)、ADR-074、`contracts/types.md` §7、§11b、§13、`features/06-test-card/FEATURE.md`、`docs/tickets/T22-review-sidecar.md`、`docs/tickets/T24-test-card-phase-2.md`
+- **Related**: ADR-022、ADR-034、ADR-042、ADR-050、ADR-060、ADR-062、ADR-069(refined)、ADR-074、`contracts/types.md` §7、§11b、§13、`features/06-test-card/FEATURE.md`、`docs/tickets/T22-review-sidecar.md`、`docs/tickets/T24-test-card-phase-2.md`、T26(core session 寫 `reviews.json` 前的樂觀檢查)

@@ -1,6 +1,6 @@
 ---
 id: T22
-deps: [T21]
+deps: [T21, T26]
 touches: [packages/core/src/session/engine.ts, packages/core/src/session/protocol.ts, packages/core/src/session/handler.ts, packages/core/src/session/answer.ts, packages/core/src/session/index.ts, scripts/review.ts, scripts/review-sidecar.ts, scripts/boundaries.allow.json, apps/desktop/src-tauri/src/review_sidecar.rs, apps/desktop/src-tauri/src/commands.rs, apps/desktop/src-tauri/src/lib.rs, apps/desktop/src-tauri/src/main.rs, apps/desktop/src/webview/review-client.ts]
 cpu: heavy
 budget_usd: 5
@@ -14,7 +14,8 @@ must_catch:
   - 一行裡有 \r(CRLF 結尾)被接受,或字串裡的 U+2028 / U+2029 讓任一邊把一行切成兩行:向量測試必須紅
   - 側車的 stdout 出現協定以外的一行(例如 core 或依賴的 console.log):「stdout 只有協定行」必須紅
   - Rust 把 stdout 的非協定行或超長的回應轉給 webview:「Rust 丟掉並只記固定的一行」必須紅
-  - 側車在記憶體裡留著 reviews.json 的快照,submit 不重讀:「側車不快取 reviews」必須紅(先改磁碟上的 reviews.json 再 submit,寫回的檔要保留那個改動)
+  - submit 時遇到 T26 的「紀錄被改過」,側車寫了 reviews.json、崩掉、或回 review-record-changed 以外的 kind:「review-record-changed、不寫、不崩」必須紅
+  - review-record-changed 之後不重新 start 就能繼續 next / submit(要回 no-session):必須紅
   - Rust 的信封檢查跟 TS 的 schema 對同一份向量判得不一樣(例如 Rust 接受 v 為 2,或接受 id 為字串):向量測試兩邊之一必須紅
   - Rust 解析或改寫 params / result 的內容(例如加欄位、改值、依 method 分支):「Rust 原樣傳遞」的靜態與向量檢查必須紅
   - 子行程環境不是用白名單重建(例如帶了 NODE_OPTIONS、OPENAI_API_KEY 或任一個不在白名單的變數),或 release build 帶了 LC_REVIEW_FAKE_CLOUD / LC_REVIEW_TODAY:子行程環境的單元測試必須紅
@@ -31,7 +32,7 @@ must_catch:
   - submitAnswer 的 keepOnError 開著時,批改 error 仍前進 typeIndex、仍跳過這張卡、或寫了 reviews.json:keepOnError 的單元測試必須紅;沒開時行為跟現在不同:既有 answer 測試必須紅
   - 填空用陣列送出時,答案裡的逗號被切開:陣列送出的單元測試必須紅
   - submit 回 failed 的填空題沒帶 correctAnswers,或答對 / 應用題也帶:submit 結果的測試必須紅
-  - reteach 的結果帶了縮短版的內容(shortBody 或任何文字),或縮短版不存在時 next 回錯誤 / 卡住:next 結果的測試必須紅
+  - reteach 的結果帶了檔案內容(shortBody 或任何文字)、縮短版不存在時沒有退回原卡的 path(或 short 不是 false)、或 next 回錯誤 / 卡住:next 結果的測試必須紅
   - summary 在這一次沒答題時也 snapshot,或有答題時不 snapshot:summary 的測試必須紅
 ---
 
@@ -43,7 +44,7 @@ must_catch:
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 > 決策:**ADR-075**(`../02-decision-map.md`;同一個分支寫入)。
 > 規格:`features/06-test-card/phase-2.feature`(同一個分支加了側車的五個場景,見「規格」)。
-> 基底:origin/main `6e2e71f`。**派工時基底要含 T21 合併後的 main**(T21 也動 `main.rs`;兩張落點都是 10-desktop-shell,R2 不能同時跑)。
+> 基底:origin/main `6e2e71f`。**派工時基底要含 T21 與 T26 合併後的 main**(T21 也動 `main.rs`;兩張落點都是 10-desktop-shell,R2 不能同時跑。T26 是 core 寫 `reviews.json` 前的樂觀檢查,這張要把它的錯誤轉成 kind)。
 
 ## 為什麼有這張
 
@@ -121,13 +122,13 @@ export async function submitAnswer(session: Session, answer: string | string[], 
   | method | params | result |
   |---|---|---|
   | `start` | `{}` | `{ state: 'paused' \| 'empty' \| 'ready', today, resumed: boolean, total, answered, deferred, dailyCap, fakeCloud: boolean }` |
-  | `next` | `{}` | `{ kind: 'reteach', card, shortPath: string \| null }` \| `{ kind: 'question', card, stage, type: 'fill' \| 'apply', prompt, blanks?, progress: { index, total }, stuck, overdueDays }` \| `{ kind: 'done' }` |
+  | `next` | `{}` | `{ kind: 'reteach', card, path: string, short: boolean }` \| `{ kind: 'question', card, stage, type: 'fill' \| 'apply', prompt, blanks?, progress: { index, total }, stuck, overdueDays }` \| `{ kind: 'done' }` |
   | `submit` | `{ fill: string[] }` \| `{ apply: string }` | `{ status: 'passed' \| 'failed' \| 'error' \| 'partial', pass: boolean \| null, feedback, cardDone, newStage?, correctAnswers?: string[] }` |
   | `summary` | `{}` | `{ passed, returned, retryLater, answeredThisRun?, tomorrow: { total, capped, shown, overflow }, snapshot: 'committed' \| 'no-changes' \| 'skipped' \| 'failed' }` |
   | `status` | `{}` | `{ paused: boolean, today }` |
 
-- **params 沒有任何路徑或卡 id 欄位**(`card` 與 `shortPath` 只出現在 result)。`answered` 是今天已答的張數(續答時 > 0),`total` 是 `totalDue`。
-- `shortPath`:縮短版在 learning/ 裡的相對路徑(`cards/<分類>/<id>.short.md`,正斜線)。視窗用 `LearningFs` 自己讀(ADR-075 第 3 點:縮短版照舊走 `LearningFs`),側車不送內容。檔案不存在時是 `null`(05 phase-3 還沒做,真 vault 目前沒有縮短版)。
+- **params 沒有任何路徑或卡 id 欄位**(`card` 與 `path` 只出現在 result)。`answered` 是今天已答的張數(續答時 > 0),`total` 是 `totalDue`。
+- `path` / `short`:視窗要讀的那個檔在 learning/ 裡的相對路徑(正斜線)。縮短版(`cards/<分類>/<id>.short.md`)存在時 `short: true`;不存在時退回原卡(`cards/<分類>/<id>.md`)、`short: false`(跟 T25 的「退回只顯示原卡」同一個規則)。視窗用 `LearningFs` 自己讀(ADR-075 第 3 點),側車不送內容。
 - `fakeCloud`:跟 `hello` 的同一個值(webview 看不到 `hello`,所以 `start` 再帶一次),給視窗顯示「測試模式」。
 - `correctAnswers`:只在填空題、這一次 `pass === false` 時有,每個空格取可接受寫法的第一個(06 phase-1 畫面要的)。
 - 錯誤的 `kind`(固定清單;`message` 是固定的中文句子,每個 kind 一句,寫在 `protocol.ts`):
@@ -144,6 +145,7 @@ export async function submitAnswer(session: Session, answer: string | string[], 
   | 側車 | `paused` | 今天暫停時呼叫 `next` / `submit` |
   | 側車 | `no-session` | 還沒 `start` 就呼叫 `next` / `submit` / `summary` |
   | 側車 | `no-question` | 還沒 `next` 拿到題目就 `submit`,或 `fill` / `apply` 跟目前題型不合 |
+  | 側車 | `review-record-changed` | `submit` 寫 `reviews.json` 時,T26 的檢查發現紀錄在載入之後被別的地方改過(例如終端機同時在答);**沒有寫入**。`message` 是「複習紀錄剛被別的地方改過,請重新開始今天的複習」 |
   | 側車 | `internal` | 其他例外(原文不回;stderr 只印 `[review-sidecar] internal`)|
   | Rust | `not-configured` | 啟動狀態不是 ok(learning 根沒設好,T2c-2)|
   | Rust | `sidecar-unavailable` | 起不來(沒有 node、20 秒內沒有 hello)|
@@ -168,13 +170,15 @@ export async function submitAnswer(session: Session, answer: string | string[], 
   並檢查 ledger 的 learning 目錄真實路徑等於 `learningDir`,不同回 `root-mismatch`。
   T24 的 vitest / cucumber 用這個函式在程序內接一個 client,不起行程。
 - `start`:`listCardIds` 為空 → `no-cards`;`openDay`;`paused` → `state: 'paused'`;`totalDue === 0` 且沒有 reteach → `state: 'empty'`;否則 `ready`。
-- `next`:`presentNextCard` 的結果,`question` 另帶 `overdueDays`(`session.current.overdueDays`)。`reteach` 不送 `shortBody`,改送 `shortPath`(`findCardFile(…, { short: true })` 相對於 learning 根);縮短版不存在時 `presentNextCard` 會丟錯(reteach 已經從佇列拿掉),handler 接住、回 `shortPath: null`,下一次 `next` 照常出題。
+- `next`:`presentNextCard` 的結果,`question` 另帶 `overdueDays`(`session.current.overdueDays`)。`reteach` 不送內容,改送 `path` / `short`:handler 先找 `findCardFile(…, { short: true })`,找不到再找原卡,都轉成相對於 learning 根的路徑。T25 合併前 `presentNextCard` 在縮短版不存在時會丟錯(reteach 已經從佇列拿掉),handler 接住、照樣回原卡的 `path`;T25 合併後不丟錯,結果一樣。
 - `submit`:`submitAnswer(session, fill ?? apply, { keepOnError: true })`;填空 `pass === false` 時加 `correctAnswers`。這一次答了幾題(含批改失敗)記在 handler 裡。
 - `summary`:`summarizeDay` + `snapshotAfterReview`(這一次有答題才 snapshot);result 的 `snapshot` 只帶 `status`,不帶 `hint`。
 - `status`:讀今天的快取的 `paused`(沒有快取 → false)。
 - 一個請求處理完才讀下一行(依序,不併發)。stdin 結束(EOF)→ 結束行程(退出碼 0)。
 - 只用 `\n` 分行;字串裡的 U+2028 / U+2029 是合法 JSON,照常處理,不當成換行。一行裡有 `\r` → `bad-request`。
-- **不快取 reviews**:側車不在記憶體裡留 `reviews.json` 的內容;每次 `submit` 都經 core 重讀再寫(`answer.ts` 現在就是 `loadReviews` → 轉移 → `saveReviews`)。這樣跟終端機同時用時,丟的最多是同時那一題的 history,不會蓋掉別人早就寫好的。
+- **紀錄被改過(T26)**:`submitAnswer` 寫 `reviews.json` 前,T26 會重讀並比對載入時的雜湊;不一樣就不寫、丟 T26 定的錯誤。handler 接住它:
+  回 `review-record-changed`(`ok: false`),**丟掉記憶體裡的 session**(之後 `next` / `submit` / `summary` 回 `no-session`,要重新 `start`),側車不結束。
+  其他例外照舊是 `internal`。T26 的錯誤類別名字與觸發方式以 T26 工單為準。
 - 壞的一行:回 `bad-request`(或 `too-large`),**不結束**。
 - 回給 webview 的錯誤 `message` 只用 `protocol.ts` 的固定句子;例外原文、stack、provider 回應都不出側車。stderr 只印 `[review-sidecar] <kind>` 這種固定格式。
 
@@ -280,7 +284,7 @@ export function createReviewClient(opts?: { invoke?: InvokeFn; handler?: (line: 
 | 1 | CLI 不變 | 既有 review 測試與 cucumber,不改 | 綠(防退步) |
 | 2 | `keepOnError`、陣列送出 | vitest:批改回 error 時 typeIndex / queue / reviews.json / errors 都不變;下一次 present 同一題;陣列裡含逗號的答案原樣送進 grader;應用題給陣列丟錯 | 紅 |
 | 3 | 訊息形狀 | 向量檔(紅測試作者寫):合法與不合法的 hello / 請求 / 回應各若干行,至少含:多一個欄位(strictObject 拒絕)、`v: 2`(`unsupported-version`)、`id: "1"`、`method: "Start"`(`unknown-method`)、超長、非法 JSON(`bad-request`)、CRLF 結尾、字串裡有 U+2028 / U+2029(接受、不斷行)、回應 id 跟請求不符;每一列寫明預期的 kind;vitest 用 schema 跑、Rust 的 `tests/review_sidecar.rs` 用 `request_line` / `parse_response_line` 跑,兩邊結果要跟向量寫的一樣 | 紅 |
-| 4 | 側車 | vitest 起真的 `scripts/review-sidecar.ts` 子行程(暫存根、`XDG_*`、`HOME` 全暫存;`LC_REVIEW_FAKE_CLOUD` 指向 `_fake-review-cloud.mjs`):hello、五個 method、壞的一行、EOF 結束、root-mismatch、錯誤訊息不帶原文;另外直接測 `createReviewHandler` | 紅 |
+| 4 | 側車 | vitest 起真的 `scripts/review-sidecar.ts` 子行程(暫存根、`XDG_*`、`HOME` 全暫存;`LC_REVIEW_FAKE_CLOUD` 指向 `_fake-review-cloud.mjs`):hello、五個 method、壞的一行、EOF 結束、root-mismatch、錯誤訊息不帶原文;用 T26 的觸發方式造出「紀錄被改過」:回 `review-record-changed`、`reviews.json` 逐位元不變、之後 `next` 回 `no-session`、側車還活著;另外直接測 `createReviewHandler` | 紅 |
 | 5 | Rust | `tests/review_sidecar.rs`(獨立檔):`child_env` 的 debug / release(白名單以外的變數,例如 `NODE_OPTIONS`、`OPENAI_API_KEY`、`FOO`,兩種 build 都不帶)、`sidecar_command`、常數值;stdout 的非協定行與超長行;id 不遞增;用一支假側車(`sh -c` 小腳本:印 hello、回固定的行、故意不回、故意結束)測 busy、timeout、sidecar-exited 後重起、Exit 時收掉 | 紅 |
 | 5 | Rust 原樣傳遞 | 向量裡的 params / result 經 `request_line` / `parse_response_line` 後逐位元相同;靜態:`review_sidecar.rs` 不出現 `"start"` 等 method 名字的字串比對 | 紅 |
 | 6 | client | vitest:用假 `invoke` 與 `handler` 兩種,id 遞增、回應驗證、錯誤轉成 `ReviewError(kind)`;webview 不 import `node:` | 紅 |
@@ -313,7 +317,7 @@ npm run boundaries
 - 不改 `contracts/`(§7 路由表與 `LlmRouter` 簽章是硬約定);不改 `CLAUDE.md`;不改 `packages/core/src/llm/`、`grading/`、`scheduler/`。
 - 不開網路埠。不做打包(Node runtime 怎麼帶,10 phase-4、phase-5 再決定)。
 - 不加 `pause` 這個 method(暫停照舊由終端機 `review --pause` 設;系統列是 10 phase-3)。
-- 不處理視窗與終端機同時答題的寫入衝突(ADR-075 Consequences 的已知限制)。
+- 不寫 T26 的比對本身(core 的 `reviews.json` 樂觀檢查是 T26);這張只把它的錯誤轉成 `review-record-changed`。
 - 不改 `tauri.conf.json`、`window_mode.rs`(T21 的落點)、`capabilities/`、`Cargo.toml`、`package.json`。
 
 ## 預算
