@@ -147,4 +147,55 @@ describe('T19 端到端:runIngest 與基準形狀的 regenerate 回應', () => {
     expect(String(warnings[0]!.message)).toContain('needs-review.json');
     expect(events().filter((e) => e.type === 'regenerate')).toEqual([]);
   });
+
+  // 要求 2(顧問 Q2):regenerate 回了不只一筆 → 取第一筆,log.jsonl 多一行 warning;只有一筆時不多這一行。
+  // 用完整形狀(含 examples、lines),讓基底上紅的原因只剩「沒有記 warning」。
+  const full = (body: string) => ({ title: '模型改過的標題', body, examples: ['新例'], lines: [7, 9] });
+  const TEXT_2 = 'regenerate 回了 2 筆,只用第一筆';
+
+  it('regenerate 回了 2 筆 → 卡檔用第一筆,log.jsonl 剛好一行 warning「regenerate 回了 2 筆,只用第一筆」', async () => {
+    const router = scriptedRouter([batch, JSON.stringify([full(SHORT), full('第二筆的正文。')])]);
+    const result = await runIngest({ outDir: dir, rawRelPath: RAW, category: 'security', router, today: '2026-10-16' });
+
+    expect(result.cardsCreated).toEqual(['sec-0001']);
+    const check = validateCard(readFileSync(join(dir, 'cards/security/sec-0001.md'), 'utf8'));
+    expect(check.card!.body).toBe(SHORT);
+    expect(check.card!.frontmatter.source_ref).toBe('raw/security/x.md#L3-L4');
+
+    const warnings = events().filter((e) => e.type === 'warning');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ type: 'warning', file: RAW });
+    expect(String(warnings[0]!.message)).toContain(TEXT_2);
+    expect(typeof warnings[0]!.ts).toBe('string');
+  });
+
+  it('第二筆不是物件也不丟錯,照樣記那一行 warning', async () => {
+    const router = scriptedRouter([batch, JSON.stringify([full(SHORT), 42])]);
+    const result = await runIngest({ outDir: dir, rawRelPath: RAW, category: 'security', router, today: '2026-10-16' });
+    expect(result.ok).toBe(true);
+    expect(result.cardsCreated).toEqual(['sec-0001']);
+    const warnings = events().filter((e) => e.type === 'warning');
+    expect(warnings).toHaveLength(1);
+    expect(String(warnings[0]!.message)).toContain(TEXT_2);
+  });
+
+  it('防退步:regenerate 只回一筆 → log.jsonl 不多 warning 那一行(只有 ingested 與 regenerate)', async () => {
+    const router = scriptedRouter([batch, JSON.stringify([full(SHORT)])]);
+    await runIngest({ outDir: dir, rawRelPath: RAW, category: 'security', router, today: '2026-10-16' });
+    expect(events().map((e) => e.type)).toEqual(['ingested', 'regenerate']);
+  });
+
+  it('防退步:批次回應多筆照舊每筆一張卡,log.jsonl 沒有 warning', async () => {
+    const router = scriptedRouter([
+      JSON.stringify([
+        { title: '卡一', body: '第一張卡的正文。', examples: [], lines: [1, 2] },
+        { title: '卡二', body: '第二張卡的正文。', examples: ['例'], lines: [3, 4] },
+        { title: '卡三', body: '第三張卡的正文。', examples: [], lines: [5, 6] },
+      ]),
+    ]);
+    const result = await runIngest({ outDir: dir, rawRelPath: RAW, category: 'security', router, today: '2026-10-16' });
+    expect(result.cardsCreated).toEqual(['sec-0001', 'sec-0002', 'sec-0003']);
+    expect(router.calls).toHaveLength(1);
+    expect(events().map((e) => e.type)).toEqual(['ingested']);
+  });
 });
