@@ -42,9 +42,11 @@ npm run dev -w apps/test-card
 
 | 東西 | 位置 | 整合時移除於 |
 |---|---|---|
-| `StubScheduler` | `apps/test-card/src/stubs/scheduler.ts` | I3 |
-| `StubGrader` | `apps/test-card/src/stubs/grader.ts` | I3 |
-| `MemoryFs` | `apps/test-card/src/stubs/memory-fs.ts` | I3 |
+| `StubScheduler` | `apps/test-card/src/stubs/scheduler.ts` | I3(T24) |
+| `StubGrader` | `apps/test-card/src/stubs/grader.ts` | I3(T24) |
+| `MemoryFs` | `apps/test-card/src/stubs/memory-fs.ts` | I3(T24) |
+
+單獨執行在 I3 之後改成:vite dev server 起同一支側車,跑在 `contracts/fixtures/learning-minimal` 的暫存複本上、一律假 router(ADR-075、T24 驗收 5)。指令不變。
 
 ## 技術棧
 
@@ -52,7 +54,7 @@ npm run dev -w apps/test-card
 |---|---|---|
 | 框架 | Svelte 5 + Vite | `apps/test-card/` |
 | 狀態 | Svelte runes,不引入狀態庫 | |
-| 與 core 溝通 | I3 起 import `packages/core`;檔案透過 `LearningFs` | |
+| 與 core 溝通 | I3 起經複習側車(ADR-075):webview 用 `ReviewClient` 的五個動作,跟終端機同一份 core 在 Node 跑;縮短版等視窗自己要讀的檔透過 `LearningFs` | 工單 T22(側車)、T24(phase-2)、T23(phase-3) |
 | markdown | markdown-it + example fence 插件(與教學卡共用 `packages/ui-shared/`) | |
 | 變異門檻 | **寬鬆,不強制** | UI 由 @manual 與整合測試涵蓋 |
 

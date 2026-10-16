@@ -24,7 +24,7 @@ Feature: Reviewing in a desktop window
 
   Scenario: File access goes through the Tauri boundary
     When the window reads a card file
-    Then it calls the read_learning_file command
+    Then it calls the read command
     And the command rejects any path containing ".."
     And the command rejects any path outside the learning directory
 
