@@ -1,0 +1,8 @@
+{
+  "id": "children-cors",
+  "text": "[\n  {\n    \"title\": \"預檢請求\",\n    \"body\": \"非簡單請求會先送 OPTIONS 預檢；伺服器須核准方法與自訂標頭，瀏覽器才送正式請求。\",\n    \"examples\": [\n      \"OPTIONS /users HTTP/1.1\\nOrigin: https://app.example.com\\nAccess-Control-Request-Method: DELETE\\nAccess-Control-Request-Headers: X-Token\"\n    ]\n  },\n  {\n    \"title\": \"憑證與萬用字元\",\n    \"body\": \"帶 Cookie 或其他憑證時，Allow-Origin 必須是具體來源，並搭配 Allow-Credentials: true；不能使用 *。\",\n    \"examples\": [\n      \"Access-Control-Allow-Origin: https://app.example.com\\nAccess-Control-Allow-Credentials: true\\nSet-Cookie: sid=abc; Secure\"\n    ]\n  },\n  {\n    \"title\": \"來源的組成\",\n    \"body\": \"來源由協定、主機、埠組成；只要其中一項不同，即使路徑相同，也屬不同來源。\",\n    \"examples\": [\n      \"https://app.example.com:443 與 http://app.example.com:443 不同來源\",\n      \"https://app.example.com 與 https://api.example.com 不同來源\"\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

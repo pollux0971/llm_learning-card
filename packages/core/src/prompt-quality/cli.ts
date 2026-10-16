@@ -6,6 +6,7 @@
  *   prompt-check.ts --list
  *   prompt-check.ts --golden [--set <golden set>] [--fake] [--out <存放根目錄>]
  *   prompt-check.ts --diff <run 目錄 A> <run 目錄 B>
+ *   prompt-check.ts --overlap <children run 目錄> <parents run 目錄> [--threshold <0..1>]
  *
  * `--set` 收的是 **golden set id**,不是契約 §7 的 LlmTask:`ingest/` 底下三個 prompt 檔
  * 共用 `'ingest.cards'` 這一個任務,一個檔一組 golden set,所以要各自的 key。
@@ -19,6 +20,7 @@
  */
 import { runGolden, MissingGoldenSetError, LiveRunOfflineError, DirtyPromptError } from './golden-run.js';
 import { compareRuns, LegacyRunLayoutError, NotComparableError } from './compare.js';
+import { checkGoldenParentChild, PARENT_CHILD_OVERLAP_THRESHOLD } from './parent-child-overlap.js';
 import {
   allGoldenSets,
   checkPromptCoverage,
@@ -59,12 +61,68 @@ export async function main(argv: string[], deps?: { root?: string }): Promise<Cl
     return runDiff(argv, log, lines);
   }
 
+  if (argv.includes('--overlap')) {
+    return runOverlap(argv, log, lines);
+  }
+
   if (argv.includes('--golden')) {
     return runGoldenCommand(argv, log, lines, deps);
   }
 
-  log('用法:prompt-check.ts --list  |  --golden [--set <golden set>] [--fake | --live] [--out <存放根目錄>]  |  --diff <run 目錄 A> <run 目錄 B>');
+  log(
+    '用法:prompt-check.ts --list  |  --golden [--set <golden set>] [--fake | --live] [--out <存放根目錄>]  |  --diff <run 目錄 A> <run 目錄 B>  |  --overlap <children run 目錄> <parents run 目錄> [--threshold <0..1>]',
+  );
   return { code: 1, output: lines.join('\n') };
+}
+
+/** `--threshold` 只收 0..1 的十進位數字。空字串 `Number('') === 0`,不能靠 Number() 自己擋。 */
+function parseUnitInterval(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  if (!/^(?:0|1)(?:\.0+)?$|^0\.\d+$|^[1-9]\d*\.\d+$/.test(raw)) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1) return undefined;
+  return n;
+}
+
+/**
+ * 父卡 run 對子卡 run 的字面重疊。0 對 → 退出碼 0;有對、路徑錯、配不起來、門檻不合法 → 1。
+ * 錯誤只印原因,不把例外丟出去(呼叫端是終端機,stack trace 不是給人看的訊息)。
+ */
+function runOverlap(argv: string[], log: (s: string) => void, lines: string[]): CliResult {
+  const i = argv.indexOf('--overlap');
+  const childrenDir = argv[i + 1];
+  const parentsDir = argv[i + 2];
+  if (!childrenDir || !parentsDir || childrenDir.startsWith('--') || parentsDir.startsWith('--')) {
+    log('用法:prompt-check.ts --overlap <children run 目錄> <parents run 目錄> [--threshold <0..1>]');
+    return { code: 1, output: lines.join('\n') };
+  }
+
+  const threshold = argv.includes('--threshold') ? parseUnitInterval(arg(argv, '--threshold')) : undefined;
+  if (argv.includes('--threshold') && threshold === undefined) {
+    log('--threshold 需要 0 到 1 的數字:--threshold <0..1>');
+    return { code: 1, output: lines.join('\n') };
+  }
+
+  try {
+    const result = checkGoldenParentChild({
+      childrenDir,
+      parentsDir,
+      ...(threshold !== undefined ? { opts: { threshold } } : {}),
+    });
+    const used = threshold ?? PARENT_CHILD_OVERLAP_THRESHOLD;
+    log(`重疊 ${result.totalPairs} 對(字面;門檻 ${used.toFixed(3)}。改寫式重述歸人評分,0 對不等於語意沒重複)`);
+    for (const input of result.inputs) {
+      log(`${input.key}: 父 ${input.report.parentCount} × 子 ${input.report.childCount},成立 ${input.report.pairs.length} 對`);
+      for (const pair of input.report.pairs) {
+        log(`  ${input.key} ${pair.child} 對 ${pair.parent} 重疊 ${pair.overlap.toFixed(3)}(${pair.reason})`);
+      }
+    }
+    log(`最高 ${result.maxOverlap.toFixed(3)}`);
+    return { code: result.totalPairs > 0 ? 1 : 0, output: lines.join('\n') };
+  } catch (e) {
+    log(e instanceof Error ? e.message : String(e));
+    return { code: 1, output: lines.join('\n') };
+  }
 }
 
 /**

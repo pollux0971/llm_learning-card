@@ -113,7 +113,8 @@ export type StructuralIssueKind =
   | 'missing-field'
   // phase-2 的兩項批次檢查(整批一起看才算得出來,單一輸出看不出)
   | 'duplicate-pair'
-  | 'prereq-shape';
+  | 'prereq-shape'
+  | 'parent-child-overlap';
 
 export interface StructuralIssue {
   kind: StructuralIssueKind;

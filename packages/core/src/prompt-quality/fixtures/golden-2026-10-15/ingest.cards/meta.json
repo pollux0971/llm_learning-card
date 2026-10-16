@@ -1,0 +1,12 @@
+{
+  "set": "ingest.cards",
+  "task": "ingest.cards",
+  "date": "2026-10-15",
+  "model": "gpt-5.6-luna",
+  "provider": "openai",
+  "promptFileGitCommit": "a2a6669",
+  "mode": "live",
+  "tokens_in": 1702,
+  "tokens_out": 2106,
+  "estimated_cost_usd": 0.025314999999999997
+}

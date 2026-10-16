@@ -1,0 +1,8 @@
+{
+  "id": "cards-cors",
+  "text": "[\n  {\n    \"title\": \"跨來源架構\",\n    \"body\": \"前端與 API 位於不同來源時，瀏覽器會阻擋跨來源讀取；CORS 讓伺服器授權這類讀取。\",\n    \"examples\": [\n      \"前端：https://app.example\\nAPI：https://api.example\"\n    ],\n    \"lines\": [7, 8]\n  },\n  {\n    \"title\": \"伺服器以標頭授權\",\n    \"body\": \"伺服器在回應加入標頭，列出允許的來源；瀏覽器確認符合後，才把結果交給網頁。\",\n    \"examples\": [\n      \"Access-Control-Allow-Origin: https://app.example\"\n    ],\n    \"lines\": [10, 11]\n  },\n  {\n    \"title\": \"權限決定權在伺服器\",\n    \"body\": \"是否允許跨來源讀取由伺服器決定，發出請求的網頁不能自行宣稱獲得權限。\",\n    \"examples\": [\n      \"惡意網站無法僅靠加入自訂標頭，就取得 API 回應內容。\"\n    ],\n    \"lines\": [13, 13]\n  },\n  {\n    \"title\": \"憑證請求不能用萬用字元\",\n    \"body\": \"跨來源請求若帶上憑證，伺服器必須明確指定允許的來源，不得使用萬用字元。\",\n    \"examples\": [\n      \"帶 Cookie 的請求應回傳 Access-Control-Allow-Origin: https://app.example，而不是 *。\"\n    ],\n    \"lines\": [15, 15]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}
