@@ -50,7 +50,7 @@ Feature: Progress, overdue count and the daily summary
 
   @manual
   Scenario: Pausing the day records nothing
-    When the person pauses today from the tray
+    When the person pauses today with the review command in the terminal
     Then the interface says today is paused
     And no failures are recorded
     And tomorrow those cards are one day more overdue
