@@ -70,6 +70,7 @@ npx tsx scripts/review.ts --dir contracts/fixtures/learning-minimal --dry-run --
 |---|---|---|---|---|
 | 1 | session 建立、作答、落地、小結 | I2 | done | 2026-09-03 |
 | 2 | 續答、跨日、暫停、dry-run 完整化、結束時 snapshot(ADR-042) | I3 | done | 2026-10-16 |
+| 3 | 連錯兩次的卡沒有縮短版時退回原卡(T25)、紀錄被改過時不寫並叫使用者重來(T26) | I3 | done | 2026-10-17 |
 
 ## 驗收方式
 

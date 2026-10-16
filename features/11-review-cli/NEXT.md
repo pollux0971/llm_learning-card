@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-2(2026-10-16:當日快取、續答、跨日、暫停、dry-run、結束時 snapshot;工單 T17,-ed 驗收無阻擋項,session 三檔 Stryker 96.67%,證據見 docs/reviews/acceptance-T17.md 與 T17-2026-10-16.md)。phase-1(2026-09-03) |
-| 進行中 | phase-3(T25:連錯兩次的卡沒有縮短版時退回原卡,不讓複習停掉) |
-| 下一個 | 無(兩個 phase 都完成;I3 整合等 06 phase-2 與 phase-3) |
+| 已完成 | phase-3(2026-10-17:連錯兩次的卡沒有縮短版時退回原卡並記一筆 warning(T25,-ed 驗收無阻擋項,證據 docs/reviews/acceptance-T25.md);reviews.json 寫入前的樂觀檢查,被別處改過就不寫、叫使用者重來(T26,-ed 驗收無阻擋項,真 cucumber 4/4,證據 docs/reviews/acceptance-T26.md);phase-3.feature 四個場景全綠,沒有 @manual)。phase-2(2026-10-16:當日快取、續答、跨日、暫停、dry-run、結束時 snapshot;工單 T17,-ed 驗收無阻擋項,session 三檔 Stryker 96.67%,證據見 docs/reviews/acceptance-T17.md 與 T17-2026-10-16.md)。phase-1(2026-09-03) |
+| 進行中 | 無 |
+| 下一個 | 無(三個 phase 都完成;I3 整合等 06 phase-2 與 phase-3) |
 
 ## Gate
 
