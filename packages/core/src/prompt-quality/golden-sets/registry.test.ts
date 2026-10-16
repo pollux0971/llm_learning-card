@@ -260,8 +260,18 @@ describe('登記表本身', () => {
     expect(new Set(sets.map((s) => s.promptFile)).size).toBe(3);
   });
 
-  it('每組三個輸入(FEATURE.md 開放問題:先每個任務 3 個輸入)', () => {
-    for (const set of allGoldenSets()) expect(set.inputs.length).toBe(3);
+  // T18 (d2) 改了這條:ingest.children 多三個非資安的泛化輸入(原本三個 + children-gen-*),其他組仍是 3 個。
+  // 改成逐組釘數字,比原本的「每組 3」更嚴:哪一組多一個、少一個都會紅。
+  it('每組的輸入數(FEATURE.md 開放問題:先每個任務 3 個輸入;ingest.children 另有 3 個泛化輸入,T18 (d2))', () => {
+    const counts = Object.fromEntries(allGoldenSets().map((set) => [set.id, set.inputs.length]));
+    expect(counts).toEqual({
+      'ingest.cards': 3,
+      'ingest.children': 6,
+      'ingest.regenerate': 3,
+      'ingest.questions': 3,
+      'ingest.deps': 3,
+      selftest: 3,
+    });
   });
 
   it('輸入 id 在整張表裡唯一——id 是檔名,撞名會互相蓋掉輸出檔', () => {
@@ -345,8 +355,17 @@ describe('每一組的第一則輸入逐字長這樣', () => {
     );
   });
 
-  it('ingest.children:parent_id + parent_title,內容是去掉標題的父卡正文', () => {
-    expect(first('ingest.children')).toBe(
+  // T18 (d) 改了這條:header 在 parent_title 之後多一段 already_covered(另外兩個切片的 L0 卡)。
+  // 這裡仍逐位元比「區塊以外」的部分;區塊每一行的內容(標題集合、摘要、格式)在 registry-t18.test.ts 釘死。
+  it('ingest.children:parent_id + parent_title + already_covered,內容是去掉標題的父卡正文', () => {
+    const lines = first('ingest.children').split('\n');
+    const at = lines.indexOf('already_covered:');
+    expect(at).toBe(4);
+    let stop = at + 1;
+    while (lines[stop]?.startsWith('- ')) stop += 1;
+    expect(stop - at - 1).toBe(7);
+    expect(lines[stop]).toBe('---');
+    expect([...lines.slice(0, at), ...lines.slice(stop)].join('\n')).toBe(
       [
         '---',
         'golden: children-same-origin',

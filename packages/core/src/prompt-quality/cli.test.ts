@@ -171,11 +171,12 @@ describe('cli main', () => {
     for (const id of listGoldenSets()) expect(existsSync(join(out, id))).toBe(true);
   });
 
-  it('--golden --fake 五組真任務加自我測試,一共 18 個輸入都跑得起來', async () => {
+  // T18 (d2) 改了這條:ingest.children 多三個泛化輸入,18 → 21。
+  it('--golden --fake 五組真任務加自我測試,一共 21 個輸入都跑得起來', async () => {
     const out = tmpOutDir();
     const result = await main(['--golden', '--fake', '--out', out]);
     expect(result.code).toBe(0);
-    expect(result.output).toContain('處理了 18 個 golden 輸入');
+    expect(result.output).toContain('處理了 21 個 golden 輸入');
     for (const id of REAL_TASK_GOLDEN_SET_IDS) {
       expect(result.output).toContain(`✓ golden run ${id} →`);
     }
@@ -266,7 +267,8 @@ describe('cli main', () => {
     expect(lines[0]).toBe('登記的 golden set:');
     expect(lines.slice(1, 7)).toEqual([
       `- ingest.cards → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/cards.md,3 個輸入`,
-      `- ingest.children → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/children.md,3 個輸入`,
+      // T18 (d2):ingest.children 多三個泛化輸入,3 → 6。
+      `- ingest.children → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/children.md,6 個輸入`,
       `- ingest.regenerate → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/regenerate.md,3 個輸入`,
       `- ingest.questions → LlmTask ingest.questions,prompt ${PROMPTS_DIR}/ingest/questions.md,3 個輸入`,
       `- ingest.deps → LlmTask ingest.deps,prompt ${PROMPTS_DIR}/ingest/deps.md,3 個輸入`,
