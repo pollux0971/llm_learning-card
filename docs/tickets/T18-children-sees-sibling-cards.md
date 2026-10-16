@@ -148,6 +148,8 @@ golden 的三個 children 輸入彼此獨立,所以 sibling 清單要用**固定
   每個不重複的對只算一次(A↔B 與 B↔A 是同一對,報在字典序較小的那個 child 上)。回傳 `{ pairs(≥ 0.5), observe(0.3 ≤ x < 0.5), totalPairsChecked, maxOverlap }`。
   重疊係數、n-gram、`normalizeBody` 全部沿用 T12 的函式。
 - CLI:`prompt-check.ts --overlap-siblings <children run 目錄> <cards run 目錄> [--threshold <0..1>]`:`pairs` 為空 → 退出碼 0,否則 1;錯誤(路徑、key 對不起來、`--threshold` 不合法)→ 1 並講原因;輸出一律列出觀察清單。
+  - (紅測試作者補記)紅測試對 CLI 輸出只釘這幾件,其餘格式 worker 自訂:重疊值印**三位小數**(同 T12 的 `--overlap`,`toFixed(3)`);成對的那一行要印出兩邊的 **key 與標題**;
+    觀察清單那一段要有「**觀察**」兩個字,而且 0 對時也要印這一段;沒有參數時的總用法列出 `--overlap-siblings`;缺參數時的用法也要有 `--overlap-siblings`。
 - 這條是**回歸網**(逐字照抄),不是語意判斷;這個限制要寫在檔頭註解(同 T12 的寫法)。
 - (紅測試作者補記)回傳的形狀(紅測試直接用):
 
