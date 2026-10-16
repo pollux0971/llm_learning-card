@@ -58,3 +58,75 @@ impl ShowGate {
         true
     }
 }
+
+// ───────────────────────────── T21:沒有合成器時的實心底、啟動焦點
+
+/// 沒有合成器時視窗的底色:跟 packages/ui-shared/src/hud/hud.css 的 --hud-solid 同一個值(測試釘住)。
+pub const SOLID_BACKGROUND: [u8; 4] = [0xf4, 0xf6, 0xf8, 0xff];
+
+/// 建窗時視窗的表面:透明與否、底色。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowSurface {
+    pub transparent: bool,
+    pub background: Option<[u8; 4]>,
+}
+
+/// 只看 `mode.solid`,不另外問 GDK。有合成器 → 透明、不塗底色;沒有 → 不透明、`SOLID_BACKGROUND`。
+pub fn surface_for(mode: WindowMode) -> WindowSurface {
+    if mode.solid {
+        WindowSurface {
+            transparent: false,
+            background: Some(SOLID_BACKGROUND),
+        }
+    } else {
+        WindowSurface {
+            transparent: true,
+            background: None,
+        }
+    }
+}
+
+/// 兩個卡片視窗都顯示之後,鍵盤焦點給這個視窗(考試卡:使用者開 app 之後要在這裡打字)。
+pub const STARTUP_FOCUS: &str = "test";
+
+/// 啟動焦點:所有要開的卡片視窗都顯示之後,只給一次。不開視窗、不碰時鐘。
+#[derive(Debug)]
+pub struct StartupFocus {
+    /// 還沒顯示過的標籤。只有 labels 裡有 `STARTUP_FOCUS` 才記;沒有就留空,永遠不給焦點。
+    pending: Vec<String>,
+    given: bool,
+}
+
+impl StartupFocus {
+    /// labels:這次要開的卡片視窗(open_windows 的那一份,ok 時是 teach、test;四種失敗是空的)。
+    pub fn new(labels: &[&str]) -> Self {
+        let mut pending = Vec::new();
+        if labels.iter().any(|label| *label == STARTUP_FOCUS) {
+            for label in labels {
+                if !pending.iter().any(|seen| seen == label) {
+                    pending.push((*label).to_string());
+                }
+            }
+        }
+        Self {
+            pending,
+            given: false,
+        }
+    }
+
+    /// 某個視窗剛顯示。全部都顯示的那一次回 `Some(STARTUP_FOCUS)`,之後都回 `None`。
+    pub fn on_shown(&mut self, label: &str) -> Option<&'static str> {
+        if self.given {
+            return None;
+        }
+        let Some(at) = self.pending.iter().position(|pending| pending == label) else {
+            return None;
+        };
+        self.pending.swap_remove(at);
+        if !self.pending.is_empty() {
+            return None;
+        }
+        self.given = true;
+        Some(STARTUP_FOCUS)
+    }
+}

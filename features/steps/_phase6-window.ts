@@ -14,6 +14,8 @@ export interface OpenedWindow {
   /** 除了 classList 之外碰過的東西 */
   touched: string[];
   threw?: string;
+  /** Rust 端真的算出來的 surface_for(mode_for(composited))(T21) */
+  surface?: { transparent: boolean; background: number[] | null; solidBackground: number[] };
 }
 
 /** key 是 cucumber 的 World;值是這個場景裡打開過的視窗(沒有就是沒打開) */

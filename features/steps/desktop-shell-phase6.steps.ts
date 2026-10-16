@@ -13,10 +13,10 @@ import { openedWindows, type OpenedWindow } from './_phase6-window.js';
 import { readTauriConf, type TauriConf } from '../../apps/desktop/src/test-support/frontend-dist.js';
 import {
   EMIT_TIMEOUT_MS, REQUIRED_PERMISSIONS, capabilityProblems, decorationsProblems, layoutClassNames, readCapability, runInitScript,
-  rustInitScript, transparentProblems,
+  rustInitScript, rustStartupFocus, rustSurface, transparencyLeftToAppProblems, type StartupFocusEmit,
 } from '../../apps/desktop/src/test-support/window-frame.js';
 
-interface Phase6State { conf?: TauriConf; capability?: ReturnType<typeof readCapability>; composited?: boolean }
+interface Phase6State { conf?: TauriConf; capability?: ReturnType<typeof readCapability>; composited?: boolean; windowsOpening?: boolean; focus?: StartupFocusEmit }
 const states = new WeakMap<LearningWorld, Phase6State>();
 function st(w: LearningWorld): Phase6State {
   let s = states.get(w);
@@ -34,10 +34,10 @@ Then('both windows have the system decorations turned off', function (this: Lear
   assert.ok(conf, '還沒讀 tauri.conf.json');
   none(decorationsProblems(conf));
 });
-Then('both windows are transparent', function (this: LearningWorld) {
+Then('the configuration leaves transparency to the app', function (this: LearningWorld) {
   const conf = st(this).conf;
   assert.ok(conf, '還沒讀 tauri.conf.json');
-  none(transparentProblems(conf));
+  none(transparencyLeftToAppProblems(conf));
 });
 
 // ---------------------------------------------------------------- 場景 2:權限
@@ -67,7 +67,7 @@ When('a window opens', { timeout: EMIT_TIMEOUT_MS + 30_000 }, function (this: Le
   const wanted = st(this).composited === undefined ? [true, false] : [st(this).composited!];
   const opened: OpenedWindow[] = wanted.map((composited) => {
     const run = runInitScript(rustInitScript(composited));
-    return { composited, classes: run.classes, touched: run.touched, ...(run.threw === undefined ? {} : { threw: run.threw }) };
+    return { composited, classes: run.classes, touched: run.touched, surface: rustSurface(composited), ...(run.threw === undefined ? {} : { threw: run.threw }) };
   });
   openedWindows.set(this, opened);
 });
@@ -83,4 +83,51 @@ Then(/^the page root (has|does not have) the solid class$/, function (this: Lear
     assert.equal(w.classes.includes(solid), has === 'has',
       `桌面${w.composited ? '能' : '不能'}畫透明時,根元素${has === 'has' ? '要有' : '不能有'} ${solid};實際 class:[${w.classes.join(', ')}]`);
   }
+});
+
+Then(/^the window (is|is not) transparent$/, function (this: LearningWorld, is: string) {
+  const opened = openedWindows.get(this);
+  assert.ok(opened && opened.length > 0, '還沒打開視窗(少了 When a window opens)');
+  for (const w of opened) {
+    assert.ok(w.surface, 'Rust 沒有回 surface_for 的結果');
+    assert.equal(w.surface.transparent, is === 'is', `桌面${w.composited ? '能' : '不能'}畫透明時,視窗${is === 'is' ? '要' : '不能'}透明;Rust 的 surface_for 回 transparent=${w.surface.transparent}`);
+  }
+});
+
+Then(/^the window background is (left clear|the solid fallback colour)$/, function (this: LearningWorld, what: string) {
+  const opened = openedWindows.get(this);
+  assert.ok(opened && opened.length > 0, '還沒打開視窗(少了 When a window opens)');
+  for (const w of opened) {
+    assert.ok(w.surface, 'Rust 沒有回 surface_for 的結果');
+    if (what === 'left clear') {
+      assert.equal(w.surface.background, null, `桌面能畫透明時不塗底色(切角才看得到桌面);實際 ${JSON.stringify(w.surface.background)}`);
+    } else {
+      assert.deepEqual(w.surface.background, w.surface.solidBackground, '沒有合成器時底色是 SOLID_BACKGROUND');
+      assert.equal(w.surface.background?.[3], 255, '底色的 alpha 是 255(不透明)');
+    }
+  }
+});
+
+// ---------------------------------------------------------------- Scenario Outline:啟動焦點
+Given('the card windows are opening', function (this: LearningWorld) {
+  st(this).windowsOpening = true;
+});
+
+When(/^the (teach|test) window is shown first and the other one after it$/, { timeout: EMIT_TIMEOUT_MS + 30_000 }, function (this: LearningWorld, first: string) {
+  assert.ok(st(this).windowsOpening, '少了 Given the card windows are opening');
+  st(this).focus = rustStartupFocus(first as 'teach' | 'test');
+});
+
+Then('the keyboard focus is given to the test card', function (this: LearningWorld) {
+  const focus = st(this).focus;
+  assert.ok(focus, '還沒顯示視窗(少了 When … is shown first …)');
+  assert.equal(focus.results.length, 4);
+  assert.equal(focus.results[0], null, '只有一個視窗顯示時還不能給焦點');
+  assert.equal(focus.results[1], 'test', '兩個都顯示之後,焦點給考試卡');
+});
+
+Then('it is given only once', function (this: LearningWorld) {
+  const focus = st(this).focus;
+  assert.ok(focus, '還沒顯示視窗');
+  assert.equal(focus.results.filter((r) => r !== null).length, 1, `焦點只給一次;實際 ${JSON.stringify(focus.results)}`);
 });
