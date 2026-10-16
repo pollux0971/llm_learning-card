@@ -46,19 +46,22 @@ function commandFns(src: string): CommandFn[] {
   return out;
 }
 
-describe('the four Tauri commands are one line each(A1)', () => {
+describe('the four learning_fs Tauri commands are one line each(A1;T22 加了第五個 review,見下)', () => {
   it('src-tauri/src/commands.rs exists', () => {
     expect(existsSync(COMMANDS), 'apps/desktop/src-tauri/src/commands.rs').toBe(true);
   });
 
-  it('there are exactly four commands: read, write, list, exists', () => {
+  // T22 改動(ADR-075,工單驗收 5 強制):多了第五個 command `review`(複習側車的轉手),它不碰 learning_fs;
+  // 它的形狀(只轉手、不看內容)由 review-sidecar-wiring.test.ts 的 reviewCommandProblems 釘住。
+  // 原本四個的規則一個字沒放鬆:仍是一行、呼叫同一個 learning_fs 函式。
+  it('there are exactly five commands: read, write, list, exists, and review (the sidecar pass-through)', () => {
     const names = commandFns(readFileSync(COMMANDS, 'utf8')).map((c) => c.name).sort();
-    expect(names).toEqual(['exists', 'list', 'read', 'write']);
+    expect(names).toEqual(['exists', 'list', 'read', 'review', 'write']);
   });
 
   it('each body is a single expression that calls one learning_fs function, the same one the probe calls', () => {
     const probe = stripRustComments(readFileSync(PROBE, 'utf8'));
-    for (const cmd of commandFns(readFileSync(COMMANDS, 'utf8'))) {
+    for (const cmd of commandFns(readFileSync(COMMANDS, 'utf8')).filter((c) => c.name !== 'review')) {
       expect(cmd.body.includes(';'), `${cmd.name}: more than one statement: ${cmd.body}`).toBe(false);
       expect(/\b(let|if|match|for|while|loop)\b/.test(cmd.body), `${cmd.name}: logic in the command body: ${cmd.body}`).toBe(false);
       const calls = [...cmd.body.matchAll(/\blearning_fs::([a-z_][a-z0-9_]*)\s*\(/g)].map((m) => m[1]);

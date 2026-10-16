@@ -478,8 +478,10 @@ function functionBody(code: string, name: string): string {
 }
 
 describe('靜態(T26 要求 3、6、must_catch 最後一條)', () => {
-  it('scripts/review.ts 的 sessionFromCache(續答那條建 session 的路)用 readReviewsSnapshot 並把雜湊放進 session', () => {
-    const body = functionBody(source('scripts/review.ts'), 'sessionFromCache');
+  // T22 改動(工單驗收 1「編排只有一份」強制):sessionFromCache 從 scripts/review.ts 搬進 packages/core/src/session/engine.ts,
+  // 所以這條斷言的檔案跟著換;斷言本身一個字沒放鬆(仍要 readReviewsSnapshot 與 reviewsHash)。
+  it('engine.ts 的 sessionFromCache(續答那條建 session 的路)用 readReviewsSnapshot 並把雜湊放進 session', () => {
+    const body = functionBody(source('packages/core/src/session/engine.ts'), 'sessionFromCache');
     expect(body, '找不到 sessionFromCache').not.toBe('');
     expect(body).toMatch(/readReviewsSnapshot\s*\(/);
     expect(body).toMatch(/reviewsHash\s*:/);
