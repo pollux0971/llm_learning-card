@@ -44,6 +44,8 @@ function noopRouter(): LlmRouter {
 function makeDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'lc-t25-'));
   tmpDirs.push(dir);
+  // 真的 learning 目錄一定有 state/(index 時就建好);測試目錄照樣,才不會把「要不要 mkdir」變成這張工單的規格
+  mkdirSync(join(dir, 'state'), { recursive: true });
   return dir;
 }
 
@@ -67,7 +69,7 @@ function writeQuestions(dir: string, id: string): void {
   mkdirSync(join(dir, 'questions'), { recursive: true });
   writeFileSync(
     join(dir, 'questions', `${id}.yaml`),
-    [`card: ${id}`, 'fill:', '  - prompt: "答案是 ___。"', '    answers:', '      - ["對"]', 'apply:', '  - prompt: "解釋一下。"', '    rubric:', '      - "有講到重點"', ''].join('\n'),
+    [`card: ${id}`, 'fill:', '  - prompt: "答案是 ___。"', '    answers:', '      - ["對"]', '  - prompt: "另一個 ___。"', '    answers:', '      - ["也對"]', 'apply:', '  - prompt: "解釋一下。"', '    rubric:', '      - "有講到重點"', '      - "沒有事實錯誤"', ''].join('\n'),
   );
 }
 
@@ -196,7 +198,6 @@ describe('warning', () => {
   it('已有的 log 內容不動,warning 接在後面', async () => {
     const dir = makeDir();
     writeOriginal(dir, 'sec-0001');
-    mkdirSync(join(dir, 'state'), { recursive: true });
     const existing = `${JSON.stringify({ ts: '2026-09-09T00:00:00.000Z', type: 'reviewed', card: 'sec-0009' })}\n`;
     writeFileSync(join(dir, 'state/log.jsonl'), existing);
     await presentNextCard(makeSession(dir, { reteachQueue: ['sec-0001'] }));
@@ -216,7 +217,6 @@ describe('warning', () => {
   it.skipIf(process.getuid?.() === 0)('state 目錄唯讀也不可以讓複習停掉', async () => {
     const dir = makeDir();
     writeOriginal(dir, 'sec-0001');
-    mkdirSync(join(dir, 'state'), { recursive: true });
     chmodSync(join(dir, 'state'), 0o500);
     try {
       const result = await presentNextCard(makeSession(dir, { reteachQueue: ['sec-0001'] }));
