@@ -30,7 +30,7 @@
 - [ ] 整合:無
 - [ ] 契約:無(不動磁碟格式)
 
-  要動的只有 `apps/desktop/`:`tauri.conf.json` 兩個視窗設 `decorations: false`、`transparent: true`;
+  要動的只有 `apps/desktop/`:`tauri.conf.json` 兩個視窗設 `decorations: false`;透明由程式依合成器決定,設定檔不寫(T21,沒有合成器時視窗不透明、底色 `--hud-solid`);
   `capabilities/default.json` 加開始拖曳、開始縮放拖曳、縮小、關閉四個視窗權限;頁面根元素加 `hud-frameless`,
   偵測不到合成器(compositor)時再加 `hud-solid`(Linux 的 WebKitGTK 沒有合成器時透明區會變黑,所以要退回實心底)。
   偵測放 Rust 端,怎麼把結果交給頁面由工單定,目標是第一次畫面之前就決定,不要先黑再變。
