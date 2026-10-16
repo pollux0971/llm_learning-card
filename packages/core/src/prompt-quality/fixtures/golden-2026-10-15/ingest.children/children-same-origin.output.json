@@ -1,0 +1,8 @@
+{
+  "id": "children-same-origin",
+  "text": "[\n  {\n    \"title\": \"來源三元組\",\n    \"body\": \"判斷兩個網址是否同源時，逐一比較 scheme、hostname 與 port；任一項不同，就不能視為同源。\",\n    \"examples\": [\n      \"https://app.example.com:443/a 與 https://app.example.com:443/b：同源\"\n    ]\n  },\n  {\n    \"title\": \"Cookie 與讀取權\",\n    \"body\": \"同源限制主要保護讀取權：跨站請求可能送出登入 Cookie，但攻擊頁不能直接取得回應內容。\",\n    \"examples\": [\n      \"受害者已登入 bank.example；evil.example 發出查詢請求，雖可能帶上銀行 Cookie，腳本仍讀不到帳戶餘額。\"\n    ]\n  },\n  {\n    \"title\": \"預設埠的比較\",\n    \"body\": \"預設埠也會納入比較：HTTPS 通常是 443、HTTP 通常是 80；明寫非預設埠會造成不同來源。\",\n    \"examples\": [\n      \"https://a.test 與 https://a.test:443：同源\",\n      \"https://a.test 與 https://a.test:8443：不同源\"\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

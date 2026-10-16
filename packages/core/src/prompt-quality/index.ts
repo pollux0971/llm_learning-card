@@ -1,6 +1,7 @@
 export * from './types.js';
 export * from './word-count.js';
 export * from './structural-checks.js';
+export * from './parent-child-overlap.js';
 export * from './fake-llm.js';
 export * from './scores.js';
 export * from './golden-run.js';
