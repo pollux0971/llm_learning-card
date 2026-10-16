@@ -52,9 +52,23 @@ fn desktop_is_composited() -> bool {
     true
 }
 
+/// 某個卡片視窗剛顯示。兩個都顯示的那一次,`on_shown` 回的標籤才 `set_focus`(全檔只此一處)。
+fn focus_if_both_shown(window: &WebviewWindow, focus: &Arc<Mutex<window_mode::StartupFocus>>, label: &str) {
+    let mut focus = focus.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(target) = focus.on_shown(label) {
+        if let Some(card) = window.get_webview_window(target) {
+            let _ = card.set_focus();
+        }
+    }
+}
+
 /// 超過 SHOW_FALLBACK 還沒載入完也顯示一次,並寫明是哪一個視窗、等了多久。
 /// 已經顯示過(載入先完成)則什麼都不做、不寫 warn。show() 把訊息送回事件迴圈,可以在這條執行緒叫。
-fn arm_show_fallback(window: &WebviewWindow, gate: Arc<Mutex<window_mode::ShowGate>>) {
+fn arm_show_fallback(
+    window: &WebviewWindow,
+    gate: Arc<Mutex<window_mode::ShowGate>>,
+    focus: Arc<Mutex<window_mode::StartupFocus>>,
+) {
     let window = window.clone();
     let label = window.label().to_string();
     std::thread::spawn(move || {
@@ -66,18 +80,23 @@ fn arm_show_fallback(window: &WebviewWindow, gate: Arc<Mutex<window_mode::ShowGa
                 window_mode::SHOW_FALLBACK
             );
             let _ = window.show();
+            focus_if_both_shown(&window, &focus, &label);
         }
     });
 }
 
 /// tauri.conf.json 的兩個視窗是 `create: false`:啟動狀態決定要不要開(T2c-2 驗收 3)。
 /// ok 開教學卡與測驗卡;四種失敗只開 `setup` 視窗,顯示 `start_screen` 的那一頁。
-/// 卡片視窗先藏起來:頁面第一次載入完(或逾時)才顯示。setup 視窗不改,照舊有系統外框。
+/// 卡片視窗先藏起來:頁面第一次載入完(或逾時)才顯示。沒有合成器時建窗就用不透明實心底。
+/// 兩個都顯示之後,鍵盤焦點給考試卡。setup 視窗不改,照舊有系統外框。
 fn open_windows(app: &App, state: StartState) -> Result<(), Box<dyn std::error::Error>> {
     let session = session::detect_from_env();
     let mode = window_mode::mode_for(desktop_is_composited());
     let script = window_mode::init_script(mode);
-    for label in start_screen::windows(state) {
+    let surface = window_mode::surface_for(mode);
+    let labels = start_screen::windows(state);
+    let focus = Arc::new(Mutex::new(window_mode::StartupFocus::new(labels)));
+    for label in labels {
         let config = app
             .config()
             .app
@@ -88,7 +107,10 @@ fn open_windows(app: &App, state: StartState) -> Result<(), Box<dyn std::error::
             .clone();
         let gate = Arc::new(Mutex::new(window_mode::ShowGate::new()));
         let gate_for_page = Arc::clone(&gate);
-        let window = WebviewWindowBuilder::from_config(app.handle(), &config)?
+        let focus_for_page = Arc::clone(&focus);
+        let shown_label = *label;
+        let mut builder = WebviewWindowBuilder::from_config(app.handle(), &config)?
+            .transparent(surface.transparent)
             .initialization_script(script.clone())
             .on_page_load(move |window, payload| {
                 if payload.event() != PageLoadEvent::Finished {
@@ -97,10 +119,14 @@ fn open_windows(app: &App, state: StartState) -> Result<(), Box<dyn std::error::
                 let mut gate = gate_for_page.lock().unwrap_or_else(PoisonError::into_inner);
                 if gate.on_page_finished() {
                     let _ = window.show();
+                    focus_if_both_shown(&window, &focus_for_page, shown_label);
                 }
-            })
-            .build()?;
-        arm_show_fallback(&window, gate);
+            });
+        if let Some(color) = surface.background {
+            builder = builder.background_color(tauri::window::Color(color[0], color[1], color[2], color[3]));
+        }
+        let window = builder.build()?;
+        arm_show_fallback(&window, gate, Arc::clone(&focus));
         apply_session_behaviour(&window, session);
     }
     if state != StartState::Ok {
