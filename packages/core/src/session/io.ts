@@ -13,6 +13,7 @@
  *   yaml 的 parse、@contracts 的 ReviewSchema / QuestionFileSchema /
  *   SettingsSchema、@core/schema/atomic-write.js 的 writeFileAtomic。
  */
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -53,6 +54,72 @@ export function loadReviews(learningDir: string): Record<CardId, Review> {
 export function saveReviews(learningDir: string, reviews: Record<CardId, Review>): void {
   const path = join(learningDir, 'state/reviews.json');
   writeFileAtomic(path, `${JSON.stringify(reviews, null, 2)}\n`);
+}
+
+/**
+ * 檔案不存在時的固定基準。不是空檔的雜湊:別人在這期間建了檔必須看得出來。
+ */
+const ABSENT_REVIEWS_HASH = 'absent';
+
+const REVIEWS_CHANGED_MESSAGE = '複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。';
+
+/**
+ * 寫入前重讀比對失敗。`message` 與 `code` 是側車對應的契約,逐字固定。
+ * T22/T24 只依賴這兩個,不依賴 instanceof(側車是別的行程)。
+ */
+export class ReviewsChangedError extends Error {
+  readonly code = 'reviews-changed';
+
+  constructor() {
+    super(REVIEWS_CHANGED_MESSAGE);
+    this.name = 'ReviewsChangedError';
+  }
+}
+
+function reviewsJsonPath(learningDir: string): string {
+  return join(learningDir, 'state/reviews.json');
+}
+
+function hashBytes(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+function parseReviews(text: string): Record<CardId, Review> {
+  const raw = JSON.parse(text) as Record<string, unknown>;
+  const reviews: Record<CardId, Review> = {};
+  for (const [card, value] of Object.entries(raw)) {
+    reviews[card] = ReviewSchema.parse(value);
+  }
+  return reviews;
+}
+
+/**
+ * 一次讀 `state/reviews.json`:同一份原始位元組既過 `ReviewSchema.parse`(規則與
+ * `loadReviews` 相同),又算 SHA-256。雜湊是檔案位元組的十六進位小寫,不是重新
+ * 序列化之後的。檔案不存在回 `{ reviews: {}, hash: 'absent' }`。
+ */
+export function readReviewsSnapshot(learningDir: string): { reviews: Record<CardId, Review>; hash: string } {
+  const path = reviewsJsonPath(learningDir);
+  if (!existsSync(path)) return { reviews: {}, hash: ABSENT_REVIEWS_HASH };
+
+  const buf = readFileSync(path);
+  return { reviews: parseReviews(buf.toString('utf8')), hash: hashBytes(buf) };
+}
+
+/**
+ * 寫之前再讀一次磁碟上的 `reviews.json`。雜湊與 `expectedHash` 不同就什麼都不寫
+ * (不建暫存檔),丟 `ReviewsChangedError`。相同則照 `saveReviews` 的格式
+ * (`JSON.stringify(reviews, null, 2) + '\n'`)用 `writeFileAtomic` 寫入,回傳
+ * 剛寫進去的位元組的雜湊,給呼叫端當下一次的基準。
+ *
+ * 誠實的限制:重讀比對到 rename 之間仍有微秒級的空窗。樂觀檢查不是鎖;顧問已接受,不再加碼。
+ */
+export function saveReviewsIfUnchanged(learningDir: string, reviews: Record<CardId, Review>, expectedHash: string): string {
+  if (readReviewsSnapshot(learningDir).hash !== expectedHash) throw new ReviewsChangedError();
+
+  const payload = `${JSON.stringify(reviews, null, 2)}\n`;
+  writeFileAtomic(reviewsJsonPath(learningDir), payload);
+  return hashBytes(Buffer.from(payload, 'utf8'));
 }
 
 /** config/settings.yaml,用 `SettingsSchema.parse` 驗證。phase-1 只用得到 daily_cap。 */
