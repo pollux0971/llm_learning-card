@@ -15,7 +15,7 @@ must_catch:
   - start 回 paused 時還出題、或 next 被呼叫:暫停的測試必須紅
   - start 回 no-cards 時顯示「今天沒有到期」:P-28 的測試必須紅
   - 側車錯誤(sidecar-exited、timeout、sidecar-unavailable、internal)時畫面卡住、沒有重試、或重試不是重新 start:錯誤處理的測試必須紅
-  - review-record-changed 時沒有顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習」、或沒有「重新開始」、或不重新 start 就繼續出題:錯誤處理的測試必須紅
+  - review-record-changed 時沒有顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」、或沒有「重新開始」、或不重新 start 就繼續出題:錯誤處理的測試必須紅
   - start 回 fakeCloud true 時沒有「測試模式」標記,或 false 時有:標記的測試必須紅
   - reteach 的檔不是經 LearningFs 讀(例如經側車、fetch、寫死內容),或 short 是 false 時沒有說明「先看原卡」:reteach 的測試必須紅
   - 縮短版的內容用 innerHTML / {@html} 塞進畫面:靜態檢查必須紅
@@ -92,7 +92,7 @@ export interface SessionDeps {
 | `no-cards` | 「掃描到 0 張卡 —— 這個 learning 資料夾沒有卡片。」(**不能**說成「今天沒有到期」,P-28) |
 | `router-unavailable` | 「帳本身分驗不過,批改不能用。請在終端機執行 `npx tsx scripts/vault.ts show` 看原因。」 |
 | `paused` | 同 `start` 回 `paused` 的畫面:「今天已暫停。要繼續,在終端機執行 `npx tsx scripts/review.ts --dir <learning 目錄> --today <今天> --unpause`。」 |
-| `review-record-changed` | 「複習紀錄剛被別的地方改過,請重新開始今天的複習。」加一顆「重新開始」;按了重新 `init()`。這一題**沒有**被記下(T26 拒絕寫入),重新開始後會再問 |
+| `review-record-changed` | 顯示 `ReviewError.message` 原文(T26 定稿的全文:「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」),加一顆「重新開始」;按了重新 `init()`。剛才那一題沒有被記下(T26 拒絕寫入),重新開始後會再問到 |
 | `sidecar-exited`、`timeout`、`sidecar-unavailable`、`internal`、`busy` | 「複習程式停了。」加一顆「重新開始」;按了重新 `init()`(從 `start` 開始;T22 的 Rust 會重起側車) |
 | 其他 | 同上 |
 
@@ -128,7 +128,7 @@ export interface SessionDeps {
 | phase-2 `@manual`「A full session end to end」 | 暫存 learning 有 5 張到期(learning-minimal 複製再補兩張);答完五張 | `reviews.json` 五張都有今天的 history;關掉再開,顯示「今天沒有到期的複習」;`learning/` 有一個新的 snapshot commit |
 | 視窗與終端機看到同一份 | 視窗答兩張後關掉;終端機跑 `scripts/review.ts --dry-run` | 列出剩下的三張,順序跟視窗原本的一樣 |
 | 批改失敗留在原地 | fake cloud 回不合法的回應兩次 | 畫面顯示「評分失敗,請再試一次」,同一題、輸入還在;`reviews.json` 那張卡不變 |
-| 視窗與終端機同時寫 | 視窗出題後,用終端機答一題(T26 的觸發方式),再在視窗送出 | 視窗顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。」與「重新開始」;`reviews.json` 只有終端機那一筆;按「重新開始」後正常出題 |
+| 視窗與終端機同時寫 | 視窗出題後,用終端機答一題(T26 的觸發方式),再在視窗送出 | 視窗顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」與「重新開始」;`reviews.json` 只有終端機那一筆;按「重新開始」後正常出題 |
 | 測試模式標記 | 帶 / 不帶 `LC_REVIEW_FAKE_CLOUD` | 帶的時候有那一行;不帶時沒有(不帶時用沒有 `.env` 的簽出,`start` 回 `router-unavailable` 或正常開始) |
 | 側車停了 | 對側車送 SIGKILL,再按「下一題」 | 顯示「複習程式停了」;按「重新開始」回到題目(續答,header 是已答 / 總數) |
 | 長相 | 檢查器截圖:題目、結果、錯誤、暫停、reteach 五種畫面 | console 0 則;送出鍵不捲動可見(T15 的量法) |

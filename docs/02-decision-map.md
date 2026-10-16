@@ -1516,7 +1516,7 @@ graph TD
 - **Consequences**:
   - 視窗與終端機是同一份程式碼,I3 的「window and terminal produce the same session」自然成立,沒有第二份實作。
   - 桌面程式要有 `node`:Rust 用 `node --import tsx scripts/review-sidecar.ts --dir <learning 根>`,工作目錄是 repo 根(現在本來就從 repo 跑)。**已知限制:打包(10 phase-4、phase-5)時要帶 Node runtime,或把側車編成單一執行檔,到時再決定。**
-  - 視窗與終端機同時開著、同時答題時,**後寫的一方會被拒絕、不寫**(見 T26:core 寫 `reviews.json` 前重讀、比對載入時的雜湊),視窗與終端機都顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習」。
+  - 視窗與終端機同時開著、同時答題時,**後寫的一方會被拒絕、不寫**(見 T26:core 寫 `reviews.json` 前重讀、比對載入時的雜湊),視窗與終端機都顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」。
     不靜默丟資料(`reviews.json` 是幾個月的記憶資料,硬規則 5 的精神;技術顧問 2026-10-16 裁決),也不鎖檔(鎖檔放在 `learning/state/` 底下就是改 §12)。
   - 子行程環境用白名單,所以只在 shell 裡 `export` 的 LLM 變數(沒寫進 `.env`)桌面版拿不到;CLI 照舊讀 shell 的環境。
   - 06 的單獨執行(ADR-022):vite dev server 用同一支側車,跑在 `contracts/fixtures/learning-minimal` 的暫存複本上,一律假 router;dev server 本身的埠是開發工具的,不是 app 的。

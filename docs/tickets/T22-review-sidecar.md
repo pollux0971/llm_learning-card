@@ -145,7 +145,7 @@ export async function submitAnswer(session: Session, answer: string | string[], 
   | 側車 | `paused` | 今天暫停時呼叫 `next` / `submit` |
   | 側車 | `no-session` | 還沒 `start` 就呼叫 `next` / `submit` / `summary` |
   | 側車 | `no-question` | 還沒 `next` 拿到題目就 `submit`,或 `fill` / `apply` 跟目前題型不合 |
-  | 側車 | `review-record-changed` | `submit` 寫 `reviews.json` 時,T26 的檢查發現紀錄在載入之後被別的地方改過(例如終端機同時在答);**沒有寫入**。`message` 是「複習紀錄剛被別的地方改過,請重新開始今天的複習」 |
+  | 側車 | `review-record-changed` | `submit` 寫 `reviews.json` 時,T26 的檢查發現紀錄在載入之後被別的地方改過(例如終端機同時在答);**沒有寫入**。`message` 是 T26 定的全文「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」(T26 的 code 是 `reviews-changed`;協定的 kind 是 `review-record-changed`) |
   | 側車 | `internal` | 其他例外(原文不回;stderr 只印 `[review-sidecar] internal`)|
   | Rust | `not-configured` | 啟動狀態不是 ok(learning 根沒設好,T2c-2)|
   | Rust | `sidecar-unavailable` | 起不來(沒有 node、20 秒內沒有 hello)|
