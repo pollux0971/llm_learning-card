@@ -31,6 +31,33 @@ Feature: The test card wired to the real modules
     Then the card's stage on disk is unchanged
     And the question remains in the session
 
+  Scenario: The review helper takes only review actions
+    When the window sends the review helper an action other than start, next, submit, summary or status
+    Then the action is refused
+    And the helper keeps running
+    And no action the window can send carries a path or a card id
+
+  Scenario: The helper's message shape is the same on both sides
+    When the shared message vectors are read by the window side and by the desktop shell
+    Then both accept and refuse exactly the same lines
+
+  Scenario: A helper that has exited is reported and the next action starts a new one
+    Given the review helper has exited
+    When the window sends an action
+    Then the window is told the helper has exited
+    And the action after that is answered by a new helper
+
+  Scenario: The fake grader can only be turned on when the application starts
+    Given the application was started without the fake grader variable
+    When the window sends any action
+    Then the grading stays real
+    And a release build drops the fake grader variable before starting the helper
+
+  @manual
+  Scenario: The helper does not outlive the application
+    When the application is closed, or killed
+    Then no review helper process is left running
+
   @manual
   Scenario: A full session end to end
     Given five questions are due

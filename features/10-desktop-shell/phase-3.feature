@@ -58,3 +58,5 @@ Feature: Tray, autostart and staying out of the way
     Then the menu item becomes an unpause action
     And the test card says the day is paused
     And the tray count shows a dash
+    And no failures are recorded
+    And tomorrow those cards are one day more overdue
