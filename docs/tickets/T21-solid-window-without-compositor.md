@@ -51,7 +51,7 @@ T16 的 `@manual` 量到:沒有合成器時,兩個卡片視窗出現後的第一
 4. 頁面 class 照舊 `hud-solid`。
 5. 有合成器時照現在的做法。
 6. `tauri.conf.json` 裡寫死的 `transparent: true` 改成由程式決定。
-7. 改實作,不改契約。不需要新的 ADR(ADR-072 補一段,見「ADR-072 補記」)。
+7. 改實作,不改契約。不需要新的 ADR(ADR-072 補一段,見「補記到 ADR-072 的建議文字」)。
 
 ## 驗收條件
 
@@ -165,7 +165,7 @@ T16 的測試裡要跟著改的(紅測試作者改,開發 worker 不改):
 
 `features/10-desktop-shell/NEXT.md` 的 phase-6 段:`transparent: true` 那句改成「透明由程式依合成器決定(T21)」。
 
-## ADR-072 補記(同一個 commit 的建議文字,技術顧問決定要不要收)
+## 補記到 ADR-072 的建議文字(規格那個 commit 已加進 decision-map,技術顧問決定要不要收)
 
 不開新號。照 ADR-072「第 2 輪」的寫法,在 Consequences 後面加:
 
@@ -215,7 +215,7 @@ npm run boundaries
 - 不改 `setup` 視窗。不改 `Cargo.toml`、`Cargo.lock`、`package.json`、`package-lock.json`、`capabilities/`。
 - 不追執行中的合成器變化;不做 Wayland、macOS、Windows(跟 T16 一樣)。
 - T16 `@manual` 的觀察 O1(啟動後拿到鍵盤焦點的視窗不固定)、O2(Xvfb 沒有視窗管理員時拖曳後吃掉下一次按下)不在這張;要做另開票。
-- 不配 ADR 號(不需要;ADR-072 補記見上)。
+- 不配 ADR 號(不需要;補記見上)。
 
 ## 預算
 
