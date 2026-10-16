@@ -26,9 +26,10 @@
  *    → 回傳 session.current.types[typeIndex] 那一題的 presentation,
  *    不重新從 queue 拿卡、不改 progress(同一張卡的第二題共用同一個 progress)。
  *
- * progress:`{ index, total }`。total = session.totalDue(建立 session 當下的
- * queue 長度,固定分母);index = session.totalDue - session.queue.length + 1
- * (第一張卡是 1,不是 0)。reteach 完全不影響這兩個數字。
+ * progress:`{ index, total }`。total = session.totalDue(當天整個 session 的題數,
+ * 固定分母,續答也不改);index = session.totalDue - session.queue.length + 1。
+ * 呼叫端在進來之前要把「今天已答」的卡從 queue 拿掉,分子才是「已略過 + 目前題號」
+ * (5 題答了 2 題,續答第一題是 3/5,不是 1/3)。reteach 完全不影響這兩個數字。
  *
  * blanks 欄位只在 type==='fill' 時填,用 `countBlanks(fillQuestion.prompt)`
  * (契約 §3 的權威演算法,不自己重新算 `___` 的數量)。

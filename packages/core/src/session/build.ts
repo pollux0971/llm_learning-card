@@ -9,8 +9,9 @@
  * 不再有預設 router(T13,I2 整合)。
  */
 import type { CardId, Review } from '@contracts/index.js';
-import { buildDueList, selectSession, type SchedulableCard } from '@core/scheduler/index.js';
+import { buildDueList, questionTypesForStage, selectSession, type DueItem, type SchedulableCard } from '@core/scheduler/index.js';
 import type { LlmRouter } from '@core/grading/index.js';
+import type { SessionCache } from './cache.js';
 import { loadReviews, loadSettings } from './io.js';
 import type { Session } from './types.js';
 
@@ -44,6 +45,31 @@ export interface BuildSessionCtx {
  */
 export function deriveReteachQueue(reviews: Record<CardId, Review>, dueCards: CardId[]): CardId[] {
   return dueCards.filter((card) => reviews[card]?.fails_in_row === 2);
+}
+
+/**
+ * 快取的 queue 只有四個欄位,決定「今天問哪些卡、什麼順序」。
+ * 題型與 stuck 以 reviews.json 為準(快取不存答案與分數,stage 可能跟帳本不一致);
+ * 帳本沒有這張卡、或 stage 不在 1–5,才退回快取裡的 stage。
+ */
+export function dueItemsFromCache(queue: SessionCache['queue'], reviews: Record<CardId, Review>): DueItem[] {
+  return queue.map((item) => {
+    const review = reviews[item.card];
+    const stage = review && review.stage >= 1 && review.stage <= 5 ? review.stage : item.stage;
+    return {
+      card: item.card,
+      stage,
+      types: questionTypesForStage(stage),
+      overdue_days: item.overdue_days,
+      overdue_ratio: item.overdue_ratio,
+      stuck: review?.stuck ?? false,
+    };
+  });
+}
+
+/** 今天 history 有一筆的卡視為已答,續答時略過。分母 totalDue 不動,所以進度是 3/5 不是 1/3。 */
+export function dropAnsweredToday(queue: DueItem[], reviews: Record<CardId, Review>, today: string): DueItem[] {
+  return queue.filter((item) => !(reviews[item.card]?.history ?? []).some((entry) => entry.date === today));
 }
 
 /**
