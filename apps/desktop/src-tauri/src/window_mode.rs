@@ -86,47 +86,120 @@ pub fn surface_for(mode: WindowMode) -> WindowSurface {
     }
 }
 
-/// 兩個卡片視窗都顯示之後,鍵盤焦點給這個視窗(考試卡:使用者開 app 之後要在這裡打字)。
+/// 最後顯示、拿到焦點的那個視窗(考試卡:使用者開 app 之後要在這裡打字)。
 pub const STARTUP_FOCUS: &str = "test";
 
-/// 啟動焦點:所有要開的卡片視窗都顯示之後,只給一次。不開視窗、不碰時鐘。
+/// 先顯示的那個視窗(教學卡)。考試卡要等它顯示過才顯示,焦點才會落在後 map 的考試卡。
+pub const SHOW_FIRST: &str = "teach";
+
+/// 教學卡一直沒顯示時,考試卡最晚在建窗後這麼久顯示。比每個視窗自己的 3 秒顯示退路晚。
+pub const ORDER_BACKSTOP: Duration = Duration::from_secs(5);
+
+/// 啟動時要依序執行的視窗動作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupAction {
+    Show(&'static str),
+    Focus(&'static str),
+}
+
+/// 啟動順序:兩張都開時,考試卡一定在教學卡之後顯示。不開視窗、不碰時鐘。
 #[derive(Debug)]
 pub struct StartupFocus {
-    /// 還沒顯示過的標籤。只有 labels 裡有 `STARTUP_FOCUS` 才記;沒有就留空,永遠不給焦點。
-    pending: Vec<String>,
-    given: bool,
+    opening: Vec<String>,
+    ready: Vec<String>,
+    shown: Vec<String>,
 }
 
 impl StartupFocus {
-    /// labels:這次要開的卡片視窗(open_windows 的那一份,ok 時是 teach、test;四種失敗是空的)。
-    pub fn new(labels: &[&str]) -> Self {
-        let mut pending = Vec::new();
-        if labels.iter().any(|label| *label == STARTUP_FOCUS) {
-            for label in labels {
-                if !pending.iter().any(|seen| seen == label) {
-                    pending.push((*label).to_string());
-                }
+    /// labels:這次要開的卡片視窗(start_screen::windows(state);ok 時是 teach、test;四種失敗是空的)。
+    pub fn new(labels: &[&'static str]) -> Self {
+        let mut opening = Vec::new();
+        for label in labels {
+            if !opening.iter().any(|seen| seen == label) {
+                opening.push((*label).to_string());
             }
         }
         Self {
-            pending,
-            given: false,
+            opening,
+            ready: Vec::new(),
+            shown: Vec::new(),
         }
     }
 
-    /// 某個視窗剛顯示。全部都顯示的那一次回 `Some(STARTUP_FOCUS)`,之後都回 `None`。
-    pub fn on_shown(&mut self, label: &str) -> Option<&'static str> {
-        if self.given {
-            return None;
+    fn opens(&self, label: &str) -> bool {
+        self.opening.iter().any(|open| open == label)
+    }
+
+    fn is_ready(&self, label: &str) -> bool {
+        self.ready.iter().any(|ready| ready == label)
+    }
+
+    fn is_shown(&self, label: &str) -> bool {
+        self.shown.iter().any(|shown| shown == label)
+    }
+
+    /// 兩張都開才等。只開考試卡不等教學卡;沒有考試卡就沒有東西好等。
+    fn test_waits_for_teach(&self) -> bool {
+        self.opens(SHOW_FIRST) && self.opens(STARTUP_FOCUS)
+    }
+
+    /// 這個視窗準備好了(ShowGate 第一次回 true)。回傳現在要依序執行的動作。
+    pub fn on_ready(&mut self, label: &str) -> Vec<StartupAction> {
+        if !self.opens(label) || self.is_ready(label) {
+            return Vec::new();
         }
-        let Some(at) = self.pending.iter().position(|pending| pending == label) else {
-            return None;
-        };
-        self.pending.swap_remove(at);
-        if !self.pending.is_empty() {
-            return None;
+        self.ready.push(label.to_string());
+
+        if label == SHOW_FIRST {
+            let mut actions = self.show_first();
+            if self.test_waits_for_teach() && self.is_ready(STARTUP_FOCUS) && !self.is_shown(STARTUP_FOCUS) {
+                actions.extend(self.show_focus());
+            } else if self.is_shown(STARTUP_FOCUS) && !actions.is_empty() {
+                // 考試卡已被退路顯示,教學卡後 map 會搶焦點,補一次保險。
+                actions.push(StartupAction::Focus(STARTUP_FOCUS));
+            }
+            return actions;
         }
-        self.given = true;
-        Some(STARTUP_FOCUS)
+
+        if label == STARTUP_FOCUS {
+            if self.test_waits_for_teach() && !self.is_shown(SHOW_FIRST) {
+                return Vec::new();
+            }
+            return self.show_focus();
+        }
+
+        Vec::new()
+    }
+
+    /// ORDER_BACKSTOP 到了。教學卡還沒顯示時,考試卡照樣顯示(呼叫端寫一行 warn)。
+    pub fn on_backstop(&mut self) -> Vec<StartupAction> {
+        if !self.opens(STARTUP_FOCUS) || self.is_shown(STARTUP_FOCUS) {
+            return Vec::new();
+        }
+        // 教學卡已經顯示:考試卡等自己的 on_ready,這條退路不管。
+        if self.test_waits_for_teach() && self.is_shown(SHOW_FIRST) {
+            return Vec::new();
+        }
+        self.show_focus()
+    }
+
+    fn show_first(&mut self) -> Vec<StartupAction> {
+        if !self.opens(SHOW_FIRST) || self.is_shown(SHOW_FIRST) {
+            return Vec::new();
+        }
+        self.shown.push(SHOW_FIRST.to_string());
+        vec![StartupAction::Show(SHOW_FIRST)]
+    }
+
+    /// Show(test) 與 Focus(test) 一起回,Focus 緊接在 Show 之後。
+    fn show_focus(&mut self) -> Vec<StartupAction> {
+        if !self.opens(STARTUP_FOCUS) || self.is_shown(STARTUP_FOCUS) {
+            return Vec::new();
+        }
+        self.shown.push(STARTUP_FOCUS.to_string());
+        vec![
+            StartupAction::Show(STARTUP_FOCUS),
+            StartupAction::Focus(STARTUP_FOCUS),
+        ]
     }
 }

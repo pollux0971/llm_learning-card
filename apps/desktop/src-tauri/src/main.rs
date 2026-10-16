@@ -12,7 +12,7 @@ use learning_cards_desktop::session::{self, SessionType};
 use learning_cards_desktop::start_screen;
 use learning_cards_desktop::window_mode;
 use tauri::webview::PageLoadEvent;
-use tauri::{App, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{App, AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 /// X11:視窗建立後立刻置頂,並在每次拿到焦點時重新置頂(有些視窗管理器點擊別的視窗後會把置頂效果蓋掉)。
 /// Wayland:不強制置頂(協定不允許客戶端這樣做),改為呼叫 placeholder 頁面自己的一次性提示。
@@ -52,18 +52,27 @@ fn desktop_is_composited() -> bool {
     true
 }
 
-/// 某個卡片視窗剛顯示。兩個都顯示的那一次,`on_shown` 回的標籤才 `set_focus`(全檔只此一處)。
-fn focus_if_both_shown(window: &WebviewWindow, focus: &Arc<Mutex<window_mode::StartupFocus>>, label: &str) {
-    let mut focus = focus.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(target) = focus.on_shown(label) {
-        if let Some(card) = window.get_webview_window(target) {
-            let _ = card.set_focus();
+/// 依序執行啟動動作。卡片視窗的 show 與 set_focus 只在這裡(全檔各一處)。
+/// show() 把訊息送回事件迴圈,可以在別的執行緒叫。
+fn run_startup_actions(app: &AppHandle, actions: &[window_mode::StartupAction]) {
+    for action in actions {
+        match *action {
+            window_mode::StartupAction::Show(label) => {
+                if let Some(card) = app.get_webview_window(label) {
+                    let _ = card.show();
+                }
+            }
+            window_mode::StartupAction::Focus(label) => {
+                if let Some(card) = app.get_webview_window(label) {
+                    let _ = card.set_focus();
+                }
+            }
         }
     }
 }
 
-/// 超過 SHOW_FALLBACK 還沒載入完也顯示一次,並寫明是哪一個視窗、等了多久。
-/// 已經顯示過(載入先完成)則什麼都不做、不寫 warn。show() 把訊息送回事件迴圈,可以在這條執行緒叫。
+/// 超過 SHOW_FALLBACK 還沒載入完也算準備好,並寫明是哪一個視窗、等了多久。
+/// 已經準備過(載入先完成)則什麼都不做、不寫 warn。顯不顯示由 on_ready 回的動作決定。
 fn arm_show_fallback(
     window: &WebviewWindow,
     gate: Arc<Mutex<window_mode::ShowGate>>,
@@ -79,16 +88,38 @@ fn arm_show_fallback(
                 "window {label} still not finished loading after {:?}; showing it anyway",
                 window_mode::SHOW_FALLBACK
             );
-            let _ = window.show();
-            focus_if_both_shown(&window, &focus, &label);
+            let actions = {
+                let mut focus = focus.lock().unwrap_or_else(PoisonError::into_inner);
+                focus.on_ready(&label)
+            };
+            run_startup_actions(window.app_handle(), &actions);
+        }
+    });
+}
+
+/// 兩張卡都開時才起。教學卡一直沒顯示,ORDER_BACKSTOP 到了就讓考試卡照樣顯示,並寫一行 warn。
+fn arm_order_backstop(app: AppHandle, focus: Arc<Mutex<window_mode::StartupFocus>>) {
+    std::thread::spawn(move || {
+        std::thread::sleep(window_mode::ORDER_BACKSTOP);
+        let actions = {
+            let mut focus = focus.lock().unwrap_or_else(PoisonError::into_inner);
+            focus.on_backstop()
+        };
+        if !actions.is_empty() {
+            log::warn!(
+                "test card shown before the teach card after {:?}; the teach card never became ready",
+                window_mode::ORDER_BACKSTOP
+            );
+            run_startup_actions(&app, &actions);
         }
     });
 }
 
 /// tauri.conf.json 的兩個視窗是 `create: false`:啟動狀態決定要不要開(T2c-2 驗收 3)。
 /// ok 開教學卡與測驗卡;四種失敗只開 `setup` 視窗,顯示 `start_screen` 的那一頁。
-/// 卡片視窗先藏起來:頁面第一次載入完(或逾時)才顯示。沒有合成器時建窗就用不透明實心底。
-/// 兩個都顯示之後,鍵盤焦點給考試卡。setup 視窗不改,照舊有系統外框。
+/// 卡片視窗先藏起來:頁面第一次載入完(或逾時)才算準備好。沒有合成器時建窗就用不透明實心底。
+/// 兩張都開時教學卡先顯示,考試卡跟著它;教學卡一直沒出現則 ORDER_BACKSTOP 讓考試卡照樣顯示。
+/// setup 視窗不改,照舊有系統外框。
 fn open_windows(app: &App, state: StartState) -> Result<(), Box<dyn std::error::Error>> {
     let session = session::detect_from_env();
     let mode = window_mode::mode_for(desktop_is_composited());
@@ -118,8 +149,11 @@ fn open_windows(app: &App, state: StartState) -> Result<(), Box<dyn std::error::
                 }
                 let mut gate = gate_for_page.lock().unwrap_or_else(PoisonError::into_inner);
                 if gate.on_page_finished() {
-                    let _ = window.show();
-                    focus_if_both_shown(&window, &focus_for_page, shown_label);
+                    let actions = {
+                        let mut focus = focus_for_page.lock().unwrap_or_else(PoisonError::into_inner);
+                        focus.on_ready(shown_label)
+                    };
+                    run_startup_actions(window.app_handle(), &actions);
                 }
             });
         if let Some(color) = surface.background {
@@ -128,6 +162,9 @@ fn open_windows(app: &App, state: StartState) -> Result<(), Box<dyn std::error::
         let window = builder.build()?;
         arm_show_fallback(&window, gate, Arc::clone(&focus));
         apply_session_behaviour(&window, session);
+    }
+    if labels.contains(&window_mode::SHOW_FIRST) && labels.contains(&window_mode::STARTUP_FOCUS) {
+        arm_order_backstop(app.handle().clone(), Arc::clone(&focus));
     }
     if state != StartState::Ok {
         WebviewWindowBuilder::new(app, start_screen::WINDOW_LABEL, WebviewUrl::CustomProtocol(start_screen::url().parse()?))
