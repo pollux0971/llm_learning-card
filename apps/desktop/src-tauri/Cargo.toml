@@ -33,6 +33,11 @@ unicode-properties = { version = "0.1", default-features = false, features = ["g
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# 合成器偵測(T16 / ADR-072)。GTK 只有 Linux 有,不能放一般 dependencies(phase-4、phase-5 會編不過)。
+# 版本跟 lock 裡 tao 已經用的 0.18.2 同一份。
+[target.'cfg(target_os = "linux")'.dependencies]
+gdk = "0.18"
+
 # 測試用(T2c-1 測試 agent):tauri 的 test feature 給 tests/commands.rs 的 mock runtime;
 # libc 給 errno 常數(EINVAL/EIO/ENOSPC…);sha2 給段向量檔與圖片 bytes 的 sha256。
 [dev-dependencies]

@@ -12,12 +12,16 @@ import { join } from 'node:path';
 import { strict as assert } from 'node:assert';
 import type { LearningWorld } from './_world.js';
 import { ROOT } from './_world.js';
+import { openedWindows } from './_phase6-window.js';
+import { layoutClassNames } from '../../apps/desktop/src/test-support/window-frame.js';
 import {
   HUD_DIR, allStyleNodes, bodyContrast, closeViteServer, countHook, createRawSnippetOrThrow, expandAnimationProblems,
   fontFiles, fontLicenceProblems, importHud, jsMotionProblems, makeWindowSpy, openingTag, readHudCss, readText,
   reducedMotionProblems, renderSvelte, scanHudLoads, windowApiProblems,
   type ControlsDeps, type WindowControls, type WindowSpy,
 } from '../../packages/ui-shared/src/hud/test-support.js';
+
+const FRAMELESS_CLASS_NAME = layoutClassNames().frameless;
 
 interface HudState {
   frameless?: boolean;
@@ -156,7 +160,19 @@ Then('it is filled to {int} percent', function (this: LearningWorld, percent: nu
 
 // ---------------------------------------------------------------- 場景 4–6:標題列與把手
 Given('the page root does not have the frameless class', function (this: LearningWorld) { st(this).frameless = false; });
-Given('the page root has the frameless class', function (this: LearningWorld) { st(this).frameless = true; });
+Given('the page root has the frameless class', function (this: LearningWorld) {
+  // 10 phase-6 場景 3 的 Then 用的是同一句話(cucumber 不分關鍵字):已經有視窗打開時,這一句是斷言,不是設定。
+  const opened = openedWindows.get(this);
+  if (opened) {
+    assert.ok(opened.length > 0, '沒有打開過視窗');
+    for (const w of opened) {
+      assert.equal(w.threw, undefined, `頁面那段程式丟了錯:${w.threw}`);
+      assert.ok(w.classes.includes(FRAMELESS_CLASS_NAME), `根元素沒有 ${FRAMELESS_CLASS_NAME}(composited=${w.composited}),實際 class:[${w.classes.join(', ')}]`);
+    }
+    return;
+  }
+  st(this).frameless = true;
+});
 Given('the page is not running inside the desktop app', function (this: LearningWorld) { st(this).tauri = false; });
 Given('the page is running inside the desktop app', function (this: LearningWorld) { st(this).tauri = true; });
 
