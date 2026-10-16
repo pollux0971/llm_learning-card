@@ -3,6 +3,7 @@
  * 不吃 Session 物件、不碰磁碟——呼叫端(scripts/review.ts)自己從 Session
  * 與磁碟狀態算出這裡要的數字,方便單獨測文字格式與邊界值。
  */
+import type { Review } from '@contracts/index.js';
 import type { EstimateInput, EstimateResult, SessionSummaryInput } from './types.js';
 
 /**
@@ -32,8 +33,39 @@ export function estimateTomorrow(input: EstimateInput): EstimateResult {
  * errors 有發生時也要提一句(不是 phase-1.feature 明文要求,但 session 結束
  * 使用者應該知道有幾題因為 grading 錯誤被跳過)。
  */
+/**
+ * 今天這一輪的 passed / returned / retryLater。範圍是當日快取名單。
+ * 一張卡通過 = 它今天每一筆的有效結果(`revised_to ?? pass`)都通過;有一筆沒過就是回退。
+ * 沒有今天 history 的卡(批改失敗,或這次沒問到)不算進 passed / returned,列入 retryLater。
+ */
+export function tallyToday(
+  cards: readonly string[],
+  reviews: Readonly<Record<string, Review>>,
+  today: string,
+): { passed: number; returned: number; retryLater: number } {
+  let passed = 0;
+  let returned = 0;
+  let retryLater = 0;
+  for (const card of cards) {
+    const todays = (reviews[card]?.history ?? []).filter((entry) => entry.date === today);
+    if (todays.length === 0) {
+      retryLater += 1;
+      continue;
+    }
+    const allPassed = todays.every((entry) => (entry.revised_to ?? entry.pass) === true);
+    if (allPassed) passed += 1;
+    else returned += 1;
+  }
+  return { passed, returned, retryLater };
+}
+
 export function renderSummary(input: SessionSummaryInput): string {
   const lines: string[] = [`${input.passed} passed, ${input.failed} returned.`];
+
+  // 只有續答才傳這個欄位(含 0)。一次跑完不傳,小結才跟 phase-1 位元組相同。
+  if (input.answeredThisRun !== undefined) {
+    lines.push(`Answered this run: ${input.answeredThisRun}.`);
+  }
 
   lines.push(
     input.tomorrow.capped
@@ -41,7 +73,11 @@ export function renderSummary(input: SessionSummaryInput): string {
       : `Tomorrow: ${input.tomorrow.shown} due.`,
   );
 
-  if (input.errors > 0) {
+  if (input.retryLater !== undefined) {
+    if (input.retryLater > 0) {
+      lines.push(`Retry later: ${input.retryLater} question(s).`);
+    }
+  } else if (input.errors > 0) {
     lines.push(`${input.errors} question(s) had a grading error and were skipped.`);
   }
 
