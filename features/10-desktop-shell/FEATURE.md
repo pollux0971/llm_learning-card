@@ -67,7 +67,7 @@ Wave 0 是兩個 placeholder HTML 視窗,不載入任何真的內容。
 | 3 | 系統列、自啟、縮到系統列 | I5 | todo | |
 | 4 | macOS | I7 | todo | |
 | 5 | Windows | I8 | todo | |
-| 6 | 無框透明視窗、自畫控制項的權限、實心底退路 | 不綁整合點 | in-progress | T16 已合併;@manual 待做 |
+| 6 | 無框透明視窗、自畫控制項的權限、實心底退路 | 不綁整合點 | ready | T16 已合併;@manual 有一條未過(F1),修補排 T21;T21 紅測試與步驟定義到位前 .feature 有 undefined,故先標 ready,T21 過了才 done |
 
 ## 驗收方式
 
