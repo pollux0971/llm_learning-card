@@ -35,6 +35,17 @@ Feature: Frameless windows
       | can    | does not have | is     | left clear                |
       | cannot | has           | is not | the solid fallback colour |
 
+  Scenario Outline: The test card gets the keyboard focus once both windows are shown
+    Given the card windows are opening
+    When the <first> window is shown first and the other one after it
+    Then the keyboard focus is given to the test card
+    And it is given only once
+
+    Examples:
+      | first |
+      | teach |
+      | test  |
+
   @manual
   Scenario: Dragging and resizing without the system frame
     Given the desktop app is built and started
@@ -63,6 +74,11 @@ Feature: Frameless windows
     When the desktop app is built and started
     Then the corners are filled with the solid fallback colour
     And no black area appears, not even in the first frame after the window is shown
+
+  @manual
+  Scenario: The test card has the keyboard focus after every start
+    When the desktop app is built and started several times
+    Then each time the test card has the keyboard focus once both windows are shown
 
   @manual
   Scenario: Staying on top still works without the frame

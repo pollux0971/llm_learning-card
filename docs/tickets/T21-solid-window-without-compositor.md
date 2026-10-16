@@ -17,9 +17,12 @@ must_catch:
   - tauri.conf.json 的 teach 或 test 還寫著 transparent(true 或 false 都算):「透明由程式決定,設定檔不寫」必須紅
   - setup 視窗(啟動失敗的畫面)被加上透明或底色:T16 既有的「setup 視窗不改」必須紅
   - 沒有合成器時頁面不再加 hud-solid、visible 改回 true、拿掉 3 秒退路:T16 既有的檢查照舊紅
+  - 啟動焦點不固定:StartupFocus 在兩個視窗都顯示之前就回焦點、永遠不回、回兩次、或回的不是 test:StartupFocus 的單元測試必須紅
+  - main.rs 只有一個顯示的地方通知 StartupFocus(例如 3 秒退路那條忘了),或建窗後直接 set_focus、不管兩個都顯示了沒、或對寫死的標籤 set_focus:焦點接線的靜態檢查必須紅
+  - STARTUP_FOCUS 不是 test,或不是 tauri.conf.json 裡的視窗標籤:焦點目標檢查必須紅
 ---
 
-# 工單 T21:10-desktop-shell phase-6 後續 —— 沒有合成器時,視窗一出現就是實心底,不先黑
+# 工單 T21:10-desktop-shell phase-6 後續 —— 沒有合成器時,視窗一出現就是實心底,不先黑;啟動後焦點固定給考試卡
 
 > 狀態:草稿,待技術顧問審。
 > 作者:UI/Tauri 負責人(10 phase-6 規格作者,不是實作者)。編號:協調者配(T21)。派工:協調者。
@@ -28,6 +31,7 @@ must_catch:
 > 來源:T16 `@manual` 的 F1(證據檔 docs/reviews/T16-manual-2026-10-16.md,在分支 pollux0971/t16-manual-evidence @ eb92408,還沒進 main);技術顧問裁決「要修」(協調者 2026-10-16 轉達)。
 > 規格:`features/10-desktop-shell/phase-6.feature`(這張的工單分支另有一個 commit 改它,見「規格的改動」)。
 > 基底:origin/main `4fdf666`(含 T16、T17)。
+> 第 2 輪(技術顧問 2026-10-16 批准第 1 輪後追加,協調者轉達):併進 T16 `@manual` 的 O1 —— 啟動後焦點固定給考試卡(驗收 8)。
 
 ## 為什麼有這張
 
@@ -43,6 +47,12 @@ T16 的 `@manual` 量到:沒有合成器時,兩個卡片視窗出現後的第一
 丟棄式實驗(前端,不進 git)證明修法有效:沒有合成器時建窗用 `.transparent(false).background_color(244, 246, 248, 255)`,
 20 ms 取樣 2 次,黑 0 張。視窗一出現就是整片 `--hud-solid`(約 140 ms),接著卡片內容出來。
 
+另外併進一件(T16 `@manual` 的 O1):
+
+- T16 之前,兩個視窗建好就顯示,後建的考試卡固定拿到鍵盤焦點。
+- T16 之後,視窗載入完才顯示,**後載入完的那個**拿到焦點。`:1` 兩次開 app,一次是教學卡、一次是考試卡。
+- 使用者開 app 之後直接打字,可能打不進考試卡。顧問裁決:兩個視窗都顯示之後,固定把焦點給考試卡,跟以前一樣。
+
 ## 技術顧問的裁決(協調者轉達,照原意列)
 
 1. 建窗時就依 `is_composited` 決定。
@@ -51,7 +61,8 @@ T16 的 `@manual` 量到:沒有合成器時,兩個卡片視窗出現後的第一
 4. 頁面 class 照舊 `hud-solid`。
 5. 有合成器時照現在的做法。
 6. `tauri.conf.json` 裡寫死的 `transparent: true` 改成由程式決定。
-7. 改實作,不改契約。不需要新的 ADR(ADR-072 補一段,見「補記到 ADR-072 的建議文字」)。
+7. 改實作,不改契約。不需要新的 ADR(ADR-072 補一段,見「補記到 ADR-072 的文字」;顧問已批准)。
+8. (第 2 輪)兩個視窗都顯示之後,固定把鍵盤焦點給考試卡,不要「誰後載入完就給誰」。
 
 ## 驗收條件
 
@@ -137,14 +148,55 @@ pub fn surface_for(mode: WindowMode) -> WindowSurface;
 | 視窗的位元深度 | `xwininfo` | 沒有合成器:卡片視窗 Depth 24;有合成器:Depth 32 |
 | 3 秒退路還在,而且卡住時不黑 | 沒有合成器;WebKitWebProcess 一出現就 `SIGSTOP`,5 秒才 `SIGCONT` | 兩個視窗 3 秒多一點出現,各一行 warn、各只 map 一次;**停住的那段時間視窗是 (244, 246, 248),不是黑的**;解凍後照常畫出來 |
 | `:1` 冒煙 | GNOME,開一次;不送輸入 | 兩個視窗 `_NET_WM_STATE_ABOVE`;根元素 `hud-frameless`;DOM click 兩顆關閉鈕後 exit 0 |
+| `:1` 啟動焦點(驗收 8) | GNOME,開 **5 次**(每次新的暫存根);兩個都出現後 2 秒讀;不送輸入 | 5/5 次:`_NET_ACTIVE_WINDOW` 是考試卡的視窗、考試卡有 `_NET_WM_STATE_FOCUSED`;檢查器 `document.hasFocus()` 考試卡 true、教學卡 false |
+| `:1` 啟動焦點,頁面卡住那一次 | 同上,WebKitWebProcess `SIGSTOP` 5 秒(有合成器,停住時視窗是透明的,看不到) | 兩個靠 3 秒退路出現之後,焦點在考試卡 |
+| `:1` 焦點的後果 | 接著跑 T15 那套步驟裡的作答欄 `focus()`(真的 DOM 焦點,不是 CSSOM 複製) | 作答欄框線四邊中點 (231, 119, 31) ±10(T16 `@manual` 那次因為考試卡沒焦點,是黑的) |
 
 - 沒有合成器時,第一張之後頁面才畫出卡片內容(約 140 ms 是整片 `--hud-solid`),這是預期,不算問題。
+
+### 8. 啟動後鍵盤焦點固定給考試卡(第 2 輪,T16 `@manual` O1)
+
+純函式加在 `window_mode.rs`,名字照這裡寫(紅測試直接用):
+
+```rust
+/// 兩個卡片視窗都顯示之後,鍵盤焦點給這個視窗(考試卡:使用者開 app 之後要在這裡打字)。
+pub const STARTUP_FOCUS: &str = "test";
+
+pub struct StartupFocus { /* 實作者定 */ }
+
+impl StartupFocus {
+    /// labels:這次要開的卡片視窗(open_windows 的那一份,ok 時是 teach、test;四種失敗是空的)。
+    pub fn new(labels: &[&str]) -> Self;
+    /// 某個視窗剛顯示。全部都顯示的那一次回 Some(STARTUP_FOCUS),之後都回 None。
+    pub fn on_shown(&mut self, label: &str) -> Option<&'static str>;
+}
+```
+
+| 情況 | `on_shown` 的回傳 |
+|---|---|
+| `new(["teach", "test"])`,先 teach 再 test | teach → `None`;test → `Some("test")` |
+| 先 test 再 teach | test → `None`;teach → `Some("test")`(教學卡後顯示、搶走焦點,要拿回來) |
+| 同一個標籤顯示兩次 | 第二次不算,不會因此提早回 `Some` |
+| 已經回過 `Some` | 之後每次都 `None`(只給一次,不跟使用者搶焦點) |
+| 不在 labels 裡的標籤 | 忽略 |
+| labels 裡沒有 `STARTUP_FOCUS`(例如空的) | 永遠 `None` |
+
+`main.rs` 的接線:
+
+- `open_windows` 在迴圈之前建**一個** `StartupFocus`,用 `start_screen::windows(state)` 那一份標籤,用 `Arc<Mutex<…>>` 給每個視窗共用。
+- 兩個顯示的地方都要通知:`on_page_load` 的 `Finished` 裡 `on_page_finished()` 回 true、`show()` 之後;`arm_show_fallback` 裡 `on_timeout()` 回 true、`show()` 之後。各自呼叫 `on_shown(<這個視窗的標籤>)`。
+- `on_shown` 回 `Some(label)` 時,用 `get_webview_window(label)` 拿那個視窗,呼叫 `set_focus()`。標籤用回傳值,不寫字面的 `"test"`。
+- `main.rs` 裡 `set_focus` 只出現在這一處。不要建窗後直接 `set_focus`(那時候視窗還藏著,而且另一個視窗之後顯示會把焦點搶走)。
+- 頁面卡住、靠 3 秒退路才顯示的那一次,焦點在兩個都顯示之後才給(最多晚 3 秒)。這是預期。
+- 執行中使用者自己點別的視窗,焦點照使用者的;這裡只管啟動那一次。
+- 只驗 X11(`:1` 的 GNOME)。Wayland 上視窗能不能自己拿焦點由合成器決定,這張不驗。
 
 ## 使用者看得到的差別
 
 - 沒有合成器的桌面上,開 app 時兩個視窗一出現就是淺灰的實心底,接著卡片內容出來;不會再先閃一下黑的。
 - 頁面卡住超過 3 秒的那一次,沒有合成器時視窗也是淺灰的,不是黑的。
 - 有合成器的桌面(一般的 GNOME、KDE)看不出差別:切角照舊看得到桌面。
+- 開 app 之後,鍵盤焦點一定在考試卡,直接打字就打進作答欄(跟 T16 之前一樣)。
 
 ## 規格的改動(工單分支另一個 commit,技術顧問一起審)
 
@@ -154,6 +206,9 @@ pub fn surface_for(mode: WindowMode) -> WindowSurface;
 - 場景 1 的 `And both windows are transparent` 換成 `And the configuration leaves transparency to the app`。
 - Scenario Outline 加兩個 Then:`And the window <is> transparent`、`And the window background is <background>`(有合成器:`is` / `left clear`;沒有:`is not` / `the solid fallback colour`)。
 - `@manual` 場景「Without transparency the corners are solid, not black」的 `And no black area appears` 加上 `, not even in the first frame after the window is shown`。
+- (第 2 輪)加 Scenario Outline「The test card gets the keyboard focus once both windows are shown」(兩列:先顯示 teach、先顯示 test),
+  與 `@manual` 場景「The test card has the keyboard focus after every start」。步驟可以照 T16 `emit_init_script_for_the_scenarios` 的做法,
+  由 Rust 測試檔印出 `StartupFocus` 對某個顯示順序的回傳,cucumber 讀輸出比對。
 
 T16 的測試裡要跟著改的(紅測試作者改,開發 worker 不改):
 
@@ -165,7 +220,7 @@ T16 的測試裡要跟著改的(紅測試作者改,開發 worker 不改):
 
 `features/10-desktop-shell/NEXT.md` 的 phase-6 段:`transparent: true` 那句改成「透明由程式依合成器決定(T21)」。
 
-## 補記到 ADR-072 的建議文字(規格那個 commit 已加進 decision-map,技術顧問決定要不要收)
+## 補記到 ADR-072 的文字(規格那個 commit 已加進 decision-map;技術顧問 2026-10-16 批准)
 
 不開新號。照 ADR-072「第 2 輪」的寫法,在 Consequences 後面加:
 
@@ -186,7 +241,11 @@ T16 的測試裡要跟著改的(紅測試作者改,開發 worker 不改):
 | 3 | 接線 | vitest 靜態讀 `main.rs`(照 T16 `window-frame.ts` 的寫法):`open_windows` 裡 `desktop_is_composited()` 一次;`surface_for(mode)` 與 `init_script(mode)` 同一個變數;卡片 builder 鏈在 `.build()` 前有 `.transparent(` 而且參數不是字面 `true`/`false`、有條件地 `.background_color(`;沒有 `set_background_color`;setup 視窗那段沒有 `transparent`、`background_color` | 紅 |
 | 3 | 量尺自測 | 最小合成片段:寫死 `transparent(true)`、`.build()` 之後才 `set_background_color`、呼叫兩次 `desktop_is_composited` → 各自報錯 | 綠 |
 | 4 | 設定檔 | 讀 `tauri.conf.json`:teach、test 沒有 `transparent` 鍵;`decorations`、`visible` 照舊 | 紅 |
-| 6 | 不退步 | T16 其餘測試、cucumber `@desktop-shell and @phase-6 and not @manual` | 綠(步驟改完之後,新的 Outline 兩列紅) |
+| 8 | `StartupFocus` | `tests/window_mode.rs`:驗收 8 表的每一列;`STARTUP_FOCUS` 是 `"test"` | 紅(沒有這個型別) |
+| 8 | 焦點目標 | 讀 `tauri.conf.json`:`STARTUP_FOCUS` 是 `app.windows` 裡的一個 label | 紅 |
+| 8 | 焦點接線 | vitest 靜態讀 `main.rs`:`open_windows` 一個 `StartupFocus::new(`(在迴圈之前);`on_page_load` 的 Finished 分支與 `arm_show_fallback` 的 on_timeout 分支,都在 `show()` 之後 `on_shown(`;`set_focus()` 只有一處,而且在 `on_shown` 回 `Some` 的分支裡、對 `get_webview_window(<回傳值>)`;沒有對字串字面的 `get_webview_window("test")` 呼叫 `set_focus` | 紅 |
+| 8 | 量尺自測 | 最小合成片段:只有 Finished 那邊通知、建窗後直接 `set_focus()`、`set_focus` 出現兩次 → 各自報錯 | 綠 |
+| 6 | 不退步 | T16 其餘測試、cucumber `@desktop-shell and @phase-6 and not @manual` | 綠(步驟改完之後,新的兩個 Outline 各兩列紅) |
 
 注意:
 
@@ -214,7 +273,9 @@ npm run boundaries
 - 不改 `hud.css`、`window_mode.js`、兩張卡、`packages/ui-shared`。
 - 不改 `setup` 視窗。不改 `Cargo.toml`、`Cargo.lock`、`package.json`、`package-lock.json`、`capabilities/`。
 - 不追執行中的合成器變化;不做 Wayland、macOS、Windows(跟 T16 一樣)。
-- T16 `@manual` 的觀察 O1(啟動後拿到鍵盤焦點的視窗不固定)、O2(Xvfb 沒有視窗管理員時拖曳後吃掉下一次按下)不在這張;要做另開票。
+- T16 `@manual` 的觀察 O2(Xvfb 沒有視窗管理員時,拖曳 / 縮放之後下一次按下被吃掉)記成**已知限制**,不在這張修:
+  只在沒有視窗管理員的 Xvfb 看到(GDK 的模擬拖曳);真的桌面走視窗管理員,I3 的 `@manual` 由使用者在真桌面試(技術顧問 2026-10-16)。
+- 啟動之後的焦點(使用者自己點來點去)不管;驗收 8 只管啟動那一次。
 - 不配 ADR 號(不需要;補記見上)。
 
 ## 預算
@@ -224,7 +285,7 @@ npm run boundaries
 ## 測試誰寫
 
 - 紅測試、步驟定義、量尺:-e5。開發 worker 以紅測試分支為基底。
-- 實作:worker-grok,只改「touches」列的三個檔。
+- 實作:worker-grok,只改「touches」列的三個檔(第 2 輪的焦點也在 `main.rs`、`window_mode.rs`,不多動檔)。
 - 驗收:-ed,照 `worker-acceptance`。
 - 觀感:前端重拍(驗收 7),技術顧問判。
 
