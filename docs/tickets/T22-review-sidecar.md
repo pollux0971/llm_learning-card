@@ -45,7 +45,8 @@ must_catch:
 > 決策:**ADR-075**(`../02-decision-map.md`;同一個分支寫入)。
 > 規格:`features/06-test-card/phase-2.feature`(同一個分支加了側車的五個場景,見「規格」)。
 > 基底:origin/main `6e2e71f`。**派工時基底要含 T21 與 T26 合併後的 main**(T21 也動 `main.rs`;兩張落點都是 10-desktop-shell,R2 不能同時跑。T26 是 core 寫 `reviews.json` 前的樂觀檢查,這張要把它的錯誤轉成 kind)。
-> (2026-10-17 補)main `891f228` 已含 T26 與 T21 第 3 輪。紅測試作者(-e5)在測試裡固定的名字與細節見**驗收 9**,跟前面衝突的兩處(驗收 1 的靜態清單、驗收 4 的 import 順序)已在原處標明以驗收 9 為準。
+> (2026-10-17 補)**顧問審過(cee2b70 之後這一版)。派工等兩件事:-e5 補完 routerFactory 重試的紅測試(驗收 9 的 B),以及 Rust 紅測試編得過。**
+> main `891f228` 已含 T26 與 T21 第 3 輪。紅測試作者(-e5)在測試裡固定的名字與細節見**驗收 9**,跟前面衝突的兩處(驗收 1 的靜態清單、驗收 4 的 import 順序)已在原處標明以驗收 9 為準。
 
 ## 為什麼有這張
 
@@ -90,7 +91,7 @@ export function snapshotAfterReview(opts: { learningDir: string; today: string; 
 - `sessionFromCache`、`buildAndStore`、`cacheFromSession`、`tallyToday` 加明天估計那幾行、`snapshotQuietly` 的判斷,都搬進這裡。`refusingRouter` 跟著搬(`pauseDay` 用)。
 - `scripts/review.ts` 改成呼叫這幾個函式。**CLI 的輸出(每一行字)、退出碼、寫的檔、snapshot 的時機都不變。** 讀 stdin、印字、`--dry-run` 的列印留在 CLI。
 - 靜態檢查:`scripts/review.ts` 不再直接呼叫 `readSessionCache`、`writeSessionCache`、`buildTodaySession`、`tallyToday`、`estimateTomorrow`、`snapshotLearningDir`(`--dry-run` 的唯讀路徑可以留 `readSessionCache` 與 `buildTodaySession`,其餘不行)。
-  **(2026-10-17 改,以驗收 9 的 D 為準)**`readSessionCache` 另外可以多一處:「暫停日不需要帳本」的預檢。
+  **(2026-10-17 改,以驗收 9 的 D 為準)**`readSessionCache` 另外可以多一處:「暫停日不需要帳本」的預檢(只讀、不寫;暫停時的輸出與退出碼不變)。
 
 ### 2. `submitAnswer` 給側車的兩個小改(`packages/core/src/session/answer.ts`)
 
@@ -295,7 +296,8 @@ export function createReviewClient(opts?: { invoke?: InvokeFn; handler?: (line: 
 - `createReviewHandler({ learningDir, today, routerFactory, env })` 回的字串是**不含換行**的一行 JSON;`\n` 由框線程式加。
 - `start` 的 `fakeCloud` = `Boolean(env.LC_REVIEW_FAKE_CLOUD)`。
 - `routerFactory`:第一次 `start` 才呼叫,拿到 router 之後不再呼叫;`status` 不呼叫。
-  (前端補,紅測試沒釘)呼叫失敗(`root-mismatch`、`router-unavailable`)時手上沒有 router,下一次 `start` 再呼叫一次——使用者修好帳本不用重開 app。
+  (前端補,顧問 2026-10-17 同意)呼叫失敗(`root-mismatch`、`router-unavailable`)時手上沒有 router,下一次 `start` 再呼叫一次——使用者修好帳本不用重開 app。
+  失敗的那一次不留半個 session、不建快取、不把錯誤記住(下一次 `start` 不能直接回上一次的錯)。紅測試由 -e5 補:第一次失敗、修好後第二次 `start` 成功。**補完才派工。**
 - `next` 的 reteach 結果 = `{ kind: 'reteach', card, path, short }`(同驗收 3;沒有 `shortBody`、沒有任何內文)。
 - `submit` 的 `correctAnswers`:填空題、而且這一次 `pass === false` 就帶。stage 2 的填空答錯時 `status` 是 `partial`,也要帶。
 - 批改失敗 = `ok: true`、`status: 'error'`、`cardDone: false`,題目留在原地。
@@ -315,6 +317,7 @@ export function createReviewClient(opts?: { invoke?: InvokeFn; handler?: (line: 
 - 簽名照驗收 1;`summarizeDay` 不收 `env`。
 - 「暫停日不需要帳本」(CLI 現在的行為)要 CLI 在叫 `liveRouterOrExit` 之前先看一眼快取是不是暫停。所以 `scripts/review.ts`:
   - `readSessionCache` 最多 2 處(`--dry-run`,以及這個預檢);
+    (顧問 2026-10-17 的條件)預檢那一處**只讀、不寫**,只用來判斷「今天暫停」;暫停時印的每一個字與退出碼要跟原本的 CLI 一模一樣(既有 review 測試與 cucumber 11 照舊全綠)。
   - `buildTodaySession` 只剩 `--dry-run` 那 1 處;
   - `writeSessionCache`、`tallyToday`、`estimateTomorrow`、`snapshotLearningDir`、`buildAndStore`、`sessionFromCache`、`cacheFromSession`、`snapshotQuietly`、`warnInvalidSessionCache` 一處都不准出現。
 
