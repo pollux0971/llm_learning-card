@@ -1,0 +1,353 @@
+/**
+ * T19:regenerate 的回應不要求 `lines`(工單 docs/tickets/T19-regenerate-without-lines.md)。
+ *
+ * 全部走生產路徑 `generateCards(router, opts)`:第一次回應(cards.md 批次)給一張超過 100 字的卡,
+ * 逼它呼叫 regenerate,再用假 router 決定 regenerate 回什麼。不呼叫真的 LLM。
+ *
+ * 原卡刻意跟回應長得不一樣(標題、行號、examples 都不同),才看得出「沿用原卡」還是「採用回應」。
+ */
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { countWords } from '@core/schema/word-count.js';
+import { stripExampleFences } from './word-count-min.js';
+import { generateCards } from './generate-cards.js';
+import type { LlmResult, LlmRouter, LlmTask } from './types.js';
+
+interface ScriptedRouter extends LlmRouter {
+  calls: { task: LlmTask; prompt: string }[];
+}
+
+/** 依序回傳 responses;用完還被呼叫就丟錯(多呼叫一次 = 測試要看得到)。 */
+function scriptedRouter(responses: string[]): ScriptedRouter {
+  const calls: { task: LlmTask; prompt: string }[] = [];
+  return {
+    calls,
+    async call(task: LlmTask, prompt: string): Promise<LlmResult> {
+      const text = responses[calls.length];
+      calls.push({ task, prompt });
+      if (text === undefined) throw new Error(`scriptedRouter: 第 ${calls.length} 次呼叫沒有預設回應`);
+      return { text, provider: 'fake', model: 'mock', latency_ms: 0, provisional: false };
+    },
+    async probeOnline() {
+      return true;
+    },
+    async probeLocal() {
+      return { available: false, models: [] };
+    },
+  };
+}
+
+const OPTS = { relLabel: 'x.md', category: 'security', content: 'raw' };
+
+/** §2 的字數:先去 example 圍欄,再用權威的 countWords。測試資料的預期值都用它核對。 */
+const ref = (body: string) => countWords(stripExampleFences(body).body);
+
+const ORIGINAL_BODY = '長'.repeat(120);
+const ORIGINAL = { title: '原本的標題', body: ORIGINAL_BODY, examples: ['原例一', '原例二'], lines: [3, 4] };
+const SHORT = '重寫後的精簡正文。';
+const MODEL_TITLE = '模型改過的標題';
+
+const batchOf = (...cards: Record<string, unknown>[]) => JSON.stringify(cards);
+const regen = (fields: unknown) => JSON.stringify([fields]);
+
+/** 批次回應 = 一張超長的原卡;之後依序回 regenerate 的回應。 */
+async function runWith(...regenerateResponses: string[]) {
+  const router = scriptedRouter([batchOf(ORIGINAL), ...regenerateResponses]);
+  const result = await generateCards(router, OPTS);
+  return { router, result };
+}
+
+describe('T19 前提:測試資料的字數', () => {
+  it('原卡 body 超過 100 字、SHORT 在 100 字內(§2 的權威算法)', () => {
+    expect(ref(ORIGINAL_BODY)).toBe(120);
+    expect(ref(SHORT)).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('要求 2:regenerate 回應的形狀', () => {
+  it.each<[string, Record<string, unknown>, string[]]>([
+    ['基準形狀 {title, body}(2026-10-15 真模型)', { title: MODEL_TITLE, body: SHORT }, ORIGINAL.examples],
+    ['{title, body, lines}(沒有 examples)', { title: MODEL_TITLE, body: SHORT, lines: [1, 2] }, ORIGINAL.examples],
+    ['{title, body, examples}(沒有 lines)', { title: MODEL_TITLE, body: SHORT, examples: ['新例'] }, ['新例']],
+    ['完整形狀 {title, body, examples, lines}', { title: MODEL_TITLE, body: SHORT, examples: ['新例'], lines: [1, 2] }, ['新例']],
+    ['T12 第 2 輪的形狀 {title, body, examples: []}', { title: MODEL_TITLE, body: SHORT, examples: [] }, ORIGINAL.examples],
+    ['只有 body(沒有 title)', { body: SHORT }, ORIGINAL.examples],
+    ['title 不是字串', { title: 42, body: SHORT }, ORIGINAL.examples],
+  ])('%s → 接受;title、lines 沿用原卡', async (_name, fields, expectedExamples) => {
+    const { router, result } = await runWith(regen(fields));
+    expect(result.parked).toEqual([]);
+    expect(result.regenerateEvents).toBe(1);
+    expect(router.calls).toHaveLength(2);
+    expect(result.accepted).toEqual([
+      { title: ORIGINAL.title, body: SHORT, examples: expectedExamples, lines: [3, 4] },
+    ]);
+  });
+
+  it('多於一筆:取第一筆', async () => {
+    const { result } = await runWith(JSON.stringify([{ title: MODEL_TITLE, body: SHORT }, { title: '第二筆', body: '第二筆的正文。' }]));
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0]!.body).toBe(SHORT);
+    expect(result.accepted[0]!.title).toBe(ORIGINAL.title);
+  });
+});
+
+describe('要求 2:examples(缺少或 [] 保留原卡;只有非空字串陣列才替換;格式不對整個忽略)', () => {
+  // 每一筆都附上合法的 lines,讓這組只看 examples 的規則(lines 的規則在下一組)。
+  it.each<[string, unknown]>([
+    ['缺少', undefined],
+    ['空陣列 []', []],
+    ['字串 "abc"', 'abc'],
+    ['數字陣列 [1]', [1]],
+    ['混合 ["ok", 1](不半採用)', ['ok', 1]],
+    ['空字串 [""]', ['']],
+    ['只有空白 ["   "]', ['   ']],
+    ['混合 ["ok", ""](不半採用)', ['ok', '']],
+    ['null', null],
+    ['物件 {}', {}],
+    ['巢狀 [["a"]]', [['a']]],
+  ])('%s → 保留原卡的 examples,不丟錯', async (_name, examples) => {
+    const fields: Record<string, unknown> = { title: MODEL_TITLE, body: SHORT, lines: [1, 2] };
+    if (examples !== undefined) fields.examples = examples;
+    const { result } = await runWith(regen(fields));
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0]!.examples).toEqual(ORIGINAL.examples);
+  });
+
+  it.each<[string, string[]]>([
+    ['一項 ["新例"]', ['新例']],
+    ['兩項 ["新例一", "新例二"]', ['新例一', '新例二']],
+  ])('非空字串陣列 %s → 整個替換', async (_name, examples) => {
+    const { result } = await runWith(regen({ title: MODEL_TITLE, body: SHORT, examples, lines: [1, 2] }));
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0]!.examples).toEqual(examples);
+  });
+
+  it('原卡沒有 examples 時,回應的 [] 不會讓它變成 undefined', async () => {
+    const router = scriptedRouter([batchOf({ ...ORIGINAL, examples: [] }), regen({ title: MODEL_TITLE, body: SHORT, examples: [] })]);
+    const result = await generateCards(router, OPTS);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0]!.examples).toEqual([]);
+  });
+});
+
+describe('要求 2:lines 一律忽略(不驗證、不採用、不丟錯)', () => {
+  // 每一筆都附上合法的 examples,讓這組只看 lines。
+  it.each<[string, unknown]>([
+    ['缺少', undefined],
+    ['別的行號 [99, 100]', [99, 100]],
+    ['字串 "x"', 'x'],
+    ['長度 1 [1]', [1]],
+    ['長度 3 [1, 2, 3]', [1, 2, 3]],
+    ['NaN 序列化後的 [null, null]', [null, null]],
+    ['字串陣列 ["a", "b"]', ['a', 'b']],
+    ['物件 {}', {}],
+  ])('lines 是 %s → 接受,lines 仍是原卡的', async (_name, lines) => {
+    const fields: Record<string, unknown> = { title: MODEL_TITLE, body: SHORT, examples: ['新例'] };
+    if (lines !== undefined) fields.lines = lines;
+    const { result } = await runWith(regen(fields));
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0]!.lines).toEqual([3, 4]);
+    expect(result.accepted[0]!.title).toBe(ORIGINAL.title);
+  });
+});
+
+describe('要求 2:regenerate 回應壞掉時丟錯,訊息含 regenerate', () => {
+  it.each<[string, string]>([
+    ['不是合法 JSON', 'not json'],
+    ['物件,不是陣列', JSON.stringify({ title: MODEL_TITLE, body: SHORT })],
+    ['字串,不是陣列', JSON.stringify('只是字串')],
+    ['數字,不是陣列', '123'],
+    ['null', 'null'],
+  ])('%s', async (_name, text) => {
+    const router = scriptedRouter([batchOf(ORIGINAL), text]);
+    await expect(generateCards(router, OPTS)).rejects.toThrow(/regenerate/);
+    expect(router.calls).toHaveLength(2);
+  });
+
+  it('空陣列 → 沿用既有訊息「regenerate 回應沒有回傳卡片」', async () => {
+    const router = scriptedRouter([batchOf(ORIGINAL), '[]']);
+    await expect(generateCards(router, OPTS)).rejects.toThrow('regenerate 回應沒有回傳卡片');
+  });
+
+  it.each<[string, unknown]>([
+    ['第一筆是字串', '只是字串'],
+    ['第一筆是 null', null],
+    ['第一筆是數字', 123],
+    ['第一筆是陣列', ['a']],
+    ['沒有 body', { title: MODEL_TITLE }],
+    ['body 是數字', { title: MODEL_TITLE, body: 123 }],
+    ['body 是 null', { title: MODEL_TITLE, body: null }],
+    ['body 是陣列', { title: MODEL_TITLE, body: ['a'] }],
+    ['body 是物件', { title: MODEL_TITLE, body: { text: SHORT } }],
+  ])('%s → 丟錯,訊息含 regenerate 並附上那筆', async (_name, first) => {
+    const router = scriptedRouter([batchOf(ORIGINAL), regen(first)]);
+    const err = await generateCards(router, OPTS).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toMatch(/regenerate/);
+    expect(message).toContain(JSON.stringify(first));
+  });
+});
+
+describe('要求 1:批次回應(cards.md)的解析一個字都不放寬', () => {
+  const good = { title: '卡', body: SHORT, examples: [], lines: [1, 2] };
+  const without = (key: string) => Object.fromEntries(Object.entries(good).filter(([k]) => k !== key));
+  it.each<[string, Record<string, unknown>]>([
+    ['基準形狀 {title, body}', { title: '卡', body: SHORT }],
+    ['缺 lines', without('lines')],
+    ['lines 長度 1', { ...good, lines: [1] }],
+    ['lines 長度 3', { ...good, lines: [1, 2, 3] }],
+    ['lines 是字串', { ...good, lines: 'x' }],
+    ['缺 examples', without('examples')],
+    ['examples 是字串', { ...good, examples: 'abc' }],
+    ['缺 title', without('title')],
+    ['body 是數字', { ...good, body: 123 }],
+  ])('%s → 仍丟「格式不正確」,不呼叫 regenerate', async (_name, card) => {
+    const router = scriptedRouter([batchOf(card), regen({ title: MODEL_TITLE, body: SHORT })]);
+    await expect(generateCards(router, OPTS)).rejects.toThrow(/ingest\.cards 回應第 0 筆格式不正確/);
+    expect(router.calls).toHaveLength(1);
+  });
+
+  it('超長的卡缺 lines 也照樣丟錯(不能靠 regenerate 的寬鬆解析救回來)', async () => {
+    const { lines: _dropped, ...overlongWithoutLines } = ORIGINAL;
+    const router = scriptedRouter([batchOf(overlongWithoutLines), regen({ body: SHORT })]);
+    await expect(generateCards(router, OPTS)).rejects.toThrow(/ingest\.cards 回應第 0 筆格式不正確/);
+    expect(router.calls).toHaveLength(1);
+  });
+});
+
+describe('要求 3:重試三次的紀錄', () => {
+  it('三次仍超長(regenerate 回應是基準形狀)→ parked;lines、title 是原卡的;attempts 3 筆', async () => {
+    const second = '二'.repeat(110);
+    const third = '三'.repeat(105);
+    const { router, result } = await runWith(
+      regen({ title: MODEL_TITLE, body: second, lines: [9, 9] }),
+      regen({ title: MODEL_TITLE, body: third }),
+    );
+    expect(router.calls).toHaveLength(3);
+    expect(result.accepted).toEqual([]);
+    expect(result.regenerateEvents).toBe(0);
+    expect(result.parked).toEqual([
+      {
+        title: ORIGINAL.title,
+        lines: [3, 4],
+        attempts: [
+          { attempt: 1, wordCount: 120, body: ORIGINAL_BODY },
+          { attempt: 2, wordCount: 110, body: second },
+          { attempt: 3, wordCount: 105, body: third },
+        ],
+      },
+    ]);
+  });
+
+  it('第二次仍超長、第三次合格 → 接受第三次的 body,regenerateEvents 是 1', async () => {
+    const { router, result } = await runWith(regen({ title: MODEL_TITLE, body: '二'.repeat(110) }), regen({ title: MODEL_TITLE, body: SHORT }));
+    expect(router.calls).toHaveLength(3);
+    expect(result.parked).toEqual([]);
+    expect(result.regenerateEvents).toBe(1);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0]!.body).toBe(SHORT);
+    expect(result.accepted[0]!.lines).toEqual([3, 4]);
+    expect(result.accepted[0]!.title).toBe(ORIGINAL.title);
+  });
+
+  it('regenerate 的 prompt 帶的是原卡的 title(不是上一次回應的)', async () => {
+    const { router } = await runWith(regen({ title: MODEL_TITLE, body: '二'.repeat(110) }), regen({ title: '又改了一次', body: SHORT }));
+    expect(router.calls).toHaveLength(3);
+    for (const call of router.calls.slice(1)) {
+      expect(call.prompt).toContain(`title: ${ORIGINAL.title}`);
+      expect(call.prompt).not.toContain(MODEL_TITLE);
+    }
+  });
+});
+
+describe('要求 4:字數用契約 §2 判斷(100 通過、101 不通過)', () => {
+  // 這組的 regenerate 回應用完整形狀,只看字數規則(形狀的規則在上面)。
+  const full = (body: string) => regen({ title: ORIGINAL.title, body, examples: ['新例'], lines: [3, 4] });
+  const cases: [string, string, number][] = [
+    ['連字號切斷:98 個漢字 + same-origin', '同'.repeat(98) + 'same-origin', 100],
+    ['連字號切斷:99 個漢字 + same-origin', '同'.repeat(99) + 'same-origin', 101],
+    ['英數連續序列算 1:99 個漢字 + TLS13', '同'.repeat(99) + 'TLS13', 100],
+    ['句點切斷:99 個漢字 + 1.3', '同'.repeat(99) + '1.3', 101],
+    ['撇號切斷:98 個漢字 + don\'t', '同'.repeat(98) + "don't", 100],
+    ['標點算 0:100 個漢字 + 。、!?——', '同'.repeat(100) + '。、!?——', 100],
+    ['example 圍欄內不算:100 個漢字 + 圍欄', '同'.repeat(100) + '\n```example\n圍欄裡面有很多很多字都不算\n```', 100],
+    ['example 圍欄內不算:101 個漢字 + 圍欄', '同'.repeat(101) + '\n```example\n例\n```', 101],
+    ['空白切斷:97 個漢字 + RFC 6265 + 字', '同'.repeat(97) + 'RFC 6265字', 100],
+  ];
+
+  const table = cases.map(([name, body, words]) => ({ name, body, words }));
+
+  it.each(table)('測試資料核對:$name = $words 字', ({ body, words }) => {
+    expect(ref(body)).toBe(words);
+  });
+
+  it.each(table)('regenerate 回應 $name($words 字)', async ({ body, words }) => {
+    // 第二次回 body,第三次回 SHORT:body 合格就只呼叫 2 次,不合格就會用到第 3 次。
+    const { router, result } = await runWith(full(body), full(SHORT));
+    expect(result.regenerateEvents).toBe(1);
+    expect(result.accepted).toHaveLength(1);
+    if (words <= 100) {
+      expect(router.calls).toHaveLength(2);
+      expect(result.accepted[0]!.body).toBe(body);
+    } else {
+      expect(router.calls).toHaveLength(3);
+      expect(result.accepted[0]!.body).toBe(SHORT);
+    }
+  });
+
+  it.each(table)('批次回應本身 $name($words 字):合格就不呼叫 regenerate', async ({ body, words }) => {
+    const router = scriptedRouter([batchOf({ ...ORIGINAL, body }), full(SHORT)]);
+    const result = await generateCards(router, OPTS);
+    expect(router.calls).toHaveLength(words <= 100 ? 1 : 2);
+    expect(result.regenerateEvents).toBe(words <= 100 ? 0 : 1);
+  });
+
+  it('差分:parked 記下的每次字數,與 @core/schema/word-count.js 算出的一樣', async () => {
+    const bodies = [
+      '同'.repeat(95) + "同源政策(same-origin policy)在 TLS 1.3 下不變。don't 算兩個。RFC 6265 也是。",
+      '例'.repeat(90) + 'a-b-c-d-e-f-g-h-i-j-k-l' + '\n```example\n這裡面的字不算 same-origin\n```' + '尾巴',
+      'ひらがなカタカナ한국어' + '漢'.repeat(92) + 'x1y2_z3 4.5.6',
+    ];
+    for (const b of bodies) expect(ref(b)).toBeGreaterThan(100);
+    const router = scriptedRouter([batchOf({ ...ORIGINAL, body: bodies[0] }), full(bodies[1]!), full(bodies[2]!)]);
+    const result = await generateCards(router, OPTS);
+    expect(result.parked).toHaveLength(1);
+    expect(result.parked[0]!.attempts.map((a) => a.wordCount)).toEqual(bodies.map(ref));
+  });
+});
+
+describe('真實形狀:golden 基準裡真的 regenerate 輸出(含模型回顯的 golden / category / source)', () => {
+  const dir = fileURLToPath(new URL('../prompt-quality/golden/ingest.regenerate/2026-10-15/', import.meta.url));
+  const files = readdirSync(dir)
+    .filter((f) => /^regenerate-.*\.output\.json$/.test(f))
+    .sort();
+
+  it('基準有 3 份 regenerate 輸出,而且都沒有 lines、沒有 examples(這就是要配合的現實)', () => {
+    expect(files).toHaveLength(3);
+    for (const f of files) {
+      const entries = JSON.parse((JSON.parse(readFileSync(join(dir, f), 'utf8')) as { text: string }).text) as Record<string, unknown>[];
+      expect(entries.length).toBeGreaterThan(0);
+      for (const e of entries) {
+        expect(typeof e.title).toBe('string');
+        expect(typeof e.body).toBe('string');
+        expect(e).not.toHaveProperty('lines');
+        expect(e).not.toHaveProperty('examples');
+      }
+    }
+  });
+
+  it.each(files)('%s 的欄位形狀被接受(body 換成合格的,其他欄位原樣)', async (f) => {
+    const entries = JSON.parse((JSON.parse(readFileSync(join(dir, f), 'utf8')) as { text: string }).text) as Record<string, unknown>[];
+    const reshaped = entries.map((e) => ({ ...e, body: SHORT }));
+    expect(Object.keys(reshaped[0]!)).toEqual(Object.keys(entries[0]!));
+    const { result } = await runWith(JSON.stringify(reshaped));
+    expect(result.parked).toEqual([]);
+    expect(result.regenerateEvents).toBe(1);
+    expect(result.accepted).toEqual([{ title: ORIGINAL.title, body: SHORT, examples: ORIGINAL.examples, lines: [3, 4] }]);
+  });
+});
