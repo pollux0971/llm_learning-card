@@ -3,14 +3,18 @@
  *
  * 呼叫順序永遠是 presentNextCard → (CLI 收輸入) → submitAnswer → 需要的話
  * 再呼叫 presentNextCard。這個函式本身不收輸入,只決定「現在該給使用者看
- * 什麼」,把「讀 stdin」完全留給 scripts/review.ts。實作時會用到:
- * `./io.js` 的 loadCardBody / loadQuestionFile、`@contracts/index.js` 的
- * countBlanks。
+ * 什麼」,把「讀 stdin」完全留給 scripts/review.ts。用到 `./io.js` 的
+ * loadCardBody / loadQuestionFile / shortCardExists、`@contracts/index.js`
+ * 的 countBlanks、`@core/schema/log.js` 的 recordEvent。
  *
  * 決定並回傳下一個要呈現的東西:
  *
  * 1. reteachQueue 還有卡 → 從佇列頭部取一張(shift,消耗掉),回傳
- *    `{ kind: 'reteach', card, shortBody }`(loadCardBody(..., { short: true }))。
+ *    `{ kind: 'reteach', card, shortBody }`。縮短版存在時
+ *    loadCardBody(..., { short: true }),回傳不帶 usedOriginal。
+ *    `<id>.short.md` 不存在時退回原卡 body,多一個 `usedOriginal: true`,
+ *    並記一筆 warning(reason 'short-card-missing';記錄失敗只吞這一步)。
+ *    原卡也不存在、或縮短版存在但解析失敗,照舊丟錯,不記 warning。
  *    這裡不動 session.current、不動任何 progress 計數
  *    (phase-1.feature「it is not counted in the progress」)。
  *
@@ -39,8 +43,11 @@
  * 「挑最近沒考過的」是可以之後再決定的事,phase-1.feature 沒有任何場景測
  * 這個選擇,不要在沒有驗收標準的情況下先做複雜的挑選邏輯。
  */
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { countBlanks } from '@contracts/index.js';
-import { loadCardBody, loadQuestionFile } from './io.js';
+import { recordEvent } from '@core/schema/log.js';
+import { loadCardBody, loadQuestionFile, shortCardExists } from './io.js';
 import type { CardPresentation, CurrentQuestion, Session } from './types.js';
 
 function pickQuestion(session: Session, current: CurrentQuestion): CardPresentation {
@@ -73,11 +80,32 @@ function pickQuestion(session: Session, current: CurrentQuestion): CardPresentat
   };
 }
 
+/** 縮短版缺檔:warning 到 state/log.jsonl。欄位只有 ts/type/card/reason。寫失敗不得讓複習停掉。 */
+function warnShortCardMissing(learningDir: string, card: string): void {
+  try {
+    const logPath = join(learningDir, 'state/log.jsonl');
+    mkdirSync(dirname(logPath), { recursive: true });
+    recordEvent(logPath, {
+      ts: new Date().toISOString(),
+      type: 'warning',
+      card,
+      reason: 'short-card-missing',
+    });
+  } catch {
+    // 記錄失敗不得讓複習停掉。只吞這一步,不吞讀卡的錯。
+  }
+}
+
 export async function presentNextCard(session: Session): Promise<CardPresentation> {
   if (session.reteachQueue.length > 0) {
     const card = session.reteachQueue.shift()!;
-    const shortBody = loadCardBody(session.learningDir, card, { short: true });
-    return { kind: 'reteach', card, shortBody };
+    if (shortCardExists(session.learningDir, card)) {
+      const shortBody = loadCardBody(session.learningDir, card, { short: true });
+      return { kind: 'reteach', card, shortBody };
+    }
+    const shortBody = loadCardBody(session.learningDir, card);
+    warnShortCardMissing(session.learningDir, card);
+    return { kind: 'reteach', card, shortBody, usedOriginal: true };
   }
 
   if (session.current && session.current.card === session.queue[0]?.card) {
