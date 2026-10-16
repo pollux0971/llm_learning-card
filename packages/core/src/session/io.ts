@@ -91,6 +91,21 @@ export function findCardFile(learningDir: string, card: CardId, opts: { short?: 
 }
 
 /**
+ * `<id>.short.md` 是否在 `cards/` 的任一分類底下。找不到回 false,不丟錯。
+ * 只查存在,不讀、不解析。掃描規則與 `findCardFile(..., { short: true })` 相同,
+ * 但那個函式找不到會丟錯,這裡不能拿它來判斷缺檔。
+ */
+export function shortCardExists(learningDir: string, card: CardId): boolean {
+  const cardsDir = join(learningDir, 'cards');
+  if (!existsSync(cardsDir)) return false;
+  const filename = `${card}.short.md`;
+  for (const category of readdirSync(cardsDir)) {
+    if (existsSync(join(cardsDir, category, filename))) return true;
+  }
+  return false;
+}
+
+/**
  * `cards/<類別>/<id>.md` 的卡片 id 清單(排序過,不含 `.short.md`)。
  * `cards/` 不存在時回傳空陣列——「目錄不見了」與「目錄空的」對呼叫端是同一件事:
  * 這個 vault 沒有卡片。

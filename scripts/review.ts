@@ -108,7 +108,8 @@ async function runInteractive(session: Session, rl: ReturnType<typeof createInte
     if (presentation.kind === 'done') break;
 
     if (presentation.kind === 'reteach') {
-      console.log(`\n[複習提示,先看過再回答問題] ${presentation.card}`);
+      const missing = presentation.usedOriginal === true ? '(沒有縮短版,以下是原卡)' : '';
+      console.log(`\n[複習提示,先看過再回答問題] ${presentation.card}${missing}`);
       console.log(presentation.shortBody);
       continue;
     }

@@ -71,8 +71,16 @@ export type CardPresentation =
   | {
       kind: 'reteach';
       card: CardId;
-      /** cards/<category>/<id>.short.md 的內容 */
+      /**
+       * 縮短版 body。`<id>.short.md` 不存在而退回原卡時,放原卡 body
+       * (都不含 frontmatter、不含 example 圍欄)。
+       */
       shortBody: string;
+      /**
+       * 只有退回原卡時才有,值固定 true。縮短版存在時不帶這個鍵,
+       * 回傳與現況逐位元相同。
+       */
+      usedOriginal?: true;
     }
   | {
       kind: 'question';
