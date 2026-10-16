@@ -9,7 +9,7 @@
 import type { Review } from '@contracts/index.js';
 import { gradeApply, gradeFillQuestion } from '@core/grading/index.js';
 import { applyFailTransition, applyPassTransition, type Review as SchedulerReview } from '@core/scheduler/index.js';
-import { loadReviews, saveReviews } from './io.js';
+import { readReviewsSnapshot, ReviewsChangedError, saveReviewsIfUnchanged } from './io.js';
 import type { AnswerOutcome, Session } from './types.js';
 
 /**
@@ -88,10 +88,14 @@ export function joinApplyLines(lines: string[]): string {
  *         (04 的 FailCtx.answers 本來就是設計成一次checkpoint 的多題結果,
  *         這條路徑跟 04 的介面完全對得上,對照 phase-1.feature 的
  *         「A card at stage two is only resolved after both questions」)。
- *    c. loadReviews → 更新那張卡的 review → saveReviews(整份覆寫)。
- *       這一步必須在「回傳前」完成,對照 phase-1.feature「the change is
- *       written before the next question is shown」與「Answers land one at
- *       a time」——每張卡解決當下立刻寫,不是等 session 結束才寫。
+ *    c. readReviewsSnapshot 讀目前磁碟。基準是 session.reviewsHash;沒設
+ *       (手工組的 session)就用這次讀到的雜湊。磁碟雜湊不同 → 丟
+ *       ReviewsChangedError,在任何寫入之前:不呼叫 saveReviewsIfUnchanged、
+ *       不 shift queue、不加 passed/failed。相同才算轉移,再
+ *       saveReviewsIfUnchanged(整份覆寫);成功後把 session.reviewsHash
+ *       更新成回傳的雜湊。這一步必須在「回傳前」完成,對照 phase-1.feature
+ *       「the change is written before the next question is shown」與
+ *       「Answers land one at a time」——每張卡解決當下立刻寫,不是等 session 結束才寫。
  *    d. session.queue shift 掉這張卡;session.passed/session.failed 累加;
  *       session.current = undefined。
  *    e. 回傳 `{ status: overallPass ? 'passed' : 'failed', pass: overallPass,
@@ -129,7 +133,11 @@ export async function submitAnswer(session: Session, rawAnswer: string): Promise
   }
 
   const overallPass = current.pendingAnswers.every((answer) => answer.pass);
-  const reviews = loadReviews(session.learningDir);
+  const snap = readReviewsSnapshot(session.learningDir);
+  const expectedHash = session.reviewsHash ?? snap.hash;
+  if (snap.hash !== expectedHash) throw new ReviewsChangedError();
+
+  const reviews = snap.reviews;
   const review = reviews[current.card]!;
 
   let outcome;
@@ -144,7 +152,7 @@ export async function submitAnswer(session: Session, rawAnswer: string): Promise
   }
 
   reviews[current.card] = outcome.review as unknown as Review;
-  saveReviews(session.learningDir, reviews);
+  session.reviewsHash = saveReviewsIfUnchanged(session.learningDir, reviews, expectedHash);
 
   session.queue.shift();
   if (overallPass) session.passed += 1;

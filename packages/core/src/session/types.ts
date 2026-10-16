@@ -59,6 +59,13 @@ export interface Session {
   failed: number;
   errors: number;
   /**
+   * 這個 session 最後一次確定與磁碟上 `state/reviews.json` 一致的雜湊
+   * (原始位元組 SHA-256 十六進位小寫;檔案不存在為 `'absent'`)。
+   * 只活在記憶體,不寫進 session 快取。沒設時 `submitAnswer` 以該次讀到的雜湊為基準。
+   * 不寫 `| undefined`:`exactOptionalPropertyTypes` 開著,不要把可選屬性賦成 undefined。
+   */
+  reviewsHash?: string;
+  /**
    * `| undefined` 特別寫出來(不只是 `?:`):`exactOptionalPropertyTypes` 開著,
    * submitAnswer 解決一個 checkpoint 後要能明確寫 `session.current = undefined`
    * 清掉它,不是只能整個欄位不存在。
