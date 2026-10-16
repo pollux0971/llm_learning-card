@@ -52,6 +52,7 @@ import type { LlmRouter } from '@core/llm/index.js';
 import { nextCardIds } from './ids.js';
 import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
 import { loadPromptTemplate } from './prompts.js';
+import { formatAlreadyCovered, listSiblings, loadCategoryCards } from './siblings.js';
 
 // Stryker disable next-line all: 模組載入時執行一次的靜態初始化,coverageAnalysis: perTest 下不歸屬任何測試(coveredBy 恆為空),
 // 錯字會讓 readFileSync 在 import 當下就丟 ENOENT、整個測試檔案載入失敗,等同被所有測試殺死,只是 Stryker 的 per-test 模型算不出來。
@@ -78,12 +79,14 @@ export interface GenerateChildrenResult {
   questionFailures: GenerateQuestionsFailure[];
 }
 
-function buildChildrenPrompt(parent: Card): string {
+function buildChildrenPrompt(parent: Card, siblings: { id: string; title: string; summary: string }[]): string {
+  // 沒有 sibling 時 formatAlreadyCovered 回 [],這段與 T12 之後的 prompt 逐字相同。
   return [
     CHILDREN_TEMPLATE,
     '---',
     `parent_id: ${parent.frontmatter.id}`,
     `parent_title: ${parent.frontmatter.title}`,
+    ...formatAlreadyCovered(siblings),
     '---',
     parent.body,
   ].join('\n');
@@ -123,7 +126,10 @@ export async function generateChildren(
   router: LlmRouter,
   opts: GenerateChildrenOptions,
 ): Promise<Card[]> {
-  const result = await router.call('ingest.cards', buildChildrenPrompt(parent));
+  // 每次呼叫都重讀磁碟。generateChildrenForCards 寫完一個父卡再處理下一個,
+  // 所以第二個父卡看得到第一個剛寫進去的子卡。不要在批次開頭讀一次就重複使用。
+  const siblings = listSiblings(loadCategoryCards(opts.outDir, parent.frontmatter.category), parent);
+  const result = await router.call('ingest.cards', buildChildrenPrompt(parent, siblings));
   const candidates = parseChildCandidates(result.text);
 
   const today = opts.today ?? new Date().toISOString().slice(0, 10);

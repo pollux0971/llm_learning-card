@@ -9,4 +9,5 @@ export * from './generate-cards.js';
 export * from './ingest.js';
 export * from './questions.js';
 export * from './children.js';
+export * from './siblings.js';
 export * from './deps.js';

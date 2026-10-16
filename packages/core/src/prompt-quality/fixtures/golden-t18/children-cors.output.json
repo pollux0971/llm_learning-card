@@ -1,0 +1,8 @@
+{
+  "id": "children-cors",
+  "text": "[\n  {\n    \"title\": \"預檢請求的觸發\",\n    \"body\": \"跨來源請求若使用非簡單方法、非簡單標頭或特殊 Content-Type，瀏覽器會先送 OPTIONS 預檢；伺服器允許後才送正式請求。\",\n    \"examples\": [\"使用 PUT 並帶 Authorization 時，通常會先收到 OPTIONS。\"]\n  },\n  {\n    \"title\": \"簡單請求也可能先送出\",\n    \"body\": \"簡單請求通常不需預檢，瀏覽器可能先送出請求，再因回應缺少允許標頭而阻止前端讀取；因此 CORS 不是伺服器端的防偽造機制。\",\n    \"examples\": [\"跨來源表單 POST 即使前端讀不到回應，伺服器仍可能已處理資料。\"]\n  },\n  {\n    \"title\": \"憑證模式的雙方配合\",\n    \"body\": \"前端必須以 credentials 模式發送憑證，伺服器還要回傳允許憑證的標頭；只指定來源而未允許憑證，瀏覽器仍會遮蔽回應。\",\n    \"examples\": [\"fetch(url, { credentials: \\\"include\\\" }) 需搭配伺服器回傳 Access-Control-Allow-Credentials: true。\"]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

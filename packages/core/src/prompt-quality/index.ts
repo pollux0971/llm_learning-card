@@ -9,4 +9,5 @@ export * from './compare.js';
 export * from './regression.js';
 export { I1_SECURITY_BATCH } from './fixtures/i1-security-batch.js';
 export * from './golden-sets/registry.js';
+export { GENERALIZATION_SLICES, generalizationSliceBody, readChemistryFixture } from './golden-sets/generalization-slices.js';
 export { main as runCli } from './cli.js';

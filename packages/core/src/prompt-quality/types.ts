@@ -34,6 +34,11 @@ export interface LlmRouter {
 export interface GoldenInput {
   id: string;
   /**
+   * T18 (d2):泛化輸入(非資安主題)才帶。基準輸入不帶這個欄位——
+   * 原三個資安輸入的 id 與 prompt 一個位元組都不改。
+   */
+  group?: 'generalization';
+  /**
    * prompt 裡**會變動的那一半**:header 行加上內容,格式跟 02-ingest-pipeline 的
    * `buildBatchPrompt` / `buildChildrenPrompt` / `buildQuestionsPrompt` / `buildDepsPrompt`
    * 一致(`---` 分隔的 header 區塊,然後是內容)。

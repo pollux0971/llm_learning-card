@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: children-gen-buffer",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"共軛鹼吸收氫離子\", \"body\": \"加入強酸時，緩衝溶液裡的共軛鹼會吸收多出來的氫離子。\", \"examples\": []}, {\"title\": \"血液的緩衝系統\", \"body\": \"人的血液靠碳酸與碳酸氫根的緩衝系統，把 pH 維持在 7.4 左右。\", \"examples\": []}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}
