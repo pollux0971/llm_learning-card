@@ -153,6 +153,13 @@ describe('readSessionCache', () => {
       expect(readSessionCache(v.dir, TODAY, v.env), JSON.stringify(bad)).toEqual({ kind: 'invalid' });
     }
   });
+  it('date 欄位的格式要整串是 YYYY-MM-DD(前後多一個字元就是壞的)', () => {
+    for (const bad of ['x2026-09-10', '2026-09-10x', '2026-09-10\n', ' 2026-09-10']) {
+      const v = vault();
+      put(v, JSON.stringify(sample({ date: bad })));
+      expect(readSessionCache(v.dir, TODAY, v.env), JSON.stringify(bad)).toEqual({ kind: 'invalid' });
+    }
+  });
   it('路徑是目錄(EISDIR)→ invalid,不是 missing', () => {
     const v = vault();
     mkdirSync(sessionCacheFile(v.dir, TODAY, v.env), { recursive: true });
@@ -323,5 +330,6 @@ describe('renderSummary 的新欄位', () => {
     const legacy = renderSummary({ passed: 1, failed: 0, errors: 2, tomorrow });
     expect(legacy).toContain('2 question(s) had a grading error and were skipped.');
     expect(renderSummary({ passed: 1, failed: 0, errors: 2, tomorrow, retryLater: 0 })).not.toMatch(/Retry later|grading error/);
+    expect(renderSummary({ passed: 1, failed: 0, errors: 0, tomorrow })).not.toMatch(/grading error/);
   });
 });
