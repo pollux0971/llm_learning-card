@@ -1,0 +1,8 @@
+{
+  "id": "children-same-origin",
+  "text": "[\n  {\n    \"title\": \"CORS 的伺服器授權\",\n    \"body\": \"跨來源讀取可由目標伺服器以 CORS 標頭明確允許。瀏覽器檢查回應標頭；伺服器未授權時，前端仍不能取得內容。\",\n    \"examples\": [\n      \"回應含 Access-Control-Allow-Origin: https://app.example，該來源的程式才可讀取回應。\"\n    ]\n  },\n  {\n    \"title\": \"預檢請求的觸發\",\n    \"body\": \"跨來源請求若使用非簡單方法、標頭或內容型別，瀏覽器會先送 OPTIONS 預檢，確認伺服器允許後才送正式請求。\",\n    \"examples\": [\n      \"跨來源 fetch 使用 DELETE 時，瀏覽器通常先以 OPTIONS 詢問是否允許。\"\n    ]\n  },\n  {\n    \"title\": \"跨來源視窗的安全溝通\",\n    \"body\": \"不同來源的視窗不能直接讀彼此的 DOM；若要傳遞資料，應使用 postMessage，接收端必須檢查 event.origin。\",\n    \"examples\": [\n      \"嵌入的付款 iframe 以 postMessage 回傳結果，主頁依 event.origin 驗證發送者。\"\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

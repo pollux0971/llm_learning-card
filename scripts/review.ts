@@ -36,7 +36,7 @@ import {
 } from '../packages/core/src/session/cache.js';
 import { presentNextCard } from '../packages/core/src/session/present.js';
 import { joinApplyLines, submitAnswer } from '../packages/core/src/session/answer.js';
-import { listCardIds, loadReviews, loadSettings } from '../packages/core/src/session/io.js';
+import { listCardIds, loadReviews, loadSettings, readReviewsSnapshot } from '../packages/core/src/session/io.js';
 import {
   estimateTomorrow,
   renderDeferred,
@@ -165,20 +165,21 @@ async function buildAndStore(dir: string, today: string, router: LlmRouter, paus
 }
 
 function sessionFromCache(dir: string, today: string, router: LlmRouter, cache: SessionCache): Session {
-  const reviews = loadReviews(dir);
+  const snap = readReviewsSnapshot(dir);
   const settings = loadSettings(dir);
   return {
     learningDir: dir,
     today,
     dailyCap: settings.daily_cap,
     router,
-    queue: dropAnsweredToday(dueItemsFromCache(cache.queue, reviews), reviews, today),
+    queue: dropAnsweredToday(dueItemsFromCache(cache.queue, snap.reviews), snap.reviews, today),
     reteachQueue: [...cache.reteach],
     totalDue: cache.total_due,
     deferred: cache.deferred,
     passed: 0,
     failed: 0,
     errors: 0,
+    reviewsHash: snap.hash,
     current: undefined,
   };
 }
@@ -320,6 +321,8 @@ async function main(): Promise<void> {
   if (answeredThisRun >= 1) snapshotQuietly(dir, today);
 }
 
+// ReviewsChangedError 一路丟到這裡:印 message 到 stderr、退出碼 1。
+// 小結與 snapshot 在 main 裡、這次丟錯之後,所以不會執行。
 main().catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);

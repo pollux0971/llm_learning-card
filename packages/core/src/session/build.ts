@@ -12,7 +12,7 @@ import type { CardId, Review } from '@contracts/index.js';
 import { buildDueList, questionTypesForStage, selectSession, type DueItem, type SchedulableCard } from '@core/scheduler/index.js';
 import type { LlmRouter } from '@core/grading/index.js';
 import type { SessionCache } from './cache.js';
-import { loadReviews, loadSettings } from './io.js';
+import { loadSettings, readReviewsSnapshot } from './io.js';
 import type { Session } from './types.js';
 
 export interface BuildSessionCtx {
@@ -74,7 +74,7 @@ export function dropAnsweredToday(queue: DueItem[], reviews: Record<CardId, Revi
 
 /**
  * 建立今日 session:
- *   1. loadReviews + loadSettings(daily_cap)
+ *   1. readReviewsSnapshot(reviews + 基準雜湊)+ loadSettings(daily_cap)
  *   2. buildDueList(reviews, today) → 04 phase-1 的到期清單
  *   3. deriveReteachQueue(reviews, due 清單的卡片 id)
  *   4. 把 buildDueList 的結果補上 learned_at(SchedulableCard 需要),
@@ -91,7 +91,7 @@ export async function buildTodaySession(ctx: BuildSessionCtx): Promise<Session> 
   }
   const router = ctx.router;
 
-  const reviews = loadReviews(ctx.learningDir);
+  const { reviews, hash: reviewsHash } = readReviewsSnapshot(ctx.learningDir);
   const settings = loadSettings(ctx.learningDir);
 
   // exactOptionalPropertyTypes 讓 04 自己落點內複製的 Review 型別跟 @contracts
@@ -122,6 +122,7 @@ export async function buildTodaySession(ctx: BuildSessionCtx): Promise<Session> 
     passed: 0,
     failed: 0,
     errors: 0,
+    reviewsHash,
     current: undefined,
   };
 }
