@@ -13,6 +13,7 @@ export {
   type GradingKey,
   type ProviderSettings,
 } from './credentials.js';
+export { llmUnavailableReason, type LlmUnavailableReason } from './failures.js';
 export { anthropicAdapter } from './adapters/anthropic.js';
 export { openaiAdapter } from './adapters/openai.js';
 export { decideRoute, ROUTING_TABLE, type RouteGroup, type RouteInput, type RouteDecision } from './routing.js';
