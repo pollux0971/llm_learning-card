@@ -67,8 +67,8 @@ npm run dev -w apps/test-card
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | UI 骨架、兩種題型、結果顯示(stub 後端) | Wave 0 | done | 2026-09-03 |
-| 2 | 接上真的 scheduler、grading、檔案 | I3 | todo | |
-| 3 | 進度、逾期、小結、續答 | I3 | todo | |
+| 2 | 接上真的 scheduler、grading、檔案 | I3 | done | 2026-10-17 |
+| 3 | 進度、逾期、小結、續答 | I3 | ready | gate 滿足 2026-10-17(phase-2 done);T23 工單前端起草中 |
 | 4 | 縮短版先複習 | I5 | todo | |
 
 ## 驗收方式
