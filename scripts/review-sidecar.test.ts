@@ -213,7 +213,7 @@ describe('完整一輪(真的行程 + 假雲端)(驗收 4)', () => {
       const log = join(v.scratch, 'cloud-requests.log');
       const p = start(v, { env: { FAKE_REVIEW_REQUEST_LOG: log } });
       await p.nextLine(60_000);
-      expect(ok(await request(p, 1, 'start'))).toEqual({ state: 'ready', today: TODAY, resumed: false, total: 3, answered: 0, deferred: 0, dailyCap: 10, fakeCloud: true });
+      expect(ok(await request(p, 1, 'start'))).toEqual({ state: 'ready', today: TODAY, resumed: false, total: 3, answered: 0, deferred: 0, dailyCap: 10, overdue: 3, fakeCloud: true });
       let id = 2;
       for (const expectedCard of ['sec-0001', 'sec-0002', 'sec-0003']) {
         const q = ok(await request(p, id++, 'next'));
