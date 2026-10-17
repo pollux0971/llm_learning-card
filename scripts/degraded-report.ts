@@ -117,11 +117,6 @@ export const NOT_INSTRUMENTED: readonly NotInstrumented[] = [
   { file: 'packages/core/src/ingest/init.ts', snippet: 'as CategoryConfig[] | null) ?? []', reason: '空的 categories.yaml parse 成 null 補空陣列,形狀補齊' },
   { file: 'packages/core/src/lint/scan.ts', snippet: "card: data.card ?? ''", reason: '考題檔缺 card 欄位補空字串,後面的 lint 檢查會回報' },
   { file: 'packages/core/src/scheduler/select.ts', snippet: "ctx.startDate ?? '2026-01-01'", reason: '模擬工具的起始日預設值,不是產品路徑' },
-  // Wave 0 stub(apps/test-card 沒有 @contracts 的 import 路徑,而且會被正式版取代)
-  { file: 'apps/test-card/src/stubs/scheduler.ts', snippet: 'INTERVAL_DAYS[review.stage] ?? 1', reason: 'Wave 0 stub:未知 stage 當 1 天。值得計數,但 apps/ 沒接 @contracts alias,等正式 scheduler 接上再看' },
-  { file: 'apps/test-card/src/stubs/scheduler.ts', snippet: "TYPES_BY_STAGE[review.stage] ?? ['apply']", reason: '同上' },
-  { file: 'apps/test-card/src/stubs/loader.ts', snippet: 'settings.daily_cap ?? 10', reason: 'Wave 0 stub 的設定預設值' },
-  { file: 'apps/test-card/src/session.ts', snippet: "due.types[due.types.length - 1] ?? 'fill'", reason: '索引越界補值,形狀補齊' },
   // 反例:cache-miss 時**丟錯**,不退化——留著當對照
   { file: 'packages/core/src/ingest/fake-llm.ts', snippet: 'throw new CloudRequiredError(task);', reason: '反例:離線時丟 CLOUD_REQUIRED,不退化' },
   { file: 'features/support/_router-guard.ts', snippet: 'throw new Error(', reason: '反例:Background 該留下 router 卻沒有時丟錯,而不是就地生一個——這支檔案就是為了擋「安靜地變綠」而存在的' },
