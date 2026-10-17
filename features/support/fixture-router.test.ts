@@ -8,7 +8,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fixtureRouter, loadFixturesFromDir } from './fixture-router.js';
+import { NoModelError } from '@core/llm/index.js';
+import { fixtureRouter, loadFixturesFromDir, noRecordingIsNoModel } from './fixture-router.js';
 
 function writeFixture(dir: string, name: string, body: unknown): void {
   writeFileSync(join(dir, name), JSON.stringify(body), 'utf8');
@@ -205,5 +206,46 @@ describe('fixtureRouter 新增的行為(因為底下是真的 CloudLlmRouter)', 
     const router = fixtureRouter([], (call) => calls.push(call));
     await expect(router.call('grade.fill.llm', 'p')).rejects.toThrow(/沒有錄製/);
     expect(calls).toEqual([{ task: 'grade.fill.llm', prompt: 'p' }]);
+  });
+});
+
+describe('noRecordingIsNoModel(T31)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'fixture-router-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('沒有錄製 → NoModelError(cause 留著原本的錯)', async () => {
+    const router = noRecordingIsNoModel(fixtureRouter(loadFixturesFromDir(dir)));
+    const err = await router.call('grade.fill.llm', 'anything').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NoModelError);
+    expect(((err as NoModelError).cause as Error).message).toMatch(/沒有錄製/);
+  });
+
+  it('有錄製 → 照常回應', async () => {
+    writeFixture(dir, 'a.json', { task: 'grade.fill.llm', prompt_contains: 'x', attempt: 1, response: { text: 'yes' } });
+    const router = noRecordingIsNoModel(fixtureRouter(loadFixturesFromDir(dir)));
+    expect((await router.call('grade.fill.llm', 'has x here')).text).toBe('yes');
+  });
+
+  it('對不上 attempt 的錯、task 不在契約的錯都原樣丟出,不被轉成 NoModelError', async () => {
+    writeFixture(dir, 'a.json', { task: 'grade.fill.llm', prompt_contains: 'x', attempt: 1, response: { text: 'yes' } });
+    const router = noRecordingIsNoModel(fixtureRouter(loadFixturesFromDir(dir)));
+    await router.call('grade.fill.llm', 'has x here');
+    const second = await router.call('grade.fill.llm', 'has x here').catch((e: unknown) => e);
+    expect(second).not.toBeInstanceOf(NoModelError);
+    expect((second as Error).message).toMatch(/attempt=2/);
+    const bad = await router.call('not.a.task' as never, 'x').catch((e: unknown) => e);
+    expect(bad).not.toBeInstanceOf(NoModelError);
+  });
+
+  it('probeOnline / probeLocal 照舊委派', async () => {
+    const inner = fixtureRouter(loadFixturesFromDir(dir));
+    const router = noRecordingIsNoModel(inner);
+    expect(await router.probeOnline()).toBe(await inner.probeOnline());
+    expect(await router.probeLocal()).toEqual(await inner.probeLocal());
   });
 });

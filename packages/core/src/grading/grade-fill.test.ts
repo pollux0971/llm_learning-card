@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NoModelError } from '../llm/errors.js';
 import { gradeFillBlank, gradeFillQuestion } from './grade-fill.js';
 import type { FillQuestion, LlmResult, LlmRouter } from './types.js';
 
@@ -87,7 +88,7 @@ describe('gradeFillBlank', () => {
   });
 
   it('falls back to strict failure when no model is available', async () => {
-    const { router } = trackingRouter(new Error('NO_MODEL'));
+    const { router } = trackingRouter(new NoModelError('grade.fill.llm'));
     const result = await gradeFillBlank(['protocol'], 'something else entirely', router);
     expect(result.pass).toBe(false);
     expect(result.grader).toBe('fallback-strict');
@@ -114,7 +115,7 @@ describe('gradeFillQuestion', () => {
   });
 
   it('fails the whole question when only the third blank is wrong, naming it and its answer', async () => {
-    const { router } = trackingRouter(new Error('NO_MODEL'));
+    const { router } = trackingRouter(new NoModelError('grade.fill.llm'));
     const result = await gradeFillQuestion(question, ['協定', 'host', 'nope'], router);
     expect(result.pass).toBe(false);
     expect(result.feedback).toBe('第3格答案應為:埠號/port');
@@ -122,7 +123,7 @@ describe('gradeFillQuestion', () => {
 
   it('lists only the first two accepted synonyms when a blank has three or more', async () => {
     const wideQuestion: FillQuestion = { prompt: '___', answers: [['協定', 'protocol', 'scheme']] };
-    const { router } = trackingRouter(new Error('NO_MODEL'));
+    const { router } = trackingRouter(new NoModelError('grade.fill.llm'));
     const result = await gradeFillQuestion(wideQuestion, ['nope'], router);
     expect(result.feedback).toBe('第1格答案應為:協定/protocol');
     expect(result.feedback).not.toContain('scheme');
@@ -139,7 +140,7 @@ describe('gradeFillQuestion', () => {
   });
 
   it('reports the first wrong blank even if a later one is also wrong', async () => {
-    const { router } = trackingRouter(new Error('NO_MODEL'));
+    const { router } = trackingRouter(new NoModelError('grade.fill.llm'));
     const result = await gradeFillQuestion(question, ['nope', 'host', 'nope'], router);
     expect(result.pass).toBe(false);
     expect(result.feedback).toContain('1');

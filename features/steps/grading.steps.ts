@@ -14,7 +14,8 @@ import { Given, Then, When } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import { resolve } from 'node:path';
 import type { LearningWorld } from './_world.js';
-import { fixtureRouter, loadFixturesFromDir } from '../support/fixture-router.js';
+import { fixtureRouter, loadFixturesFromDir, noRecordingIsNoModel } from '../support/fixture-router.js';
+import { NoModelError } from '../../packages/core/src/llm/errors.js';
 import { gradeFillBlank, gradeFillQuestion } from '../../packages/core/src/grading/grade-fill.js';
 import { matchFuzzy } from '../../packages/core/src/grading/fuzzy.js';
 import { normalize } from '../../packages/core/src/grading/normalize.js';
@@ -51,7 +52,8 @@ function stateOf(world: LearningWorld): GradingState {
     s = {
       accepted: ['reference-phrase-xyz'],
       typed: 'completely-different-value',
-      router: fixtureRouter(loadFixturesFromDir(FIXTURES_DIR), (call) => world.llmCalls.push(call)),
+      // 填空場景:沒為第三層的 prompt 錄 fixture 就是「沒有模型」(T31:只有模型不能用才收成嚴格比對)
+      router: noRecordingIsNoModel(fixtureRouter(loadFixturesFromDir(FIXTURES_DIR), (call) => world.llmCalls.push(call))),
     };
     states.set(world, s);
   }
@@ -165,7 +167,16 @@ Given('neither of the first two layers matched', function (this: LearningWorld) 
 });
 
 Given('no model is available', function (this: LearningWorld) {
-  stateOf(this).router = fixtureRouter([], (call) => this.llmCalls.push(call));
+  // 契約 §7:離線又沒有本機模型,router 丟 NoModelError(T31 之後 gradeFillBlank 只把「模型不能用」收成 fallback-strict,
+  // 不再把任何例外都吞掉,所以這裡要丟真的 NoModelError,不是預錄 fixture 對不上的普通錯誤)
+  stateOf(this).router = {
+    call: async (task, prompt) => {
+      this.llmCalls.push({ task, prompt });
+      throw new NoModelError(task);
+    },
+    probeOnline: async () => false,
+    probeLocal: async () => ({ available: false, models: [] }),
+  };
 });
 
 Given('the model replies that the answers mean the same', function (this: LearningWorld) {

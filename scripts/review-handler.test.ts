@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import { scriptedApplyReply } from '../features/steps/_i2-cloud-script.js';
+import { NoModelError } from '../packages/core/src/llm/errors.js';
 import {
   TODAY,
   addDays,
@@ -52,7 +53,7 @@ function fakeRouter(): { calls: number; call(task: string, prompt: string): Prom
     calls: 0,
     async call(task: string, prompt: string): Promise<unknown> {
       r.calls += 1;
-      if (task !== 'grade.apply') throw new Error('沒有本機模型');
+      if (task !== 'grade.apply') throw new NoModelError(task);
       return { text: scriptedApplyReply(prompt), provider: 'fake', model: 'recorded', latency_ms: 0, provisional: false };
     },
     async probeOnline(): Promise<boolean> {

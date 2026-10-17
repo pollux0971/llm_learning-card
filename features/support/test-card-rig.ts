@@ -14,6 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { createReviewClient, type ReviewClient } from '../../apps/desktop/src/webview/review-client.js';
 import { createReviewHandler } from '../../packages/core/src/session/handler.js';
 import { scriptedApplyReply } from '../steps/_i2-cloud-script.js';
+import { NoModelError } from '../../packages/core/src/llm/errors.js';
 import { TODAY, addDays, createVault, gitInit, removeVault, reviewRecord, runReview, writeReviews, type ReviewRecord, type Vault } from './review-session-harness.js';
 
 export { TODAY };
@@ -70,7 +71,7 @@ export function fakeRouter(): FakeRouter {
     applyCalls: 0,
     async call(task: string, prompt: string): Promise<unknown> {
       r.calls += 1;
-      if (task !== 'grade.apply') throw new Error('沒有本機模型');
+      if (task !== 'grade.apply') throw new NoModelError(task);
       r.applyCalls += 1;
       return { text: scriptedApplyReply(prompt), provider: 'fake', model: 'recorded', latency_ms: 0, provisional: false };
     },
