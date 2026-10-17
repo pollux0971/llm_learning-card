@@ -2,7 +2,7 @@
 //! 不看動作名稱,也不看回覆內容。信封只查版本、識別碼、動作是不是字串、參數是不是物件、長度。
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -47,29 +47,47 @@ pub struct ReviewError {
 }
 
 fn envelope_err(kind: &str) -> EnvelopeError {
-    EnvelopeError { kind: kind.to_string() }
+    EnvelopeError {
+        kind: kind.to_string(),
+    }
 }
 
 fn review_err(kind: &str) -> ReviewError {
-    ReviewError { kind: kind.to_string() }
+    ReviewError {
+        kind: kind.to_string(),
+    }
 }
 
 /// webview 給的請求:只檢查 v == 1、id 是 ≥ 1 的整數、method 是字串、params 是物件、序列化成一行後 ≤ MAX_LINE_BYTES。
 /// 通過就回那一行(內容不改,不含換行)。
 pub fn request_line(request: &serde_json::Value) -> Result<String, EnvelopeError> {
-    let obj = request.as_object().ok_or_else(|| envelope_err("bad-envelope"))?;
-    let version = obj.get("v").and_then(serde_json::Value::as_u64).ok_or_else(|| envelope_err("bad-envelope"))?;
+    let obj = request
+        .as_object()
+        .ok_or_else(|| envelope_err("bad-envelope"))?;
+    let version = obj
+        .get("v")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| envelope_err("bad-envelope"))?;
     if version != 1 {
         return Err(envelope_err("bad-envelope"));
     }
-    let id = obj.get("id").and_then(serde_json::Value::as_u64).ok_or_else(|| envelope_err("bad-envelope"))?;
+    let id = obj
+        .get("id")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| envelope_err("bad-envelope"))?;
     if id < 1 {
         return Err(envelope_err("bad-envelope"));
     }
-    if obj.get("method").and_then(serde_json::Value::as_str).is_none() {
+    if obj
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+    {
         return Err(envelope_err("bad-envelope"));
     }
-    let params = obj.get("params").ok_or_else(|| envelope_err("bad-envelope"))?;
+    let params = obj
+        .get("params")
+        .ok_or_else(|| envelope_err("bad-envelope"))?;
     if !params.is_object() {
         return Err(envelope_err("bad-envelope"));
     }
@@ -85,9 +103,15 @@ pub fn parse_response_line(line: &str) -> Result<serde_json::Value, EnvelopeErro
     if line.len() > MAX_LINE_BYTES {
         return Err(envelope_err("bad-response"));
     }
-    let value: serde_json::Value = serde_json::from_str(line).map_err(|_| envelope_err("bad-response"))?;
-    let obj = value.as_object().ok_or_else(|| envelope_err("bad-response"))?;
-    let version = obj.get("v").and_then(serde_json::Value::as_u64).ok_or_else(|| envelope_err("bad-response"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(line).map_err(|_| envelope_err("bad-response"))?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| envelope_err("bad-response"))?;
+    let version = obj
+        .get("v")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| envelope_err("bad-response"))?;
     if version != 1 {
         return Err(envelope_err("bad-response"));
     }
@@ -95,7 +119,10 @@ pub fn parse_response_line(line: &str) -> Result<serde_json::Value, EnvelopeErro
 }
 
 /// 子行程的環境:CHILD_ENV_ALLOWLIST 裡有值的變數;`debug` 為 true 時再加 DEBUG_ONLY_ENV 裡有值的。其他一律不帶。
-pub fn child_env(debug: bool, env: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+pub fn child_env(
+    debug: bool,
+    env: impl Iterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
     let map: HashMap<String, String> = env.collect();
     let mut out = Vec::new();
     for key in CHILD_ENV_ALLOWLIST {
@@ -180,7 +207,10 @@ impl SidecarHost {
         Self {
             provider,
             timeouts,
-            inner: Mutex::new(Inner { running: None, last_id: 0 }),
+            inner: Mutex::new(Inner {
+                running: None,
+                last_id: 0,
+            }),
         }
     }
 
@@ -214,9 +244,16 @@ impl SidecarHost {
         guard.running.as_ref().map(|running| running.child.id())
     }
 
-    fn call_locked(&self, guard: &mut Inner, request: &serde_json::Value) -> Result<serde_json::Value, ReviewError> {
+    fn call_locked(
+        &self,
+        guard: &mut Inner,
+        request: &serde_json::Value,
+    ) -> Result<serde_json::Value, ReviewError> {
         let line = request_line(request).map_err(|_| review_err("bad-envelope"))?;
-        let id = request.get("id").and_then(serde_json::Value::as_u64).ok_or_else(|| review_err("bad-envelope"))?;
+        let id = request
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| review_err("bad-envelope"))?;
         if guard.last_id != 0 && id <= guard.last_id {
             return Err(review_err("bad-envelope"));
         }
@@ -226,8 +263,14 @@ impl SidecarHost {
                 Err(err) => return Err(err),
             }
         }
-        let running = guard.running.as_mut().ok_or_else(|| review_err("sidecar-unavailable"))?;
-        if writeln!(running.stdin, "{line}").and_then(|_| running.stdin.flush()).is_err() {
+        let running = guard
+            .running
+            .as_mut()
+            .ok_or_else(|| review_err("sidecar-unavailable"))?;
+        if writeln!(running.stdin, "{line}")
+            .and_then(|_| running.stdin.flush())
+            .is_err()
+        {
             if let Some(dead) = guard.running.take() {
                 stop(dead, Duration::ZERO);
             }
@@ -236,7 +279,10 @@ impl SidecarHost {
         guard.last_id = id;
         let timeout = self.timeouts.request;
         loop {
-            let running = guard.running.as_ref().ok_or_else(|| review_err("sidecar-exited"))?;
+            let running = guard
+                .running
+                .as_ref()
+                .ok_or_else(|| review_err("sidecar-exited"))?;
             match running.lines.recv_timeout(timeout) {
                 Ok(StdoutMsg::Line(text)) => {
                     if let Ok(value) = parse_response_line(&text) {
@@ -282,13 +328,28 @@ impl SidecarHost {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut child = command.spawn().map_err(|_| review_err("sidecar-unavailable"))?;
-        let stdin = child.stdin.take().ok_or_else(|| review_err("sidecar-unavailable"))?;
-        let stdout = child.stdout.take().ok_or_else(|| review_err("sidecar-unavailable"))?;
-        let stderr = child.stderr.take().ok_or_else(|| review_err("sidecar-unavailable"))?;
+        let mut child = command
+            .spawn()
+            .map_err(|_| review_err("sidecar-unavailable"))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| review_err("sidecar-unavailable"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| review_err("sidecar-unavailable"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| review_err("sidecar-unavailable"))?;
         forward_stderr(stderr);
         let lines = spawn_reader(stdout);
-        let running = Running { child, stdin, lines };
+        let running = Running {
+            child,
+            stdin,
+            lines,
+        };
         match wait_hello(&running.lines, self.timeouts.hello) {
             Ok(()) => Ok(running),
             Err(err) => {
@@ -313,7 +374,9 @@ fn wait_hello(lines: &Receiver<StdoutMsg>, timeout: Duration) -> Result<(), Revi
                 }
                 eprintln!("[review-sidecar] dropped non-protocol line");
             }
-            Ok(StdoutMsg::TooLarge) | Ok(StdoutMsg::Eof) | Err(_) => return Err(review_err("sidecar-unavailable")),
+            Ok(StdoutMsg::TooLarge) | Ok(StdoutMsg::Eof) | Err(_) => {
+                return Err(review_err("sidecar-unavailable"))
+            }
         }
     }
 }
@@ -360,7 +423,9 @@ fn read_limited(reader: &mut impl Read, max: usize) -> ReadOut {
                 }
                 return ReadOut::Line(String::from_utf8_lossy(&buf).into_owned());
             }
-            Ok(_) if byte[0] == b'\n' => return ReadOut::Line(String::from_utf8_lossy(&buf).into_owned()),
+            Ok(_) if byte[0] == b'\n' => {
+                return ReadOut::Line(String::from_utf8_lossy(&buf).into_owned())
+            }
             Ok(_) if buf.len() >= max => {
                 discard_rest(reader);
                 return ReadOut::TooLarge;
@@ -385,20 +450,53 @@ fn discard_rest(reader: &mut impl Read) {
     }
 }
 
-fn forward_stderr(stderr: impl Read + Send + 'static) {
-    thread::spawn(move || {
-        let mut reader = std::io::BufReader::new(stderr);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match std::io::BufRead::read_line(&mut reader, &mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    let text = line.trim_end_matches(['\n', '\r']);
-                    eprintln!("[review-sidecar] {text}");
+/// 側車 stderr 轉到 app stderr 時用的前綴(結尾有一個空白)。側車自己印的行也是這個開頭(ADR-075 第 5 條)。
+pub const STDERR_PREFIX: &str = "[review-sidecar] ";
+
+/// 側車 stderr 的一行 → 要寫到 app stderr 的那一行(不含換行)。
+/// `raw` 是讀到的位元組,可能帶結尾的 `\n` 或 `\r\n`,可能有不合法的 UTF-8。
+pub fn host_stderr_line(raw: &[u8]) -> String {
+    let mut end = raw.len();
+    while end > 0 && (raw[end - 1] == b'\n' || raw[end - 1] == b'\r') {
+        end -= 1;
+    }
+    let trimmed = &raw[..end];
+    let text = String::from_utf8_lossy(trimmed);
+    if trimmed.starts_with(STDERR_PREFIX.as_bytes()) {
+        text.into_owned()
+    } else {
+        format!("{STDERR_PREFIX}{text}")
+    }
+}
+
+/// 從 `reader` 一行一行讀(`read_until(b'\n')`)到 EOF,每一行經 `host_stderr_line` 換好、加 `\n`,
+/// 用**一次** `write_all` 寫進 `sink`(一行的內容與換行一起寫,不會跟別的執行緒的輸出交錯)。回傳讀到幾行。
+pub fn forward_lines(mut reader: impl BufRead, mut sink: impl Write) -> usize {
+    let mut buf = Vec::new();
+    let mut count = 0;
+    let mut sink_ok = true;
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                count += 1;
+                if sink_ok {
+                    let mut out = host_stderr_line(&buf).into_bytes();
+                    out.push(b'\n');
+                    if sink.write_all(&out).is_err() {
+                        sink_ok = false;
+                    }
                 }
             }
         }
+    }
+    count
+}
+
+fn forward_stderr(stderr: impl Read + Send + 'static) {
+    thread::spawn(move || {
+        forward_lines(std::io::BufReader::new(stderr), std::io::stderr());
     });
 }
 

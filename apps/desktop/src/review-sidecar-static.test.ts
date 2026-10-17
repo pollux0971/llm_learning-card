@@ -63,7 +63,7 @@ describe('review_sidecar.rs:行程的管法(驗收 5)', () => {
     expect(code()).not.toMatch(/TcpListener|UdpSocket|tiny_http|hyper|axum/);
   });
 
-  it('stderr 每一行加 [review-sidecar] 前綴再轉出去;非協定行只記一行固定的字', () => {
+  it('stderr 轉出去的每一行剛好一個 [review-sidecar] 前綴(已經有的不再加);非協定行只記一行固定的字', () => {
     const c = code();
     expect(c).toContain('[review-sidecar]');
     expect(c).toContain('dropped non-protocol line');
