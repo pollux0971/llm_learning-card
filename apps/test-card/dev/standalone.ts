@@ -16,6 +16,10 @@ const SEED = join(DEV, 'reviews.seed.json');
 const TODAY = '2026-09-10';
 const HELLO_TIMEOUT_MS = 20_000;
 const REQUEST_TIMEOUT_MS = 60_000;
+const STDERR_KEEP = 20;
+const TIMEOUT_PHRASE = '側車沒有在時限內回覆';
+const EXITED_PHRASE = '側車已經結束';
+const RETIRED_PHRASE = '先前逾時,側車已收掉';
 
 export interface StandaloneBackend {
   root: string;
@@ -29,6 +33,35 @@ export interface StandaloneBackend {
 interface LineWaiter {
   nextLine(timeoutMs: number): Promise<string>;
   fail(err: Error): void;
+  /** 丟掉已到、還沒被取走的行,避免逾時後晚到的那一行被下一個請求拿走。 */
+  discard(): void;
+}
+
+interface StderrRing {
+  last(n: number): string[];
+}
+
+/** 持續讀 stderr,只留最後幾行。不讀的話管線會塞滿,側車卡住。 */
+function attachStderr(child: ChildProcessWithoutNullStreams): StderrRing {
+  const buf: string[] = [];
+  let tail = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => {
+    tail += chunk;
+    let at = tail.indexOf('\n');
+    while (at >= 0) {
+      buf.push(tail.slice(0, at));
+      if (buf.length > STDERR_KEEP) buf.shift();
+      tail = tail.slice(at + 1);
+      at = tail.indexOf('\n');
+    }
+  });
+  return {
+    last(n: number): string[] {
+      const all = tail.length > 0 ? [...buf, tail] : [...buf];
+      return all.slice(-n);
+    },
+  };
 }
 
 function attachLines(child: ChildProcessWithoutNullStreams): LineWaiter {
@@ -36,6 +69,7 @@ function attachLines(child: ChildProcessWithoutNullStreams): LineWaiter {
   let tail = '';
   let waiter: (() => void) | undefined;
   let failed: Error | undefined;
+  let ignore = false;
   const wake = (): void => {
     const current = waiter;
     waiter = undefined;
@@ -43,6 +77,7 @@ function attachLines(child: ChildProcessWithoutNullStreams): LineWaiter {
   };
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk: string) => {
+    if (ignore) return;
     tail += chunk;
     let at = tail.indexOf('\n');
     while (at >= 0) {
@@ -62,9 +97,9 @@ function attachLines(child: ChildProcessWithoutNullStreams): LineWaiter {
       const deadline = Date.now() + timeoutMs;
       while (lines.length === 0) {
         if (failed) throw failed;
-        if (child.exitCode !== null) throw new Error('側車已經結束');
+        if (child.exitCode !== null) throw new Error(EXITED_PHRASE);
         const left = deadline - Date.now();
-        if (left <= 0) throw new Error('側車沒有在時限內回覆');
+        if (left <= 0) throw new Error(TIMEOUT_PHRASE);
         await new Promise<void>((resolveWait) => {
           const timer = setTimeout(() => {
             waiter = undefined;
@@ -77,10 +112,32 @@ function attachLines(child: ChildProcessWithoutNullStreams): LineWaiter {
         });
       }
       const line = lines.shift();
-      if (line === undefined) throw new Error('側車沒有在時限內回覆');
+      if (line === undefined) throw new Error(TIMEOUT_PHRASE);
       return line;
     },
+    discard(): void {
+      lines.length = 0;
+      tail = '';
+      ignore = true;
+    },
   };
+}
+
+function isTimeout(err: unknown): boolean {
+  return err instanceof Error && err.message === TIMEOUT_PHRASE;
+}
+
+function methodOf(line: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return '(不是 JSON)';
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return '(沒有 method)';
+  const method = (parsed as { method?: unknown }).method;
+  if (typeof method !== 'string' || method.length === 0) return '(沒有 method)';
+  return method;
 }
 
 function sidecarEnv(root: string): { env: Record<string, string>; home: string; xdgConfig: string; xdgCache: string } {
@@ -135,27 +192,80 @@ export async function startStandaloneBackend(opts: { repoRoot?: string } = {}): 
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as ChildProcessWithoutNullStreams;
-  child.stderr.resume();
+  const stderrRing = attachStderr(child);
   child.stdin.on('error', () => {
     /* 側車先結束時寫入失敗,由下一行的逾時或結束回報 */
   });
   const lines = attachLines(child);
   let closed = false;
+  let retired: Error | undefined;
   let chain: Promise<unknown> = Promise.resolve();
 
+  function timeoutDetail(where: string, waitedMs: number): string {
+    const alive = child.exitCode === null && child.killed !== true;
+    const code = child.exitCode === null ? 'null' : String(child.exitCode);
+    const tail = stderrRing.last(STDERR_KEEP);
+    return [
+      TIMEOUT_PHRASE,
+      `卡在 ${where}`,
+      `等了 ${waitedMs} 毫秒`,
+      `側車還活著: ${String(alive)}`,
+      `exitCode: ${code}`,
+      `killed: ${String(child.killed)}`,
+      'stderr 最後 20 行:',
+      ...tail,
+    ].join('\n');
+  }
+
+  /** 逾時後收掉側車。這一筆帶診斷;之後的請求立刻失敗,不再各等 60 秒,也不拿走晚到的那一行。 */
+  function retire(where: string, waitedMs: number): Error {
+    const detail = new Error(timeoutDetail(where, waitedMs));
+    console.error(`[standalone] ${detail.message}`);
+    if (retired === undefined) {
+      retired = new Error(RETIRED_PHRASE);
+      lines.discard();
+      lines.fail(retired);
+      if (child.exitCode === null) child.kill('SIGKILL');
+    }
+    return detail;
+  }
+
+  const helloStarted = Date.now();
   try {
     await lines.nextLine(HELLO_TIMEOUT_MS);
   } catch (err) {
+    if (isTimeout(err)) {
+      const detail = new Error(timeoutDetail('hello', Date.now() - helloStarted));
+      console.error(`[standalone] ${detail.message}`);
+      child.kill('SIGKILL');
+      rmSync(root, { recursive: true, force: true });
+      throw detail;
+    }
     child.kill('SIGKILL');
     rmSync(root, { recursive: true, force: true });
     throw err;
   }
 
   async function writeAndRead(line: string): Promise<string> {
-    if (closed || child.exitCode !== null) throw new Error('側車已經結束');
+    const method = methodOf(line);
+    const started = Date.now();
+    if (retired) {
+      console.error(`[standalone] ${method} 0ms 失敗`);
+      throw retired;
+    }
+    if (closed || child.exitCode !== null) throw new Error(EXITED_PHRASE);
     const payload = line.endsWith('\n') ? line : `${line}\n`;
     child.stdin.write(payload);
-    return lines.nextLine(REQUEST_TIMEOUT_MS);
+    try {
+      const reply = await lines.nextLine(REQUEST_TIMEOUT_MS);
+      console.error(`[standalone] ${method} ${Date.now() - started}ms`);
+      return reply;
+    } catch (err) {
+      const waited = Date.now() - started;
+      console.error(`[standalone] ${method} ${waited}ms 失敗`);
+      if (isTimeout(err)) throw retire(method, waited);
+      throw err;
+    }
   }
 
   function request(line: string): Promise<string> {
@@ -170,7 +280,7 @@ export async function startStandaloneBackend(opts: { repoRoot?: string } = {}): 
   async function close(): Promise<void> {
     if (closed) return;
     closed = true;
-    lines.fail(new Error('側車已經結束'));
+    lines.fail(new Error(EXITED_PHRASE));
     if (child.exitCode === null) {
       child.stdin.end();
       child.kill('SIGTERM');
