@@ -99,13 +99,18 @@ export const HEAD_MIN_CONTRAST = 4.5;
 
 // ── 不退步:06、07 已 done 的 phase ────────────────────────────────────────
 /**
- * 現在 06、07 都只有 phase-1 done。新出現 done 的 phase,這份清單沒有它就紅,
+ * 現在 06 的 phase-1、phase-2 與 07 的 phase-1 done。新出現 done 的 phase,這份清單沒有它就紅,
  * 逼人有意識地把它的 feature 雜湊釘進來(紅測試作者更新),不默默放過。
- * 雜湊是基底 b4d7e6d 時 `.feature` 檔內容的 sha256。
+ * 雜湊是 `.feature` 檔內容的 sha256:phase-1 兩份是基底 b4d7e6d 時量的;06 phase-2 是 main 6c822c6(06 phase-2 標 done)時量的。
  */
 export const DONE_PHASE_FEATURES: readonly { folder: string; phase: string; file: string; sha256: string }[] = [
   { folder: '06-test-card', phase: 'phase-1', file: 'features/06-test-card/phase-1.feature', sha256: 'cafdb78488aaf22bace7c18bf658706cb5bc321959739549aa8559992bc5fe7f' },
+  { folder: '06-test-card', phase: 'phase-2', file: 'features/06-test-card/phase-2.feature', sha256: '2ea20a60ddcb8a201bb1175cd9680e0bf7089e54188dade990fcbc07ecc9cadf' },
   { folder: '07-teach-card', phase: 'phase-1', file: 'features/07-teach-card/phase-1.feature', sha256: '057a70ba167e60fe12f5cbb01607cb61f25cba17e7b3a202755da74765c02a1c' },
 ];
-/** 子行程跑的標籤式(場景 4) */
-export const DONE_PHASES_TAG_EXPRESSION = '(@test-card or @teach-card) and @phase-1 and not @manual';
+/**
+ * 子行程跑的標籤式(場景 4):06 的 phase-1 與 phase-2、07 的 phase-1,都不含 @manual。
+ * 不能寫成 `(@test-card or @teach-card) and (@phase-1 or @phase-2)`:07 的 phase-2 還不是 done,不該被拉進來。
+ * 新增 done 的 phase 時,這個式子與上面的清單一起更新(紅測試作者)。
+ */
+export const DONE_PHASES_TAG_EXPRESSION = '((@test-card and (@phase-1 or @phase-2)) or (@teach-card and @phase-1)) and not @manual';

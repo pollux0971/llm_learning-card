@@ -45,3 +45,51 @@ export function doneFeatureProblems(root: string = REPO_ROOT, pinned = DONE_PHAS
   }
   return problems;
 }
+
+/** 標籤式求值(只支援 cucumber 用到的 `and` `or` `not` 與括號;`@tag` 是否在集合裡)。 */
+export function evalTagExpression(expr: string, tags: ReadonlySet<string>): boolean {
+  const tokens = expr.match(/\(|\)|@[^\s()]+|\b(?:and|or|not)\b/g) ?? [];
+  let i = 0;
+  const peek = (): string | undefined => tokens[i];
+  function primary(): boolean {
+    const t = tokens[i++];
+    if (t === '(') {
+      const v = orExpr();
+      if (tokens[i++] !== ')') throw new Error(`標籤式少了右括號:${expr}`);
+      return v;
+    }
+    if (t === 'not') return !primary();
+    if (t !== undefined && t.startsWith('@')) return tags.has(t);
+    throw new Error(`標籤式看不懂:${expr}(在 ${t ?? '結尾'})`);
+  }
+  function andExpr(): boolean {
+    let v = primary();
+    while (peek() === 'and') { i += 1; const r = primary(); v = v && r; }
+    return v;
+  }
+  function orExpr(): boolean {
+    let v = andExpr();
+    while (peek() === 'or') { i += 1; const r = andExpr(); v = v || r; }
+    return v;
+  }
+  const out = orExpr();
+  if (i !== tokens.length) throw new Error(`標籤式多出東西:${expr}`);
+  return out;
+}
+
+/** 一份 .feature 裡每個場景的標籤集合(含 Feature 層的標籤)。只認「Scenario:」,不處理 Scenario Outline 的 Examples 標籤。 */
+export function scenarioTags(feature: string): { name: string; tags: Set<string> }[] {
+  const lines = feature.split('\n').map((l) => l.trim());
+  const featureTags = new Set<string>();
+  const out: { name: string; tags: Set<string> }[] = [];
+  let pending: string[] = [];
+  let seenFeature = false;
+  for (const line of lines) {
+    if (line.startsWith('@')) { pending.push(...line.split(/\s+/).filter((t) => t.startsWith('@'))); continue; }
+    if (/^Feature:/.test(line)) { seenFeature = true; for (const t of pending) featureTags.add(t); pending = []; continue; }
+    const m = /^Scenario(?: Outline)?:\s*(.*)$/.exec(line);
+    if (seenFeature && m) { out.push({ name: m[1] ?? '', tags: new Set([...featureTags, ...pending]) }); pending = []; continue; }
+    if (line !== '' && !line.startsWith('#')) pending = [];
+  }
+  return out;
+}
