@@ -291,26 +291,76 @@ describe('收尾(驗收 5 第 5 點)', () => {
   }, 120_000);
 });
 
+// ---------------------------------------------------------------- 起 vite 的測試:每一步帶名字的限時
+// 整鏈偶發逾時 120 秒時,vitest 只說「逾時」,看不出卡在哪一步。這裡每一步(createServer、listen、每個 fetch / post、server.close)
+// 都包一層限時,卡住時錯誤訊息寫出是哪一步、等了多久。限時小於各測試的 120_000 外框,好讓這個訊息先出來。只加診斷,不動任何斷言。
+const STEP_LIMIT_MS = 70_000;
+
+async function timed<T>(name: string, run: (signal: AbortSignal) => Promise<T>, limitMs = STEP_LIMIT_MS): Promise<T> {
+  const started = Date.now();
+  const ac = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      ac.abort();
+      reject(new Error(`[standalone.test 診斷] 卡在步驟「${name}」:等了 ${Date.now() - started} ms(限時 ${limitMs} ms)仍沒回來`));
+    }, limitMs);
+  });
+  try {
+    return await Promise.race([run(ac.signal), limit]);
+  } catch (err) {
+    if (err instanceof Error && !err.message.startsWith('[standalone.test 診斷]') && ac.signal.aborted) {
+      throw new Error(`[standalone.test 診斷] 步驟「${name}」被中止(${Date.now() - started} ms):${err.message}`);
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+interface ViteHandle {
+  server: import('vite').ViteDevServer;
+  port: number;
+  /** 帶步驟名與限時的 fetch,回 { status, text } */
+  get(name: string, path: string, init?: RequestInit): Promise<{ status: number; text: string }>;
+  /** POST /__review 一個 JSON-RPC 行,回解析後的物件 */
+  rpc(method: string, params?: Obj): Promise<Obj>;
+  close(): Promise<void>;
+}
+
+async function startVite(extra: { strictPort?: boolean } = {}): Promise<ViteHandle> {
+  const { createServer } = await timed('import vite', () => import('vite'));
+  const server = await timed('vite createServer', () =>
+    createServer({ root: APP, configFile: join(APP, 'vite.config.ts'), logLevel: 'silent', server: { host: '127.0.0.1', port: 0, ...extra } }),
+  );
+  await timed('vite server.listen', () => server.listen());
+  const address = server.httpServer?.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  const get: ViteHandle['get'] = (name, path, init) =>
+    timed(`fetch ${name}`, async (signal) => {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, { ...init, signal: AbortSignal.any([signal, AbortSignal.timeout(STEP_LIMIT_MS)]) });
+      return { status: res.status, text: await res.text() };
+    });
+  return {
+    server,
+    port,
+    get,
+    async rpc(method, params = {}) {
+      const out = await get(`POST /__review ${method}`, '/__review', { method: 'POST', body: JSON.stringify({ v: 1, id: nextId++, method, params }) });
+      return JSON.parse(out.text) as Obj;
+    },
+    close: () => timed('vite server.close', () => server.close()),
+  };
+}
+
 describe('plugin 掛在真的 vite dev server 上(POST /__review 往返、關掉就收)', () => {
   it('用 apps/test-card/vite.config.ts 起 dev server:POST /__review 回側車的那一行;server 關掉後側車行程與暫存根都沒了', async () => {
-    const { createServer } = await import('vite');
     const pidsBefore = new Set(sidecarPids());
     const tmpBefore = new Set(readdirSync(tmpdir()));
-    const server = await createServer({
-      root: APP,
-      configFile: join(APP, 'vite.config.ts'),
-      logLevel: 'silent',
-      server: { host: '127.0.0.1', port: 0, strictPort: false },
-    });
-    await server.listen();
+    const vite = await startVite({ strictPort: false });
     try {
-      const address = server.httpServer?.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      expect(port).toBeGreaterThan(0);
-      const post = async (body: string): Promise<{ status: number; text: string }> => {
-        const res = await fetch(`http://127.0.0.1:${port}/__review`, { method: 'POST', body });
-        return { status: res.status, text: await res.text() };
-      };
+      expect(vite.port).toBeGreaterThan(0);
+      const post = (body: string): Promise<{ status: number; text: string }> => vite.get('POST /__review', '/__review', { method: 'POST', body });
       const first = await post(JSON.stringify({ v: 1, id: 1, method: 'start', params: {} }));
       expect(first.status).toBe(200);
       expect(first.text).not.toContain('\n');
@@ -322,7 +372,7 @@ describe('plugin 掛在真的 vite dev server 上(POST /__review 往返、關掉
       // 側車真的是這個 plugin 起的
       expect(sidecarPids().filter((p) => !pidsBefore.has(p)).length).toBeGreaterThan(0);
     } finally {
-      await server.close();
+      await vite.close();
     }
     const left: number[] = [];
     for (let i = 0; i < 60; i += 1) {
@@ -337,20 +387,12 @@ describe('plugin 掛在真的 vite dev server 上(POST /__review 往返、關掉
   }, 120_000);
 
   it('重新載入頁面不會重新種子(工單 §5:暫存根跟 dev server 同生命):答過的留著,start 回續答', async () => {
-    const { createServer } = await import('vite');
-    const server = await createServer({ root: APP, configFile: join(APP, 'vite.config.ts'), logLevel: 'silent', server: { host: '127.0.0.1', port: 0 } });
-    await server.listen();
+    const vite = await startVite();
     try {
-      const address = server.httpServer?.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      const post = async (method: string, params: Obj = {}): Promise<Obj> => {
-        const res = await fetch(`http://127.0.0.1:${port}/__review`, { method: 'POST', body: JSON.stringify({ v: 1, id: nextId++, method, params }) });
-        return JSON.parse(await res.text()) as Obj;
-      };
+      const post = (method: string, params: Obj = {}): Promise<Obj> => vite.rpc(method, params);
       const page = async (): Promise<void> => {
-        const res = await fetch(`http://127.0.0.1:${port}/`, { headers: { accept: 'text/html' } });
+        const res = await vite.get('GET / (首頁)', '/', { headers: { accept: 'text/html' } });
         expect(res.status).toBe(200);
-        await res.text();
       };
       await page();
       expect((await post('start')).ok).toBe(true);
@@ -360,35 +402,31 @@ describe('plugin 掛在真的 vite dev server 上(POST /__review 往返、關掉
       await page(); // 重新載入
       expect((await post('start')).result).toMatchObject({ state: 'ready', total: 3, answered: 1, resumed: true });
     } finally {
-      await server.close();
+      await vite.close();
     }
   }, 120_000);
 
   it('GET /__review 只收 POST:回 405 或 404,而且側車沒收到任何一行(連 GET 帶的 body 都不轉)', async () => {
-    const { createServer } = await import('vite');
     const http = await import('node:http');
-    const server = await createServer({ root: APP, configFile: join(APP, 'vite.config.ts'), logLevel: 'silent', server: { host: '127.0.0.1', port: 0 } });
-    await server.listen();
+    const vite = await startVite();
+    const port = vite.port;
     try {
-      const address = server.httpServer?.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
       const startLine = JSON.stringify({ v: 1, id: nextId++, method: 'start', params: {} });
-      const status = await new Promise<number>((resolve, reject) => {
+      const status = await timed('http GET /__review (帶 body)', () => new Promise<number>((resolve, reject) => {
         const req = http.request({ host: '127.0.0.1', port, path: '/__review', method: 'GET', headers: { 'content-length': Buffer.byteLength(startLine) } }, (res) => {
           res.resume();
           res.on('end', () => resolve(res.statusCode ?? 0));
         });
         req.on('error', reject);
         req.end(startLine);
-      });
+      }));
       expect([404, 405], `GET 回 ${status}`).toContain(status);
       // 側車沒收到 GET 帶的那行 start:所以現在 next 還沒有 session
-      const res = await fetch(`http://127.0.0.1:${port}/__review`, { method: 'POST', body: JSON.stringify({ v: 1, id: nextId++, method: 'next', params: {} }) });
-      const reply = JSON.parse(await res.text()) as { ok: boolean; error?: { kind: string } };
+      const reply = (await vite.rpc('next')) as { ok: boolean; error?: { kind: string } };
       expect(reply.ok).toBe(false);
       expect(reply.error?.kind).toBe('no-session');
     } finally {
-      await server.close();
+      await vite.close();
     }
   }, 120_000);
 });
