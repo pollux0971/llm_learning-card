@@ -15,7 +15,7 @@
 - 05-grading phase-2 done
 - 01-data-layer phase-2 done
 
-**phase-2** 需要:phase-1 done、I2 自動驗收通過(ADR-073:I2 不打 tag,人工確認延到 I4)、01-data-layer phase-4 done(ADR-042 的
+**phase-2** 需要:phase-1 done、終端機複習那個整合點的自動驗收通過(ADR-073:那個整合點不打 tag,過了沒由技術顧問判)、01-data-layer phase-4 done(ADR-042 的
 `snapshotLearningDir()` 要先能用)
 
 **phase-3** 需要:phase-2 done
