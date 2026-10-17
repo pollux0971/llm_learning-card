@@ -217,6 +217,7 @@ pub fn sidecar_command(repo_root: &Path, learning_root: &Path) -> (String, Vec<S
 - `repo_root`:這一版用編譯時的 `CARGO_MANIFEST_DIR` 往上三層(`apps/desktop/src-tauri` → repo 根)。打包是 ADR-075 的已知限制,這張不做。
 - `SidecarHost`(Tauri managed state,`main.rs` 加 `.manage(...)`):
   - 第一次 `review` 時起側車(`std::process::Command`,stdin / stdout 接管,stderr 每一行加 `[review-sidecar]` 前綴轉到 app 的 stderr),等 `hello`(`HELLO_TIMEOUT`)。
+    (2026-10-17 補)stderr 的前綴改由 T28 定(`T28-sidecar-stderr-prefix-once.md`):已經是 `[review-sidecar] ` 開頭的行原樣轉、不再加;T28 合併前照上一句。
   - 一次一個請求(`Mutex`);鎖不到就回 `busy`。
   - 寫一行、讀到 `id` 相同的那一行為止(`id` 不同的舊回應丟掉);`REQUEST_TIMEOUT` 到了就收掉側車、回 `timeout`。
   - 請求的 `id` 要比上一個送出的大(webview 的 client 從 1 往上數;重開 app 從頭數),不然回 `bad-envelope`、不送。
