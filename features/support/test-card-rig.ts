@@ -28,6 +28,7 @@ export interface View {
   state: string;
   message: string | undefined;
   canRestart: boolean;
+  canRetry: boolean;
   testModeNotice: string | undefined;
   answeredCount: number;
   totalCount: number;
