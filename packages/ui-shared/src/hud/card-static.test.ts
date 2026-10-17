@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buttonProblems, fieldProblems, importProblems, loadScanProblems, panelProblems, progressProblems, resultMarkupProblems,
-  styleProblems,
+  gradingTextProblems, styleProblems,
 } from './card-static-test-support.js';
 
 describe.each(['teach-card', 'test-card'] as const)('%s 的原始碼', (name) => {
@@ -41,5 +41,9 @@ describe('考試卡的作答欄、進度、結果(驗收 2)', () => {
 
   it('結果那一行:data-result、「✓ 答對了」「× 答錯了」寫在標記裡不在 CSS content,評分失敗不帶符號', () => {
     expect(resultMarkupProblems()).toEqual([]);
+  });
+
+  it('評分失敗那行的字從 session.ts 的 GRADING_ERROR、SUBMIT_RETRY_HINT 來:兩個常數的值都沒有 ✓ × ✗', () => {
+    expect(gradingTextProblems()).toEqual([]);
   });
 });

@@ -22,6 +22,7 @@ export const ERROR_KINDS = [
   'no-question',
   'review-record-changed',
   'internal',
+  'credential-unavailable',
   'not-configured',
   'sidecar-unavailable',
   'sidecar-exited',
@@ -32,7 +33,10 @@ export const ERROR_KINDS = [
 ] as const;
 export type ErrorKind = (typeof ERROR_KINDS)[number];
 
-/** 每個 kind 一句固定中文,回給視窗的 message 只用這裡的句子。 */
+/**
+ * 每個 kind 一句固定中文,回給視窗的 message 只用這裡的句子。
+ * credential-unavailable 這一種用 credentialMessage 的樣板(缺或被拒絕,只換鍵名);這裡的句子是備用。
+ */
 export const ERROR_MESSAGES: Record<ErrorKind, string> = {
   'bad-request': '這一列不是合法的請求。',
   'unsupported-version': '不支援這個協定版本。',
@@ -46,6 +50,7 @@ export const ERROR_MESSAGES: Record<ErrorKind, string> = {
   'no-question': '現在沒有可以送出的題目。',
   'review-record-changed': '複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。',
   internal: '內部發生問題,請稍後再試。',
+  'credential-unavailable': '批改要用的金鑰不能用。請在專案根目錄的 .env 檢查。',
   'not-configured': '學習目錄還沒設定好。',
   'sidecar-unavailable': '複習輔助程式無法啟動。',
   'sidecar-exited': '複習輔助程式已經結束。',

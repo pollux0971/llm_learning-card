@@ -5,6 +5,8 @@
 import { relative } from 'node:path';
 import type { CardId } from '@contracts/index.js';
 import type { LlmRouter } from '@core/grading/index.js';
+import { credentialMessage, credentialProblem } from '@core/llm/credentials.js';
+import { MissingCredentialError } from '@core/llm/errors.js';
 import { submitAnswer } from './answer.js';
 import { readSessionCache, type SessionCache } from './cache.js';
 import { openDay, snapshotAfterReview, summarizeDay } from './engine.js';
@@ -26,9 +28,13 @@ export class ReviewStartError extends Error {
 
 export interface ReviewHandlerDeps {
   learningDir: string;
-  today: string;
+  today: string | (() => string);
   routerFactory: () => unknown | Promise<unknown>;
   env: NodeJS.ProcessEnv;
+  /** 重讀 .env,回「內容有沒有變」。不給就是 T22:不重讀、不丟快取。 */
+  reloadEnv?: () => boolean;
+  /** 回缺的鍵名。不給就是 T22:不查金鑰。 */
+  missingKeys?: () => readonly string[];
 }
 
 type Handler = (line: string) => Promise<string>;
@@ -58,19 +64,39 @@ function isReviewsChanged(err: unknown): boolean {
 }
 
 export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
-  const { learningDir, today, env } = deps;
+  const { learningDir, env } = deps;
   let router: LlmRouter | undefined;
   let session: Session | undefined;
   let cache: SessionCache | undefined;
   let resumed = false;
   let answeredThisRun = 0;
+  let roundDay: string | undefined;
+  if (typeof deps.today === 'string') roundDay = deps.today;
 
   const fail = (id: number | null, kind: ErrorKind): string =>
     JSON.stringify({ v: 1, id, ok: false, error: { kind, message: ERROR_MESSAGES[kind] } });
+  const failCredential = (id: number, message: string): string =>
+    JSON.stringify({ v: 1, id, ok: false, error: { kind: 'credential-unavailable', message } });
   const ok = (id: number, result: unknown): string => JSON.stringify({ v: 1, id, ok: true, result });
 
+  function day(): string {
+    if (roundDay !== undefined) return roundDay;
+    if (typeof deps.today === 'function') return deps.today();
+    throw new Error('internal: today 還沒在 start 算過');
+  }
+
+  function lockToday(): void {
+    if (typeof deps.today !== 'function') return;
+    roundDay = deps.today();
+  }
+
+  function reloadAndMaybeDropRouter(): void {
+    if (deps.reloadEnv === undefined) return;
+    if (deps.reloadEnv()) router = undefined;
+  }
+
   const diskPaused = (): boolean => {
-    const prior = readSessionCache(learningDir, today, env);
+    const prior = readSessionCache(learningDir, day(), env);
     return prior.kind === 'ok' && prior.cache.paused;
   };
 
@@ -85,7 +111,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
     const reviews = loadReviews(learningDir);
     let n = 0;
     for (const item of dayCache.queue) {
-      if ((reviews[item.card]?.history ?? []).some((entry) => entry.date === today)) n += 1;
+      if ((reviews[item.card]?.history ?? []).some((entry) => entry.date === day())) n += 1;
     }
     return n;
   }
@@ -104,7 +130,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
     }
     return {
       state,
-      today,
+      today: day(),
       resumed: resumedFlag,
       total: dayCache.total_due,
       answered: answeredToday(dayCache),
@@ -128,9 +154,17 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
     return { kind: 'reteach', card, path, short };
   }
 
+  function credentialLine(id: number, err: unknown): string | undefined {
+    const problem = credentialProblem(err, env);
+    if (problem === undefined) return undefined;
+    return failCredential(id, credentialMessage(problem));
+  }
+
   async function handleStart(id: number): Promise<string> {
     if (listCardIds(learningDir).length === 0) return fail(id, 'no-cards');
-    const prior = readSessionCache(learningDir, today, env);
+    reloadAndMaybeDropRouter();
+    lockToday();
+    const prior = readSessionCache(learningDir, day(), env);
     const paused = prior.kind === 'ok' && prior.cache.paused;
     let active = router;
     if (!paused) {
@@ -141,9 +175,20 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
         cache = undefined;
         return fail(id, startFailureKind(err));
       }
+      if (deps.missingKeys !== undefined) {
+        const missing = deps.missingKeys();
+        const first = missing[0];
+        if (first !== undefined) {
+          session = undefined;
+          cache = undefined;
+          const line = credentialLine(id, new MissingCredentialError(first));
+          if (line !== undefined) return line;
+          return fail(id, 'credential-unavailable');
+        }
+      }
     }
     try {
-      const opened = await openDay({ learningDir, today, router: active ?? refusingRouter(), env });
+      const opened = await openDay({ learningDir, today: day(), router: active ?? refusingRouter(), env });
       answeredThisRun = 0;
       if (opened.kind === 'paused') {
         session = undefined;
@@ -197,6 +242,8 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
     if ('apply' in params && type !== 'apply') return fail(id, 'no-question');
     const correctAnswers = (current.fillQuestion?.answers ?? []).map((group) => group[0] ?? '');
     try {
+      reloadAndMaybeDropRouter();
+      if (router === undefined) session.router = await ensureRouter();
       const outcome = await submitAnswer(session, 'fill' in params ? params.fill : params.apply, { keepOnError: true });
       answeredThisRun += 1;
       const result: Record<string, unknown> = {
@@ -209,6 +256,8 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
       if (type === 'fill' && outcome.pass === false) result.correctAnswers = correctAnswers;
       return ok(id, result);
     } catch (err) {
+      const line = credentialLine(id, err);
+      if (line !== undefined) return line;
       if (isReviewsChanged(err)) {
         session = undefined;
         cache = undefined;
@@ -223,13 +272,13 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
     try {
       const summary = summarizeDay({
         learningDir,
-        today,
+        today: day(),
         cache,
         dailyCap: session.dailyCap,
         answeredThisRun,
         resumed,
       });
-      const snap = snapshotAfterReview({ learningDir, today, answeredThisRun });
+      const snap = snapshotAfterReview({ learningDir, today: day(), answeredThisRun });
       const result: Record<string, unknown> = {
         passed: summary.passed,
         returned: summary.failed,
@@ -245,7 +294,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
   }
 
   function handleStatus(id: number): string {
-    return ok(id, { paused: diskPaused(), today });
+    return ok(id, { paused: diskPaused(), today: day() });
   }
 
   return async (line: string): Promise<string> => {

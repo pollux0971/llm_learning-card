@@ -24,6 +24,7 @@ const NO_CARDS_MESSAGE = '掃描到 0 張卡 —— 這個 learning 資料夾沒
 const ROUTER_MESSAGE = '帳本身分驗不過,批改不能用。請在終端機執行 npx tsx scripts/vault.ts show 看原因。';
 const VAULT_HINT = '請在終端機執行 npx tsx scripts/vault.ts show 看原因。';
 const RETRY_HINT = '改好之後按「再試一次」。';
+const SUBMIT_RETRY_HINT = '改好之後再按「送出」。';
 const GRADING_ERROR = '評分失敗,請再試一次';
 const TEST_MODE_NOTICE = '測試模式:批改是假的';
 const SHORT_NOTICE = '這張卡連續答錯兩次;縮短版還沒有產生,先看原卡。';
@@ -360,6 +361,12 @@ export class TestSession {
       this.result = result;
       this.gradingError = undefined;
     } catch (err) {
+      const review = reviewOf(err);
+      if (review !== undefined && review.kind === 'credential-unavailable') {
+        this.gradingError = `${review.message}${SUBMIT_RETRY_HINT}`;
+        this.result = undefined;
+        return;
+      }
       this.showError(err);
     } finally {
       this.submitting = false;
@@ -475,6 +482,10 @@ export class TestSession {
     }
     this.clearCard();
     this.phase = 'error';
+    if (review.kind === 'credential-unavailable') {
+      this.showRetry(review.message);
+      return;
+    }
     if (review.kind === 'no-cards') {
       this.showRetry(NO_CARDS_MESSAGE);
       return;

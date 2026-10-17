@@ -1588,3 +1588,171 @@ describe('root-mismatch、not-configured 的畫面字全文(驗收 7)', () => {
     expect(b.s.getView().message).toBe('帳本身分驗不過,批改不能用。請在終端機執行 npx tsx scripts/vault.ts show 看原因。改好之後按「再試一次」。');
   });
 });
+
+// ---------------------------------------------------------------- T30:金鑰問題(credential-unavailable)
+
+describe('T30 驗收 4:start 回 credential-unavailable → 「再試一次」畫面(不是「複習程式停了」)', () => {
+  const MISSING = '批改要用的金鑰沒有設定:GATEWAY_API_KEY。請在專案根目錄的 .env 加上。';
+  const REJECTED = '批改用的金鑰被拒絕:OPENAI_API_KEY(可能過期或打錯)。請在專案根目錄的 .env 換一個。';
+  const credential = (message: string): Error => new ReviewError('credential-unavailable', message);
+
+  it('訊息照原文,後面直接接「改好之後按「再試一次」。」(中間沒有空格);有「再試一次」、沒有「重新開始」', async () => {
+    const { s } = await ready({ start: [credential(MISSING)] });
+    await s.init();
+    const v = s.getView();
+    expect(v.state).toBe('error');
+    expect(v.message).toBe(`${MISSING}改好之後按「再試一次」。`);
+    expect(v.canRetry).toBe(true);
+    expect(v.canRestart).toBe(false);
+    expect(v.message).not.toContain('複習程式停了');
+    expect(v.current).toBeUndefined();
+    expect(v.summaryLines).toEqual([]);
+  });
+
+  it('被拒絕的那一句也一樣(訊息用側車給的,不在畫面裡寫死)', async () => {
+    const { s } = await ready({ start: [credential(REJECTED)] });
+    await s.init();
+    expect(s.getView().message).toBe(`${REJECTED}改好之後按「再試一次」。`);
+    expect(s.getView().canRetry).toBe(true);
+  });
+
+  it('側車給什麼句子就顯示什麼句子(不同的字也原樣帶出)', async () => {
+    const { s } = await ready({ start: [credential('別的句子 XYZ')] });
+    await s.init();
+    expect(s.getView().message).toBe('別的句子 XYZ改好之後按「再試一次」。');
+  });
+
+  it('按「再試一次」= 再 init():重新 start,補好金鑰就出題;沒有走 next 以外的路', async () => {
+    const { s, f } = await ready({ start: [credential(MISSING), start()], next: [fillQ()] });
+    await s.init();
+    expect(s.getView().canRetry).toBe(true);
+    await s.init();
+    expect(f.calls.map((c) => c.method)).toEqual(['start', 'start', 'next']);
+    const v = s.getView();
+    expect(v.state).toBe('question');
+    expect(v.canRetry).toBe(false);
+    expect(v.canRestart).toBe(false);
+    expect(v.message).toBeUndefined();
+  });
+
+  it('再試一次還是缺 → 還在「再試一次」畫面;可以一直試', async () => {
+    const { s, f } = await ready({ start: [credential(MISSING), credential(MISSING), credential(REJECTED)] });
+    for (let i = 0; i < 3; i += 1) await s.init();
+    expect(f.count('start')).toBe(3);
+    expect(s.getView().message).toBe(`${REJECTED}改好之後按「再試一次」。`);
+    expect(s.getView().canRetry).toBe(true);
+  });
+
+  it('其他種類的 start 失敗不受影響:internal 還是「複習程式停了」加「重新開始」', async () => {
+    const { s } = await ready({ start: [new ReviewError('internal', 'x')] });
+    await s.init();
+    expect(s.getView().message).toContain('複習程式停了');
+    expect(s.getView().canRestart).toBe(true);
+    expect(s.getView().canRetry).toBe(false);
+  });
+});
+
+describe('T30 驗收 4:submit 回 credential-unavailable → 題目與輸入留著、可以再送', () => {
+  const MISSING = '批改要用的金鑰沒有設定:GATEWAY_API_KEY。請在專案根目錄的 .env 加上。';
+  const REJECTED = '批改用的金鑰被拒絕:OPENAI_API_KEY(可能過期或打錯)。請在專案根目錄的 .env 換一個。';
+  const credential = (message: string): Error => new ReviewError('credential-unavailable', message);
+
+  it('應用題:還在 question、題目沒變、submitting false;gradingError 是側車那一句加「改好之後再按「送出」。」', async () => {
+    const { s } = await ready({ start: [start()], next: [applyQ()], submit: [credential(MISSING)] });
+    await s.init();
+    const before = s.getView().current;
+    await s.submitApply('我的回答');
+    const v = s.getView();
+    expect(v.state).toBe('question');
+    expect(v.current).toEqual(before);
+    expect(v.submitting).toBe(false);
+    expect(v.result).toBeUndefined();
+    expect(v.gradingError).toBe(`${MISSING}改好之後再按「送出」。`);
+    expect(v.canRetry).toBe(false);
+    expect(v.canRestart).toBe(false);
+    expect(v.message).toBeUndefined();
+    expect(v.gradingError).not.toContain('評分失敗');
+  });
+
+  it('被拒絕那一句也一樣', async () => {
+    const { s } = await ready({ start: [start()], next: [applyQ()], submit: [credential(REJECTED)] });
+    await s.init();
+    await s.submitApply('我的回答');
+    expect(s.getView().gradingError).toBe(`${REJECTED}改好之後再按「送出」。`);
+    expect(s.getView().state).toBe('question');
+  });
+
+  it('填空題一樣:題目留著、header 不動', async () => {
+    const { s } = await ready({ start: [start()], next: [fillQ({ progress: { index: 2, total: 5 } })], submit: [credential(MISSING)] });
+    await s.init();
+    await s.submitFill(['a', 'b', 'c']);
+    const v = s.getView();
+    expect(v.state).toBe('question');
+    expect(v.current?.card).toBe('sec-0001');
+    expect([v.answeredCount, v.totalCount]).toEqual([1, 5]);
+    expect(v.gradingError).toBe(`${MISSING}改好之後再按「送出」。`);
+    expect(v.submitting).toBe(false);
+  });
+
+  it('改好之後再按「送出」:只多一次 submit(沒有 start、沒有 next),這次有結果、錯誤清掉', async () => {
+    const { s, f } = await ready({ start: [start()], next: [applyQ()], submit: [credential(MISSING), graded()] });
+    await s.init();
+    await s.submitApply('我的回答');
+    await s.submitApply('我的回答');
+    expect(f.calls.map((c) => c.method)).toEqual(['start', 'next', 'submit', 'submit']);
+    expect(f.calls[3]).toEqual({ method: 'submit', arg: { apply: '我的回答' } });
+    const v = s.getView();
+    expect(v.gradingError).toBeUndefined();
+    expect(v.result).toMatchObject({ pass: true });
+    expect(v.state).toBe('question');
+  });
+
+  it('連續兩次憑證錯誤:句子換成最新的那一句,沒有疊加', async () => {
+    const { s } = await ready({ start: [start()], next: [applyQ()], submit: [credential(MISSING), credential(REJECTED)] });
+    await s.init();
+    await s.submitApply('x');
+    await s.submitApply('x');
+    expect(s.getView().gradingError).toBe(`${REJECTED}改好之後再按「送出」。`);
+  });
+
+  it('批改回 status:"error" 的老路不變:gradingError 還是「評分失敗,請再試一次」', async () => {
+    const { s } = await ready({ start: [start()], next: [applyQ()], submit: [{ status: 'error', pass: null, feedback: '評分失敗', cardDone: false }] });
+    await s.init();
+    await s.submitApply('x');
+    expect(s.getView().gradingError).toBe('評分失敗,請再試一次');
+  });
+
+  it('送出中:submitting 為 true,結束(包括憑證錯誤)後回 false', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { s } = await ready({
+      start: [start()],
+      next: [applyQ()],
+      submit: [
+        async () => {
+          await gate;
+          throw credential(MISSING);
+        },
+      ],
+    });
+    await s.init();
+    const pending = s.submitApply('x');
+    expect(s.getView().submitting).toBe(true);
+    release?.();
+    await pending;
+    expect(s.getView().submitting).toBe(false);
+  });
+
+  it('其他種類的 submit 失敗照舊:internal → 「複習程式停了」加「重新開始」,題目收起來', async () => {
+    const { s } = await ready({ start: [start()], next: [applyQ()], submit: [new ReviewError('internal', 'x')] });
+    await s.init();
+    await s.submitApply('x');
+    const v = s.getView();
+    expect(v.state).toBe('error');
+    expect(v.message).toContain('複習程式停了');
+    expect(v.canRestart).toBe(true);
+    expect(v.current).toBeUndefined();
+  });
+});
