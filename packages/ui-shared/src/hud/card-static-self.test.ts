@@ -113,9 +113,13 @@ const testMutants: [string, string, string | RegExp, string, RegExp][] = [
   ['符號改用 CSS ::before', 'result', '  .pass {', "  .pass::before {\n    content: '" + String.fromCodePoint(0x2713) + "';\n  }\n  .pass {", /::before|content/],
   ['拿掉 data-result', 'result', " data-result={view.result.pass ? 'pass' : 'fail'}", '', /data-result/],
   ['data-result 只有 pass', 'result', "data-result={view.result.pass ? 'pass' : 'fail'}", 'data-result="pass"', /pass 與 fail/],
-  ['評分失敗那行帶 data-result', 'result', '<p class="error">', '<p class="error" data-result="fail">', /評分失敗/],
-  ['評分失敗那行帶符號', 'result', '評分失敗,請再試一次', '× 評分失敗,請再試一次', /評分失敗/],
-  ['評分失敗那行不見', 'result', '評分失敗,請再試一次', '失敗', /找不到「評分失敗/],
+  ['評分失敗那行帶 data-result', 'result', '<p class="error">{view.gradingError}', '<p class="error" data-result="fail">{view.gradingError}', /評分失敗/],
+  ['評分失敗那行帶符號', 'result', '<p class="error">{view.gradingError}', '<p class="error">× {view.gradingError}', /評分失敗/],
+  ['評分失敗那行帶 ✓', 'result', '<p class="error">{view.gradingError}', '<p class="error">✓ {view.gradingError}', /評分失敗/],
+  ['評分失敗那行不見', 'result', '{view.gradingError}</p>', '</p>', /找不到「評分失敗/],
+  ['評分失敗那行顯示別的欄位', 'result', '{view.gradingError}</p>', '{view.loadError}</p>', /找不到「評分失敗/],
+  ['寫死的評分失敗帶符號', 'result', '<p class="error">{view.gradingError}', '<p class="error">× 評分失敗,請再試一次', /評分失敗/],
+  ['寫死的評分失敗帶 data-result', 'result', '<p class="error">{view.gradingError}', '<p class="error" data-result="fail">評分失敗,請再試一次', /評分失敗/],
   ['import 07 的根', 'import', `  import '${HUD_CSS}';`, `  import '${HUD_CSS}';\n  import { renderMarkdown } from '${UI_ROOT}';`, /不能 import/],
   ['import ui-shared 的別的檔', 'import', `  import '${HUD_CSS}';`, `  import '${UI_ROOT}/example-fence.js';\n  import '${HUD_CSS}';`, /不能 import/],
   ['答對答錯顏色改回 #1a7f37', 'style', 'color: var(--hud-pass);', 'color: #1a7f37;', /顏色/],
@@ -131,6 +135,13 @@ describe('考試卡:改壞的版本抓得到', () => {
       expect(problems.join('\n')).toMatch(re);
     });
   }
+});
+
+describe('考試卡:評分失敗那行寫死的字也收', () => {
+  it('寫死「評分失敗,請再試一次」沒有問題', () => {
+    const app = mutate(GOOD_TEST_APP, '<p class="error">{view.gradingError}', '<p class="error">評分失敗,請再試一次');
+    expect(check('result', test(app), 'test-card')).toEqual([]);
+  });
 });
 
 describe('解析器本身', () => {

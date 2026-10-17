@@ -263,7 +263,7 @@ export const GOOD_TEST_APP = `<script lang="ts">
     {/if}
 
     {#if view.error}
-      <p class="error">評分失敗,請再試一次</p>
+      <p class="error">{view.gradingError}</p>
     {/if}
 
     {#if view.result && !view.error}
