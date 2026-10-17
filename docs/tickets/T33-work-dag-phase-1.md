@@ -54,9 +54,10 @@ phase-1 把這件事變成一支**只讀、只印、可重現**的腳本:`npx ts
    輸出形狀照 FEATURE.md「輸出形狀」,記錄一行一筆、行首固定大寫關鍵字、排序為自然排序、同樹兩次逐位元組相同。
 2. **單獨可跑**:`npx tsx scripts/dag.ts --root features/13-work-dag/fixtures/basic` 印出 `READY` / `BLOCKED` 行與 mermaid 區塊,
    最後的摘要行 `gate=dag result=OK ready=1 blocked=2 human=0 problems=0`,退出碼 0;`standalone.json` 有 `13-work-dag` 鍵,`npm run accept:standalone`(或 `check:standalone`)綠。
-3. **真 repo 煙霧測試**(驗收者跑,不是新測試):`npx tsx scripts/dag.ts --root .` 在真 repo 上退出碼 0、沒有 stack trace、摘要行存在。
-   輸出裡出現的 `PROBLEM` 不算失敗(真 repo 的 NEXT.md 寫法不齊是已知的),但**每一條 `PROBLEM` 要逐條記進報告**,說明是工具讀錯還是檔案本來就沒寫 gate;
-   工具讀錯的要修。報告附 `READY` 行的清單,與協調者手讀 NEXT.md 的結論比對(協調者看得出來:目前 `13-work-dag/phase-1`、`03-llm-router/phase-3` 應在 `READY`)。
+3. **真 repo 煙霧測試**(驗收者 -ed 跑,不是新測試):`npx tsx scripts/dag.ts --root .` 在真 repo 上退出碼 0、沒有 stack trace、摘要行 `gate=dag result=OK ...` 存在。
+   依 FEATURE.md「驗收方式」:輸出的 `READY` / `BLOCKED` / `HUMAN` / `PROBLEM` **全部貼進驗收報告,由顧問核對**「與看 NEXT.md 的直覺一致嗎」。
+   **不寫死預期清單**——一切以**基底 commit 的狀態**為準(派工後 `13-work-dag/phase-1` 自己會變 `in-progress`,不會再是 `READY`;顧問用基底狀態讀 NEXT.md 得到的 `READY` 至少含 `03-llm-router/phase-3` 與 `07-teach-card/phase-4`,但以顧問核對為準,不以這句為準)。
+   `PROBLEM` 分類:-ed 逐條列(附 FEATURE/NEXT 檔與行號),由顧問判**工具讀錯**或**檔案本來就沒寫**:工具讀錯 → 同一張修;檔案錯(NEXT.md 沒寫 gate、寫法不齊)→ 協調者另開文件小批,**worker 不碰 NEXT.md / FEATURE.md**。
 4. **只讀**:不寫任何檔(含暫存檔寫進被掃的樹)。
 5. **解析自己寫**:不 import `scripts/check-next-gates.ts`(模板擁有,SOURCE 標頭)、不引入 YAML / markdown 套件;
    `npm run boundaries` 綠;`scripts/dag.ts` 與 `scripts/dag.test.ts` 在 `scripts/boundaries.owners.json` 登記到 `13-work-dag`;
