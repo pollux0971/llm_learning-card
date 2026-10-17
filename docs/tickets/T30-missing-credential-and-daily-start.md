@@ -13,7 +13,7 @@ must_catch:
   - credential-unavailable 的訊息沒有鍵名、或帶了鍵的值、絕對路徑、例外原文:訊息的測試必須紅
   - 側車起來之後才在 .env 補上金鑰、或改了金鑰的值、或刪掉一個鍵,下一次 start 沒有照檔案現在的內容(例如只呼叫 process.loadEnvFile:它不覆蓋已經有的值):重讀 .env 的測試必須紅
   - 重讀 .env 改掉了啟動環境本來就有的變數:重讀 .env 的測試必須紅
-  - .env 裡寫 LC_REVIEW_FAKE_CLOUD 或 LC_REVIEW_TODAY 就讓側車開假 router 或換測試日期(待顧問定,見檔頭第 4 點):開關只來自啟動環境的測試必須紅
+  - .env 裡寫 LC_REVIEW_FAKE_CLOUD 或 LC_REVIEW_TODAY 就讓側車開假 router 或換測試日期(第一次載入或重讀都算;安全洞,硬條件):開關只來自啟動環境的測試必須紅
   - .env 內容變了,start 之後還用快取的舊 router(舊的閘道 token):重建 router 的測試必須紅
   - submit 遇到 MissingCredentialError、雲端 401、或閘道 GatewayCallError 401(包在 NoModelError 的 cause 裡的也算),回 internal:submit 憑證錯誤的測試必須紅(要回 credential-unavailable)
   - submit 遇到憑證錯誤之後 session 被清掉、reviews.json 被改、或帳本多一筆:submit 憑證錯誤的測試必須紅
@@ -28,23 +28,14 @@ must_catch:
 
 # 工單 T30:缺金鑰時 start 就說清楚、側車每次 start 重讀 .env 與重算今天
 
-> 狀態:草稿,待顧問審。
+> 狀態:顧問審過 2026-10-17(六點照建議,第 6 點另開 T31)。
 > 作者:UI/Tauri 負責人(起草;顧問 2026-10-17 給方向)。編號:T30。派工:協調者。優先:中,排在 T23 之後。
 > 實作:worker-grok(opencode grok-4.7)。紅測試:-e5。驗收:-ed。觀感:前端拍、技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 > 起因:T24 `@manual` 的 O1(`../reviews/T24-manual-2026-10-17.md`)。決策:ADR-034(`.env` 只在入口讀)、ADR-075(側車)。`protocol.ts` 的 `ERROR_KINDS` 是 core 的軟約定,不是 `contracts/` 硬約定。
+> **ADR(號碼待配)**:協調者合併這張工單時用 `/decide` 配號寫一筆(顧問 2026-10-17):每次 start / submit 重讀 `.env`(只在 `_env.ts`、環境優先、`LC_REVIEW_` 不從檔案設)、每次 start 重算今天、`credential-unavailable` 與兩句樣板。
+> ADR-034 與 ADR-075 不改內文,各加一行「部分由 ADR-(待配)修訂(重讀 .env、樣板訊息)」的指標。實作 worker 不寫 ADR。
 > 基底:main(`e5e3015` 或之後,T23 合併之後再派)。
-
-## 要顧問定的(審完刪掉這一節)
-
-1. **錯誤種類的名字。** 草稿用一個 `credential-unavailable`(跟 `router-unavailable` 同一個形狀),缺鍵與被拒絕(401)都用它,訊息不同。顧問方向裡的「例如 missing-credential」照字面只講到缺鍵;submit 的「金鑰過期」要回同一個種類,所以名字不寫死成「missing」。
-2. **訊息不帶絕對路徑。** ADR-075 第 4 點「訊息不帶路徑」、第 5 點「固定的訊息,不帶例外原文」。草稿把檔案寫成「專案根目錄的 `.env`」,鍵名只從程式裡固定的三個裡挑(見驗收 1),所以可能出現的訊息是有限的幾句、都由程式決定。顧問方向寫的是「在哪個檔(`<repo>/.env`)」;要印絕對路徑的話,ADR-075 第 4 點要改。我建議不印。
-3. **submit 前也重讀 `.env`。** 顧問方向是「每次 start 重讀」。但 submit 的憑證錯誤要「題目留著、輸入留著」,使用者改好 `.env` 之後最自然的是再按一次「送出」;只在 start 重讀的話,那一次送出還是用舊的。草稿寫成 start 與 submit 都重讀(同一個函式、只讀一個小檔)。我建議這樣;不要的話,submit 的憑證錯誤改成走「再試一次」畫面(題目與輸入就留不住)。
-4. **`.env` 能開假 router(這次查到的洞)。** 側車先 `import './_env.js'`(`../../scripts/review-sidecar.ts:8`)才讀 `LC_REVIEW_FAKE_CLOUD`(第 106 行)與 `LC_REVIEW_TODAY`(第 112 行),所以 `.env` 裡寫這兩個就會開。
-   實測:簽出的 `.env` 只放這兩行、不從環境帶,直接跑側車 → `hello` 是 `fakeCloud: true`、`today` 是 `.env` 寫的日期。release build 一樣(Rust 的白名單管不到側車自己讀的檔),違反 ADR-075 第 6 點「假 router 只能由啟動時的環境變數開」。
-   這張本來就要改 `_env.ts`,草稿把「`.env` 裡 `LC_REVIEW_` 開頭的鍵一律不設」放進來(驗收 3)。我建議放進來。
-5. **ADR。** 這張改了 ADR-034 的「入口載入一次」(變成側車每次 start / submit 重讀)與 ADR-075 第 5 點的「固定的訊息」(多一種由固定句與鍵名組成的訊息)。我建議記一筆 ADR(編號協調者配),不改舊的兩筆。
-6. **別的批改失敗還是 `internal`。** 網路斷了、閘道也掛、逾時,`router.call` 一樣丟出來,submit 一樣變成「複習程式停了」、重新開始還是同一題。這張只管憑證(顧問方向)。我建議另開一張:submit 時 router 丟的錯一律變成 `status: "error"`(「評分失敗,請再試一次」,題目留著),不在這張。
 
 ## 為什麼有這張
 
@@ -52,6 +43,9 @@ must_catch:
 按「重新開始」回到同一題,再送還是一樣,永遠過不去;使用者也看不出原因是缺金鑰。終端機同源:`review.ts` 的 `liveRouterOrExit`(`../../scripts/review.ts:68`)只驗帳本,router 懶建,缺金鑰要到批改時才爆。
 
 T24 `@manual` 量到的是 `GATEWAY_API_KEY`:沒設 `LLM_CLOUD_PROVIDER` 時 `probeOnline` 回 false(`../../packages/core/src/llm/router.ts:179`),應用題照契約 §7 走 local,也就是閘道。所以「要哪個鍵」要照 router 實際先走的那條路算,不能寫死成雲端的鍵。
+
+還有一個安全洞(起草時實測):側車先 `import './_env.js'`(`../../scripts/review-sidecar.ts:8`)才讀 `LC_REVIEW_FAKE_CLOUD`(第 106 行)與 `LC_REVIEW_TODAY`(第 112 行),所以 `.env` 裡寫這兩個就會開。
+簽出的 `.env` 只放這兩行、環境不帶,直接跑側車 → `hello` 是 `fakeCloud: true`、`today` 是 `.env` 寫的日期。release build 一樣(Rust 的白名單管不到側車自己讀的檔),違反 ADR-075 第 6 點「假 router 只能由啟動時的環境變數開」。這張本來就要改 `_env.ts`,一起關掉(驗收 3,硬條件)。
 
 另外側車的「今天」只在起來時算一次(`../../scripts/review-sidecar.ts:115`)。這是常駐的系統列 app,隔夜不重開,隔天 `start` 會拿到昨天的當日快取(顧問 2026-10-17 併進這張:跟「每次 start 重讀環境」是同一件事)。
 
@@ -74,7 +68,7 @@ T24 `@manual` 量到的是 `GATEWAY_API_KEY`:沒設 `LLM_CLOUD_PROVIDER` 時 `pr
 - `credentialMessage(problem)`:兩句固定的樣板,只換鍵名:
   - 缺:「批改要用的金鑰沒有設定:{鍵名}。請在專案根目錄的 .env 加上。」
   - 被拒絕:「批改用的金鑰被拒絕:{鍵名}(可能過期或打錯)。請在專案根目錄的 .env 換一個。」
-  - 不帶值、不帶絕對路徑、不帶例外原文(檔頭第 2 點)。
+  - 不帶值、不帶絕對路徑、不帶例外原文。檔案寫成「專案根目錄的 .env」(ADR-075 第 4 點「訊息不帶路徑」不改),鍵名只從上面三個挑,所以可能出現的訊息是有限的幾句、都由程式決定(ADR-075 第 5 點的「固定的訊息」由這張的 ADR 補上樣板這一種)。
 
 ### 2. 側車(`handler.ts`、`protocol.ts`、`review-sidecar.ts`)
 
@@ -90,7 +84,7 @@ T24 `@manual` 量到的是 `GATEWAY_API_KEY`:沒設 `LLM_CLOUD_PROVIDER` 時 `pr
   4. 暫停日照舊不建 router、不查金鑰(暫停日不評分);否則 `ensureRouter()`(帳本、root-mismatch,照舊)→ `missingKeys()` 非空 → `credential-unavailable`,訊息是 `credentialMessage`(缺的那一個鍵;不只一個時用第一個,順序照 `requiredGradingKeys`);
   5. `openDay`(照舊)。
 - `routerFactory` 還是「第一次 start 才呼叫、成功就快取」(`scripts/review-handler.test.ts` 第 7 行寫的 T22 行為),只多「`reloadEnv` 回 true 時丟掉快取」這一個例外。紅測試作者要不要改那一條既有測試的說明,由紅測試作者判斷並寫在 commit 說明裡。
-- `submit`:先 `reloadEnv()`(檔頭第 3 點;回 true 一樣丟掉快取的 router,這一題用新建的)。批改丟錯時,catch 先問 `credentialProblem`:認得 → `credential-unavailable` 加 `credentialMessage`;**不清 session**(題目留著,可以再送);認不得照舊(`review-record-changed` 照舊清 session,其他 `internal`)。
+- `submit`:先 `reloadEnv()`(回 true 一樣丟掉快取的 router,這一題用新建的;題目與輸入留著時,使用者改好 `.env` 再按「送出」就會用到新的值)。批改丟錯時,catch 先問 `credentialProblem`:認得 → `credential-unavailable` 加 `credentialMessage`;**不清 session**(題目留著,可以再送);認不得照舊(`review-record-changed` 照舊清 session,其他 `internal`)。
   憑證錯誤時 `submitAnswer` 還沒寫 `reviews.json`(批改在寫之前),帳本也沒有新的一筆(雲端與閘道的 `llm_call` 都在成功之後才記;失敗那次只有逾時與截斷會記,`../../packages/core/src/llm/router.ts` 的 catch);測試要證明這兩件。
 - `review-sidecar.ts`:`reloadEnv` 用 `_env.ts` 匯出的函式(驗收 3);`missingKeys` 用 `missingGradingKeys(process.env)`;
   `today`:**起來時**有 `LC_REVIEW_TODAY`(debug build 才有)就固定用它(格式不對照舊 exit 2);沒有就傳 `localToday` 這個函式。`hello` 的 `today` 照舊是起來那天(只是告知)。
@@ -104,7 +98,7 @@ T24 `@manual` 量到的是 `GATEWAY_API_KEY`:沒設 `LLM_CLOUD_PROVIDER` 時 `pr
   - **第一次載入之前**環境裡就有的變數,永遠不動(跟現在一樣:環境優先);
   - 檔案裡的鍵:設成檔案現在的值(新的加上、改的換掉);上一次從檔案設的鍵、這次檔案裡沒有了 → 從 `process.env` 刪掉;
   - 檔案不在 = 空檔案(從檔案設的鍵全部刪掉);讀不到也一樣,不丟錯;
-  - **`LC_REVIEW_` 開頭的鍵一律不設**(第一次載入也是;檔頭第 4 點):除錯開關只能來自啟動環境;
+  - **`LC_REVIEW_` 開頭的鍵一律不設**(第一次載入也是;**硬條件**,安全洞,見「為什麼有這張」):除錯開關只能來自啟動環境;
   - 回傳 `process.env` 有沒有因此改變。
 - 只有 `_env.ts` 讀 `.env`;library 照舊只讀 `process.env`。值不印、不寫進任何 log。
 
@@ -174,7 +168,7 @@ npm run boundaries
 
 ## 不在範圍
 
-- 檔頭第 6 點:憑證以外的批改失敗(網路、閘道、逾時)在 submit 變成 `internal` —— 建議另開。
+- 憑證以外的批改失敗(網路、閘道、逾時)在 submit 變成 `internal` 的迴圈 —— **T31**(顧問 2026-10-17:要分清楚「router / LLM 的失敗」與「程式本身的 bug」,不能一律收成「評分失敗」;多半在 grading 層處理,grading 是嚴格級模組)。
 - 填空同義判斷缺閘道鍵時退回嚴格比對(契約 §7 的設計,不改)。
 - `LLM_CLOUD_PROVIDER` 填錯字(不認得)時的提示 —— 照 router 現在的行為當「沒有雲端」,要的是閘道的鍵;不另外說「provider 打錯了」。
 - 不改 Rust(`apps/desktop/src-tauri/`)、HUD 元件、`contracts/`、任何 `.feature`、任何測試檔(測試由 -e5 改)。
