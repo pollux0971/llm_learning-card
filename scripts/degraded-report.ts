@@ -91,7 +91,6 @@ export interface NotInstrumented {
 export const NOT_INSTRUMENTED: readonly NotInstrumented[] = [
   // 模板檔(v1.3.4,`sync-gates.sh` 升版,不手改)——要計數得先進模板 1.4.0
   { file: 'scripts/_root.ts', snippet: 'return process.cwd();', reason: '模板檔不手改:找不到 git root 就當 cwd,值得計數,回流模板 1.4.0 時一起做' },
-  { file: 'scripts/check-doc-links.ts', snippet: 'return {};', reason: '模板檔不手改:skip 設定讀不到就當空設定' },
   { file: 'scripts/check-doc-links.ts', snippet: 'return withoutAnchor;', reason: '模板檔不手改:錨點解析失敗就當沒錨點' },
   { file: 'scripts/check-gherkin-dup.ts', snippet: 'return { valid: [], invalid: [] };', reason: '模板檔不手改:.feature 讀不到就當空清單' },
   { file: 'scripts/check-phase-coverage.ts', snippet: 'return undefined;', reason: '模板檔不手改:FEATURE.md 讀不到就當沒有 phase 表' },
@@ -103,7 +102,6 @@ export const NOT_INSTRUMENTED: readonly NotInstrumented[] = [
   { file: 'packages/core/src/llm/adapters/gateway.ts', snippet: 'function resolveTtlMs', reason: '回應沒帶過期時間就用 50 分鐘——不改變路徑,只影響多久重換 token' },
   { file: 'packages/core/src/llm/adapters/gateway.ts', snippet: 'async function readJson', reason: 'parse 不動回 undefined,但每個呼叫端都檢查了:token() 丟錯、probe() 走 bad-body 訊號,不會靜默' },
   { file: 'packages/core/src/llm/spend.ts', snippet: "if (raw === undefined || raw.trim() === '') return fallback;", reason: '沒設環境變數用預設值是設定,不是失敗;有設但不合法那一行才計數(llm.spend.env-invalid-default)' },
-  { file: 'packages/core/src/llm/router.ts', snippet: 'if (!path) return () => {};', reason: '沒給 logPath 就不寫 log:不改變執行路徑,只是少了副作用。測試斷言 log 內容的話會自己紅' },
   { file: 'packages/core/src/llm/router-impl.ts', snippet: 'this.onlineProbeTtlMs = opts.onlineProbeTtlMs ?? 60_000;', reason: '純設定預設值' },
   // 失敗有被明確回報,不是「看起來正常」
   { file: 'packages/core/src/ingest/ingest.ts', snippet: "return fail('ingest 需要雲端模型", reason: 'CloudRequiredError 轉成明確的失敗結果與非 0 退出碼,不是靜默' },
@@ -115,7 +113,7 @@ export const NOT_INSTRUMENTED: readonly NotInstrumented[] = [
   { file: 'packages/core/src/schema/atomic-write.ts', snippet: 'unlinkSync(tmp);', reason: '清理暫存檔失敗不遮蔽原本的錯誤(ADR-040),不產生值' },
   // 形狀補齊:索引越界或缺欄位補空值,不是失敗處理
   { file: 'packages/core/src/grading/grade-fill.ts', snippet: "rawAnswers[i] ?? ''", reason: '作答數少於空格數時補空字串,下一層會判「沒有作答」,是形狀補齊' },
-  { file: 'packages/core/src/ingest/generate-cards.ts', snippet: 'examples: regenerated.examples ?? current.examples', reason: 'regenerate 回應沒帶 examples 就沿用舊的——形狀補齊;regenerate 本身有計數(ingest.cards.regenerate-retry)' },
+  { file: 'packages/core/src/ingest/generate-cards.ts', snippet: 'if (regenerated.examples === undefined) {', reason: 'regenerate 回應沒帶 examples 就沿用舊的——形狀補齊;regenerate 本身有計數(ingest.cards.regenerate-retry)' },
   { file: 'packages/core/src/ingest/init.ts', snippet: 'as CategoryConfig[] | null) ?? []', reason: '空的 categories.yaml parse 成 null 補空陣列,形狀補齊' },
   { file: 'packages/core/src/lint/scan.ts', snippet: "card: data.card ?? ''", reason: '考題檔缺 card 欄位補空字串,後面的 lint 檢查會回報' },
   { file: 'packages/core/src/scheduler/select.ts', snippet: "ctx.startDate ?? '2026-01-01'", reason: '模擬工具的起始日預設值,不是產品路徑' },
