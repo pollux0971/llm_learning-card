@@ -113,6 +113,8 @@ function runInteractive(dir: string, today = TODAY): { code: number; output: str
     cwd: REPO_ROOT,
     encoding: 'utf8',
     input: '',
+    // T30:互動模式會先查批改要的金鑰;這支測的是「沒有到期」的輸出,給一組假鍵讓它過得去(不評分、不打網路)
+    env: { ...process.env, LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'fake-key' },
     timeout: SPAWN_TIMEOUT_MS,
   });
   return { code: r.status ?? -1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
