@@ -311,6 +311,25 @@ export function resultMarkupProblems(src: CardSource = readCardSource('test-card
   return problems;
 }
 
+/**
+ * 「評分失敗」那行的字改從變數來(T30),只認標記會讓「那行沒有對錯符號」這條規則變空。
+ * 所以讀 session.ts 裡 GRADING_ERROR 與 SUBMIT_RETRY_HINT 兩個常數的值,斷言裡面沒有 ✓ / × / ✗。
+ * review.message(側車給的字)由 handler 測試管,這裡不管。
+ */
+export const GRADING_TEXT_CONSTANTS = ['GRADING_ERROR', 'SUBMIT_RETRY_HINT'] as const;
+export function gradingTextProblems(sessionSrc: string = readFileSync(join(CARD_DIRS['test-card'], 'src/session.ts'), 'utf8')): string[] {
+  const problems: string[] = [];
+  const symbols = [RESULT_SYMBOL.pass, RESULT_SYMBOL.fail, String.fromCodePoint(0x2717)];
+  for (const name of GRADING_TEXT_CONSTANTS) {
+    const m = new RegExp(`\\bconst\\s+${name}\\s*(?::[^=]+)?=\\s*(?:(['"\`])([\\s\\S]*?)\\1)\\s*(?:as\\s+const\\s*)?;`).exec(sessionSrc);
+    if (!m) { problems.push(`session.ts 找不到 const ${name} = '…'(字串常數,量尺要讀它的值)`); continue; }
+    const value = m[2]!;
+    if (value.trim() === '') problems.push(`${name} 是空字串`);
+    for (const c of symbols) if (value.includes(c)) problems.push(`${name} 的值含對錯符號 ${c}(評分失敗那行不帶符號)`);
+  }
+  return problems;
+}
+
 // ───────────────────────────── 樣式與載入
 const FRAME_PROP = /^(border|outline|box-shadow|clip-path|mask|-webkit-mask)/;
 const COLOUR_PROPS = /^(color|background|background-color|background-image|fill|stroke|border-.*color|outline-color|caret-color|accent-color|text-decoration-color)$/;

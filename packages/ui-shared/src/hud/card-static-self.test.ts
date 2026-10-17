@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { GOOD_MAIN, GOOD_TEACH_APP, GOOD_TEST_APP } from './card-static-samples-test-support.js';
 import {
-  buttonProblems, fieldProblems, importProblems, loadScanProblems, panelProblems, parseCardSource, parseMarkup, progressProblems,
+  buttonProblems, fieldProblems, gradingTextProblems, importProblems, loadScanProblems, panelProblems, parseCardSource, parseMarkup, progressProblems,
   resultMarkupProblems, styleProblems, rootLevel, type CardSource,
 } from './card-static-test-support.js';
 import type { CardName } from './card-design-values-test-support.js';
@@ -141,6 +141,37 @@ describe('考試卡:評分失敗那行寫死的字也收', () => {
   it('寫死「評分失敗,請再試一次」沒有問題', () => {
     const app = mutate(GOOD_TEST_APP, '<p class="error">{view.gradingError}', '<p class="error">評分失敗,請再試一次');
     expect(check('result', test(app), 'test-card')).toEqual([]);
+  });
+});
+
+const GOOD_SESSION = `const SUBMIT_RETRY_HINT = '改好之後再按「送出」。';
+const GRADING_ERROR = '評分失敗,請再試一次';
+`;
+
+describe('評分失敗常數:不帶對錯符號', () => {
+  it('好的:0 個問題', () => { expect(gradingTextProblems(GOOD_SESSION)).toEqual([]); });
+  it('真的 session.ts 的常數讀得到(防止掃空)', () => {
+    expect(gradingTextProblems()).toEqual([]);
+  });
+  const bad: [string, string, string, RegExp][] = [
+    ['GRADING_ERROR 加 ✓', '評分失敗,請再試一次', '✓ 評分失敗,請再試一次', /GRADING_ERROR.*✓/],
+    ['GRADING_ERROR 加 ×', '評分失敗,請再試一次', '× 評分失敗,請再試一次', /GRADING_ERROR/],
+    ['GRADING_ERROR 加 ✗', '評分失敗,請再試一次', String.fromCodePoint(0x2717) + ' 評分失敗', /GRADING_ERROR/],
+    ['SUBMIT_RETRY_HINT 加 ×', '改好之後再按「送出」。', '× 改好之後再按「送出」。', /SUBMIT_RETRY_HINT/],
+    ['SUBMIT_RETRY_HINT 加 ✓', '改好之後再按「送出」。', '改好之後再按「送出」。✓', /SUBMIT_RETRY_HINT/],
+  ];
+  for (const [label, from, to, re] of bad) {
+    it(label, () => {
+      const problems = gradingTextProblems(mutate(GOOD_SESSION, from, to));
+      expect(problems.length).toBeGreaterThan(0);
+      expect(problems.join('\n')).toMatch(re);
+    });
+  }
+  it('常數不見 → 報「找不到」', () => {
+    expect(gradingTextProblems(GOOD_SESSION.replace('const GRADING_ERROR', 'const OTHER')).join('\n')).toMatch(/找不到 const GRADING_ERROR/);
+  });
+  it('常數改成字串以外(函式回傳)→ 報「找不到」,不默默放過', () => {
+    expect(gradingTextProblems(GOOD_SESSION.replace("'評分失敗,請再試一次'", 'pick()')).join('\n')).toMatch(/找不到 const GRADING_ERROR/);
   });
 });
 

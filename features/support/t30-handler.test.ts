@@ -580,6 +580,39 @@ describe('每次 start 重算今天;進行中不換日(驗收 2,第 3 步)', () 
     expect(ok(await r.send('start'))).toMatchObject({ today: D1, overdue: 1 });
   });
 
+  it('F1:start 之前叫 status、today 是函式 → ok,today 是 YYYY-MM-DD(不是 internal)', async () => {
+    const c = clock(TODAY);
+    const r = await rig({ today: c.fn });
+    const res = await r.send('status');
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+    const st = res.result as Obj;
+    expect(st.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(st).toMatchObject({ paused: false, today: TODAY });
+  });
+
+  it('F1:start 之前的 status 不鎖日:換日後再叫 status 跟著時鐘,之後 start 照常算今天並鎖定', async () => {
+    const c = clock(TODAY);
+    const r = await rig({ today: c.fn });
+    expect(ok(await r.send('status'))).toMatchObject({ today: TODAY });
+    c.now = D1;
+    expect(ok(await r.send('status'))).toMatchObject({ today: D1 });
+    expect(ok(await r.send('start'))).toMatchObject({ today: D1, resumed: false });
+    expect(existsSync(cachePath(r.v, D1))).toBe(true);
+    expect(existsSync(cachePath(r.v, TODAY))).toBe(false);
+    c.now = addDays(D1, 1);
+    expect(ok(await r.send('status'))).toMatchObject({ today: D1 });
+  });
+
+  it('F1:status 之前叫過,不影響之後 start 的日期與算法(start 仍每次呼叫 today 恰好一次)', async () => {
+    const c = clock(TODAY);
+    const r = await rig({ today: c.fn });
+    ok(await r.send('status'));
+    c.now = D1;
+    const before = c.calls();
+    expect(ok(await r.send('start'))).toMatchObject({ today: D1 });
+    expect(c.calls() - before).toBe(1);
+  });
+
   it('today 給字串:照舊固定(T22 行為)', async () => {
     const r = await rig({ today: TODAY });
     expect(ok(await r.send('start'))).toMatchObject({ today: TODAY });
