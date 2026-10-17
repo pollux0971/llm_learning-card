@@ -11,7 +11,7 @@ Feature: Reviewing in a desktop window
   @e2e @manual
   Scenario: A person completes a review session in the window
     When the person opens the test card window
-    Then the header shows "Today 0 / 5"
+    Then the header shows zero of five and that none are overdue
     And the first question is displayed
     When the person answers all five questions
     Then the summary shows the pass and return counts
