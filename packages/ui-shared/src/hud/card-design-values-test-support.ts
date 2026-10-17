@@ -117,8 +117,8 @@ export const DONE_PHASE_FEATURES: readonly { folder: string; phase: string; file
 export const DONE_PHASES_TAG_EXPRESSION = '((@test-card and (@phase-1 or @phase-2 or @phase-3)) or (@teach-card and @phase-1)) and not @manual';
 
 /**
- * 「即將標 done」的 phase:雜湊已經釘住,但 FEATURE.md 的 phase 表可能還沒翻成 done(協調者標 done 的那個 commit 之前)。
- * 這裡列的 phase 在 FEATURE.md 還不是 done 時不算問題,翻成 done 之後照常檢查;雜湊兩種狀態都檢查。
- * phase 標 done 之後這一筆可以刪(留著無害)。
+ * 「即將標 done」的 phase:雜湊已經釘住,但 FEATURE.md 的 phase 表還沒翻成 done(協調者標 done 的那個 commit 之前)時,
+ * 列在這裡的 phase 不報「在清單裡但不是 done」;雜湊照樣檢查。平常是空的:phase 標 done 之後就清掉,
+ * 否則日後有人把它翻回非 done 會被放過。下一個 phase 要先釘時,把它加進來,標 done 後再清掉。
  */
-export const PENDING_DONE_PHASES: readonly { folder: string; phase: string }[] = [{ folder: '06-test-card', phase: 'phase-3' }];
+export const PENDING_DONE_PHASES: readonly { folder: string; phase: string }[] = [];
