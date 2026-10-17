@@ -177,6 +177,10 @@
       "steps"
     ],
     [
+      "scripts/review-handler-acceptance.test.ts",
+      "steps"
+    ],
+    [
       "scripts/review-sidecar.test.ts",
       "steps"
     ],
