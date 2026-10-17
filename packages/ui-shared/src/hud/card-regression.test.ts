@@ -2,12 +2,13 @@
  * 14-hud-skin phase-2(工單 T15)不退步的快速部分:done phase 的 .feature 雜湊與 phase 表。測試 agent 寫;開發 worker 不改。
  * 真正跑 06、07 場景的是 cucumber 的步驟(子行程)。
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DONE_PHASE_FEATURES } from './card-design-values-test-support.js';
-import { donePhases, doneFeatureProblems, sha256 } from './card-regression-test-support.js';
+import { DONE_PHASES_TAG_EXPRESSION, DONE_PHASE_FEATURES } from './card-design-values-test-support.js';
+import { donePhases, doneFeatureProblems, evalTagExpression, scenarioTags, sha256 } from './card-regression-test-support.js';
+import { REPO_ROOT } from './test-support.js';
 
 describe('done phase 的 .feature 沒改、清單是最新的(驗收 9)', () => {
   it('真的 repo:06、07 的 done phase 都在釘住的清單裡,.feature 的雜湊都沒變', () => {
@@ -37,11 +38,12 @@ describe('doneFeatureProblems 抓得到', () => {
       writeFileSync(join(root, 'features', folder, 'FEATURE.md'), md);
       writeFileSync(join(root, 'features', folder, 'phase-1.feature'), feat);
     }
+    writeFileSync(join(root, 'features', '06-test-card', 'phase-2.feature'), feat);
     return root;
   }
   const table = (rows: string[]) => ['| # | 內容 | wave | 狀態 | 日期 |', '|---|---|---|---|---|', ...rows].join('\n');
   const pinnedFor = (feat: string) => {
-    const root = fake(table(['| 1 | a | W | done | d |']), table(['| 1 | a | W | done | d |']), feat);
+    const root = fake(table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |']), table(['| 1 | a | W | done | d |']), feat);
     return { root, pinned: DONE_PHASE_FEATURES.map((p) => ({ ...p, sha256: doneFeatureHash(root, p.file) })) };
   };
   const doneFeatureHash = (root: string, file: string) => {
@@ -68,7 +70,45 @@ describe('doneFeatureProblems 抓得到', () => {
 
   it('清單裡的 phase 不再是 done → 抓到', () => {
     const { root, pinned } = pinnedFor('Feature: x\n');
-    writeFileSync(join(root, 'features/06-test-card/FEATURE.md'), table(['| 1 | a | W | in-progress | d |']));
+    writeFileSync(join(root, 'features/06-test-card/FEATURE.md'), table(['| 1 | a | W | done | d |', '| 2 | b | W | in-progress | d |']));
     expect(doneFeatureProblems(root, pinned).join('\n')).toMatch(/不是 done/);
+  });
+});
+
+describe('子行程的標籤式涵蓋每一個釘住的 done phase(場景 4)', () => {
+  const FOLDER_TAG: Record<string, string> = { '06-test-card': '@test-card', '07-teach-card': '@teach-card' };
+  const read = (file: string): string => readFileSync(join(REPO_ROOT, file), 'utf8');
+
+  it('釘住的每一份 .feature:至少一個非 @manual 的場景被標籤式選中,所有 @manual 場景都不選', () => {
+    for (const p of DONE_PHASE_FEATURES) {
+      const scenarios = scenarioTags(read(p.file));
+      expect(scenarios.length, `${p.file} 讀不到場景`).toBeGreaterThan(0);
+      const picked = scenarios.filter((s) => evalTagExpression(DONE_PHASES_TAG_EXPRESSION, s.tags));
+      const nonManual = scenarios.filter((s) => !s.tags.has('@manual'));
+      expect(picked.map((s) => s.name), `${p.file} 的非 @manual 場景要全部被選中`).toEqual(nonManual.map((s) => s.name));
+      expect(picked.length, `${p.file} 沒有場景被選中`).toBeGreaterThan(0);
+    }
+  });
+
+  it('還沒 done 的 phase 不會被拉進來(例如 07 的 phase-2、06 的 phase-3、phase-4)', () => {
+    const pinned = new Set(DONE_PHASE_FEATURES.map((p) => p.file));
+    for (const folder of Object.keys(FOLDER_TAG)) {
+      const dir = join(REPO_ROOT, 'features', folder);
+      for (const f of readdirSync(dir).filter((n) => n.endsWith('.feature'))) {
+        const rel = `features/${folder}/${f}`;
+        if (pinned.has(rel)) continue;
+        const wrongly = scenarioTags(read(rel)).filter((s) => evalTagExpression(DONE_PHASES_TAG_EXPRESSION, s.tags));
+        expect(wrongly.map((s) => s.name), `${rel} 不是 done,場景不該被選中`).toEqual([]);
+      }
+    }
+  });
+
+  it('標籤式求值器本身:and / or / not / 括號', () => {
+    const t = (...tags: string[]) => new Set(tags);
+    expect(evalTagExpression('@a and (@b or @c) and not @m', t('@a', '@c'))).toBe(true);
+    expect(evalTagExpression('@a and (@b or @c) and not @m', t('@a', '@c', '@m'))).toBe(false);
+    expect(evalTagExpression('@a and (@b or @c) and not @m', t('@a'))).toBe(false);
+    expect(evalTagExpression('(@a and @b) or (@c and @d)', t('@c', '@d'))).toBe(true);
+    expect(evalTagExpression('(@a and @b) or (@c and @d)', t('@a', '@d'))).toBe(false);
   });
 });
