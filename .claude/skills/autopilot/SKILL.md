@@ -344,8 +344,18 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
    讓「在 worktree 裡」變成測試**製造**的事實,而不是**向被測程式詢問**的答案。
    同族:`if (skip) return` 型的條件跳過、用被測函式算出期望值。
 
+4. **新增 `scripts/*.ts` 的工單,驗收者要單跑 `npx vitest run scripts/zero-input-guard.test.ts`。**
+   名冊(`scripts/zero-input-roster.ts`)要求每個 `scripts/*.ts` 都登記;worker 與驗收者不跑整鏈,
+   就會「分支綠、合併後整鏈紅」(實例:T22 的 `review-sidecar.ts`、`review-sidecar-stdio.ts`,2026-10-17)。
+   這是 §4c 第一種形狀的又一例。
+
 **協調者為了修 main 紅燈而動測試檔**:可以先修(§4「先修 main」優先),但**同一輪必須開一張 review 工單事後覆核**,
 工單裡逐處列出「為什麼是測試錯不是實作錯」。覆核者判定任一處其實是**放寬** → **退回**。
+
+**跑完驗證鏈,刪掉自己的舊 verify 工作樹**(2026-10-17):每個約 3G(node_modules + cargo target),根目錄 `/` 放 /tmp,
+累積到 100% 時整鏈會在一分鐘內假紅(`degraded-report.test.ts` 十條紅,單跑 81/81 綠)。
+只刪自己登記過的;刪前量 porcelain 為 0、commit 已在 main 裡;之後 `git worktree prune` 並看 `df -h /`。
+起鏈前也先看 `df -h /`。
 
 ## 4b. 平台操作備忘(Orca,實際踩過的)
 

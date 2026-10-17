@@ -40,6 +40,10 @@ Wave 0 是兩個 placeholder HTML 視窗,不載入任何真的內容。
 | phase-4 | 自身 phase-3、I6 通過 | macOS |
 | phase-5 | 自身 phase-4、I7 通過 | Windows |
 
+**跨資料夾的例外(T22 起)**:`apps/desktop/src/`(10)的複習 client 要 import `packages/core/src/session/protocol.ts`(11)的訊息形狀(zod schema)。
+理由:webview 與 Node 側車共用同一份協定,視窗不自己組(ADR-075;顧問 2026-10-17)。
+只開「10→11」一條,而且只 import `protocol.ts`,不 import engine、handler、io(那些會碰 `node:fs`);11 沒有 → 10 的邊,不會繞成圈。`scripts/boundaries.allow.json` 已有這一條。
+
 ## Wave 0 的重複
 
 | 東西 | 位置 | 整合時移除於 |
