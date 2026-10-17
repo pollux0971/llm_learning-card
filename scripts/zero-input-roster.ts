@@ -981,6 +981,36 @@ export const ROSTER: Record<string, Entry> = {
       },
     ],
   },
+  'scripts/review-sidecar.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'review-sidecar',
+        // 這支是 stdio 側車(ADR-075):stdin 一行一則 JSON。這個 harness 的 stdin 永遠是空的(runEntry 一開就
+        // child.stdin.end()),所以只探得到「啟動時就檢查」的那一層:--dir 與 LC_REVIEW_TODAY。
+        // 照 T22 工單 §4,--dir 的內容在第一次 start 才在協定裡檢查(root-mismatch / no-cards),壞行回 bad-request;
+        // 那幾種(--dir 不存在、是檔案、空 vault、壞行)在 scripts/review-sidecar.test.ts 與
+        // scripts/review-handler-acceptance.test.ts 測,這裡看不到協定層。硬加進來探針會 exit 0、跟 healthy 一模一樣——
+        // 那是設計不是洞,也不能進棘輪(max 只減不增),所以不加。--dir 一律指 scratch,不指真的 learning/。
+        // healthy:stdin 空 → 印 hello → EOF → exit 0;不會叫 routerFactory,不碰帳本或網路。
+        baselines: { healthy: (s) => ({ args: ['--dir', vault(s)], env: { LC_REVIEW_TODAY: '2026-10-17' } }) },
+        probes: [
+          { kind: 'empty', name: '--dir 是空字串', build: (s) => { vault(s); return { args: ['--dir', ''], env: { LC_REVIEW_TODAY: '2026-10-17' }, mention: 'bad-dir' }; } },
+          { kind: 'empty', name: 'LC_REVIEW_TODAY 是空字串', build: (s) => ({ args: ['--dir', vault(s)], env: { LC_REVIEW_TODAY: '' }, mention: 'bad-today' }) },
+          { kind: 'missing', name: '沒給 --dir', build: () => ({ args: [], env: { LC_REVIEW_TODAY: '2026-10-17' }, mention: 'bad-dir' }) },
+          { kind: 'missing', name: '--dir 後面沒有值', build: () => ({ args: ['--dir'], env: { LC_REVIEW_TODAY: '2026-10-17' }, mention: 'bad-dir' }) },
+          { kind: 'malformed', name: 'LC_REVIEW_TODAY 是 2026/10/17', build: (s) => ({ args: ['--dir', vault(s)], env: { LC_REVIEW_TODAY: '2026/10/17' }, mention: 'bad-today' }) },
+          { kind: 'wrong-type', name: 'LC_REVIEW_TODAY 是 20261017', build: (s) => ({ args: ['--dir', vault(s)], env: { LC_REVIEW_TODAY: '20261017' }, mention: 'bad-today' }) },
+        ],
+      },
+    ],
+  },
+  'scripts/review-sidecar-stdio.ts': {
+    kind: 'helper',
+    reason:
+      'side-effect import(ADR-075:把 console.log/info/debug/warn 導到 stderr,stdout 只留給協定行),沒有 main、沒有參數;' +
+      '必須是 review-sidecar.ts 的第一個 import',
+  },
   'scripts/snapshot.ts': {
     kind: 'entry',
     commands: [
