@@ -7,6 +7,7 @@ pub mod event_log;
 pub mod learning_fs;
 pub mod learning_root;
 pub mod path_guard;
+pub mod review_sidecar;
 pub mod session;
 pub mod start_screen;
 pub mod window_mode;
