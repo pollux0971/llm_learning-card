@@ -2387,13 +2387,15 @@ describe('審核輪(2026-09-05)補殺的變異:守衛與資源', () => {
     expect(parseLock(JSON.stringify({ pid: 1, startedAt: T0, cwd: '/x' }))).toBeNull();
   });
 
-  it('tryAcquire 不漏 fd:拿 200 次鎖(含 200 次 EEXIST),/proc/self/fd 的數量不變', () => {
+  it('tryAcquire 不漏 fd:拿 20 次鎖(含 20 次 EEXIST),/proc/self/fd 的數量不變', () => {
     // P-29 說「要撞 EMFILE 才看得到,不值得」。不用撞:Linux 上 /proc/self/fd 直接數得到。
+    // 次數 20(T29,顧問 2026-10-18 裁決):原本 200,每次拿鎖成功都 fsync,整鏈預熱留下的髒頁寫回時單次 fsync 會停到秒級,
+    // 200 次疊起來撞 5 秒逾時。比的是 fd 數的差剛好 0(不是門檻),漏一個 fd 就多一個,20 次照樣抓得到。
     const dir = tmp('mutate-fd-leak');
     const p = join(dir, '.stryker.lock');
     const fds = () => readdirSync('/proc/self/fd').length;
     const before = fds();
-    for (let i = 0; i < 200; i += 1) {
+    for (let i = 0; i < 20; i += 1) {
       expect(tryAcquire(p, info({ pid: i + 1 }))).toBe(true);
       expect(tryAcquire(p, info({ pid: i + 1 }))).toBe(false);
       expect(releaseLock(p, i + 1)).toBe(true);
