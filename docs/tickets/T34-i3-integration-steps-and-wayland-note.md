@@ -23,7 +23,7 @@ must_catch:
 
 # 工單 T34:i3 驗收檔的整合層步驟定義,與 Wayland 一次性提示接到真前端
 
-> 狀態:草稿 2026-10-18,待顧問審。
+> 狀態:顧問審過 2026-10-18(三點照建議:A 用真的側車子行程、背景只要求 lc-fs 編好、C 改場景字樣;驗收 A 加兩句:日期釘住、SIGKILL 的改壞證明要穩)。
 > 作者:UI/Tauri 負責人(10-desktop-shell、06-test-card 的規格作者)。編號:T34(協調者配)。派工:協調者。
 > 實作:A 由 -e5 寫(只有測試);B 由 worker-grok(opencode grok-4.7)實作、-e5 寫紅測試。驗收:-ed。觀感:前端(驗收 B4),技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
@@ -61,6 +61,9 @@ I3 盤點的兩個缺口:
 
 - 背景的另兩條(「a learning directory populated by the I1 pipeline」「5 cards are due today」)已經有定義(`../../features/steps/common.steps.ts:27`、`../../features/steps/scheduler.steps.ts:550`)。新步驟要用它們佈置好的那個 learning 目錄,不另起一個。
 - 全部用暫存根(learning、`XDG_*`、`HOME` 同一個 mkdtemp)、假 router(`LC_REVIEW_FAKE_CLOUD`),**不碰真的 learning/,不准 live**。
+- **日期釘住**(顧問 2026-10-18):「同一個 session」「同一個狀態」兩條要比側車和 `review.ts --dry-run` 的輸出,兩邊用同一個日期:側車的 `LC_REVIEW_TODAY` 與 `review.ts` 的 `--today` 是同一個值。不然跨午夜跑會假紅。
+- **SIGKILL 那條的改壞證明要穩**(顧問 2026-10-18):must_catch 第一條「改成回應之後才寫」是在搶時間,回應送出後寫檔只要幾毫秒,SIGKILL 不一定搶得贏。
+  -e5 的丟棄式證明要「改壞的版本連跑 10 次都紅」。做不到 10 / 10,就換一種保證會紅的改壞法(例如改成 summary 時才寫),並在 commit 說明寫清楚這條守的是哪一種退步。
 - 完成的樣子:`cucumber-js --tags '@i3 and not @manual'` 0 undefined、全綠。
 
 ### B. Wayland 一次性提示接到真前端(worker 實作)
@@ -78,12 +81,14 @@ I3 盤點的兩個缺口:
    - 頁面的 CSP 是 `default-src 'self'; script-src 'self'`,沒有 `unsafe-inline`(`../../apps/desktop/src-tauri/tauri.conf.json`)。所以不用 `style` 屬性,不用 `innerHTML` 塞樣式;要設樣式用 CSSOM 或 HUD 現成的掛鉤(例如按鈕用 `data-hud="button"`)。
    - 顏色只用 `var(--hud-*)`。不改 `hud.css`、HUD 元件、兩張卡的 `App.svelte`。
 
-### C. `@e2e @manual` 的字樣(顧問判)
+### C. `@e2e @manual` 的字樣(顧問 2026-10-18 同意改字樣)
 
 - 場景「A person completes a review session in the window」寫「Then the header shows "Today 0 / 5"」。現在的 header 是「0 / 5」「逾期 0」兩段,是 T15、T23、T32 定的;`../00-design.md` §5.5 是「今日 3 / 10 題,逾期 0」。
 - 這條在 I4 做的時候,照字面就對不上。
-- 建議**改場景的字樣去對齊畫面**,例如「Then the header shows "0 / 5" and the overdue count」,不改畫面。理由:T15 的渲染測試讀 header 的第一個數字,前面加字會改到它。
-- 顧問同意的話,由規格作者(前端)在派工前改 `docs/integration/i3-desktop-review.feature` 那一行,同一條分支另一個 commit。不同意就不動。
+- **改場景的字樣去對齊畫面,不改畫面。** 理由:T15 的渲染測試讀 header 的第一個數字,前面加字會改到它。
+- 規格作者(前端)在派工前改了 `docs/integration/i3-desktop-review.feature` 那一行(同一條分支另一個 commit),改成「Then the header shows zero of five and that none are overdue」。
+  畫面上就是「0 / 5」「逾期 0」兩段。照 CLAUDE.md「Gherkin 全英文」與 06 的寫法(「the header shows zero of three」「the header shows the progress and that two are overdue」),步驟字不放中文字樣。
+- 這一條是 `@manual`,沒有步驟定義,I4 那一輪照它看畫面。
 
 ### D. 不退步
 
@@ -99,15 +104,16 @@ I3 盤點的兩個缺口:
 - 判斷「要不要顯示」與「要不要置頂」寫成純函式,Rust 測試放 `tests/`,不寫在實作檔的 `mod tests`。
 - placeholder 的 `wayland-note.js` 這張不動(它現在沒人載入;要不要刪另議)。
 
-## 要顧問判的
+## 顧問的裁決(2026-10-18)
 
-1. **A 用真的側車子行程,還是 06 phase-2 那套程序內的 handler?** 建議真行程:
+1. **A 用真的側車子行程**(不用 06 phase-2 那套程序內的 handler)。理由:
    - 整合點要驗的就是零件接起來的樣子;
    - 「被殺掉」只有真行程能做 SIGKILL;
    - harness 已經有了(T22 的 `spawnSidecar`)。
    代價是每條多起一個 node 行程,約幾百毫秒。Rust 那一段「起、傳、收、關」由 T22 的 cargo 測試守,這張不重複。
-2. **背景「built for Linux」只要求 lc-fs 編好,不跑完整的 `tauri build`。** 理由:完整建置要十幾秒到幾分鐘、而且是重活;視窗那一側要用的 Rust 是 lc-fs 共用的 `learning_fs`。
-3. **C 要不要改字樣**(見上)。
+2. **背景「built for Linux」= Linux + lc-fs 編好,不跑完整的 `tauri build`。** 理由:完整建置要十幾秒到幾分鐘、而且是重活;視窗那一側要用的 Rust 是 lc-fs 共用的 `learning_fs`。
+3. **C 改字樣**(見上)。
+4. B 的做法建議同意。localStorage 跨視窗、跨重啟在 WebKitGTK 有沒有留下,Chrome 測不到,所以 B4 的 `@manual`「按掉 → 關掉再開,兩頁都沒有」保留,那就是證明。
 
 ## 規格
 
@@ -118,7 +124,7 @@ B 的行為以 10 phase-1「Wayland is detected and explained」與 i3「Wayland
 
 | 驗收 | 量什麼 | 怎麼量(建議) | 基底上 |
 |---|---|---|---|
-| A | 五條整合場景 + 背景 | cucumber 步驟定義(見 A 的表) | 綠(行為本來就在;這幾條是整合驗收,不是紅測試。交件前用 must_catch 前五條的改壞證明它們會紅) |
+| A | 五條整合場景 + 背景 | cucumber 步驟定義(見 A 的表) | 綠(行為本來就在;這幾條是整合驗收,不是紅測試。交件前用 must_catch 前五條的改壞證明它們會紅;SIGKILL 那條見驗收 A 的「改壞證明要穩」) |
 | B1 | Wayland 兩頁都有提示 | Rust:`init_script` 在 Wayland 帶提示、X11 不帶;真 Chrome(`openCard`)載入注入了提示程式的頁面 → 出現、字樣對、按鈕在 | 紅 |
 | B2 | 按掉之後不再出現 | 真 Chrome:按「知道了」→ 重新載入 → 沒有;`localStorage` 鍵 | 紅 |
 | B3 | X11 不出現、Wayland 不置頂 | Rust 純函式(session → 要做的動作) | 紅(前半)/ 本來就綠(後半) |
