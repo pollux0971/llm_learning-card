@@ -331,7 +331,16 @@ interface ViteHandle {
 async function startVite(extra: { strictPort?: boolean } = {}): Promise<ViteHandle> {
   const { createServer } = await timed('import vite', () => import('vite'));
   const server = await timed('vite createServer', () =>
-    createServer({ root: APP, configFile: join(APP, 'vite.config.ts'), logLevel: 'silent', server: { host: '127.0.0.1', port: 0, ...extra } }),
+    createServer({
+      root: APP,
+      configFile: join(APP, 'vite.config.ts'),
+      logLevel: 'silent',
+      // 這幾條量的是 standalone 外掛(POST /__review 往返、重新載入不重種子、只收 POST),不是 vite 的 HMR、監看、預打包。
+      // 那幾個在 close 時偶爾會卡:整鏈抓到過一次「卡在 vite server.close 70 s」。所以測試用覆寫把它們關掉。
+      // 仍用 apps/test-card/vite.config.ts,外掛照樣被載入(POST /__review 有回側車的行)。
+      server: { host: '127.0.0.1', port: 0, ws: false, watch: null, ...extra },
+      optimizeDeps: { noDiscovery: true, include: [] },
+    }),
   );
   await timed('vite server.listen', () => server.listen());
   const address = server.httpServer?.address();
@@ -349,7 +358,12 @@ async function startVite(extra: { strictPort?: boolean } = {}): Promise<ViteHand
       const out = await get(`POST /__review ${method}`, '/__review', { method: 'POST', body: JSON.stringify({ v: 1, id: nextId++, method, params }) });
       return JSON.parse(out.text) as Obj;
     },
-    close: () => timed('vite server.close', () => server.close()),
+    close: () =>
+      timed('vite server.close', async () => {
+        // 先斷掉還開著的連線(keep-alive),不然 close 會等它們
+        (server.httpServer as { closeAllConnections?: () => void } | null)?.closeAllConnections?.();
+        await server.close();
+      }),
   };
 }
 
