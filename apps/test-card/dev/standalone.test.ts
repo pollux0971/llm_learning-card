@@ -234,7 +234,7 @@ describe('一行進、一行出(驗收 5 第 4 點)', () => {
   it('start → ready、三張、fakeCloud true(假 router 起來了)', async () => {
     const b = await backend();
     const out = result(await call(b, 'start'));
-    expect(out).toMatchObject({ state: 'ready', today: '2026-09-10', total: 3, answered: 0, fakeCloud: true });
+    expect(out).toMatchObject({ state: 'ready', today: '2026-09-10', total: 3, answered: 0, overdue: 0, fakeCloud: true });
   }, 120_000);
 
   it('走完三張(stage 1 填空、stage 2 填空 + 應用、stage 3 應用):批改都有合法回應,沒有 status error', async () => {

@@ -14,6 +14,7 @@
  *
  * 各場景為了讓「保護」真的被考到而多佈置的東西,寫在對應步驟的註解裡。
  */
+import { p3Active, p3MoreCards, p3Resumes, p3Yesterday } from './test-card-phase3.steps.js';
 import { After, Given, Then, When } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -169,6 +170,7 @@ Given('the session was created this morning with {int} questions', { timeout: ST
 });
 
 Given('more cards have become due since', function (this: LearningWorld) {
+  if (p3Active(this)) return p3MoreCards(this);
   const s = st(this);
   // 3 張新到期的卡,逾期天數比原本任何一張都多:要是被重建,它們會排在最前面、把原本的擠掉
   const reviews = readReviews(s.vault);
@@ -218,6 +220,7 @@ When('the review command is run again the same day', { timeout: STEP_TIMEOUT_MS 
 });
 
 Then('it resumes at the third question', function (this: LearningWorld) {
+  if (p3Active(this)) return p3Resumes(this);
   const s = st(this);
   const out = lastRun(this);
   assert.ok(out.asked.length > 0, `續答時完全沒有問題:\n${out.output}`);
@@ -269,6 +272,7 @@ Then('the session is rebuilt from scratch', function (this: LearningWorld) {
 });
 
 Then("yesterday's three are one day more overdue", function (this: LearningWorld) {
+  if (p3Active(this)) return p3Yesterday(this);
   const s = st(this);
   const cache = readCache(s.vault, this.today) as unknown as CacheShape;
   assert.equal(cache.queue.length, 3);
