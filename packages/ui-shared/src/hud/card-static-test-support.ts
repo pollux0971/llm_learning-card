@@ -273,7 +273,7 @@ export function progressProblems(src: CardSource = readCardSource('test-card')):
   return problems;
 }
 
-/** 驗收 2:結果那一行。兩個分支字樣不同、都含符號、符號不寫在 <style> 的 content 裡,評分失敗不帶 data-result */
+/** 驗收 2:結果那一行。兩個分支字樣不同、都含符號、符號不寫在 <style> 的 content 裡,評分失敗不帶 data-result(那行可以是寫死的字,或 {view.gradingError}) */
 export function resultMarkupProblems(src: CardSource = readCardSource('test-card')): string[] {
   const els = allEls(parseMarkup(src.markup));
   const problems: string[] = [];
@@ -296,12 +296,37 @@ export function resultMarkupProblems(src: CardSource = readCardSource('test-card
     }
   }
   if (/::?(before|after)/.test(src.style)) problems.push('<style> 有 ::before / ::after(符號不用 CSS 畫)');
-  const errors = els.filter((e) => /評分失敗/.test(e.children.filter((c): c is Txt => !('tag' in c)).map((c) => c.text).join('')));
+  // 「評分失敗」那行:寫死的字面,或 <p class="error"> 顯示 {view.gradingError}(T30:字由側車訊息決定,status 為 error 時仍是那句)
+  const errorLine = (e: El): boolean => {
+    const own = e.children.filter((c): c is Txt => !('tag' in c)).map((c) => c.text).join('');
+    if (/評分失敗/.test(own)) return true;
+    return /(^|\s)error(\s|$)/.test(unquote(attrOf(e, 'class') ?? '')) && /\{\s*view\.gradingError\s*\}/.test(own);
+  };
+  const errors = els.filter(errorLine);
   for (const e of errors) {
     if (attrOf(e, 'data-result') !== undefined) problems.push('「評分失敗」那行不該帶 data-result');
     if ([RESULT_SYMBOL.pass, RESULT_SYMBOL.fail, String.fromCodePoint(0x2717)].some((c) => textOf(e).includes(c))) problems.push('「評分失敗」那行不該有對錯符號');
   }
-  if (errors.length === 0) problems.push('找不到「評分失敗,請再試一次」那一行(06 phase-1 照舊要有)');
+  if (errors.length === 0) problems.push('找不到「評分失敗」那一行(要有 <p class="error">{view.gradingError}</p>,或寫死「評分失敗,請再試一次」)');
+  return problems;
+}
+
+/**
+ * 「評分失敗」那行的字改從變數來(T30),只認標記會讓「那行沒有對錯符號」這條規則變空。
+ * 所以讀 session.ts 裡 GRADING_ERROR 與 SUBMIT_RETRY_HINT 兩個常數的值,斷言裡面沒有 ✓ / × / ✗。
+ * review.message(側車給的字)由 handler 測試管,這裡不管。
+ */
+export const GRADING_TEXT_CONSTANTS = ['GRADING_ERROR', 'SUBMIT_RETRY_HINT'] as const;
+export function gradingTextProblems(sessionSrc: string = readFileSync(join(CARD_DIRS['test-card'], 'src/session.ts'), 'utf8')): string[] {
+  const problems: string[] = [];
+  const symbols = [RESULT_SYMBOL.pass, RESULT_SYMBOL.fail, String.fromCodePoint(0x2717)];
+  for (const name of GRADING_TEXT_CONSTANTS) {
+    const m = new RegExp(`\\bconst\\s+${name}\\s*(?::[^=]+)?=\\s*(?:(['"\`])([\\s\\S]*?)\\1)\\s*(?:as\\s+const\\s*)?;`).exec(sessionSrc);
+    if (!m) { problems.push(`session.ts 找不到 const ${name} = '…'(字串常數,量尺要讀它的值)`); continue; }
+    const value = m[2]!;
+    if (value.trim() === '') problems.push(`${name} 是空字串`);
+    for (const c of symbols) if (value.includes(c)) problems.push(`${name} 的值含對錯符號 ${c}(評分失敗那行不帶符號)`);
+  }
   return problems;
 }
 
