@@ -19,7 +19,7 @@
 
 use std::cell::Cell;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
+use std::io::{self, BufReader, Cursor, Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
