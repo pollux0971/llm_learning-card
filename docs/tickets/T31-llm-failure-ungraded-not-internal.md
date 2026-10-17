@@ -17,30 +17,19 @@ must_catch:
   - 模型不能用時又自動重打一次 router.call(同一題打兩次,使用者多等一倍):不自動重打的測試必須紅;回應解析不出來的那條「再打一次」照舊
   - 側車:應用題遇到模型不能用,submit 回 internal、或題目與輸入不見了、或 reviews.json 被改、或卡片前進 / 退回:submit 的測試必須紅(要 status error、題目留著)
   - 終端機:應用題遇到模型不能用,review.ts 整個停(exit 非 0)、或沒有記成「稍後再考」:終端機的測試必須紅
-  - 填空:同義判斷的 router 丟程式的 bug 時還是收成 fallback-strict(待顧問定,見檔頭第 2 點):填空 bug 不藏的測試必須紅;模型不能用、NoModelError、缺閘道鍵、閘道 401、模型名被拒照舊 fallback-strict
+  - 填空:同義判斷的 router 丟程式的 bug 時還是收成 fallback-strict:填空 bug 不藏的測試必須紅;模型不能用、NoModelError、缺閘道鍵、閘道 401、模型名被拒照舊 fallback-strict
   - 05-grading phase-1、phase-2 的非 @manual 場景任一條變紅,T30 的測試變紅,或任何 .feature 被改:不退步必須紅
 ---
 
 # 工單 T31:批改時模型連不上就是「評分失敗」,不是「複習程式停了」;程式的 bug 照樣丟出來
 
-> 狀態:草稿,待顧問審。
+> 狀態:顧問審過 2026-10-17(五點照建議)。
 > 作者:UI/Tauri 負責人(起草;顧問 2026-10-17 給方向)。編號:T31(協調者配)。派工:協調者。順序:T23 → T30 → T31。
 > 實作:worker-grok(opencode grok-4.7)。紅測試:-e5(排在 T30 之後)。驗收:-ed(grading 是嚴格級,要跑變異)。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 > 起因:T24 `@manual` O1 之後的另一半(顧問 2026-10-17):T30 管憑證;憑證以外的批改失敗(網路、閘道掛、逾時)在 submit 一樣變成 `internal` 迴圈。
 > 決策:ADR-076(T30:憑證錯誤走 `credential-unavailable`)、ADR-039(備援表)、ADR-044(退化訊號 witness)、契約 §7(路由表)。
 > 基底:main(`2cb81bc` 或之後;T30 合併之後再派,這張要用到 T30 的 `credentialProblem`)。
-
-## 要顧問定的(審完刪掉這一節)
-
-1. **分類函式放在 `packages/core/src/llm/failures.ts`,ingest 那一份這張不動。** ingest 已經有一份私有的(`../../packages/core/src/ingest/questions.ts` 的 `retryReasonOf` 與 `isNetworkError`:截斷、逾時、訊息或 `cause.code` 比對網路特徵字)。
-   這張的分類要多認 `NoModelError`、`AbortError`、SDK 的連線錯、429 / 5xx,而且要先排除憑證(T30),範圍比 ingest 大。草稿把網路特徵字的那一條**照抄同一個正規式**,ingest 不改(02-ingest 也是嚴格級,另一張再收成一份)。另一個做法是這張就讓 ingest 改用新的;我建議不在這張。
-2. **填空的 catch-all 要不要收窄。** `gradeFillBlank` 現在 `catch {}` 全收(`../../packages/core/src/grading/grade-fill.ts`),連程式的 bug 都變成 `fallback-strict`(有 witness `grading.fill.llm-failed-strict`,是登記過的退化)。
-   顧問講的「不准一律收掉」也適用這裡。草稿寫成:只收「router 回報的失敗」(模型不能用,加上契約 §7 的「沒有本機模型」那一家:`NoModelError`、缺 `GATEWAY_API_KEY`、閘道 401、模型名被拒),其他往外丟。
-   風險:既有測試若用 `new Error('boom')` 當「沒有模型」,會變紅,要紅測試作者改成真的錯誤種類。我建議收窄。
-3. **不自動重打。** 應用題遇到模型不能用,這一次就回 `pass: null`。視窗那邊題目留著、使用者再按「送出」就是重打;終端機記成「稍後再考」。自動重打會讓使用者在逾時的情況下多等一倍(雲端逾時 60 秒,`../../packages/core/src/llm/router.ts` 的 `DEFAULT_TIMEOUT_MS`)。我建議不重打。
-4. **設定錯誤照舊往外丟。** `GatewayModelRejectedError`(`LLM_LOCAL_MODEL` 填了雲端模型名)、`UnsupportedProviderError`、雲端 400 / 403 / 404 不是「模型這次不能用」,是設定要改,收成「評分失敗」會讓人一直重按。草稿讓它們照舊變 `internal`(看得見,但說不清楚)。要給它們自己的錯誤種類,建議另開。
-5. **不改 `.feature`。** 05 phase-2 已有「Two failures leave the card untouched」(`pass: null`、呼叫端不前進也不退回);這張是同一個結果多一個成因。05 phase-3(I6,離線審核與複審)不碰:這張不產生 provisional、不進複審佇列。
 
 ## 為什麼有這張
 
@@ -72,7 +61,7 @@ must_catch:
 | `instanceof OutputTruncatedError` | `truncated` |
 | `instanceof NoModelError`(離線又沒有本機模型;閘道打不通也被包成這個) | `no-model` |
 | 兩家 SDK 的 `APIConnectionError`(含子類 `APIConnectionTimeoutError`)——**用 `instanceof`**:實測兩家 SDK 的錯 `name` 都是 `"Error"`,只有 `constructor.name` 才是類別名 | `network` |
-| 訊息或 `cause.code` 符合 ingest 用的同一個網路特徵正規式(`fetch failed`、`ECONNRESET`、`ECONNREFUSED`、`ETIMEDOUT`、`EAI_AGAIN`、`ENOTFOUND`、`EPIPE`、`socket hang up`、`network error`,`../../packages/core/src/ingest/questions.ts` 的 `NETWORK_ERROR_PATTERN`,照抄) | `network` |
+| 訊息或 `cause.code` 符合 ingest 用的同一個網路特徵正規式(`fetch failed`、`ECONNRESET`、`ECONNREFUSED`、`ETIMEDOUT`、`EAI_AGAIN`、`ENOTFOUND`、`EPIPE`、`socket hang up`、`network error`,`../../packages/core/src/ingest/questions.ts` 的 `NETWORK_ERROR_PATTERN`,照抄;旁邊加一行註解:「與 ingest/questions.ts 的 NETWORK_ERROR_PATTERN 同一份,收成一份見 backlog」) | `network` |
 | 數字 `status` 是 429 | `rate-limited` |
 | 數字 `status` ≥ 500 | `server-error` |
 
@@ -83,11 +72,13 @@ must_catch:
 
 - `router.call('grade.apply', …)` 包一層 try:`llmUnavailableReason(err)` 有值 → 記 witness `grading.apply.llm-unavailable`、記一筆 warning(`{ type: 'warning', task: 'grade.apply', reason: 'llm_unavailable', cause: <原因> }`,只寫原因的代號,不寫例外原文),回
   `{ pass: null, feedback: '這次沒辦法批改(模型暫時連不上),請再試一次。', grader: 'error' }`;沒有值 → 原樣往外丟。
-- 回應解析不出來的「再打一次」照舊(兩次的迴圈不改);**模型不能用不重打**(檔頭第 3 點):第一次 `router.call` 就丟出來時,這一題只打一次。第一次回應解析不出來、第二次 `router.call` 丟出模型不能用 → 一樣回上面那個 `pass: null`。
+- 回應解析不出來的「再打一次」照舊(兩次的迴圈不改);**模型不能用不重打**(顧問 2026-10-17:使用者再按「送出」就是重打;自動重打在逾時的情況下會讓人多等一倍,雲端逾時 60 秒,`../../packages/core/src/llm/router.ts` 的 `DEFAULT_TIMEOUT_MS`):第一次 `router.call` 就丟出來時,這一題只打一次。第一次回應解析不出來、第二次 `router.call` 丟出模型不能用 → 一樣回上面那個 `pass: null`。
 - warning 的 log 照 `gradeApply` 現在的寫法:有 `logPath` 才寫(`../../packages/core/src/grading/grade-apply.ts` 的 `createFileLogAppender`,沒給就不寫;複習那條路現在沒給,跟「回應解析不出來」那筆 warning 一樣)。這張不加 `logPath` 的接線。
 - `packages/contracts/src/witness.ts` 登記 `grading.apply.llm-unavailable`(`kind: 'swallow'`、`owner: '05-grading'`、一句說明),跟 `grading.apply.unparsable-skipped` 同一區。`scripts/degraded-report.ts` 的報表要讀得到它。
 
-### 3. 填空(`packages/core/src/grading/grade-fill.ts`,檔頭第 2 點)
+### 3. 填空(`packages/core/src/grading/grade-fill.ts`)
+
+`gradeFillBlank` 現在 `catch {}` 全收,連程式的 bug 都變成 `fallback-strict`。這正是「不准一律收掉」(顧問 2026-10-17),所以一起收窄。
 
 - `gradeFillBlank` 的 `catch {}` 改成先分類:`llmUnavailableReason(err)` 有值,或是契約 §7「沒有本機模型」那一家(`NoModelError`、`MissingCredentialError` 且鍵是 `GATEWAY_API_KEY`、閘道 401、`GatewayModelRejectedError`)→ 照舊 `fallback-strict` 與 witness `grading.fill.llm-failed-strict`;其他往外丟。
 - 填空的同義判斷永遠不回 `pass: null`、不回 `credential-unavailable`(T30 寫的「填空缺閘道鍵照契約 §7 退回嚴格比對」不變)。
@@ -127,7 +118,8 @@ must_catch:
 
 ## 規格
 
-這張不加、不改 `.feature`(檔頭第 5 點)。行為以本檔驗收條件為準。
+這張不加、不改 `.feature`:05 phase-2「Two failures leave the card untouched」(`pass: null`、呼叫端不前進也不退回)已經涵蓋這個結果,這張是同一個結果多一個成因(顧問 2026-10-17)。
+05 phase-3(I6,離線審核與複審)不碰:這張不產生 provisional、不進複審佇列。行為以本檔驗收條件為準。
 
 ## 紅測試(-e5 寫,開發 worker 不改)
 
@@ -138,7 +130,7 @@ must_catch:
 | 2 | witness 登記 | 既有的 degraded-report / witness 登記檢查(新的名字沒登記就紅) | 紅 |
 | 3 | 填空 | vitest:模型不能用、`NoModelError`、缺閘道鍵、閘道 401、模型名被拒 → `fallback-strict`;`TypeError`(非網路)、`ZodError` → 丟出 | 紅(後兩種;前面的本來就綠) |
 | 4 | 側車 / 終端機 | vitest:`createReviewHandler` + 會丟模型不能用的假 router → submit 的結果、session、雜湊;`review.ts` 子程序(`--import` 假 cloud 回 503)→ exit 0、小結 | 紅 |
-| 6 | 不退步 | 既有測試全綠;用 `new Error(...)` 當「沒有模型」的舊測試,改成真的錯誤種類並在 commit 說明寫哪幾條 | 綠 |
+| 6 | 不退步 | 既有測試全綠。用 `new Error(...)` 當「沒有模型」的舊測試,改成真的錯誤種類(`NoModelError` 等),**逐條**寫進 commit 說明(檔名、測試名、改前改後);-ed 驗收時逐條核對每一條都是換成真的錯誤種類,不是把斷言放寬 | 綠 |
 
 - 自測片段一律最小,不放可以直接抄的完整實作。測試一律用 `mkdtemp` 當 `XDG_*` 與 `HOME`;**不准 live**。
 
@@ -155,8 +147,8 @@ npm run boundaries
 
 ## 不在範圍
 
-- 設定錯誤的專屬錯誤種類(檔頭第 4 點)。
-- ingest 改用同一個分類函式(檔頭第 1 點)。
+- 設定錯誤(`GatewayModelRejectedError`、`UnsupportedProviderError`、雲端 400 / 403 / 404)照舊往外丟(`internal`,看得見但說不清楚)。專屬的錯誤種類記在 backlog,不配號;有人回報再開(顧問 2026-10-17)。
+- ingest 改用同一個分類函式:這張不動 `ingest/questions.ts`(02-ingest 也是嚴格級);收成一份記在 backlog。
 - router 層的備援規則:雲端連線錯(`APIConnectionError`)現在不算 `isCloudFailure`(只認逾時、截斷、5xx),所以不會換到閘道。要不要讓它也換閘道是 ADR-039 的事,不在這張。
 - 05 phase-3 的離線審核、provisional、複審(I6)。
 - `submitAnswer` 把 `logPath` 傳給 `gradeApply`(複習那條路的 warning 現在都不寫進帳本)。
