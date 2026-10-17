@@ -359,6 +359,8 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 
 ## 4b. 平台操作備忘(Orca,實際踩過的)
 
+- **驗證簽出不要改名,要換就刪了重開**(2026-10-17):`git worktree move` 之後 cargo 快取裡的絕對路徑失效,preheat 回 rc=101。
+
 > ⚠️ **2026-10-14 起 worker 改用 grok(Codex 訂閱停了)。** 本節標「Codex」或 `claude` 的畫面字樣、`worker-start`、
 > `claude --dangerously-skip-permissions` 的做法是**歷史紀錄**;**教訓保留**(送出回執 ≠ 對方收到、探針要先證明能回「有」),
 > **字面不能照搬到 grok**。現行派工與 grok 的畫面見 §4f。
