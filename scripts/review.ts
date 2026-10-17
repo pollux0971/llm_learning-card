@@ -10,7 +10,8 @@
  *   3. --pause / --dry-run 處理完就結束;--unpause 只把暫停關掉,然後繼續
  *   4. 今天的快取標記為暫停 → 印暫停訊息,退出碼 0(在查帳本之前)
  *   5. 互動模式查帳本(失敗退出碼 2)
- *   6. 讀或建當日快取 → 答題 → 小結 → 本次作答 ≥ 1 題才 snapshot
+ *   6. 缺批改金鑰 → 印樣板、退出碼 2(還沒建快取、不 snapshot)
+ *   7. 讀或建當日快取 → 答題 → 小結 → 本次作答 ≥ 1 題才 snapshot
  *
  * --dry-run 不建、不改快取,不評分,不需要指標檔。
  */
@@ -18,8 +19,12 @@ import './_env.js';
 import { createInterface } from 'node:readline/promises';
 import { join } from 'node:path';
 import {
+  MissingCredentialError,
   createLiveGatewayRouter,
+  credentialMessage,
+  credentialProblem,
   defaultVaultDeps,
+  missingGradingKeys,
   resolveVerifiedLedger,
 } from '../packages/core/src/llm/index.js';
 import type { LlmRouter } from '../packages/core/src/grading/types.js';
@@ -72,6 +77,21 @@ function liveRouterOrExit(): LlmRouter {
     process.exit(2);
   }
   return createLiveGatewayRouter({ ledger: resolved.ledger });
+}
+
+/** 驗完帳本、建當日快取之前。缺鍵就印樣板、退出碼 2,不建快取、不 snapshot。 */
+function exitIfMissingKeys(): void {
+  const missing = missingGradingKeys(process.env);
+  if (missing.length === 0) return;
+  const first = missing[0];
+  if (first === undefined) return;
+  const problem = credentialProblem(new MissingCredentialError(first), process.env);
+  const message =
+    problem === undefined
+      ? '批改要用的金鑰不能用。請在專案根目錄的 .env 檢查。'
+      : credentialMessage(problem);
+  console.error(message);
+  process.exit(2);
 }
 
 function bindQuit(rl: ReturnType<typeof createInterface>): AbortSignal {
@@ -207,6 +227,7 @@ async function main(): Promise<void> {
   }
 
   const router = liveRouterOrExit();
+  exitIfMissingKeys();
   const opened = await openDay({ learningDir: dir, today, router, env: process.env });
   if (opened.kind === 'paused') {
     console.log('今天已暫停,要繼續請加 --unpause');
@@ -244,8 +265,13 @@ async function main(): Promise<void> {
 }
 
 // ReviewsChangedError 一路丟到這裡:印 message 到 stderr、退出碼 1。
-// 小結與 snapshot 在 main 裡、這次丟錯之後,所以不會執行。
+// 憑證錯誤(缺鍵或 401)印同一句樣板、退出碼 2。小結與 snapshot 在 main 裡、這次丟錯之後,所以不會執行。
 main().catch((err: unknown) => {
+  const problem = credentialProblem(err, process.env);
+  if (problem !== undefined) {
+    console.error(credentialMessage(problem));
+    process.exit(2);
+  }
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

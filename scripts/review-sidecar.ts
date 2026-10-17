@@ -5,10 +5,10 @@
  * 第一個 import 必須是 review-sidecar-stdio(把 console 導到 stderr),_env 排第二。
  */
 import './review-sidecar-stdio.js';
-import './_env.js';
+import { loadDotEnv } from './_env.js';
 import { realpathSync, writeSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { createLiveGatewayRouter, defaultVaultDeps, resolveVerifiedLedger } from '../packages/core/src/llm/index.js';
+import { createLiveGatewayRouter, defaultVaultDeps, missingGradingKeys, resolveVerifiedLedger } from '../packages/core/src/llm/index.js';
 import { ReviewStartError, createReviewHandler } from '../packages/core/src/session/handler.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -110,15 +110,12 @@ async function main(): Promise<void> {
   }
 
   const todayRaw = process.env.LC_REVIEW_TODAY;
-  let today: string;
-  if (todayRaw === undefined) {
-    today = localToday();
-  } else if (!DATE_RE.test(todayRaw)) {
+  if (todayRaw !== undefined && !DATE_RE.test(todayRaw)) {
     stderrLine('[review-sidecar] bad-today');
     process.exit(2);
-  } else {
-    today = todayRaw;
   }
+  const helloToday = todayRaw === undefined ? localToday() : todayRaw;
+  const handlerToday: string | (() => string) = todayRaw === undefined ? localToday : todayRaw;
 
   const learningDir = arg('--dir');
   if (!learningDir) {
@@ -126,13 +123,15 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const hello = { v: 1, kind: 'hello', fakeCloud: Boolean(fake), today };
+  const hello = { v: 1, kind: 'hello', fakeCloud: Boolean(fake), today: helloToday };
   process.stdout.write(`${JSON.stringify(hello)}\n`);
 
   const handler = createReviewHandler({
     learningDir,
-    today,
+    today: handlerToday,
     env: process.env,
+    reloadEnv: loadDotEnv,
+    missingKeys: () => missingGradingKeys(process.env),
     routerFactory: () => {
       const resolved = resolveVerifiedLedger(defaultVaultDeps());
       if (!resolved.ok) throw new ReviewStartError('router-unavailable');

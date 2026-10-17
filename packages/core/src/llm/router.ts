@@ -18,6 +18,7 @@ import {
 } from './errors.js';
 import { anthropicAdapter } from './adapters/anthropic.js';
 import { openaiAdapter } from './adapters/openai.js';
+import { envVarFor, resolveProviderName } from './credentials.js';
 import { TASK_MAX_TOKENS } from './token-limits.js';
 import type { LogEvent } from '@contracts/index.js';
 import { recordEvent } from '@core/schema/log.js';
@@ -42,10 +43,6 @@ const PROBE_URL: Record<CloudProvider, string> = {
   anthropic: 'https://api.anthropic.com/v1/models',
   openai: 'https://api.openai.com/v1/models',
 };
-
-function envVarFor(provider: CloudProvider): string {
-  return provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
-}
 
 export interface CloudSettings {
   cloud_provider?: string;
@@ -101,7 +98,7 @@ export class CloudLlmRouter implements LlmRouter {
     const log = this.log;
     if (!log) throw new UnaccountableLlmCallError();
 
-    const providerName = this.resolveProviderName();
+    const providerName = resolveProviderName(this.env, this.settings);
     if (!isCloudProvider(providerName)) {
       throw new UnsupportedProviderError(providerName);
     }
@@ -175,7 +172,7 @@ export class CloudLlmRouter implements LlmRouter {
   }
 
   async probeOnline(): Promise<boolean> {
-    const providerName = this.resolveProviderName();
+    const providerName = resolveProviderName(this.env, this.settings);
     if (!isCloudProvider(providerName)) return false;
 
     const apiKey = this.env[envVarFor(providerName)];
@@ -205,10 +202,6 @@ export class CloudLlmRouter implements LlmRouter {
   /** phase-2 才有本機 adapter(ADR-034 待決:本機模型未定)。phase-1 一律回報不可用。 */
   async probeLocal(): Promise<{ available: boolean; models: string[] }> {
     return { available: false, models: [] };
-  }
-
-  private resolveProviderName(): string {
-    return this.env.LLM_CLOUD_PROVIDER ?? this.settings.cloud_provider ?? '';
   }
 
   private resolveModel(): string {
