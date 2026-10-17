@@ -315,6 +315,7 @@ graph TD
 - **Alternatives**: 寫死模型名(換模型要改程式);同時做 Anthropic adapter 的真呼叫(契約保留 `anthropic` 值,adapter 要有,但 Wave 0 只有 OpenAI 有金鑰,Anthropic 走 mock)。
 - **Consequences**: 換模型只改 `.env`。`contracts/fixtures/learning-minimal/config/settings.yaml` 仍寫 anthropic 當範例,環境變數會覆蓋它。
 - **Related**: ADR-006, contracts/types.md §7 §11, features/03-llm-router/FEATURE.md
+- **refined by ADR-076(2026-10-17)**:「`.env` 只在入口讀」不變;側車這個長駐行程改成每次 `start` / `submit` 重讀 `.env`(仍只在 `scripts/_env.ts`),並新增缺金鑰時的樣板訊息。
 
 ## ADR-035 · Wave 0 平行開發的落點與共用檔歸屬
 
@@ -1523,3 +1524,29 @@ graph TD
   - 06 的單獨執行(ADR-022):vite dev server 用同一支側車,跑在 `contracts/fixtures/learning-minimal` 的暫存複本上,一律假 router;dev server 本身的埠是開發工具的,不是 app 的。
   - Rust 會多一個模組管行程;它的測試只測信封與生命週期,不測批改。
 - **Related**: ADR-022、ADR-034、ADR-042、ADR-050、ADR-060、ADR-062、ADR-069(refined)、ADR-074、`contracts/types.md` §7、§11b、§13、`features/06-test-card/FEATURE.md`、`docs/tickets/T22-review-sidecar.md`、`docs/tickets/T24-test-card-phase-2.md`、T26(core session 寫 `reviews.json` 前的樂觀檢查)
+- **refined by ADR-076(2026-10-17)**:第 5 點的「固定的訊息」加上缺金鑰的兩句樣板;第 6 點「假 router 只能由啟動時的環境變數開」補上「`LC_REVIEW_` 開頭的鍵不從 `.env` 設」(原本側車先載入 `.env` 才讀這兩個變數,`.env` 裡寫就會開);側車每次 `start` 重算今天。
+
+## ADR-076 · 側車每次 start / submit 重讀 `.env`、每次 start 重算今天;缺金鑰時 start 就說清楚(`credential-unavailable`)
+
+- **Status**: accepted · 2026-10-17(技術顧問審過 T30 六點;前端起草;修訂 ADR-034、ADR-075 的幾句,不推翻)
+- **Context**:
+  1. T24 `@manual` 的 O1:桌面版沒有金鑰時,應用題送出 → `MissingCredentialError` 沒人接 → handler 的 catch-all → `internal` →「複習程式停了」;按「重新開始」回到同一題,永遠過不去,使用者看不出原因是缺金鑰。終端機 `review.ts` 同源(router 懶建,缺金鑰要到批改才爆)。
+  2. 側車是常駐的長駐行程(系統列 app 隔夜不重開)。`.env` 只在側車起來時讀一次(ADR-034 的入口讀取),使用者補好 `.env` 要重開 app 才生效;「今天」也只在起來時算一次,隔天 `start` 會拿到昨天的當日快取。
+  3. 安全洞(前端起草時實測):側車先 `import './_env.js'` 才讀 `LC_REVIEW_FAKE_CLOUD` 與 `LC_REVIEW_TODAY`,所以 `.env` 裡寫這兩個就能開假 router、換測試日期,release build 也一樣。這違反 ADR-075 第 6 點「假 router 只能由啟動時的環境變數開」。
+- **Decision**:
+  1. **`start` 時檢查批改要的金鑰**:只看環境變數在不在、不打網路。要哪個鍵照 router 實際先走的那條路算(`LLM_CLOUD_PROVIDER` 是 openai / anthropic 要那家的鍵;沒設或不認得 → `GATEWAY_API_KEY`),用 router 自己那一份 provider 判斷(抽成共用純函式,兩邊不會算得不一樣)。暫停日不查。缺了回新的錯誤種類 `credential-unavailable`,訊息是兩句固定樣板、只換鍵名:缺「批改要用的金鑰沒有設定:{鍵名}。請在專案根目錄的 .env 加上。」;被拒絕「批改用的金鑰被拒絕:{鍵名}(可能過期或打錯)。請在專案根目錄的 .env 換一個。」。不帶值、不帶絕對路徑、不帶例外原文。
+  2. **每次 `start` 與 `submit` 重讀 `.env`**:仍只在 `scripts/_env.ts`(ADR-034 的「金鑰只在一個地方讀」不變)。**啟動環境優先**(重讀不覆蓋啟動時環境本來就有的變數);內容變了就丟掉快取的 router 重建。**`LC_REVIEW_` 開頭的鍵一律不從檔案設**(第一次載入與重讀都算),假 router 與測試日期只來自啟動環境,關掉上面的洞。
+  3. **`submit` 遇到憑證錯誤**(`MissingCredentialError`、雲端 401、閘道 401,包在 `NoModelError` 的 cause 裡也算)回同一個 `credential-unavailable`,不落到 `internal`;題目、輸入、session、`reviews.json`、帳本都不動。
+  4. **視窗**:這一種走 T24 的「再試一次」畫面(重新 `start`),使用者補好 `.env` 按一下就好;submit 時題目與輸入留著。**終端機** `review.ts`:start 前檢查,缺了印同一句、exit 2。
+  5. **每次 `start` 重算「今天」**(沒設 `LC_REVIEW_TODAY` 時);同一輪(start 之後的 next / submit / summary)中途換日不換。
+- **Alternatives**:
+  - 只在視窗顯示更好的訊息、不重讀 `.env` —— 不採用。使用者補好金鑰仍要重開 app。
+  - 重讀時讓檔案蓋過環境 —— 不採用。啟動環境(例如測試或使用者在 shell 設的)要優先;`process.loadEnvFile` 本來也不覆蓋已有的值。
+  - 讓 Rust 讀 `.env` 並傳金鑰給側車 —— 不採用。違反 ADR-075 第 5 點(金鑰只在側車行程、Rust 不經手)。
+  - submit 的非憑證失敗(網路、閘道掛、逾時)一併收掉 —— 不在這張,另開 T31(要分清 LLM 失敗與程式 bug,不准 catch-all)。
+- **Consequences**:
+  - 缺金鑰從「永遠過不去的迴圈」變成一句看得懂的話加一個按鈕;補 `.env` 不用重開 app。
+  - 常駐 app 隔夜後的第一次 `start` 拿到的是當天的快取,不是昨天的。
+  - `protocol.ts` 的 `ERROR_KINDS` 是 core 的軟約定,加一個種類不動 `contracts/`。
+  - 要讓 `.env` 開假 router 的人(測試)改成在啟動環境設變數。
+- **Related**: ADR-034(refined)、ADR-075(refined)、T30(`docs/tickets/T30-missing-credential-and-daily-start.md`)、T24 `@manual` O1(`docs/reviews/T24-manual-2026-10-17.md`)、T31(submit 的非憑證失敗,待起草)

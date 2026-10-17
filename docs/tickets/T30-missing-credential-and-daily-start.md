@@ -33,8 +33,8 @@ must_catch:
 > 實作:worker-grok(opencode grok-4.7)。紅測試:-e5。驗收:-ed。觀感:前端拍、技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 > 起因:T24 `@manual` 的 O1(`../reviews/T24-manual-2026-10-17.md`)。決策:ADR-034(`.env` 只在入口讀)、ADR-075(側車)。`protocol.ts` 的 `ERROR_KINDS` 是 core 的軟約定,不是 `contracts/` 硬約定。
-> **ADR(號碼待配)**:協調者合併這張工單時用 `/decide` 配號寫一筆(顧問 2026-10-17):每次 start / submit 重讀 `.env`(只在 `_env.ts`、環境優先、`LC_REVIEW_` 不從檔案設)、每次 start 重算今天、`credential-unavailable` 與兩句樣板。
-> ADR-034 與 ADR-075 不改內文,各加一行「部分由 ADR-(待配)修訂(重讀 .env、樣板訊息)」的指標。實作 worker 不寫 ADR。
+> **ADR(ADR-076)**:協調者合併這張工單時用 `/decide` 配號寫一筆(顧問 2026-10-17):每次 start / submit 重讀 `.env`(只在 `_env.ts`、環境優先、`LC_REVIEW_` 不從檔案設)、每次 start 重算今天、`credential-unavailable` 與兩句樣板。
+> ADR-034 與 ADR-075 不改內文,各加一行「部分由 ADR-076修訂(重讀 .env、樣板訊息)」的指標。實作 worker 不寫 ADR。
 > 基底:main(`e5e3015` 或之後,T23 合併之後再派)。
 
 ## 為什麼有這張
