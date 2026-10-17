@@ -166,7 +166,7 @@ test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 ## learning/ 前後量測
 
-只量不改。量法:在 `/data/python/llm_learning-cards/learning` 做雜湊前 16 碼、檔案數、`state/log.jsonl` 行數。沒有讀寫 `learning/`、`raw/`、`state/` 的內容。
+只量不改。量法:在主簽出的 `learning/` 做雜湊前 16 碼、檔案數、`state/log.jsonl` 行數。沒有讀寫 `learning/`、`raw/`、`state/` 的內容。
 
 | 時點 | 雜湊前 16 碼 | 檔案數 | log 行數 |
 |---|---|---|---|
