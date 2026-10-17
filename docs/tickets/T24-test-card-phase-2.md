@@ -1,7 +1,7 @@
 ---
 id: T24
 deps: [T22, T26]
-touches: [apps/test-card/src/App.svelte, apps/test-card/src/session.ts, apps/test-card/src/types.ts, apps/test-card/src/main.ts, apps/test-card/src/stubs/fixtures.ts, apps/test-card/src/stubs/grader.ts, apps/test-card/src/stubs/loader.ts, apps/test-card/src/stubs/memory-fs.ts, apps/test-card/src/stubs/scheduler.ts, apps/test-card/src/stubs/.gitkeep, apps/test-card/vite.config.ts, apps/test-card/package.json, apps/test-card/dev/standalone.ts, apps/test-card/dev/fake-cloud.mjs, apps/test-card/dev/reviews.seed.json, scripts/boundaries.allow.json]
+touches: [apps/test-card/src/App.svelte, apps/test-card/src/session.ts, apps/test-card/src/types.ts, apps/test-card/src/main.ts, apps/test-card/src/stubs/fixtures.ts, apps/test-card/src/stubs/grader.ts, apps/test-card/src/stubs/loader.ts, apps/test-card/src/stubs/memory-fs.ts, apps/test-card/src/stubs/scheduler.ts, apps/test-card/src/stubs/.gitkeep, apps/test-card/vite.config.ts, apps/test-card/package.json, apps/test-card/dev/standalone.ts, apps/test-card/dev/fake-cloud.mjs, apps/test-card/dev/reviews.seed.json, scripts/boundaries.allow.json, scripts/degraded-report.ts]
 cpu: heavy
 budget_usd: 5
 status: ready
@@ -15,6 +15,7 @@ must_catch:
   - start 回 paused 時還出題、或 next 被呼叫:暫停的測試必須紅
   - start 回 no-cards 時顯示「今天沒有到期」:P-28 的測試必須紅
   - 側車錯誤(sidecar-exited、timeout、sidecar-unavailable、internal)時畫面卡住、沒有重試、或重試不是重新 start:錯誤處理的測試必須紅
+  - stubs 刪了,`scripts/degraded-report.ts` 的登記(第 123–125 行三筆與第 122 行註解)還指著它:`degraded-report.test` 必須紅(檔頭規則:檔案不存在仍算過期)。登記整筆刪掉,不改指到別的檔;worker 新寫的程式能不用靜默預設就不用,真的要用就在同一張表登記並寫理由,不准調基準
   - root-mismatch 或 not-configured 時顯示「複習程式停了」或給「重新開始」(重起也一樣錯):錯誤處理的測試必須紅
   - next 回缺必要欄位的結果卻照常畫面(沒走 bad-response 的「複習程式停了」):結果收窄的測試必須紅
   - review-record-changed 時沒有顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」、或沒有「重新開始」、或不重新 start 就繼續出題:錯誤處理的測試必須紅
