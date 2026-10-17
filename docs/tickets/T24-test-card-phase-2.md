@@ -15,7 +15,7 @@ must_catch:
   - start 回 paused 時還出題、或 next 被呼叫:暫停的測試必須紅
   - start 回 no-cards 時顯示「今天沒有到期」:P-28 的測試必須紅
   - 側車錯誤(sidecar-exited、timeout、sidecar-unavailable、internal)時畫面卡住、沒有重試、或重試不是重新 start:錯誤處理的測試必須紅
-  - stubs 刪了,`scripts/degraded-report.ts` 的登記(第 123–125 行三筆與第 122 行註解)還指著它:`degraded-report.test` 必須紅(檔頭規則:檔案不存在仍算過期)。登記整筆刪掉,不改指到別的檔;worker 新寫的程式能不用靜默預設就不用,真的要用就在同一張表登記並寫理由,不准調基準
+  - stubs 刪了或 `session.ts` 改寫後,`scripts/degraded-report.ts` 的 `NOT_INSTRUMENTED` 還留著指向已不存在的檔或片段的登記:「登記表不腐爛」那條測試(讀真 repo 的表,每筆 file 存在、snippet 找得到;紅測試作者寫,基底上綠)必須紅。要刪的是第 122–126 行共 4 筆加註解(含 `session.ts` 那筆 `due.types[due.types.length - 1] ?? 'fill'`);worker 的改動讓哪筆登記的片段消失,就刪那筆;不改指到別的檔,不調基準;新程式能不用靜默預設就不用,真的要用就在同一張表登記並寫理由
   - root-mismatch 或 not-configured 時顯示「複習程式停了」或給「重新開始」(重起也一樣錯):錯誤處理的測試必須紅
   - next 回缺必要欄位的結果卻照常畫面(沒走 bad-response 的「複習程式停了」):結果收窄的測試必須紅
   - review-record-changed 時沒有顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」、或沒有「重新開始」、或不重新 start 就繼續出題:錯誤處理的測試必須紅
@@ -118,6 +118,7 @@ export interface SessionDeps {
   5. dev server 關掉時收掉側車、刪暫存根。
 - `apps/test-card/dev/fake-cloud.mjs`:換掉 `fetch`,填空同義詞與應用題都回固定的合法回應(照 `features/steps/_fake-review-cloud.mjs` 的形狀;不 import `features/` 底下的檔)。
 - **不寫 `contracts/fixtures/` 本身**;一律假 router;答案只落在暫存根,dev server 關掉就沒了(跟 phase-1 的「答案不落地」同一個意思)。
+- 暫存根跟 dev server 同生命:**重新載入頁面不會重新種子**,答過的會留著(三題答完就是「今天都做完了」)。要全新狀態就重啟 dev server,或在程序內用新的暫存根(測試這樣做)。
 - `FEATURE.md` 的「單獨執行」指令不變。
 
 ### 6. 不退步
