@@ -225,6 +225,10 @@
       "infra"
     ],
     [
+      "scripts/dag.test.ts",
+      "13-work-dag"
+    ],
+    [
       "scripts/check-doc-rot.ts",
       "infra"
     ],
