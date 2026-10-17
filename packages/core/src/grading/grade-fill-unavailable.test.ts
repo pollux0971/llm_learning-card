@@ -103,6 +103,13 @@ const PASS_THROUGH: [string, () => unknown][] = [
   ['雲端 400', () => withStatus(400)],
   ['雲端 404', () => withStatus(404)],
   ['不是 Error 的丟出物(字串)', () => 'boom'],
+  // T31 驗收缺口 F1:isNoLocalModel 的兩條 && 條件各自要有測試守著
+  ['缺的是 OPENAI_API_KEY(不是閘道鍵)', () => new MissingCredentialError('OPENAI_API_KEY')],
+  ['缺的是 ANTHROPIC_API_KEY(不是閘道鍵)', () => new MissingCredentialError('ANTHROPIC_API_KEY')],
+  ['閘道 400', () => new GatewayCallError('chat returned 400', 400)],
+  ['閘道 403', () => new GatewayCallError('chat returned 403', 403)],
+  ['閘道 404', () => new GatewayCallError('chat returned 404', 404)],
+  ['閘道錯沒有 status', () => new GatewayCallError('chat returned nothing useful')],
 ];
 
 describe('填空同義判斷失敗(驗收 3)', () => {
