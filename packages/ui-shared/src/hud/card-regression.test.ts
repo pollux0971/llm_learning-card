@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DONE_PHASES_TAG_EXPRESSION, DONE_PHASE_FEATURES } from './card-design-values-test-support.js';
+import { DONE_PHASES_TAG_EXPRESSION, DONE_PHASE_FEATURES, PENDING_DONE_PHASES } from './card-design-values-test-support.js';
 import { donePhases, doneFeatureProblems, evalTagExpression, scenarioTags, sha256 } from './card-regression-test-support.js';
 import { REPO_ROOT } from './test-support.js';
 
@@ -39,6 +39,7 @@ describe('doneFeatureProblems 抓得到', () => {
       writeFileSync(join(root, 'features', folder, 'phase-1.feature'), feat);
     }
     writeFileSync(join(root, 'features', '06-test-card', 'phase-2.feature'), feat);
+    writeFileSync(join(root, 'features', '06-test-card', 'phase-3.feature'), feat);
     return root;
   }
   const table = (rows: string[]) => ['| # | 內容 | wave | 狀態 | 日期 |', '|---|---|---|---|---|', ...rows].join('\n');
@@ -66,6 +67,25 @@ describe('doneFeatureProblems 抓得到', () => {
     const { root, pinned } = pinnedFor('Feature: x\n');
     writeFileSync(join(root, 'features/07-teach-card/FEATURE.md'), table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |']));
     expect(doneFeatureProblems(root, pinned).join('\n')).toMatch(/phase-2 已經是 done/);
+  });
+
+  it('即將標 done 的 phase(06 phase-3):FEATURE.md 還沒翻成 done、或已經翻成 done,兩種狀態都通過', () => {
+    expect(PENDING_DONE_PHASES).toEqual([{ folder: '06-test-card', phase: 'phase-3' }]);
+    const { root, pinned } = pinnedFor('Feature: x\n');
+    expect(doneFeatureProblems(root, pinned), '還沒 done').toEqual([]);
+    writeFileSync(join(root, 'features/06-test-card/FEATURE.md'), table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |']));
+    expect(doneFeatureProblems(root, pinned), '已經 done').toEqual([]);
+  });
+
+  it('即將標 done 的 phase 雜湊照樣檢查:phase-3.feature 被改 → 抓到(還沒 done 也抓)', () => {
+    const { root, pinned } = pinnedFor('Feature: x\n');
+    writeFileSync(join(root, 'features/06-test-card/phase-3.feature'), 'Feature: changed\n');
+    expect(doneFeatureProblems(root, pinned).join('\n')).toMatch(/phase-3\.feature 被改過了/);
+  });
+
+  it('只有「即將標 done」那一筆被放過:別的 phase 不是 done 仍然抓到;沒有列 pending 時 phase-3 沒翻 done 也抓到', () => {
+    const { root, pinned } = pinnedFor('Feature: x\n');
+    expect(doneFeatureProblems(root, pinned, []).join('\n')).toMatch(/phase-3 在清單裡,但 FEATURE.md 不是 done/);
   });
 
   it('清單裡的 phase 不再是 done → 抓到', () => {
