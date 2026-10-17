@@ -16,7 +16,7 @@ must_catch:
   - start 回 no-cards 時顯示「今天沒有到期」:P-28 的測試必須紅
   - 側車錯誤(sidecar-exited、timeout、sidecar-unavailable、internal)時畫面卡住、沒有重試、或重試不是重新 start:錯誤處理的測試必須紅
   - stubs 刪了或 `session.ts` 改寫後,`scripts/degraded-report.ts` 的 `NOT_INSTRUMENTED` 還留著指向已不存在的檔或片段的登記:「登記表不腐爛」那條測試(讀真 repo 的表,每筆 file 存在、snippet 找得到;紅測試作者寫,基底上綠)必須紅。要刪的是第 122–126 行共 4 筆加註解(含 `session.ts` 那筆 `due.types[due.types.length - 1] ?? 'fill'`);worker 的改動讓哪筆登記的片段消失,就刪那筆;不改指到別的檔,不調基準;新程式能不用靜默預設就不用,真的要用就在同一張表登記並寫理由
-  - root-mismatch 或 not-configured 時顯示「複習程式停了」或給「重新開始」(重起也一樣錯):錯誤處理的測試必須紅
+  - no-cards、router-unavailable、root-mismatch、not-configured 這四種錯誤顯示「複習程式停了」、或沒有「再試一次」、或「再試一次」不是重新 start(`init()` 從 `start` 開始):錯誤處理的測試必須紅
   - next 回缺必要欄位的結果卻照常畫面(沒走 bad-response 的「複習程式停了」):結果收窄的測試必須紅
   - review-record-changed 時沒有顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」、或沒有「重新開始」、或不重新 start 就繼續出題:錯誤處理的測試必須紅
   - start 回 fakeCloud true 時沒有「測試模式」標記,或 false 時有:標記的測試必須紅
@@ -97,11 +97,11 @@ export interface SessionDeps {
 
 | `ReviewError.kind` | 畫面 |
 |---|---|
-| `no-cards` | 「掃描到 0 張卡 —— 這個 learning 資料夾沒有卡片。」(**不能**說成「今天沒有到期」,P-28) |
-| `router-unavailable` | 「帳本身分驗不過,批改不能用。請在終端機執行 `npx tsx scripts/vault.ts show` 看原因。」 |
+| `no-cards` | 「掃描到 0 張卡 —— 這個 learning 資料夾沒有卡片。」(**不能**說成「今天沒有到期」,P-28)加「改好之後按「再試一次」。」與一顆「再試一次」;按了重新 `init()`(從 `start` 開始) |
+| `router-unavailable` | 「帳本身分驗不過,批改不能用。請在終端機執行 `npx tsx scripts/vault.ts show` 看原因。」加「改好之後按「再試一次」。」與一顆「再試一次」;按了重新 `init()`(從 `start` 開始) |
 | `paused` | 同 `start` 回 `paused` 的畫面:「今天已暫停。要繼續,在終端機執行 `npx tsx scripts/review.ts --dir <learning 目錄> --today <今天> --unpause`。」 |
 | `review-record-changed` | 顯示 `ReviewError.message` 原文(T26 定稿的全文:「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」),加一顆「重新開始」;按了重新 `init()`。剛才那一題沒有被記下(T26 拒絕寫入),重新開始後會再問到 |
-| `root-mismatch`、`not-configured` | 顯示 `ReviewError.message` 原文(protocol 的固定句),加「請在終端機執行 `npx tsx scripts/vault.ts show` 看原因。」;**不給**「重新開始」(重起也一樣錯) |
+| `root-mismatch`、`not-configured` | 顯示 `ReviewError.message` 原文(protocol 的固定句),加「請在終端機執行 `npx tsx scripts/vault.ts show` 看原因。改好之後按「再試一次」。」與一顆「再試一次」;按了重新 `init()`(從 `start` 開始)。**不用**「複習程式停了」。為什麼要有按鈕:卡片視窗只在啟動時顯示一次、`App.svelte` 只在載入時 `init()` 一次,沒有按鈕就是死路(使用者在終端機改好,視窗也回不來);T22 的 `routerFactory` 失敗不快取,`start` 也會重掃卡片,所以改好後再 `start` 就會好(顧問 2026-10-17,推翻先前「重起也一樣錯」的裁決) |
 | `sidecar-exited`、`timeout`、`sidecar-unavailable`、`internal`、`busy` | 「複習程式停了。」加一顆「重新開始」;按了重新 `init()`(從 `start` 開始;T22 的 Rust 會重起側車) |
 | 其他(含 `no-session`、`bad-response`) | 同上 |
 
@@ -117,6 +117,7 @@ export interface SessionDeps {
   4. `POST /__review`:把 body(一行)寫給側車,回它的那一行。
   5. dev server 關掉時收掉側車、刪暫存根。
 - `apps/test-card/dev/fake-cloud.mjs`:換掉 `fetch`,填空同義詞與應用題都回固定的合法回應(照 `features/steps/_fake-review-cloud.mjs` 的形狀;不 import `features/` 底下的檔)。
+- `fake-cloud.mjs` 讀請求本文的 `messages[0].content` 不是字串就丟錯,不補空字串(缺了會變成空 prompt,假 grader 照樣判全對,掩蓋錯誤;顧問 2026-10-17)。
 - **不寫 `contracts/fixtures/` 本身**;一律假 router;答案只落在暫存根,dev server 關掉就沒了(跟 phase-1 的「答案不落地」同一個意思)。
 - 暫存根跟 dev server 同生命:**重新載入頁面不會重新種子**,答過的會留著(三題答完就是「今天都做完了」)。要全新狀態就重啟 dev server,或在程序內用新的暫存根(測試這樣做)。
 - `FEATURE.md` 的「單獨執行」指令不變。
@@ -160,7 +161,7 @@ export interface SessionDeps {
 | 2 | 程序內跑真的 core | vitest / cucumber:`createReviewClient({ handler: createReviewHandler({ … routerFactory: 假 router }) })`,暫存根(learning-minimal 複本);phase-2 的「real scheduler」「answers written immediately」「interface and terminal agree」「grading error」四個場景 | 紅 |
 | 2 | 縮短版 | 假 `fs` 記錄讀了哪個路徑;`short: false` 時讀的是原卡的 path、畫面有那一句說明;靜態:`App.svelte` 沒有 `{@html`、`session.ts` 沒有 `innerHTML` | 紅 |
 | 3 | 測試模式標記 | vitest:`fakeCloud` true / false 兩種的 view | 紅 |
-| 4 | 錯誤 | vitest:每個 kind 的畫面狀態(含 root-mismatch、not-configured 無「重新開始」);重試時重新 `start`;`next` 回缺欄位 → 錯誤畫面(bad-response) | 紅 |
+| 4 | 錯誤 | vitest:每個 kind 的畫面狀態(no-cards、router-unavailable、root-mismatch、not-configured 四種有「再試一次」、按了重新 `start`、不顯示「複習程式停了」);session 類錯誤照舊「重新開始」;`next` 回缺欄位 → 錯誤畫面(bad-response) | 紅 |
 | 4 | path 防護 | cucumber `A file outside the learning directory cannot be reached`:考試卡用的那個 `fs`(桌面版的 `LearningFs`,經 T2c-1 的 probe)讀 `../x` 被拒絕 | 紅 |
 | 5 | 單獨執行 | vitest:`dev/standalone.ts` 的暫存根不在 `contracts/fixtures/` 底下、側車環境有 `LC_REVIEW_FAKE_CLOUD`、`POST /__review` 往返一行 | 紅 |
 | 6 | phase-1 不退步 | 既有的 `features/steps/test-card.steps.ts`、`apps/test-card/src/session.test.ts` **改接新的後端**(見下),phase-1 場景全綠 | 改完後綠 |
