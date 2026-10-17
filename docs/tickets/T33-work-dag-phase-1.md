@@ -25,7 +25,7 @@ must_catch:
 
 # 工單 T33:13-work-dag phase-1 —— 從 FEATURE.md、NEXT.md、`I<N>` tag 算出 ready、卡在誰、待人判
 
-> 狀態:草稿(協調者起草,2026-10-18;顧問指示:I3 盤點的同時開第二個 WIP)。待顧問審。
+> 狀態:顧問審過 2026-10-18(驗收 3 兩處改入)。協調者起草,2026-10-18;顧問指示:I3 盤點的同時開第二個 WIP。
 > 作者:協調者(起草)。紅測試:-e5。實作:worker-grok(opencode grok-4.7)。驗收:-ed(含變異,標準級 80%)。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 > 規格正本:[features/13-work-dag/FEATURE.md](../../features/13-work-dag/FEATURE.md)(輸出形狀、NEXT.md 怎麼讀、節點滿足條件)與
