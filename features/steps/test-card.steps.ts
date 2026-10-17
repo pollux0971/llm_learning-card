@@ -1,53 +1,40 @@
 /**
- * 06-test-card / phase-1。
+ * 06-test-card / phase-1(T24 之後改接新的後端)。
  *
- * 這裡直接呼叫 apps/test-card/src 底下的真實模組(session.ts、stubs/*),不重寫一份邏輯——
- * 這樣測試驗的是 App.svelte 實際在用的程式碳,不是測試自己編的替身。
+ * 這裡直接呼叫 apps/test-card/src 底下的真實模組(session.ts),後端是程序內的真 core:
+ * `createReviewClient({ handler: createReviewHandler(…) })` + 暫存根 + 假 router(features/support/test-card-rig.ts)。
+ * Wave 0 的 stubs 沒了(T24):`.feature` 的字一個都沒改,下面的步驟對舊句子給新的意思——
+ *   「stub grader is configured to take four seconds」= 假 router 延遲 4 秒、
+ *   「stub grader returns an error result」= 假 router 對應用題回不合法的回應、
+ *   「stub grader is called with …」= 送給 core 批改的就是打的那些答案(client.submit 的參數)、
+ *   「The stubs are drop in replaceable」= 考試卡用的就是 core 的 scheduler(經 handler),session.ts 裡沒有排程。
  * features/steps/ 是膠水,不受 npm run boundaries 限制,可以這樣 import(見 packages/core/README.md)。
  */
-import { Given, When, Then } from '@cucumber/cucumber';
+import { After, Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { LearningWorld } from './_world.js';
 import { seedApplyQuestion } from './review-cli.steps.js';
-
-import { MemoryFs } from '../../apps/test-card/src/stubs/memory-fs.js';
-import { buildFsSeed, TODAY } from '../../apps/test-card/src/stubs/fixtures.js';
-import { selectDue, advance as realAdvance } from '../../apps/test-card/src/stubs/scheduler.js';
-import { StubGrader } from '../../apps/test-card/src/stubs/grader.js';
-import { loadQuestions, loadReviews, loadDailyCap } from '../../apps/test-card/src/stubs/loader.js';
-import { TestSession, type Grader } from '../../apps/test-card/src/session.js';
-import type {
-  ApplyQuestion,
-  CurrentQuestion,
-  DueItem,
-  FillQuestion,
-  QuestionFile,
-  SchedulerAdvanceFn,
-  Stage,
-} from '../../apps/test-card/src/types.js';
-
-interface GraderCallLog {
-  fill: { question: FillQuestion; typed: string[] }[];
-  apply: { question: ApplyQuestion; typed: string }[];
-}
-
-interface AdvanceCallLog {
-  count: number;
-}
+import {
+  answerCurrent,
+  createRig,
+  terminalDueCards,
+  type Rig,
+  type Session,
+  type View,
+} from '../support/test-card-rig.js';
+import { reviewsPath } from '../support/review-session-harness.js';
 
 interface TestCardState {
-  due: DueItem[];
-  questions: Record<string, QuestionFile>;
-  innerGrader: StubGrader;
-  grader: Grader;
-  graderCalls: GraderCallLog;
-  advance: SchedulerAdvanceFn;
-  advanceCalls: AdvanceCallLog;
-  session: TestSession;
-  applyInputValue: string;
+  rig: Rig;
+  session: Session;
+  applyAnswer: string;
   lastTypedAnswers?: string[];
   lastTypedAnswer?: string;
-  questionBefore: CurrentQuestion | undefined;
+  applyInputValue: string;
+  questionBefore: View['current'];
+  reviewsBefore: string | undefined;
 }
 
 declare module './_world.js' {
@@ -56,54 +43,23 @@ declare module './_world.js' {
   }
 }
 
-function makeSpyGrader(inner: StubGrader): { grader: Grader; calls: GraderCallLog } {
-  const calls: GraderCallLog = { fill: [], apply: [] };
-  const grader: Grader = {
-    async gradeFill(question, typed) {
-      calls.fill.push({ question, typed });
-      return inner.gradeFill(question, typed);
-    },
-    async gradeApply(question, typed) {
-      calls.apply.push({ question, typed });
-      return inner.gradeApply(question, typed);
-    },
-  };
-  return { grader, calls };
-}
-
-function makeSpyAdvance(inner: SchedulerAdvanceFn): { advance: SchedulerAdvanceFn; calls: AdvanceCallLog } {
-  const calls: AdvanceCallLog = { count: 0 };
-  const advance: SchedulerAdvanceFn = (review, ctx) => {
-    calls.count += 1;
-    return inner(review, ctx);
-  };
-  return { advance, calls };
-}
+/** 三張到期卡:第一張 stage 2(先填空再應用)、第二張 stage 1(填空)、第三張 stage 3(應用);第一張逾期最多 */
+const PHASE1_CARDS = {
+  'sec-0001': { stage: 2, overdue: 8 },
+  'sec-0002': { stage: 1, overdue: 2 },
+  'sec-0003': { stage: 3, overdue: 1 },
+};
 
 export async function buildTestCardState(): Promise<TestCardState> {
-  const fs = new MemoryFs(buildFsSeed());
-  const reviews = await loadReviews(fs);
-  const dailyCap = await loadDailyCap(fs);
-  const { due } = selectDue(reviews, TODAY, dailyCap);
-  const questions = await loadQuestions(fs, due.map((d) => d.card));
-
-  const innerGrader = new StubGrader();
-  const { grader, calls: graderCalls } = makeSpyGrader(innerGrader);
-  const { advance, calls: advanceCalls } = makeSpyAdvance(realAdvance);
-
-  const session = new TestSession({ due, questions, grader, advance, today: TODAY });
-
+  const rig = await createRig({ cards: 3, entries: PHASE1_CARDS });
+  await rig.session.init();
   return {
-    due,
-    questions,
-    innerGrader,
-    grader,
-    graderCalls,
-    advance,
-    advanceCalls,
-    session,
+    rig,
+    session: rig.session,
+    applyAnswer: 'PASSALL 我的回答',
     applyInputValue: '',
     questionBefore: undefined,
+    reviewsBefore: undefined,
   };
 }
 
@@ -112,13 +68,32 @@ function state(world: LearningWorld): TestCardState {
   return world.testCard;
 }
 
+After({ tags: '@test-card' }, function (this: LearningWorld) {
+  this.testCard?.rig.dispose();
+});
+
+function submits(s: TestCardState): { method: string; arg?: unknown }[] {
+  return s.rig.calls.filter((c) => c.method === 'submit');
+}
+
+/** 目前在填空題就答掉(隨便填)再按下一題,直到在應用題。 */
+async function moveToApplyQuestion(s: TestCardState): Promise<void> {
+  for (let i = 0; i < 6 && s.session.getView().current?.type !== 'apply'; i += 1) {
+    await answerCurrent(s.session);
+    await s.session.next();
+  }
+  // 佈置用的呼叫不算場景裡的動作:後面的「送出了什麼」只看之後的
+  s.rig.calls.length = 0;
+}
+
 // ---------------------------------------------------------------- Given
 
 // 「the development server is running against the rich fixture set」跟 07-teach-card
 // 逐字相同,依規則移到 common.steps.ts 用 tag 分派,這裡不重複定義。
 
 Given('three questions are due', function (this: LearningWorld) {
-  assert.equal(state(this).due.length, 3, `預期三張到期卡,實際 ${state(this).due.length}`);
+  const total = state(this).session.getView().totalCount;
+  assert.equal(total, 3, `預期三張到期卡,實際 ${total}`);
 });
 
 Given('the current question is a fill question', function (this: LearningWorld) {
@@ -130,47 +105,37 @@ Given('the current question is a fill question', function (this: LearningWorld) 
 // session.current,不是操作這裡真的 TestSession/getView())——用 tag 分派
 // 避免 cucumber 的 ambiguous-step 錯誤(跟 grading.steps.ts 對 phase-1/phase-2
 // 共用句子的作法一致)。
-Given('the current question is an apply question', function (this: LearningWorld) {
+Given('the current question is an apply question', async function (this: LearningWorld) {
   if (this.tags.includes('@review-cli')) {
     seedApplyQuestion(this);
     return;
   }
   const s = state(this);
-  let view = s.session.getView();
-  if (view.current?.type !== 'apply') {
-    s.session.next();
-    view = s.session.getView();
-  }
+  await moveToApplyQuestion(s);
+  const view = s.session.getView();
   assert.equal(view.current?.type, 'apply', `目前題型是 ${view.current?.type ?? '(無)'},預期 apply`);
 });
 
-Given('the stub grader returns an error result', function (this: LearningWorld) {
-  state(this).innerGrader.configureError(true);
+Given('the stub grader returns an error result', async function (this: LearningWorld) {
+  // 假 router 對應用題回不合法的回應(作答文字帶 GARBAGE 標記);批改失敗只會出現在應用題,所以先移到應用題
+  const s = state(this);
+  s.applyAnswer = 'GARBAGE 亂回';
+  await moveToApplyQuestion(s);
 });
 
 Given('the stub scheduler is swapped for the real one from the core package', function (this: LearningWorld) {
-  // packages/core/src/scheduler 目前只有 .gitkeep(04-scheduler 還沒實作)。
-  // 用一個符合契約 §6 簽章 (review, ctx) => SchedulerOutcome 的替身代表「真的那個」,
-  // 驗的是型別相容、session.ts 不用改一行——不是真的去 import 04 的產出。
-  const s = state(this);
-  const substituteAdvance: SchedulerAdvanceFn = (review, ctx) => ({
-    review: {
-      ...review,
-      stage: (ctx.pass ? Math.min(6, review.stage + 1) : 1) as Stage,
-      next_due: ctx.today,
-    },
-    events: [],
-  });
-  s.session = new TestSession({ due: s.due, questions: s.questions, grader: s.grader, advance: substituteAdvance, today: TODAY });
+  // T24 之後沒有替身:考試卡經 handler 用的就是 core 的 scheduler。這句只確認那條路是通的(handler 已經在跑)。
+  assert.ok(state(this).rig.calls.some((c) => c.method === 'start'), '考試卡應該已經對 core 的 handler 呼叫過 start');
 });
 
 // ---------------------------------------------------------------- When
 
-Then('opening it shows the first question', function (this: LearningWorld) {
+Then('opening it shows the first question', async function (this: LearningWorld) {
   const s = state(this);
   const view = s.session.getView();
   assert.ok(view.current, '沒有題目可顯示');
-  assert.equal(view.current!.card, s.due[0]!.card, '顯示的不是排序後第一張到期卡');
+  const terminal = await terminalDueCards(s.rig.vault);
+  assert.equal(view.current!.card, terminal[0], '顯示的不是排序後第一張到期卡(終端機看到的第一張)');
 });
 
 When('the person presses enter', async function (this: LearningWorld) {
@@ -182,11 +147,11 @@ When('the person presses enter', async function (this: LearningWorld) {
     return;
   }
   if (action !== 'submit') return;
-  if (view.current?.type === 'fill' && view.current.fill) {
-    s.lastTypedAnswers = view.current.fill.answers.map(() => '占位答案');
+  if (view.current?.type === 'fill') {
+    s.lastTypedAnswers = Array.from({ length: view.current.blanks }, () => '占位答案');
     await s.session.submitFill(s.lastTypedAnswers);
   } else if (view.current?.type === 'apply') {
-    s.lastTypedAnswer = '占位作答內容';
+    s.lastTypedAnswer = '占位作答內容 PASSALL';
     await s.session.submitApply(s.lastTypedAnswer);
   }
 });
@@ -197,7 +162,7 @@ When('the person presses the submit shortcut', async function (this: LearningWor
   assert.equal(view.current?.type, 'apply', '提交快捷鍵的場景應該在應用題上');
   const action = s.session.decideKeydown('Enter', { ctrl: true });
   assert.equal(action, 'submit', '修飾鍵 + enter 應該送出');
-  s.lastTypedAnswer = '占位作答內容';
+  s.lastTypedAnswer = '占位作答內容 PASSALL';
   await s.session.submitApply(s.lastTypedAnswer);
 });
 
@@ -205,11 +170,11 @@ When('the person submits an answer', async function (this: LearningWorld) {
   const s = state(this);
   const view = s.session.getView();
   s.questionBefore = view.current;
+  s.reviewsBefore = readFileSync(reviewsPath(s.rig.vault), 'utf8');
   if (view.current?.type === 'apply') {
-    await s.session.submitApply('任意作答內容');
+    await s.session.submitApply(s.applyAnswer);
   } else {
-    const blanks = view.current?.fill?.answers.length ?? 1;
-    await s.session.submitFill(Array.from({ length: blanks }, () => '任意答案'));
+    await s.session.submitFill(Array.from({ length: view.current?.blanks ?? 1 }, () => '任意答案'));
   }
 });
 
@@ -221,20 +186,21 @@ When('the interface loads', function (this: LearningWorld) {
 
 Then('the stub grader is called with the typed answers', function (this: LearningWorld) {
   const s = state(this);
-  assert.equal(s.graderCalls.fill.length, 1, `填空題 stub grader 應該被呼叫一次,實際 ${s.graderCalls.fill.length}`);
-  assert.deepEqual(s.graderCalls.fill[0]!.typed, s.lastTypedAnswers);
+  const calls = submits(s);
+  assert.equal(calls.length, 1, `填空題應該送給 core 批改一次,實際 ${calls.length}`);
+  assert.deepEqual(calls[0]!.arg, { fill: s.lastTypedAnswers });
 });
 
 Then('the stub grader is called with the typed answer', function (this: LearningWorld) {
   const s = state(this);
-  assert.equal(s.graderCalls.apply.length, 1, `應用題 stub grader 應該被呼叫一次,實際 ${s.graderCalls.apply.length}`);
-  assert.equal(s.graderCalls.apply[0]!.typed, s.lastTypedAnswer);
+  const calls = submits(s);
+  assert.equal(calls.length, 1, `應用題應該送給 core 批改一次,實際 ${calls.length}`);
+  assert.deepEqual(calls[0]!.arg, { apply: s.lastTypedAnswer });
 });
 
 Then('nothing is submitted', function (this: LearningWorld) {
   const s = state(this);
-  assert.equal(s.graderCalls.fill.length, 0, '不該呼叫填空題的 stub grader');
-  assert.equal(s.graderCalls.apply.length, 0, '不該呼叫應用題的 stub grader');
+  assert.equal(submits(s).length, 0, '不該送出任何答案');
 });
 
 Then('a newline is added to the input', function (this: LearningWorld) {
@@ -242,12 +208,14 @@ Then('a newline is added to the input', function (this: LearningWorld) {
 });
 
 Then('no scheduler transition is applied', function (this: LearningWorld) {
-  assert.equal(state(this).advanceCalls.count, 0, '不該呼叫排程的 advance');
+  const s = state(this);
+  assert.notEqual(s.reviewsBefore, undefined, '送出前沒有記下 reviews.json');
+  assert.equal(readFileSync(reviewsPath(s.rig.vault), 'utf8'), s.reviewsBefore, '批改失敗,reviews.json 不該有任何變動');
 });
 
 Then('the interface says grading failed and to try again', function (this: LearningWorld) {
   const view = state(this).session.getView();
-  assert.ok(view.error, '應該要有錯誤訊息');
+  assert.equal(view.gradingError, '評分失敗,請再試一次');
 });
 
 Then('the question stays in the session', function (this: LearningWorld) {
@@ -257,9 +225,20 @@ Then('the question stays in the session', function (this: LearningWorld) {
   assert.equal(view.current?.type, s.questionBefore?.type, '出錯後不該換題型');
 });
 
-Then('it compiles and runs without any change to the interface code', function (this: LearningWorld) {
+Then('it compiles and runs without any change to the interface code', async function (this: LearningWorld) {
   const s = state(this);
   const view = s.session.getView();
-  assert.ok(view.current, '換了排程實作後,session 應該還能正常給出目前題目');
-  assert.doesNotThrow(() => s.session.next(), '換了排程實作後,session.next() 不該丟例外');
+  assert.ok(view.current, '接上真的 scheduler 後,session 應該還能正常給出目前題目');
+  // 考試卡的程式裡沒有排程:session.ts 不 import 任何排程、批改或 stubs
+  const src = readFileSync(join(import.meta.dirname, '../../apps/test-card/src/session.ts'), 'utf8');
+  for (const name of ['selectSession', 'selectDue', 'advance', 'gradeFill', 'gradeApply', 'StubScheduler', 'StubGrader', 'MemoryFs']) {
+    assert.ok(!new RegExp(`\\b${name}\\b`).test(src), `session.ts 不該有 ${name}`);
+  }
+  // 出的題目順序就是 core 的 scheduler 排的(終端機看到的清單)
+  const terminal = await terminalDueCards(s.rig.vault);
+  assert.equal(view.current!.card, terminal[0]);
+  await assert.doesNotReject(async () => {
+    await answerCurrent(s.session);
+    await s.session.next();
+  }, '接上真的 scheduler 後,按下一題不該丟例外');
 });

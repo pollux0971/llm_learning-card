@@ -2,176 +2,432 @@
  * 考試卡的互動邏輯,純 TypeScript、不依賴 Svelte。
  *
  * 為什麼要拆出來:App.svelte 用 runes,但 cucumber 用 tsx 直接跑 .ts,不會過 Svelte
- * 編譯器,沒辦法 import 用 $state 的檔案。判斷邏輯留在這裡,App.svelte 只是拿這裡的
- * 資料畫面、呼叫這裡的方法——符合 FEATURE.md「判斷都在 core,這裡只顯示與收輸入」的精神,
- * 只是 06 自己的輸入邏輯還沒資格進 packages/core,先留在 apps/test-card。
+ * 編譯器,沒辦法 import 用 $state 的檔案。判斷(排程、批改、寫複習紀錄)在側車;
+ * 這裡只把 ReviewClient 的結果收窄成畫面、收輸入。
  */
-import type {
-  ApplyQuestion,
-  CardId,
-  CurrentQuestion,
-  DueItem,
-  FillQuestion,
-  GradeResult,
-  IsoDate,
-  QuestionFile,
-  QuestionType,
-  Review,
-  SchedulerAdvanceFn,
-} from './types.js';
+import { ReviewError, type ReviewClient } from '../../desktop/src/webview/review-client.js';
+import type { LearningFs } from '../../desktop/src/webview/learning-fs.js';
+import type { KeydownAction, QuestionView, ReteachView, ResultView, SessionState, SessionView } from './types.js';
 
-export interface Grader {
-  gradeFill(question: FillQuestion, typed: string[]): Promise<GradeResult>;
-  gradeApply(question: ApplyQuestion, typed: string): Promise<GradeResult>;
-}
+export type { KeydownAction, SessionView } from './types.js';
 
 export interface SessionDeps {
-  due: DueItem[];
-  questions: Record<CardId, QuestionFile>;
-  grader: Grader;
-  advance: SchedulerAdvanceFn;
-  today: IsoDate;
+  client: ReviewClient;
+  fs: Pick<LearningFs, 'read'>;
 }
 
-export type KeydownAction = 'submit' | 'newline' | 'ignore';
+const PAUSED_MESSAGE = '今天已暫停。要繼續,在終端機執行 npx tsx scripts/review.ts --dir <learning 目錄> --today <今天> --unpause。';
+const EMPTY_MESSAGE = '今天沒有到期的複習,休息一下。';
+const DONE_MESSAGE = '今天的複習都做完了。';
+const STOPPED_MESSAGE = '複習程式停了。';
+const NO_CARDS_MESSAGE = '掃描到 0 張卡 —— 這個 learning 資料夾沒有卡片。';
+const ROUTER_MESSAGE = '帳本身分驗不過,批改不能用。請在終端機執行 npx tsx scripts/vault.ts show 看原因。';
+const VAULT_HINT = '請在終端機執行 npx tsx scripts/vault.ts show 看原因。';
+const RETRY_HINT = '改好之後按「再試一次」。';
+const GRADING_ERROR = '評分失敗,請再試一次';
+const TEST_MODE_NOTICE = '測試模式:批改是假的';
+const SHORT_NOTICE = '這張卡連續答錯兩次;縮短版還沒有產生,先看原卡。';
 
-export interface SessionView {
-  totalCount: number;
-  answeredCount: number;
-  isEmpty: boolean;
-  done: boolean;
-  current: CurrentQuestion | undefined;
-  submitting: boolean;
-  error: string | undefined;
-  result: GradeResult | undefined;
-  /** 只有填空題答錯時才有值:每個空格可接受的第一個寫法,給畫面顯示正確答案 */
-  correctAnswers: string[] | undefined;
+type Obj = Record<string, unknown>;
+
+function isRecord(value: unknown): value is Obj {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** 一個到期項目裡,兩種題型都答完之前不套用排程轉移的暫存結果 */
-interface PendingResult {
-  type: QuestionType;
-  result: GradeResult;
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+interface StartView {
+  state: 'ready' | 'paused' | 'empty';
+  fakeCloud: boolean;
+}
+
+/** 缺必要欄位就回 undefined,呼叫端當 bad-response。不補預設值。 */
+function readStart(raw: Obj): StartView | undefined {
+  const state = raw.state;
+  if (state !== 'ready' && state !== 'paused' && state !== 'empty') return undefined;
+  if (typeof raw.today !== 'string') return undefined;
+  if (typeof raw.resumed !== 'boolean') return undefined;
+  if (!isFiniteNumber(raw.total)) return undefined;
+  if (!isFiniteNumber(raw.answered)) return undefined;
+  if (!isFiniteNumber(raw.deferred)) return undefined;
+  if (!isFiniteNumber(raw.dailyCap)) return undefined;
+  if (typeof raw.fakeCloud !== 'boolean') return undefined;
+  return { state, fakeCloud: raw.fakeCloud };
+}
+
+interface NextQuestion {
+  kind: 'question';
+  card: string;
+  stage: number;
+  type: 'fill' | 'apply';
+  prompt: string;
+  index: number;
+  total: number;
+  stuck: boolean;
+  overdueDays: number;
+  blanks: number;
+}
+
+interface NextReteach {
+  kind: 'reteach';
+  card: string;
+  path: string;
+  short: boolean;
+}
+
+type NextView = NextQuestion | NextReteach | { kind: 'done' };
+
+function readProgress(value: unknown): { index: number; total: number } | undefined {
+  if (!isRecord(value)) return undefined;
+  if (!isFiniteNumber(value.index) || !isFiniteNumber(value.total)) return undefined;
+  return { index: value.index, total: value.total };
+}
+
+function readNext(raw: Obj): NextView | undefined {
+  if (raw.kind === 'done') return { kind: 'done' };
+  if (raw.kind === 'reteach') {
+    if (typeof raw.card !== 'string' || typeof raw.path !== 'string' || typeof raw.short !== 'boolean') return undefined;
+    return { kind: 'reteach', card: raw.card, path: raw.path, short: raw.short };
+  }
+  if (raw.kind !== 'question') return undefined;
+  if (typeof raw.card !== 'string' || typeof raw.prompt !== 'string') return undefined;
+  if (!isFiniteNumber(raw.stage)) return undefined;
+  if (raw.type !== 'fill' && raw.type !== 'apply') return undefined;
+  if (typeof raw.stuck !== 'boolean' || !isFiniteNumber(raw.overdueDays)) return undefined;
+  const progress = readProgress(raw.progress);
+  if (!progress) return undefined;
+  if (raw.type === 'fill') {
+    if (!isFiniteNumber(raw.blanks)) return undefined;
+    return {
+      kind: 'question',
+      card: raw.card,
+      stage: raw.stage,
+      type: 'fill',
+      prompt: raw.prompt,
+      index: progress.index,
+      total: progress.total,
+      stuck: raw.stuck,
+      overdueDays: raw.overdueDays,
+      blanks: raw.blanks,
+    };
+  }
+  return {
+    kind: 'question',
+    card: raw.card,
+    stage: raw.stage,
+    type: 'apply',
+    prompt: raw.prompt,
+    index: progress.index,
+    total: progress.total,
+    stuck: raw.stuck,
+    overdueDays: raw.overdueDays,
+    blanks: 0,
+  };
+}
+
+interface SubmitView {
+  status: 'passed' | 'failed' | 'partial' | 'error';
+  pass: boolean | null;
+  feedback: string;
+  cardDone: boolean;
+  correctAnswers?: string[];
+}
+
+function readSubmit(raw: Obj): SubmitView | undefined {
+  const status = raw.status;
+  if (status !== 'passed' && status !== 'failed' && status !== 'partial' && status !== 'error') return undefined;
+  if (typeof raw.feedback !== 'string' || typeof raw.cardDone !== 'boolean') return undefined;
+  if (status === 'error') {
+    if (raw.pass !== null) return undefined;
+  } else if (typeof raw.pass !== 'boolean') {
+    return undefined;
+  }
+  const view: SubmitView = { status, pass: raw.pass, feedback: raw.feedback, cardDone: raw.cardDone };
+  if (raw.correctAnswers !== undefined) {
+    if (!isStringArray(raw.correctAnswers)) return undefined;
+    view.correctAnswers = raw.correctAnswers;
+  }
+  return view;
+}
+
+function reviewOf(err: unknown): { kind: string; message: string } | undefined {
+  if (err instanceof ReviewError) return { kind: err.kind, message: err.message };
+  if (!(err instanceof Error) || err.name !== 'ReviewError') return undefined;
+  const kind = (err as { kind?: unknown }).kind;
+  if (typeof kind !== 'string' || kind.length === 0) return undefined;
+  return { kind, message: err.message };
+}
+
+/** 第一行是 --- 時,去掉到下一個只有 --- 的行(含)為止。內文後來的 --- 留著。 */
+export function stripFrontmatter(text: string): string {
+  const lines = text.split('\n');
+  const first = lines[0];
+  if (first !== '---') return text;
+  let end = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i] === '---') {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return text;
+  return lines.slice(end + 1).join('\n');
 }
 
 export class TestSession {
-  private index = 0;
-  private subIndex = 0;
+  private phase: SessionState = 'loading';
+  private message: string | undefined;
+  private canRestart = false;
+  private canRetry = false;
+  private testModeNotice: string | undefined;
   private answeredCount = 0;
+  private totalCount = 0;
+  private question: QuestionView | undefined;
   private submitting = false;
-  private error: string | undefined;
-  private result: GradeResult | undefined;
-  private pending: PendingResult[] = [];
-  private done = false;
+  private gradingError: string | undefined;
+  private result: ResultView | undefined;
+  private reteach: ReteachView | undefined;
 
   constructor(private readonly deps: SessionDeps) {}
 
-  private get currentDue(): DueItem | undefined {
-    return this.deps.due[this.index];
-  }
-
-  get currentQuestion(): CurrentQuestion | undefined {
-    const due = this.currentDue;
-    if (!due) return undefined;
-    const qf = this.deps.questions[due.card];
-    if (!qf) return undefined;
-    const type = due.types[this.subIndex] ?? due.types[0];
-    if (type === 'apply') {
-      const apply = qf.apply[0];
-      return apply ? { card: due.card, type: 'apply', apply } : undefined;
-    }
-    const fill = qf.fill[0];
-    return fill ? { card: due.card, type: 'fill', fill } : undefined;
-  }
-
-  /** Enter 鍵的行為:填空送出;應用題換行,除非按了 ctrl/cmd 修飾鍵才送出 */
   decideKeydown(key: string, mods: { ctrl?: boolean; meta?: boolean } = {}): KeydownAction {
     if (key !== 'Enter') return 'ignore';
-    const q = this.currentQuestion;
-    if (!q) return 'ignore';
-    if (q.type === 'fill') return 'submit';
-    return mods.ctrl || mods.meta ? 'submit' : 'newline';
+    if (this.phase !== 'question' || this.question === undefined) return 'ignore';
+    if (this.question.type === 'fill') return 'submit';
+    if (mods.ctrl === true) return 'submit';
+    if (mods.meta === true) return 'submit';
+    return 'newline';
   }
 
-  async submitFill(typedAnswers: string[]): Promise<void> {
-    const q = this.currentQuestion;
-    if (!q || q.type !== 'fill' || !q.fill) throw new Error('目前不是填空題');
-    await this.submit(q.fill.prompt, () => this.deps.grader.gradeFill(q.fill!, typedAnswers), 'fill');
-  }
-
-  async submitApply(typedAnswer: string): Promise<void> {
-    const q = this.currentQuestion;
-    if (!q || q.type !== 'apply' || !q.apply) throw new Error('目前不是應用題');
-    await this.submit(q.apply.prompt, () => this.deps.grader.gradeApply(q.apply!, typedAnswer), 'apply');
-  }
-
-  private async submit(_prompt: string, run: () => Promise<GradeResult>, type: QuestionType): Promise<void> {
-    this.submitting = true;
-    this.error = undefined;
+  async init(): Promise<void> {
+    this.phase = 'loading';
+    this.message = undefined;
+    this.canRestart = false;
+    this.canRetry = false;
+    this.testModeNotice = undefined;
+    this.clearCard();
     try {
-      const result = await run();
-      this.result = result;
-      if (result.grader === 'error' || result.pass === null) {
-        this.error = '評分失敗,請再試一次';
+      const raw = await this.deps.client.start();
+      const start = readStart(raw);
+      if (!start) {
+        this.showStopped();
         return;
       }
-      this.pending.push({ type, result });
+      if (start.fakeCloud) this.testModeNotice = TEST_MODE_NOTICE;
+      else this.testModeNotice = undefined;
+      if (start.state === 'paused') {
+        this.showPaused();
+        return;
+      }
+      if (start.state === 'empty') {
+        this.clearCard();
+        this.phase = 'empty';
+        this.message = EMPTY_MESSAGE;
+        return;
+      }
+      await this.pullNext();
+    } catch (err) {
+      this.showError(err);
+    }
+  }
+
+  /** 「下一題」與 reteach 的「繼續」共用:再問側車下一個要顯示的東西。 */
+  async next(): Promise<void> {
+    if (this.phase !== 'reteach' && !(this.phase === 'question' && this.result !== undefined)) return;
+    await this.pullNext();
+  }
+
+  async submitFill(answers: string[]): Promise<void> {
+    if (this.phase !== 'question' || this.question?.type !== 'fill') return;
+    await this.submit({ fill: answers });
+  }
+
+  async submitApply(text: string): Promise<void> {
+    if (this.phase !== 'question' || this.question?.type !== 'apply') return;
+    await this.submit({ apply: text });
+  }
+
+  getView(): SessionView {
+    const onQuestion = this.phase === 'question';
+    return {
+      state: this.phase,
+      message: this.message,
+      canRestart: this.canRestart,
+      canRetry: this.canRetry,
+      testModeNotice: this.testModeNotice,
+      answeredCount: onQuestion ? this.answeredCount : 0,
+      totalCount: onQuestion ? this.totalCount : 0,
+      current: onQuestion ? this.question : undefined,
+      submitting: this.submitting,
+      gradingError: this.gradingError,
+      result: this.result,
+      reteach: this.phase === 'reteach' ? this.reteach : undefined,
+    };
+  }
+
+  private async submit(answer: { fill: string[] } | { apply: string }): Promise<void> {
+    this.submitting = true;
+    this.gradingError = undefined;
+    try {
+      const raw = await this.deps.client.submit(answer);
+      const graded = readSubmit(raw);
+      if (!graded) {
+        this.showStopped();
+        return;
+      }
+      if (graded.status === 'error') {
+        this.gradingError = GRADING_ERROR;
+        this.result = undefined;
+        return;
+      }
+      const result: ResultView = {
+        status: graded.status,
+        pass: graded.pass,
+        feedback: graded.feedback,
+        cardDone: graded.cardDone,
+      };
+      if (graded.correctAnswers !== undefined) result.correctAnswers = graded.correctAnswers;
+      this.result = result;
+      this.gradingError = undefined;
+    } catch (err) {
+      this.showError(err);
     } finally {
       this.submitting = false;
     }
   }
 
-  /** 按下下一題:同一張卡還有沒答的題型就先換題型;都答完才套用排程轉移、往下一張卡走 */
-  next(): void {
-    const due = this.currentDue;
-    if (!due) return;
-
-    const isLastSubtype = this.subIndex >= due.types.length - 1;
-    if (!isLastSubtype) {
-      this.subIndex += 1;
-      this.result = undefined;
-      this.error = undefined;
-      return;
+  private async pullNext(): Promise<void> {
+    try {
+      const raw = await this.deps.client.next();
+      const next = readNext(raw);
+      if (!next) {
+        this.showStopped();
+        return;
+      }
+      if (next.kind === 'done') {
+        try {
+          await this.deps.client.summary();
+        } catch (err) {
+          this.showError(err);
+          return;
+        }
+        this.clearCard();
+        this.phase = 'done';
+        this.message = DONE_MESSAGE;
+        return;
+      }
+      if (next.kind === 'reteach') {
+        let text: string;
+        try {
+          text = stripFrontmatter(await this.deps.fs.read(next.path));
+        } catch {
+          this.showStopped();
+          return;
+        }
+        this.clearCard();
+        this.phase = 'reteach';
+        this.message = undefined;
+        this.reteach = {
+          card: next.card,
+          text,
+          notice: next.short ? undefined : SHORT_NOTICE,
+        };
+        return;
+      }
+      this.clearCard();
+      this.phase = 'question';
+      this.message = undefined;
+      this.answeredCount = next.index - 1;
+      this.totalCount = next.total;
+      this.question = {
+        card: next.card,
+        type: next.type,
+        stage: next.stage,
+        prompt: next.prompt,
+        blanks: next.blanks,
+        stuck: next.stuck,
+        overdueDays: next.overdueDays,
+      };
+    } catch (err) {
+      this.showError(err);
     }
-
-    const passAll = this.pending.length > 0 && this.pending.every((p) => p.result.pass === true);
-    const lastType = due.types[due.types.length - 1] ?? 'fill';
-    const fauxReview: Review = {
-      stage: due.stage,
-      learned_at: this.deps.today,
-      next_due: this.deps.today,
-      fails_in_row: 0,
-      total_fails: 0,
-      stuck: due.stuck,
-      history: [],
-    };
-    this.deps.advance(fauxReview, { today: this.deps.today, pass: passAll, type: lastType });
-
-    this.pending = [];
-    this.result = undefined;
-    this.error = undefined;
-    this.subIndex = 0;
-    this.answeredCount += 1;
-    this.index += 1;
-    if (this.index >= this.deps.due.length) this.done = true;
   }
 
-  getView(): SessionView {
-    const current = this.currentQuestion;
-    let correctAnswers: string[] | undefined;
-    if (current?.type === 'fill' && current.fill && this.result && this.result.pass === false) {
-      correctAnswers = current.fill.answers.map((options) => options[0] ?? '');
+  private clearCard(): void {
+    this.question = undefined;
+    this.result = undefined;
+    this.reteach = undefined;
+    this.gradingError = undefined;
+    this.answeredCount = 0;
+    this.totalCount = 0;
+  }
+
+  private showPaused(): void {
+    this.clearCard();
+    this.phase = 'paused';
+    this.message = PAUSED_MESSAGE;
+    this.canRestart = false;
+    this.canRetry = false;
+  }
+
+  private showStopped(): void {
+    this.clearCard();
+    this.phase = 'error';
+    this.message = STOPPED_MESSAGE;
+    this.canRestart = true;
+    this.canRetry = false;
+    this.submitting = false;
+  }
+
+  /** 啟動就能修好的四種:句子照舊,加「再試一次」,不給「重新開始」,也不說複習程式停了。 */
+  private showRetry(message: string): void {
+    this.clearCard();
+    this.submitting = false;
+    this.phase = 'error';
+    this.message = `${message}${RETRY_HINT}`;
+    this.canRestart = false;
+    this.canRetry = true;
+  }
+
+  private showError(err: unknown): void {
+    const review = reviewOf(err);
+    if (review === undefined) {
+      this.showStopped();
+      return;
     }
-    return {
-      totalCount: this.deps.due.length,
-      answeredCount: this.answeredCount,
-      isEmpty: this.deps.due.length === 0,
-      done: this.done,
-      current,
-      submitting: this.submitting,
-      error: this.error,
-      result: this.result,
-      correctAnswers,
-    };
+    if (review.kind === 'paused') {
+      this.showPaused();
+      return;
+    }
+    this.clearCard();
+    this.submitting = false;
+    this.phase = 'error';
+    if (review.kind === 'no-cards') {
+      this.showRetry(NO_CARDS_MESSAGE);
+      return;
+    }
+    if (review.kind === 'router-unavailable') {
+      this.showRetry(ROUTER_MESSAGE);
+      return;
+    }
+    if (review.kind === 'review-record-changed') {
+      this.message = review.message;
+      this.canRestart = true;
+      this.canRetry = false;
+      return;
+    }
+    if (review.kind === 'root-mismatch' || review.kind === 'not-configured') {
+      this.showRetry(`${review.message} ${VAULT_HINT}`);
+      return;
+    }
+    this.message = STOPPED_MESSAGE;
+    this.canRestart = true;
+    this.canRetry = false;
   }
 }

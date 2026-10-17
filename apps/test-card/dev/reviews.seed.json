@@ -1,0 +1,29 @@
+{
+  "sec-0001": {
+    "stage": 1,
+    "learned_at": "2026-08-01",
+    "next_due": "2026-09-10",
+    "fails_in_row": 0,
+    "total_fails": 0,
+    "stuck": false,
+    "history": []
+  },
+  "sec-0002": {
+    "stage": 2,
+    "learned_at": "2026-09-03",
+    "next_due": "2026-09-10",
+    "fails_in_row": 0,
+    "total_fails": 0,
+    "stuck": false,
+    "history": []
+  },
+  "sec-0003": {
+    "stage": 3,
+    "learned_at": "2026-09-05",
+    "next_due": "2026-09-10",
+    "fails_in_row": 0,
+    "total_fails": 0,
+    "stuck": false,
+    "history": []
+  }
+}

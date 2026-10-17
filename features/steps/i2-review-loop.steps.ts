@@ -44,6 +44,7 @@ import { presentNextCard } from '../../packages/core/src/session/present.js';
 import type { Session } from '../../packages/core/src/session/types.js';
 import { scriptedApplyReply } from './_i2-cloud-script.js';
 import type { LearningWorld, RunResult } from './_world.js';
+import { seedTestCardGradingError } from './test-card-phase2.steps.js';
 
 /** 使用者每天看到的那句話。0 張卡的時候絕不可以出現。 */
 const NOTHING_DUE = 'Nothing is due today.';
@@ -888,6 +889,11 @@ Then('the reteach does not consume the daily cap', async function (this: Learnin
 // ---------------------------------------------------------------- S10:批改錯誤不動卡片
 
 Given('the cloud grader returns an unparseable response twice', function (this: LearningWorld) {
+  // 06-test-card phase-2 的場景用同一句話:依 tag 分派(跟 review-cli.steps.ts 對共用句子的作法一致)
+  if (this.tags.includes('@test-card')) {
+    seedTestCardGradingError(this);
+    return;
+  }
   seedApplyCard(this, 3);
   st(this).reviewsBefore = readReviews(this);
 });

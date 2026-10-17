@@ -1,106 +1,53 @@
 /**
- * `contracts/types.md` 的鏡射子集(只列 06 這個 phase 用到的部分)。
+ * 考試卡的畫面型別(ADR-075)。
  *
- * Wave 0 期間 apps/test-card 不能 import packages/contracts(那個套件現在是空的,
- * 由 01-data-layer 填)。這裡的型別是手動對齊契約寫的,整合時如果簽章對不上,
- * 就是這個檔案的 bug——見 features/06-test-card/NEXT.md。
+ * 側車的 start / next / submit 回的是 Record,沒有匯出結果型別。
+ * session.ts 用讀取函式收窄成這裡的形狀;缺必要欄位就當 bad-response,不在這裡補值。
  */
 
-export type CardId = string;
-export type IsoDate = string;
-export type Stage = 0 | 1 | 2 | 3 | 4 | 5 | 6;
-export type QuestionType = 'fill' | 'apply';
+export type SessionState = 'loading' | 'paused' | 'empty' | 'question' | 'reteach' | 'done' | 'error';
 
-export interface FillQuestion {
+export type KeydownAction = 'submit' | 'newline' | 'ignore';
+
+/** 畫面上的一題。填空的輸入格數是 blanks;應用題固定 0。 */
+export interface QuestionView {
+  card: string;
+  type: 'fill' | 'apply';
+  stage: number;
   prompt: string;
-  answers: string[][];
+  blanks: number;
+  stuck: boolean;
+  overdueDays: number;
 }
 
-export interface ApplyQuestion {
-  prompt: string;
-  rubric: string[];
-}
-
-export interface QuestionFile {
-  card: CardId;
-  fill: FillQuestion[];
-  apply: ApplyQuestion[];
-}
-
-export type Grader =
-  | 'exact' | 'fuzzy' | 'local-llm' | 'fallback-strict' | 'empty'
-  | 'cloud' | 'local-provisional' | 'error';
-
-export interface GradeResult {
+/** 送出得到 passed / failed / partial 之後,到按「下一題」之前。 */
+export interface ResultView {
+  status: string;
   pass: boolean | null;
-  criteria?: boolean[];
   feedback: string;
-  grader: Grader;
+  cardDone: boolean;
+  correctAnswers?: string[];
 }
 
-export interface DueItem {
-  card: CardId;
-  stage: Stage;
-  types: QuestionType[];
-  overdue_days: number;
-  overdue_ratio: number;
-  stuck: boolean;
+/** 縮短版。text 是去掉開頭 frontmatter 的純文字;notice 只有 short 為 false 時有。 */
+export interface ReteachView {
+  card: string;
+  text: string;
+  notice: string | undefined;
 }
 
-export interface SelectResult {
-  due: DueItem[];
-  deferred: number;
-  reteach: CardId[];
-}
-
-export interface ReviewEntry {
-  date: IsoDate;
-  stage: Stage;
-  type: QuestionType;
-  pass: boolean;
-  grader: Grader;
-  provisional?: boolean;
-  revised_by?: 'cloud';
-  revised_to?: boolean;
-}
-
-export interface Review {
-  stage: Stage;
-  learned_at: IsoDate;
-  next_due: IsoDate | null;
-  fails_in_row: number;
-  total_fails: number;
-  stuck: boolean;
-  history: ReviewEntry[];
-}
-
-export interface SchedulerEvent {
-  type: 'reteach_queued' | 'stuck' | 'archived';
-  card: CardId;
-}
-
-export interface SchedulerOutcome {
-  review: Review;
-  events: SchedulerEvent[];
-}
-
-/** 契約 §6:「排程函式一律純函式」。這是 advance 的簽章,drop-in 相容性靠它檢查。 */
-export type SchedulerAdvanceCtx = { today: IsoDate; pass: boolean; type: QuestionType };
-export type SchedulerAdvanceFn = (review: Review, ctx: SchedulerAdvanceCtx) => SchedulerOutcome;
-
-/** 契約 §13,relPath 一律相對於 learning/、用正斜線、拒絕 .. 與絕對路徑 */
-export interface LearningFs {
-  read(relPath: string): Promise<string>;
-  write(relPath: string, content: string): Promise<void>;
-  list(relDir: string): Promise<string[]>;
-  exists(relPath: string): Promise<boolean>;
-  assetUrl(relPath: string): string;
-}
-
-/** 目前顯示中的題目:哪張卡、哪個題型、對應的題目內容 */
-export interface CurrentQuestion {
-  card: CardId;
-  type: QuestionType;
-  fill?: FillQuestion;
-  apply?: ApplyQuestion;
+export interface SessionView {
+  state: SessionState;
+  message: string | undefined;
+  canRestart: boolean;
+  /** 只有 no-cards、router-unavailable、root-mismatch、not-configured。與 canRestart 不同時為 true。 */
+  canRetry: boolean;
+  testModeNotice: string | undefined;
+  answeredCount: number;
+  totalCount: number;
+  current: QuestionView | undefined;
+  submitting: boolean;
+  gradingError: string | undefined;
+  result: ResultView | undefined;
+  reteach: ReteachView | undefined;
 }
