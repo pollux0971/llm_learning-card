@@ -49,12 +49,30 @@ fn the_prefix_constant_is_fixed_with_one_trailing_space() {
 #[test]
 fn host_stderr_line_follows_the_ticket_table_row_by_row() {
     let rows: &[(&[u8], &str)] = &[
-        ("[review-sidecar] 正在用假 router\n".as_bytes(), "[review-sidecar] 正在用假 router"),
-        (b"[review-sidecar] internal\r\n", "[review-sidecar] internal"),
-        (b"plain from a dependency\n", "[review-sidecar] plain from a dependency"),
-        (b"x [review-sidecar] y\n", "[review-sidecar] x [review-sidecar] y"),
-        (b"  [review-sidecar] x\n", "[review-sidecar]   [review-sidecar] x"),
-        (b"[Review-Sidecar] x\n", "[review-sidecar] [Review-Sidecar] x"),
+        (
+            "[review-sidecar] 正在用假 router\n".as_bytes(),
+            "[review-sidecar] 正在用假 router",
+        ),
+        (
+            b"[review-sidecar] internal\r\n",
+            "[review-sidecar] internal",
+        ),
+        (
+            b"plain from a dependency\n",
+            "[review-sidecar] plain from a dependency",
+        ),
+        (
+            b"x [review-sidecar] y\n",
+            "[review-sidecar] x [review-sidecar] y",
+        ),
+        (
+            b"  [review-sidecar] x\n",
+            "[review-sidecar]   [review-sidecar] x",
+        ),
+        (
+            b"[Review-Sidecar] x\n",
+            "[review-sidecar] [Review-Sidecar] x",
+        ),
         (b"[review-sidecar]x\n", "[review-sidecar] [review-sidecar]x"),
         (b"[review-sidecar] ", "[review-sidecar] "),
         (b"\n", "[review-sidecar] "),
@@ -62,7 +80,12 @@ fn host_stderr_line_follows_the_ticket_table_row_by_row() {
         (b"bad \xff byte\n", "[review-sidecar] bad \u{FFFD} byte"),
     ];
     for (raw, want) in rows {
-        assert_eq!(host_stderr_line(raw), *want, "raw = {:?}", String::from_utf8_lossy(raw));
+        assert_eq!(
+            host_stderr_line(raw),
+            *want,
+            "raw = {:?}",
+            String::from_utf8_lossy(raw)
+        );
     }
 }
 
@@ -84,41 +107,88 @@ fn trailing_newlines_and_carriage_returns_are_all_removed_but_inner_ones_stay() 
     assert_eq!(host_stderr_line(b"\r\n"), "[review-sidecar] ");
     assert_eq!(host_stderr_line(b""), "[review-sidecar] ");
     // 沒有換行也一樣
-    assert_eq!(host_stderr_line(b"no newline"), "[review-sidecar] no newline");
+    assert_eq!(
+        host_stderr_line(b"no newline"),
+        "[review-sidecar] no newline"
+    );
 }
 
 #[test]
 fn newlines_are_removed_before_the_prefix_check() {
     // 去掉結尾換行之後是「[review-sidecar]」(沒有空白)→ 不算已有前綴
-    assert_eq!(host_stderr_line(b"[review-sidecar]\n"), "[review-sidecar] [review-sidecar]");
-    assert_eq!(host_stderr_line(b"[review-sidecar]\r\n"), "[review-sidecar] [review-sidecar]");
+    assert_eq!(
+        host_stderr_line(b"[review-sidecar]\n"),
+        "[review-sidecar] [review-sidecar]"
+    );
+    assert_eq!(
+        host_stderr_line(b"[review-sidecar]\r\n"),
+        "[review-sidecar] [review-sidecar]"
+    );
     // 有那個空白(後面接換行)→ 算,原樣
-    assert_eq!(host_stderr_line(b"[review-sidecar] \r\n"), "[review-sidecar] ");
+    assert_eq!(
+        host_stderr_line(b"[review-sidecar] \r\n"),
+        "[review-sidecar] "
+    );
 }
 
 #[test]
 fn the_prefix_check_is_byte_exact_starts_with_not_contains_or_trimmed_or_case_folded() {
     let rows: &[(&[u8], &str)] = &[
-        (b"[REVIEW-SIDECAR] x\n", "[review-sidecar] [REVIEW-SIDECAR] x"),
-        (b"[review-sidecar]\tx\n", "[review-sidecar] [review-sidecar]\tx"),
-        (b"\t[review-sidecar] x\n", "[review-sidecar] \t[review-sidecar] x"),
-        (b" [review-sidecar] x\n", "[review-sidecar]  [review-sidecar] x"),
-        (b"prefix [review-sidecar] x\n", "[review-sidecar] prefix [review-sidecar] x"),
-        (b"[review-sidecar]  two spaces\n", "[review-sidecar]  two spaces"),
-        (b"[review-sidecar ] x\n", "[review-sidecar] [review-sidecar ] x"),
+        (
+            b"[REVIEW-SIDECAR] x\n",
+            "[review-sidecar] [REVIEW-SIDECAR] x",
+        ),
+        (
+            b"[review-sidecar]\tx\n",
+            "[review-sidecar] [review-sidecar]\tx",
+        ),
+        (
+            b"\t[review-sidecar] x\n",
+            "[review-sidecar] \t[review-sidecar] x",
+        ),
+        (
+            b" [review-sidecar] x\n",
+            "[review-sidecar]  [review-sidecar] x",
+        ),
+        (
+            b"prefix [review-sidecar] x\n",
+            "[review-sidecar] prefix [review-sidecar] x",
+        ),
+        (
+            b"[review-sidecar]  two spaces\n",
+            "[review-sidecar]  two spaces",
+        ),
+        (
+            b"[review-sidecar ] x\n",
+            "[review-sidecar] [review-sidecar ] x",
+        ),
         (b"review-sidecar] x\n", "[review-sidecar] review-sidecar] x"),
     ];
     for (raw, want) in rows {
-        assert_eq!(host_stderr_line(raw), *want, "raw = {:?}", String::from_utf8_lossy(raw));
+        assert_eq!(
+            host_stderr_line(raw),
+            *want,
+            "raw = {:?}",
+            String::from_utf8_lossy(raw)
+        );
     }
 }
 
 #[test]
 fn invalid_utf8_becomes_the_replacement_character_per_bad_byte_and_does_not_panic() {
-    assert_eq!(host_stderr_line(b"\xff\xfe\n"), "[review-sidecar] \u{FFFD}\u{FFFD}");
-    assert_eq!(host_stderr_line(b"ok \xc3\n"), "[review-sidecar] ok \u{FFFD}");
+    assert_eq!(
+        host_stderr_line(b"\xff\xfe\n"),
+        "[review-sidecar] \u{FFFD}\u{FFFD}"
+    );
+    assert_eq!(
+        host_stderr_line(b"ok \xc3\n"),
+        "[review-sidecar] ok \u{FFFD}"
+    );
     // 前綴本身後面接壞位元組:前綴是位元組開頭,所以算已有前綴,原樣(壞位元組變 U+FFFD)
-    assert_eq!(host_stderr_line(b"[review-sidecar] \xff\n"), "[review-sidecar] \u{FFFD}");
+    assert_eq!(
+        host_stderr_line(b"[review-sidecar] \xff\n"),
+        "[review-sidecar] \u{FFFD}"
+    );
 }
 
 // ───────────────────────────── 2. forward_lines
@@ -142,7 +212,10 @@ impl RecordingSink {
         self.writes.lock().unwrap().clone()
     }
     fn strings(&self) -> Vec<String> {
-        self.writes().iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect()
+        self.writes()
+            .iter()
+            .map(|w| String::from_utf8_lossy(w).into_owned())
+            .collect()
     }
 }
 
@@ -154,7 +227,11 @@ fn three_input_lines_make_exactly_three_writes_each_one_converted_line_plus_newl
     assert_eq!(n, 3);
     assert_eq!(
         sink.strings(),
-        ["[review-sidecar] 正在用假 router\n", "[review-sidecar] plain\n", "[review-sidecar] last one\n"],
+        [
+            "[review-sidecar] 正在用假 router\n",
+            "[review-sidecar] plain\n",
+            "[review-sidecar] last one\n"
+        ],
         "一行的內容與換行要在同一次 write(不會跟別的執行緒的輸出交錯)"
     );
 }
@@ -162,9 +239,18 @@ fn three_input_lines_make_exactly_three_writes_each_one_converted_line_plus_newl
 #[test]
 fn a_last_line_without_a_trailing_newline_is_still_written_with_one() {
     let sink = RecordingSink::default();
-    let n = forward_lines(BufReader::new(&b"first\nsecond-no-newline"[..]), sink.clone());
+    let n = forward_lines(
+        BufReader::new(&b"first\nsecond-no-newline"[..]),
+        sink.clone(),
+    );
     assert_eq!(n, 2);
-    assert_eq!(sink.strings(), ["[review-sidecar] first\n", "[review-sidecar] second-no-newline\n"]);
+    assert_eq!(
+        sink.strings(),
+        [
+            "[review-sidecar] first\n",
+            "[review-sidecar] second-no-newline\n"
+        ]
+    );
 }
 
 #[test]
@@ -177,8 +263,18 @@ fn empty_input_returns_zero_and_writes_nothing() {
 #[test]
 fn empty_lines_are_forwarded_as_prefix_only_lines() {
     let sink = RecordingSink::default();
-    assert_eq!(forward_lines(BufReader::new(&b"\n\nx\n"[..]), sink.clone()), 3);
-    assert_eq!(sink.strings(), ["[review-sidecar] \n", "[review-sidecar] \n", "[review-sidecar] x\n"]);
+    assert_eq!(
+        forward_lines(BufReader::new(&b"\n\nx\n"[..]), sink.clone()),
+        3
+    );
+    assert_eq!(
+        sink.strings(),
+        [
+            "[review-sidecar] \n",
+            "[review-sidecar] \n",
+            "[review-sidecar] x\n"
+        ]
+    );
 }
 
 #[test]
@@ -196,9 +292,15 @@ fn a_sink_that_accepts_only_a_few_bytes_per_write_still_gets_every_byte() {
         }
     }
     let got = Arc::new(Mutex::new(Vec::new()));
-    let n = forward_lines(BufReader::new(&b"hello world\n[review-sidecar] again\n"[..]), Tiny(got.clone()));
+    let n = forward_lines(
+        BufReader::new(&b"hello world\n[review-sidecar] again\n"[..]),
+        Tiny(got.clone()),
+    );
     assert_eq!(n, 2);
-    assert_eq!(String::from_utf8(got.lock().unwrap().clone()).unwrap(), "[review-sidecar] hello world\n[review-sidecar] again\n");
+    assert_eq!(
+        String::from_utf8(got.lock().unwrap().clone()).unwrap(),
+        "[review-sidecar] hello world\n[review-sidecar] again\n"
+    );
 }
 
 #[test]
@@ -214,9 +316,15 @@ fn a_line_is_one_line_even_when_the_reader_hands_it_over_in_tiny_pieces() {
         }
     }
     let sink = RecordingSink::default();
-    let n = forward_lines(BufReader::with_capacity(2, Drip(b"abcdef\nghij\n")), sink.clone());
+    let n = forward_lines(
+        BufReader::with_capacity(2, Drip(b"abcdef\nghij\n")),
+        sink.clone(),
+    );
     assert_eq!(n, 2);
-    assert_eq!(sink.strings(), ["[review-sidecar] abcdef\n", "[review-sidecar] ghij\n"]);
+    assert_eq!(
+        sink.strings(),
+        ["[review-sidecar] abcdef\n", "[review-sidecar] ghij\n"]
+    );
 }
 
 // ───────────────────────────── 3. 轉送不會自己停
@@ -225,8 +333,18 @@ fn a_line_is_one_line_even_when_the_reader_hands_it_over_in_tiny_pieces() {
 fn invalid_utf8_does_not_stop_the_forwarding_the_next_lines_still_come_out() {
     let sink = RecordingSink::default();
     let n = forward_lines(BufReader::new(&b"a\nbad \xff\nlast\n"[..]), sink.clone());
-    assert_eq!(n, 3, "三行都要寫出來(read_line 遇到壞位元組會回 Err 然後停)");
-    assert_eq!(sink.strings(), ["[review-sidecar] a\n", "[review-sidecar] bad \u{FFFD}\n", "[review-sidecar] last\n"]);
+    assert_eq!(
+        n, 3,
+        "三行都要寫出來(read_line 遇到壞位元組會回 Err 然後停)"
+    );
+    assert_eq!(
+        sink.strings(),
+        [
+            "[review-sidecar] a\n",
+            "[review-sidecar] bad \u{FFFD}\n",
+            "[review-sidecar] last\n"
+        ]
+    );
 }
 
 #[test]
@@ -244,9 +362,17 @@ fn a_real_read_error_ends_the_loop_and_returns_the_lines_so_far() {
         }
     }
     let sink = RecordingSink::default();
-    let n = forward_lines(BufReader::new(ThenError { data: Cursor::new(b"one\ntwo\n".to_vec()) }), sink.clone());
+    let n = forward_lines(
+        BufReader::new(ThenError {
+            data: Cursor::new(b"one\ntwo\n".to_vec()),
+        }),
+        sink.clone(),
+    );
     assert_eq!(n, 2);
-    assert_eq!(sink.strings(), ["[review-sidecar] one\n", "[review-sidecar] two\n"]);
+    assert_eq!(
+        sink.strings(),
+        ["[review-sidecar] one\n", "[review-sidecar] two\n"]
+    );
 }
 
 #[test]
@@ -265,9 +391,21 @@ fn an_interrupted_read_is_retried_not_treated_as_the_end() {
         }
     }
     let sink = RecordingSink::default();
-    let n = forward_lines(BufReader::new(Hiccup { data: Cursor::new(b"after the hiccup\nsecond\n".to_vec()), interrupted: false }), sink.clone());
+    let n = forward_lines(
+        BufReader::new(Hiccup {
+            data: Cursor::new(b"after the hiccup\nsecond\n".to_vec()),
+            interrupted: false,
+        }),
+        sink.clone(),
+    );
     assert_eq!(n, 2);
-    assert_eq!(sink.strings(), ["[review-sidecar] after the hiccup\n", "[review-sidecar] second\n"]);
+    assert_eq!(
+        sink.strings(),
+        [
+            "[review-sidecar] after the hiccup\n",
+            "[review-sidecar] second\n"
+        ]
+    );
 }
 
 /// 記下自己有沒有被讀到 EOF 的 reader。
@@ -302,10 +440,21 @@ impl Write for AlwaysFails {
 fn a_sink_that_always_fails_does_not_panic_and_the_reader_is_still_read_to_eof() {
     let saw_eof = Rc::new(Cell::new(false));
     let attempts = Rc::new(Cell::new(0));
-    let reader = Watched { inner: Cursor::new(b"one\ntwo\nthree\nfour\n".to_vec()), saw_eof: saw_eof.clone() };
-    let n = forward_lines(BufReader::new(reader), AlwaysFails { attempts: attempts.clone() });
+    let reader = Watched {
+        inner: Cursor::new(b"one\ntwo\nthree\nfour\n".to_vec()),
+        saw_eof: saw_eof.clone(),
+    };
+    let n = forward_lines(
+        BufReader::new(reader),
+        AlwaysFails {
+            attempts: attempts.clone(),
+        },
+    );
     assert_eq!(n, 4, "寫不出去也要回全部讀到的行數");
-    assert!(saw_eof.get(), "寫失敗不能停止讀:不讀的話側車的 stderr 管子會滿或斷,側車會卡住或死");
+    assert!(
+        saw_eof.get(),
+        "寫失敗不能停止讀:不讀的話側車的 stderr 管子會滿或斷,側車會卡住或死"
+    );
     assert!(attempts.get() >= 1, "至少試過寫一次(不是根本沒寫)");
 }
 
@@ -327,7 +476,10 @@ fn a_sink_that_fails_only_after_the_first_line_still_lets_the_rest_be_read() {
         }
     }
     let saw_eof = Rc::new(Cell::new(false));
-    let reader = Watched { inner: Cursor::new(b"a\nbad \xff\nc\nd\n".to_vec()), saw_eof: saw_eof.clone() };
+    let reader = Watched {
+        inner: Cursor::new(b"a\nbad \xff\nc\nd\n".to_vec()),
+        saw_eof: saw_eof.clone(),
+    };
     let n = forward_lines(BufReader::new(reader), FailAfterFirst { ok_writes: 1 });
     assert_eq!(n, 4);
     assert!(saw_eof.get());
@@ -337,37 +489,75 @@ fn a_sink_that_fails_only_after_the_first_line_still_lets_the_rest_be_read() {
 
 fn forwarding_source() -> (String, String) {
     let src = fs::read_to_string(manifest_dir().join("src/review_sidecar.rs")).unwrap();
-    let from_lines = src.find("pub fn forward_lines").expect("review_sidecar.rs 缺 pub fn forward_lines");
-    let from_stderr = src.find("fn forward_stderr").expect("review_sidecar.rs 缺 fn forward_stderr");
+    let from_lines = src
+        .find("pub fn forward_lines")
+        .expect("review_sidecar.rs 缺 pub fn forward_lines");
+    let from_stderr = src
+        .find("fn forward_stderr")
+        .expect("review_sidecar.rs 缺 fn forward_stderr");
     let body_end = |from: usize| -> usize {
         let rest = &src[from..];
         // 函式結束:行首的 `}`
         from + rest.find("\n}\n").map(|i| i + 3).unwrap_or(rest.len())
     };
-    (src[from_lines..body_end(from_lines)].to_string(), src[from_stderr..body_end(from_stderr)].to_string())
+    (
+        src[from_lines..body_end(from_lines)].to_string(),
+        src[from_stderr..body_end(from_stderr)].to_string(),
+    )
 }
 
 #[test]
 fn forward_lines_uses_read_until_and_one_write_all_and_never_eprintln_unwrap_or_expect() {
     let (lines_fn, _) = forwarding_source();
-    assert!(lines_fn.contains("read_until"), "用 read_until 讀位元組,不用 read_line");
-    assert!(!lines_fn.contains("read_line"), "read_line 遇到壞位元組會回 Err");
+    assert!(
+        lines_fn.contains("read_until"),
+        "用 read_until 讀位元組,不用 read_line"
+    );
+    assert!(
+        !lines_fn.contains("read_line"),
+        "read_line 遇到壞位元組會回 Err"
+    );
     assert!(lines_fn.contains("write_all"), "一行一次 write_all");
-    assert!(!lines_fn.contains("writeln!") && !lines_fn.contains("write!("), "writeln! 會把內容和換行分兩次寫");
-    for banned in ["eprintln!", "eprint!", "println!", ".unwrap()", ".expect(", "panic!"] {
-        assert!(!lines_fn.contains(banned), "forward_lines 不該有 {banned}(寫失敗不能 panic)");
+    assert!(
+        !lines_fn.contains("writeln!") && !lines_fn.contains("write!("),
+        "writeln! 會把內容和換行分兩次寫"
+    );
+    for banned in [
+        "eprintln!",
+        "eprint!",
+        "println!",
+        ".unwrap()",
+        ".expect(",
+        "panic!",
+    ] {
+        assert!(
+            !lines_fn.contains(banned),
+            "forward_lines 不該有 {banned}(寫失敗不能 panic)"
+        );
     }
 }
 
 #[test]
 fn forward_stderr_is_only_wiring_a_thread_running_forward_lines_on_the_real_stderr() {
     let (_, stderr_fn) = forwarding_source();
-    assert!(stderr_fn.contains("thread::spawn") || stderr_fn.contains("std::thread::spawn"), "要開一條執行緒");
-    assert!(stderr_fn.contains("forward_lines"), "轉送交給 forward_lines");
-    assert!(stderr_fn.contains("io::stderr()"), "寫進 app 的 stderr(std::io::stderr())");
+    assert!(
+        stderr_fn.contains("thread::spawn") || stderr_fn.contains("std::thread::spawn"),
+        "要開一條執行緒"
+    );
+    assert!(
+        stderr_fn.contains("forward_lines"),
+        "轉送交給 forward_lines"
+    );
+    assert!(
+        stderr_fn.contains("io::stderr()"),
+        "寫進 app 的 stderr(std::io::stderr())"
+    );
     assert!(stderr_fn.contains("BufReader"), "包 BufReader");
     for banned in ["eprintln!", "read_line", ".unwrap()", ".expect("] {
-        assert!(!stderr_fn.contains(banned), "forward_stderr 不該有 {banned}");
+        assert!(
+            !stderr_fn.contains(banned),
+            "forward_stderr 不該有 {banned}"
+        );
     }
 }
 
@@ -375,7 +565,8 @@ fn forward_stderr_is_only_wiring_a_thread_running_forward_lines_on_the_real_stde
 fn the_two_rust_own_dropped_line_messages_are_untouched() {
     let src = fs::read_to_string(manifest_dir().join("src/review_sidecar.rs")).unwrap();
     assert_eq!(
-        src.matches("eprintln!(\"[review-sidecar] dropped non-protocol line\")").count(),
+        src.matches("eprintln!(\"[review-sidecar] dropped non-protocol line\")")
+            .count(),
         2,
         "Rust 自己印的兩個地方照舊(不經過 host_stderr_line)"
     );
@@ -419,7 +610,11 @@ fn expected_forwarded_lines() -> Vec<String> {
 
 fn temp_dir(tag: &str) -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!("lc-t28-{tag}-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::SeqCst)));
+    let dir = std::env::temp_dir().join(format!(
+        "lc-t28-{tag}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -428,7 +623,11 @@ fn temp_dir(tag: &str) -> PathBuf {
 /// 子行程那一半:fd 2 接到檔案,起 SidecarHost、call 一次、shutdown,然後等到 tail marker 出現在檔案裡。
 fn child_half() {
     let capture = PathBuf::from(std::env::var(CAPTURE_ENV).expect("子行程要有擷取檔路徑"));
-    let file = fs::OpenOptions::new().create(true).append(true).open(&capture).unwrap();
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&capture)
+        .unwrap();
     // 之後這個行程所有寫到 stderr 的東西(包含轉送執行緒的)都進這個檔案
     let rc = unsafe { libc::dup2(file.as_raw_fd(), 2) };
     assert_eq!(rc, 2, "dup2 失敗");
@@ -444,16 +643,25 @@ fn child_half() {
             ("RESP".to_string(), OK_RESP.to_string()),
         ],
     };
-    let timeouts = SidecarTimeouts { hello: Duration::from_secs(20), request: Duration::from_secs(20), exit_grace: Duration::from_secs(5) };
+    let timeouts = SidecarTimeouts {
+        hello: Duration::from_secs(20),
+        request: Duration::from_secs(20),
+        exit_grace: Duration::from_secs(5),
+    };
     let host = SidecarHost::new(Box::new(move || Ok(spec.clone())), timeouts);
-    let reply = host.call(&json!({"v": 1, "id": 1, "method": "status", "params": {}})).expect("假側車要回應");
+    let reply = host
+        .call(&json!({"v": 1, "id": 1, "method": "status", "params": {}}))
+        .expect("假側車要回應");
     assert_eq!(reply["ok"], json!(true));
     host.shutdown();
 
     // 條件式等待:最後一行出現就收(有上限,上限是給「根本沒有轉送」的紅時間停下來,不是正常路徑要等的)
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(15) {
-        if fs::read_to_string(&capture).map(|t| t.contains("tail marker")).unwrap_or(false) {
+        if fs::read_to_string(&capture)
+            .map(|t| t.contains("tail marker"))
+            .unwrap_or(false)
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -473,7 +681,12 @@ fn what_the_sidecar_prints_reaches_the_app_stderr_with_exactly_one_prefix_per_li
     fs::write(&capture, b"").unwrap();
     let exe = std::env::current_exe().unwrap();
     let out = Command::new(exe)
-        .args(["--exact", "what_the_sidecar_prints_reaches_the_app_stderr_with_exactly_one_prefix_per_line", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "what_the_sidecar_prints_reaches_the_app_stderr_with_exactly_one_prefix_per_line",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(CHILD_ENV, "1")
         .env(CAPTURE_ENV, &capture)
         .stdin(Stdio::null())
@@ -486,9 +699,22 @@ fn what_the_sidecar_prints_reaches_the_app_stderr_with_exactly_one_prefix_per_li
     let captured = String::from_utf8_lossy(&raw).into_owned();
     let _ = fs::remove_dir_all(&dir);
 
-    assert!(out.status.success(), "子行程失敗:\n{child_stdout}\n--- 擷取到的 stderr ---\n{captured}");
-    let got: Vec<String> = captured.split_inclusive('\n').map(|l| l.strip_suffix('\n').unwrap_or(l).to_string()).collect();
-    assert_eq!(got, expected_forwarded_lines(), "app stderr 要剛好是換好的樣子、順序一樣、各一次:\n{captured}");
-    assert!(!captured.contains("[review-sidecar] [review-sidecar]"), "前綴印了兩次:\n{captured}");
+    assert!(
+        out.status.success(),
+        "子行程失敗:\n{child_stdout}\n--- 擷取到的 stderr ---\n{captured}"
+    );
+    let got: Vec<String> = captured
+        .split_inclusive('\n')
+        .map(|l| l.strip_suffix('\n').unwrap_or(l).to_string())
+        .collect();
+    assert_eq!(
+        got,
+        expected_forwarded_lines(),
+        "app stderr 要剛好是換好的樣子、順序一樣、各一次:\n{captured}"
+    );
+    assert!(
+        !captured.contains("[review-sidecar] [review-sidecar]"),
+        "前綴印了兩次:\n{captured}"
+    );
     assert!(raw.ends_with(b"\n"));
 }
