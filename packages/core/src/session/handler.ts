@@ -97,6 +97,11 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
     dailyCap: number,
     deferred: number,
   ): Record<string, unknown> {
+    // 當日快取名單(queue)裡 overdue_days ≥ 1 的張數。剛好 1 天要算;reteach 不在 queue,不算。
+    let overdue = 0;
+    for (const item of dayCache.queue) {
+      if (item.overdue_days >= 1) overdue += 1;
+    }
     return {
       state,
       today,
@@ -105,6 +110,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
       answered: answeredToday(dayCache),
       deferred,
       dailyCap,
+      overdue,
       fakeCloud: Boolean(env.LC_REVIEW_FAKE_CLOUD),
     };
   }

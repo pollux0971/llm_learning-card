@@ -1,7 +1,7 @@
 /**
  * 考試卡的畫面型別(ADR-075)。
  *
- * 側車的 start / next / submit 回的是 Record,沒有匯出結果型別。
+ * 側車的 start / next / submit / summary 回的是 Record,沒有匯出結果型別。
  * session.ts 用讀取函式收窄成這裡的形狀;缺必要欄位就當 bad-response,不在這裡補值。
  */
 
@@ -45,6 +45,10 @@ export interface SessionView {
   testModeNotice: string | undefined;
   answeredCount: number;
   totalCount: number;
+  /** question 狀態才是 start 的 overdue;其他狀態 0。一天之內固定,不是目前這張卡的 overdueDays。 */
+  overdueCount: number;
+  /** done 狀態的小結句子(不含「今天的複習都做完了。」);其他狀態空陣列。 */
+  summaryLines: string[];
   current: QuestionView | undefined;
   submitting: boolean;
   gradingError: string | undefined;

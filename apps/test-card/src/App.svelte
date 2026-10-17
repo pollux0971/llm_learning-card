@@ -117,7 +117,12 @@
 
   {#if view.state === 'loading'}
     <p>載入中…</p>
-  {:else if view.state === 'paused' || view.state === 'empty' || view.state === 'done' || view.state === 'error'}
+  {:else if view.state === 'done'}
+    <p class={view.state}>{view.message}</p>
+    {#each view.summaryLines as line, i (i)}
+      <p>{line}</p>
+    {/each}
+  {:else if view.state === 'paused' || view.state === 'empty' || view.state === 'error'}
     <p class={view.state}>{view.message}</p>
     {#if view.canRestart}
       <HudButton onclick={restart}>重新開始</HudButton>
@@ -129,13 +134,17 @@
     {#if view.reteach.notice}
       <p class="notice">{view.reteach.notice}</p>
     {/if}
-    <pre class="reteach">{view.reteach.text}</pre>
     <HudButton onclick={next}>繼續</HudButton>
+    <pre class="reteach">{view.reteach.text}</pre>
   {:else if view.state === 'question' && view.current}
     <header class="progress">
       <span>{view.answeredCount} / {view.totalCount}</span>
+      <span>逾期 {view.overdueCount}</span>
       <HpBar done={view.answeredCount} total={view.totalCount} />
     </header>
+    {#if view.current.stuck}
+      <p class="notice">這張卡已經連續答錯 3 次以上。</p>
+    {/if}
 
     {#if view.current.type === 'fill'}
       <p class="prompt">{view.current.prompt}</p>
