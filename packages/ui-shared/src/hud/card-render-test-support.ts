@@ -24,7 +24,20 @@ import { parseColor } from './test-support.js';
 const READY: Record<CardName, string> = { 'teach-card': '.markers', 'test-card': '.prompt' };
 
 export async function openCard(name: CardName): Promise<GalleryPage> {
-  return openApp(CARD_DIRS[name], { viewport: CARD_VIEWPORT, ready: READY[name] });
+  const open = () => openApp(CARD_DIRS[name], { viewport: CARD_VIEWPORT, ready: READY[name] });
+  if (name !== 'test-card') return open();
+  // T24 之後考試卡的暫存根跟 dev server 同生命,重新載入頁面不會重新種子(續答)。
+  // 這些量測的每一項都要從「剛載入的三題」開始,所以考試卡的 reset() = 關掉整個 app(dev server、側車、暫存根)再開一個新的。
+  let current = await open();
+  return {
+    get url() { return current.url; },
+    async reset() { const old = current; current = await open(); await old.close(); },
+    evaluate: (e) => current.evaluate(e),
+    rect: (selector, index) => current.rect(selector, index),
+    screenshot: (clip) => current.screenshot(clip),
+    forceState: (selector, index, states) => current.forceState(selector, index, states),
+    close: () => current.close(),
+  } as GalleryPage;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

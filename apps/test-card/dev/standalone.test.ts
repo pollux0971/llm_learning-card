@@ -14,6 +14,7 @@
  *     }
  *   standalonePlugin(): import('vite').Plugin   // name 隨意;只在 dev server(apply: 'serve');POST /__review → request(body);server 關掉時 close()
  *
+ * 暫存根跟 dev server 同生命(工單 §5):重新載入頁面不會重新種子。
  * 暫存根要自己做:複製 contracts/fixtures/learning-minimal、`npx tsx scripts/vault.ts init --learning-dir <暫存 learning>`
  * (暫存的 HOME / XDG_CONFIG_HOME / XDG_CACHE_HOME)、起 scripts/review-sidecar.ts。這個檔跑一次要幾秒(起行程)。
  *
@@ -150,12 +151,12 @@ describe('暫存根(驗收 5 第 1、2 點、「不寫 contracts/fixtures」)', 
     expect(b.root.startsWith(FIXTURES)).toBe(false);
     expect(existsSync(join(b.learningDir, 'cards/security/sec-0001.md'))).toBe(true);
     expect(digestTree(FIXTURES), 'contracts/fixtures 不該有任何變動').toBe(before);
-  });
+  }, 120_000);
 
   it('state/reviews.json 是種子檔的內容(不是 fixture 的 {})', async () => {
     const b = await backend();
     expect(JSON.parse(readFileSync(join(b.learningDir, 'state/reviews.json'), 'utf8'))).toEqual(JSON.parse(readFileSync(SEED, 'utf8')));
-  });
+  }, 120_000);
 
   it('帳本身分標記已初始化(vault.ts init 在暫存的 HOME / XDG 底下做的)', async () => {
     const b = await backend();
@@ -167,7 +168,7 @@ describe('暫存根(驗收 5 第 1、2 點、「不寫 contracts/fixtures」)', 
       expect(p, '暫存的 HOME / XDG_* 要設').not.toBe('');
       expect(p.startsWith(b.root), `${p} 要在暫存根底下`).toBe(true);
     }
-  });
+  }, 120_000);
 });
 
 describe('側車的環境(一律假 router)', () => {
@@ -175,13 +176,13 @@ describe('側車的環境(一律假 router)', () => {
     const b = await backend();
     expect(b.sidecarEnv.LC_REVIEW_FAKE_CLOUD).toBe(FAKE_CLOUD);
     expect(b.sidecarEnv.LC_REVIEW_TODAY).toBe('2026-09-10');
-  });
+  }, 120_000);
 
   it('側車環境沒有真的金鑰:名字像 KEY / TOKEN / SECRET 的變數,值只能是 fake- 開頭的假值(不從父行程繼承真的)', async () => {
     const b = await backend();
     const secrets = Object.entries(b.sidecarEnv).filter(([k, v]) => v !== undefined && /KEY|TOKEN|SECRET/i.test(k));
     for (const [k, v] of secrets) expect(v, `${k} 不是假值`).toMatch(/^fake/);
-  });
+  }, 120_000);
 });
 
 describe('一行進、一行出(驗收 5 第 4 點)', () => {
@@ -189,7 +190,7 @@ describe('一行進、一行出(驗收 5 第 4 點)', () => {
     const b = await backend();
     const out = result(await call(b, 'start'));
     expect(out).toMatchObject({ state: 'ready', today: '2026-09-10', total: 3, answered: 0, fakeCloud: true });
-  });
+  }, 120_000);
 
   it('走完三張(stage 1 填空、stage 2 填空 + 應用、stage 3 應用):批改都有合法回應,沒有 status error', async () => {
     const b = await backend();
@@ -209,7 +210,7 @@ describe('一行進、一行出(驗收 5 第 4 點)', () => {
     expect(types.filter((t) => t === 'fill').length).toBeGreaterThanOrEqual(2);
     expect(statuses.length).toBeGreaterThanOrEqual(4);
     for (const s of statuses) expect(['passed', 'failed', 'partial'], `status ${s}`).toContain(s);
-  });
+  }, 120_000);
 
   it('答案只落在暫存根的 reviews.json(contracts/fixtures 不動)', async () => {
     const before = digestTree(FIXTURES);
@@ -221,7 +222,7 @@ describe('一行進、一行出(驗收 5 第 4 點)', () => {
     const reviews = JSON.parse(readFileSync(join(b.learningDir, 'state/reviews.json'), 'utf8')) as Record<string, { history: unknown[] }>;
     expect(Object.values(reviews).some((r) => r.history.length > 0)).toBe(true);
     expect(digestTree(FIXTURES)).toBe(before);
-  });
+  }, 120_000);
 });
 
 describe('收尾(驗收 5 第 5 點)', () => {
@@ -235,14 +236,14 @@ describe('收尾(驗收 5 第 5 點)', () => {
     expect(existsSync(b.root)).toBe(false);
     for (let i = 0; i < 40 && alive(pid!); i += 1) await new Promise((r) => setTimeout(r, 50));
     expect(alive(pid!)).toBe(false);
-  });
+  }, 120_000);
 
   it('close() 重複呼叫不丟錯', async () => {
     const mod = await load();
     const b = await mod.startStandaloneBackend();
     await b.close();
     await expect(b.close()).resolves.toBeUndefined();
-  });
+  }, 120_000);
 });
 
 describe('plugin 掛在真的 vite dev server 上(POST /__review 往返、關掉就收)', () => {
@@ -290,7 +291,7 @@ describe('plugin 掛在真的 vite dev server 上(POST /__review 往返、關掉
     expect(leftovers(), '關掉 dev server 後暫存根還在').toEqual([]);
   }, 120_000);
 
-  it('重新載入頁面(再要一次 index.html)= 重新開始一份新的種子:答過的不留,start 又是 0 / 3(T15 的渲染量測每次 reset 都要「剛載入」)', async () => {
+  it('重新載入頁面不會重新種子(工單 §5:暫存根跟 dev server 同生命):答過的留著,start 回續答', async () => {
     const { createServer } = await import('vite');
     const server = await createServer({ root: APP, configFile: join(APP, 'vite.config.ts'), logLevel: 'silent', server: { host: '127.0.0.1', port: 0 } });
     await server.listen();
@@ -311,26 +312,36 @@ describe('plugin 掛在真的 vite dev server 上(POST /__review 往返、關掉
       const q = (await post('next')).result as Obj;
       const answer = q.type === 'fill' ? { fill: Array.from({ length: q.blanks as number }, () => 'x') } : { apply: '回答' };
       expect(((await post('submit', answer)).result as Obj).status).toMatch(/passed|failed|partial/);
-      const resumed = (await post('start')).result as Obj;
-      expect(resumed).toMatchObject({ answered: 1 });
       await page(); // 重新載入
-      const fresh = (await post('start')).result as Obj;
-      expect(fresh).toMatchObject({ state: 'ready', total: 3, answered: 0, resumed: false });
+      expect((await post('start')).result).toMatchObject({ state: 'ready', total: 3, answered: 1, resumed: true });
     } finally {
       await server.close();
     }
   }, 120_000);
 
-  it('GET /__review 不是往返(只收 POST)', async () => {
+  it('GET /__review 只收 POST:回 405 或 404,而且側車沒收到任何一行(連 GET 帶的 body 都不轉)', async () => {
     const { createServer } = await import('vite');
+    const http = await import('node:http');
     const server = await createServer({ root: APP, configFile: join(APP, 'vite.config.ts'), logLevel: 'silent', server: { host: '127.0.0.1', port: 0 } });
     await server.listen();
     try {
       const address = server.httpServer?.address();
       const port = typeof address === 'object' && address ? address.port : 0;
-      const res = await fetch(`http://127.0.0.1:${port}/__review`, { method: 'GET' });
-      const body = await res.text();
-      expect(res.status === 200 && body.includes('"ok":true')).toBe(false);
+      const startLine = JSON.stringify({ v: 1, id: nextId++, method: 'start', params: {} });
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = http.request({ host: '127.0.0.1', port, path: '/__review', method: 'GET', headers: { 'content-length': Buffer.byteLength(startLine) } }, (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode ?? 0));
+        });
+        req.on('error', reject);
+        req.end(startLine);
+      });
+      expect([404, 405], `GET 回 ${status}`).toContain(status);
+      // 側車沒收到 GET 帶的那行 start:所以現在 next 還沒有 session
+      const res = await fetch(`http://127.0.0.1:${port}/__review`, { method: 'POST', body: JSON.stringify({ v: 1, id: nextId++, method: 'next', params: {} }) });
+      const reply = JSON.parse(await res.text()) as { ok: boolean; error?: { kind: string } };
+      expect(reply.ok).toBe(false);
+      expect(reply.error?.kind).toBe('no-session');
     } finally {
       await server.close();
     }
