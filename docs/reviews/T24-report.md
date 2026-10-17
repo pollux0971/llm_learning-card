@@ -123,3 +123,7 @@ session `ses_eb7c9326affeMvSXlj4CjL6Dda`,opencode `session_v2.cost` = **$9.94938
 ## 補一輪(顧問 2026-10-17)
 
 快轉 `t24-fix-start`(`8d0f61b`)。四種啟動錯誤(`no-cards`、`router-unavailable`、`root-mismatch`、`not-configured`)維持原句,另加「改好之後按「再試一次」。」與一顆「再試一次」(view.canRetry,按了重新 init);不顯示「複習程式停了」,canRestart 與 canRetry 不同時為 true。session 類錯誤與 review-record-changed 仍是「重新開始」。`fake-cloud.mjs` 的 chat completions 在 `messages[0].content` 不是字串時丟錯(訊息含 messages);第 28 行的 body 讀取不改,也不登記進 NOT_INSTRUMENTED。沒有改測試檔,沒有再跑 cucumber。本輪結束時同一 session 累計 $22.866410。
+
+## 補一輪:standalone 逾時診斷(顧問 2026-10-17)
+
+`apps/test-card/dev/standalone.ts` 只改這一支。每個請求記 method 與耗時。逾時(hello 20 秒、請求 60 秒)的錯誤仍含「側車沒有在時限內回覆」,並附上卡在哪個 method(或 hello)、等了幾毫秒、當時 exitCode 與 killed、stderr 最後 20 行。stderr 改成持續讀、環形緩衝留最後 20 行,不再只 resume()。請求逾時就收掉側車並標成壞掉,之後的請求立刻丟「先前逾時,側車已收掉」,不再各等 60 秒,也不拿走晚到的那一行。hello 逾時仍是殺掉、刪暫存根、把錯誤丟出去;側車先結束仍是「側車已經結束」。
