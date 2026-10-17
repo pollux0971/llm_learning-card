@@ -210,8 +210,13 @@
     gap: 0.5rem;
   }
   .progress {
-    display: grid;
-    gap: 0.2rem;
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 0.75rem;
+    row-gap: 0.2rem;
+  }
+  .progress > :global([data-hud='hp-bar']) {
+    flex-basis: 100%;
   }
   .prompt {
     margin: 0.55rem 0;
