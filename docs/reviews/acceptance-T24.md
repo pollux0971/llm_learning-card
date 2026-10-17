@@ -81,7 +81,7 @@
 ## 5. 變異測試(Stryker,`apps/test-card/src/session.ts` 單檔)
 
 - 指令(command runner;`session.test.ts` 用動態算出來的 file URL 載入,所以 `coverageAnalysis` 要關掉):
-  `cd <worktree> && VITEST_MAX_WORKERS=1 npx stryker run <設定檔>`;設定檔內容:`testRunner: command`、`commandRunner.command = MUTATE_TEST_GLOB='apps/test-card/src/session.test.ts' VITEST_MAX_WORKERS=1 npx vitest run --bail=1 --config vitest.mutate.config.ts`、`coverageAnalysis: off`、`concurrency: 2`、`mutate: ["apps/test-card/src/session.ts"]`。(設定檔是暫存的,不進版控。)
+  直接用 Stryker CLI 帶暫存設定檔跑(**沒有走 `npm run mutate`,所以沒拿 `.stryker.lock`**;當時重活位子由協調者排給 -ed,沒有別的變異測試同時在跑;下次一律走 `npm run mutate`,見 §4g 第 6 條與 `scripts/mutate.test.ts` 的繞過鎖守門),`VITEST_MAX_WORKERS=1`;設定檔內容:`testRunner: command`、`commandRunner.command = MUTATE_TEST_GLOB='apps/test-card/src/session.test.ts' VITEST_MAX_WORKERS=1 npx vitest run --bail=1 --config vitest.mutate.config.ts`、`coverageAnalysis: off`、`concurrency: 2`、`mutate: ["apps/test-card/src/session.ts"]`。(設定檔是暫存的,不進版控。)
 - 結果:**482 個變異,殺死 393、存活 89、逾時 0、無覆蓋 0;分數 81.54%**(≥ 80%)。
 - 存活 89 個的分類(因為過了 80%,不要求逐個;下面分組,行號是 `session.ts` 的行):
   - **等價或冗餘(約 50 個)**:型別守衛 `isRecord`/`isFiniteNumber`/`isStringArray` 的邏輯運算變體(第 33、37 行;進來的值已是物件);`readProgress`/`readNext` 後面還有一層會丟 TypeError 的保護,結果同一個畫面(第 86、97、103、276、305 行的 `if (!x)` 空區塊或 false);回傳物件的 `kind: ''`(第 107、120 行,後面不再讀);多餘的 `clearCard()`(第 211、226、329、368、375 行,前面或後面已清);`submitting = false`(第 379、393 行,`finally` 也會設);`decideKeydown` 的 `&&`/false 變體(第 199 行,`question` 與 `phase` 一起變);`getView` 的 `reteach: true ? …`(第 266 行,其他階段 `reteach` 已被清);`result.correctAnswers = undefined`(第 291 行,相等比較視 undefined 同缺)。
