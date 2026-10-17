@@ -1,0 +1,8 @@
+{
+  "id": "children-same-origin",
+  "text": "[\n  {\n    \"title\": \"子網域也算不同來源\",\n    \"body\": \"主機名稱必須完全一致；`app.example.com` 與 `api.example.com` 即使共享父網域，仍是不同來源。\",\n    \"examples\": [\n      \"`https://app.example.com` 不能直接讀取 `https://api.example.com` 的回應。\"\n    ]\n  },\n  {\n    \"title\": \"同源政策主要限制讀取\",\n    \"body\": \"跨來源通常仍可嵌入圖片、載入腳本或提交表單；被限制的是網頁程式讀取對方回應內容。\",\n    \"examples\": [\n      \"頁面可提交表單到銀行網站，但不能因此讀出銀行回傳的帳戶資料。\"\n    ]\n  },\n  {\n    \"title\": \"預設埠號會被正規化\",\n    \"body\": \"省略的埠號會採用協定預設值；因此 `https` 與明寫 `:443` 的來源相同，改用其他埠號則不同。\",\n    \"examples\": [\n      \"`https://site.test` 與 `https://site.test:443` 同源，但 `https://site.test:8443` 不同源。\"\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

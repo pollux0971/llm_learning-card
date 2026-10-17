@@ -1,0 +1,8 @@
+{
+  "id": "children-cors",
+  "text": "[\n  {\n    \"title\": \"簡單請求仍可能寫入\",\n    \"body\": \"CORS 主要限制網頁讀取回應，不是阻止所有請求。符合簡單請求條件時，瀏覽器可能照送；伺服器仍須另行防範 CSRF。\",\n    \"examples\": [\n      \"跨來源表單 POST 可能已在伺服器建立訂單，即使前端因 CORS 讀不到回應。\"\n    ]\n  },\n  {\n    \"title\": \"回應標頭的可讀範圍\",\n    \"body\": \"跨來源回應中，前端預設只能讀取少數安全標頭；伺服器須用 Access-Control-Expose-Headers 額外公開自訂標頭。\",\n    \"examples\": [\n      \"伺服器若要讓前端讀取 X-Request-Id，需在 Access-Control-Expose-Headers 列出它。\"\n    ]\n  },\n  {\n    \"title\": \"動態來源與快取\",\n    \"body\": \"伺服器若依請求來源動態回傳 Access-Control-Allow-Origin，應同時回傳 Vary: Origin，避免快取把某來源的授權回應錯供給其他來源。\",\n    \"examples\": [\n      \"快取未區分 Origin 時，先允許 app.example 的回應可能被錯誤提供給 evil.example。\"\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}

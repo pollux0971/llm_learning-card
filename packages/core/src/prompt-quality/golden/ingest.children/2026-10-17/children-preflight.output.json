@@ -1,0 +1,8 @@
+{
+  "id": "children-preflight",
+  "text": "[\n  {\n    \"title\": \"預檢的詢問欄位\",\n    \"body\": \"預檢 OPTIONS 會以 `Access-Control-Request-Method` 指出正式方法，並以 `Access-Control-Request-Headers` 列出非簡單標頭；伺服器用相應的 `Access-Control-Allow-*` 回應。\",\n    \"examples\": [\n      \"正式請求是 `PUT` 並帶 `X-Token` 時，預檢會先詢問是否允許 `PUT` 與 `X-Token`。\"\n    ]\n  },\n  {\n    \"title\": \"預檢失敗的結果\",\n    \"body\": \"若預檢回應未允許所需方法或標頭，瀏覽器不會送出正式請求；前端只會收到 CORS 錯誤，不能把預檢當成伺服器驗證機制。\",\n    \"examples\": [\n      \"伺服器未在 `Access-Control-Allow-Methods` 列出 `DELETE` 時，瀏覽器會中止後續的 `DELETE`。\"\n    ]\n  },\n  {\n    \"title\": \"預檢快取的限制\",\n    \"body\": \"預檢快取依來源、目標網址、方法與請求標頭等條件區分；伺服器可用 `Access-Control-Max-Age` 指定有效秒數，但瀏覽器可能設上限。\",\n    \"examples\": [\n      \"同一來源改用 `PATCH` 或新增標頭後，可能因快取條件不同而重新預檢。\"\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}
