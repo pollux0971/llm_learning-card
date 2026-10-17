@@ -38,6 +38,10 @@ npm run dev -w apps/test-card
 | phase-3 | 自身 phase-2 | |
 | phase-4 | 自身 phase-3、05 phase-3 | 縮短版生成 |
 
+**跨資料夾的例外(T24 起)**:`apps/test-card/`(06)要 import `apps/desktop/src/webview/` 的 `review-client.ts` 與 `learning-fs.ts`(10)。
+理由:考試卡用桌面殼的複習 client 與檔案層,不另寫一份(ADR-075;顧問 2026-10-17)。
+只開「06→10」一條,只 import 這兩個檔;10 沒有 → 06 的邊,不會繞成圈。`scripts/boundaries.allow.json` 那一條由 T24 的 worker 跟程式一起加(工單驗收 3)。
+
 ## Wave 0 的重複
 
 | 東西 | 位置 | 整合時移除於 |

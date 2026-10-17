@@ -4,7 +4,7 @@ deps: [T22, T26]
 touches: [apps/test-card/src/App.svelte, apps/test-card/src/session.ts, apps/test-card/src/types.ts, apps/test-card/src/main.ts, apps/test-card/src/stubs/fixtures.ts, apps/test-card/src/stubs/grader.ts, apps/test-card/src/stubs/loader.ts, apps/test-card/src/stubs/memory-fs.ts, apps/test-card/src/stubs/scheduler.ts, apps/test-card/src/stubs/.gitkeep, apps/test-card/vite.config.ts, apps/test-card/package.json, apps/test-card/dev/standalone.ts, apps/test-card/dev/fake-cloud.mjs, apps/test-card/dev/reviews.seed.json, scripts/boundaries.allow.json]
 cpu: heavy
 budget_usd: 5
-status: todo
+status: ready
 owner: worker-grok
 must_catch:
   - apps/test-card/src 底下還有 stubs/、或任何檔 import StubScheduler / StubGrader / MemoryFs / loader:「Wave 0 的重複已移除」的靜態檢查必須紅
@@ -15,6 +15,8 @@ must_catch:
   - start 回 paused 時還出題、或 next 被呼叫:暫停的測試必須紅
   - start 回 no-cards 時顯示「今天沒有到期」:P-28 的測試必須紅
   - 側車錯誤(sidecar-exited、timeout、sidecar-unavailable、internal)時畫面卡住、沒有重試、或重試不是重新 start:錯誤處理的測試必須紅
+  - root-mismatch 或 not-configured 時顯示「複習程式停了」或給「重新開始」(重起也一樣錯):錯誤處理的測試必須紅
+  - next 回缺必要欄位的結果卻照常畫面(沒走 bad-response 的「複習程式停了」):結果收窄的測試必須紅
   - review-record-changed 時沒有顯示「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」、或沒有「重新開始」、或不重新 start 就繼續出題:錯誤處理的測試必須紅
   - start 回 fakeCloud true 時沒有「測試模式」標記,或 false 時有:標記的測試必須紅
   - reteach 的檔不是經 LearningFs 讀(例如經側車、fetch、寫死內容),或 short 是 false 時沒有說明「先看原卡」:reteach 的測試必須紅
@@ -26,7 +28,7 @@ must_catch:
 
 # 工單 T24:06-test-card phase-2 —— 考試卡拿掉 stubs,改吃複習側車
 
-> 狀態:草稿,待技術顧問審。
+> 狀態:顧問審過 2026-10-17(條件見下,5 處已改入本檔)。
 > 作者:UI/Tauri 負責人(06 規格作者,不是實作者)。編號:協調者配(T24)。派工:協調者。
 > 實作:worker-grok(opencode grok-4.7)。紅測試:另一個角色(協調者指定,不是前端、不是開發者)。驗收:-ed。觀感:前端拍、技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
@@ -48,7 +50,11 @@ T22 做好了複習側車:跟終端機同一份 core 在 Node 跑,webview 經 `R
 
 - 刪掉 `apps/test-card/src/stubs/` 整個資料夾的實作檔(`fixtures.ts`、`grader.ts`、`loader.ts`、`memory-fs.ts`、`scheduler.ts`、`.gitkeep`)。
   `stubs/scheduler.test.ts` 是測試檔,由紅測試作者刪(見「紅測試」)。
-- `types.ts` 只留畫面自己要的型別;跟協定重複的(`DueItem`、`Review`、`GradeResult`…)改用 `ReviewClient` 匯出的型別,不再手抄契約。
+- `types.ts` 只留畫面型別;`session.ts` 用一個小的讀取函式,把 `start` / `next` / `submit` 的結果收窄成這些型別(`ReviewClient` 的五個方法都回 `Record<string, unknown>`,沒有匯出結果型別)。欄位照 `handler.ts`:
+  - `start`:`{state, today, resumed, total, answered, deferred, dailyCap, fakeCloud}`
+  - `next`:`{kind:'question', card, stage, type, prompt, progress:{index,total}, stuck, overdueDays, blanks(只有填空)}` | `{kind:'reteach', card, path, short}` | `{kind:'done'}`
+  - `submit`:`{status, pass, feedback, cardDone, newStage?, correctAnswers?}`
+  - 缺了必要欄位就當 `bad-response`,走「複習程式停了」那一列。不要手抄 `DueItem`、`Review`、`GradeResult`。
 - 靜態檢查:`apps/test-card/src` 底下沒有 `stubs/`,沒有任何檔 import `stubs/`、`yaml`、`date-fns`,沒有讀 `state/reviews.json` 或 `questions/` 的字串。
 
 ### 2. `TestSession` 改吃 `ReviewClient`(`apps/test-card/src/session.ts`)
@@ -80,6 +86,7 @@ export interface SessionDeps {
 
 ### 3. 桌面版與單獨執行的接法(`apps/test-card/src/main.ts`、`App.svelte`)
 
+- `review-client.ts` 會 import `@core/session/protocol.js`,所以 `apps/test-card/vite.config.ts` 要加 `@core` alias,寫法照根目錄 `vitest.config.ts`;沒有它,`npm run build -w apps/test-card` 會解析失敗(這個檔已在 touches)。
 - 在 Tauri 裡(`isTauri()`):`client = createReviewClient()`、`fs = createLearningFs()`(都是 `apps/desktop/src/webview/`)。
 - 不在 Tauri(瀏覽器,單獨執行):`client = createReviewClient({ handler: (line) => fetch('/__review', { method: 'POST', body: line }).then((r) => r.text()) })`;`fs` 是一個 `read` 一律丟錯的物件(單獨執行的種子資料不會觸發 reteach,見驗收 5)。
 - `scripts/boundaries.allow.json` 加一條 06-test-card → 10-desktop-shell(理由寫 ADR-075:考試卡用桌面殼的 `ReviewClient` 與 `LearningFs`)。
@@ -93,10 +100,11 @@ export interface SessionDeps {
 | `router-unavailable` | 「帳本身分驗不過,批改不能用。請在終端機執行 `npx tsx scripts/vault.ts show` 看原因。」 |
 | `paused` | 同 `start` 回 `paused` 的畫面:「今天已暫停。要繼續,在終端機執行 `npx tsx scripts/review.ts --dir <learning 目錄> --today <今天> --unpause`。」 |
 | `review-record-changed` | 顯示 `ReviewError.message` 原文(T26 定稿的全文:「複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。」),加一顆「重新開始」;按了重新 `init()`。剛才那一題沒有被記下(T26 拒絕寫入),重新開始後會再問到 |
+| `root-mismatch`、`not-configured` | 顯示 `ReviewError.message` 原文(protocol 的固定句),加「請在終端機執行 `npx tsx scripts/vault.ts show` 看原因。」;**不給**「重新開始」(重起也一樣錯) |
 | `sidecar-exited`、`timeout`、`sidecar-unavailable`、`internal`、`busy` | 「複習程式停了。」加一顆「重新開始」;按了重新 `init()`(從 `start` 開始;T22 的 Rust 會重起側車) |
-| 其他 | 同上 |
+| 其他(含 `no-session`、`bad-response`) | 同上 |
 
-- 錯誤畫面不顯示 `ReviewError` 的 `message` 以外的東西(不顯示 stack、不顯示原始 JSON)。
+- 錯誤畫面不顯示 stack、原始 JSON 或例外原文。
 
 ### 5. 單獨執行(ADR-022,`npm run dev -w apps/test-card`)
 
@@ -150,7 +158,7 @@ export interface SessionDeps {
 | 2 | 程序內跑真的 core | vitest / cucumber:`createReviewClient({ handler: createReviewHandler({ … routerFactory: 假 router }) })`,暫存根(learning-minimal 複本);phase-2 的「real scheduler」「answers written immediately」「interface and terminal agree」「grading error」四個場景 | 紅 |
 | 2 | 縮短版 | 假 `fs` 記錄讀了哪個路徑;`short: false` 時讀的是原卡的 path、畫面有那一句說明;靜態:`App.svelte` 沒有 `{@html`、`session.ts` 沒有 `innerHTML` | 紅 |
 | 3 | 測試模式標記 | vitest:`fakeCloud` true / false 兩種的 view | 紅 |
-| 4 | 錯誤 | vitest:每個 kind 的畫面狀態;重試時重新 `start` | 紅 |
+| 4 | 錯誤 | vitest:每個 kind 的畫面狀態(含 root-mismatch、not-configured 無「重新開始」);重試時重新 `start`;`next` 回缺欄位 → 錯誤畫面(bad-response) | 紅 |
 | 4 | path 防護 | cucumber `A file outside the learning directory cannot be reached`:考試卡用的那個 `fs`(桌面版的 `LearningFs`,經 T2c-1 的 probe)讀 `../x` 被拒絕 | 紅 |
 | 5 | 單獨執行 | vitest:`dev/standalone.ts` 的暫存根不在 `contracts/fixtures/` 底下、側車環境有 `LC_REVIEW_FAKE_CLOUD`、`POST /__review` 往返一行 | 紅 |
 | 6 | phase-1 不退步 | 既有的 `features/steps/test-card.steps.ts`、`apps/test-card/src/session.test.ts` **改接新的後端**(見下),phase-1 場景全綠 | 改完後綠 |
