@@ -122,3 +122,12 @@ export const DONE_PHASES_TAG_EXPRESSION = '((@test-card and (@phase-1 or @phase-
  * 否則日後有人把它翻回非 done 會被放過。下一個 phase 要先釘時,把它加進來,標 done 後再清掉。
  */
 export const PENDING_DONE_PHASES: readonly { folder: string; phase: string }[] = [];
+
+// ── T32:考試卡 header 的版面(顧問 2026-10-18 審過) ───────────────────────
+/** 「逾期 N」左緣減「已答 / 總數」右緣:靠左、保留上限(`00-design.md` §5.5 是同一句話);建議 column-gap 0.75rem = 12 px */
+export const HEADER_GAP_MIN_PX = 8;
+export const HEADER_GAP_MAX_PX = 24;
+/** HP 條上緣離兩段較低的下緣:0.2rem(T24 的值,「送出」回到 T24 位置的前提);rem 從 :root 的 font-size 讀 */
+export const HEADER_HP_ROW_GAP_REM = 0.2;
+/** 同一行(上緣 y)、HP 條間距、HP 條寬度與左緣的容許誤差 */
+export const HEADER_LAYOUT_TOLERANCE_PX = 1;
