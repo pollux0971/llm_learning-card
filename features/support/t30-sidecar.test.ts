@@ -195,11 +195,20 @@ describe('接線(靜態,驗收 2、3)', () => {
     expect(src).toMatch(/missingGradingKeys\s*\(\s*process\.env\s*\)/);
   });
 
-  it('「今天」沒設 LC_REVIEW_TODAY 時傳 localToday 這個函式本身(每次 start 才算),不是起來時算一次的字串', () => {
+  it('「今天」沒設 LC_REVIEW_TODAY 時傳 localToday 這個函式本身(每次 start 才算);hello 的 today 仍可以起來時算一次', () => {
     const src = sidecar();
     // 有一處用到 localToday 但後面沒有接 `(`(宣告 `function localToday(` 與呼叫 `localToday()` 都不算)
     expect(src).toMatch(/\blocalToday\b(?!\s*\()/);
-    expect(src).not.toMatch(/today\s*=\s*localToday\s*\(\s*\)/);
+  });
+
+  it('createReviewHandler 的 today 傳的是函式來源,不是起來時算好的那個字串變數', () => {
+    const src = sidecar();
+    const call = /createReviewHandler\(\{([^]*?)\n  \}\)/.exec(src);
+    expect(call, '找不到 createReviewHandler({…})').not.toBeNull();
+    const body = call![1]!;
+    expect(body).toMatch(/\btoday\s*:/);
+    expect(body).not.toMatch(/\btoday\s*,/);
+    expect(body).not.toMatch(/\btoday\s*:\s*today\s*[,\n]/);
   });
 
   it('LC_REVIEW_FAKE_CLOUD 只在起來時讀一次(不在 reloadEnv / start 裡再讀)', () => {
