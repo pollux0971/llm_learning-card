@@ -12,6 +12,10 @@
  *   canRestart       error 狀態有沒有「重新開始」(按了 = 再呼叫一次 init())
  *   canRetry         error 狀態有沒有「再試一次」(啟動錯誤四種:no-cards、router-unavailable、root-mismatch、not-configured;按了 = 再呼叫一次 init(),從 start 開始)。
  *                    canRetry 與 canRestart 不會同時為 true;兩個都 false = 沒有按鈕(例如 paused / empty 的錯誤畫面以外的狀態)
+ *   overdueCount     question 狀態的逾期數 = start 結果的 overdue(T23:一天之內固定,不是目前這張卡的 overdueDays);其他狀態 0
+ *   summaryLines     done 狀態小結的句子(不含第一句「今天的複習都做完了。」,那句在 message):
+ *                    「通過 {passed} 張、退回 {returned} 張。」→(retryLater > 0 才有)「另有 {retryLater} 題評分失敗,下次再考。」→
+ *                    「明天預估 {shown} 張。」或(capped)「明天預估 {shown} 張(已到每天上限,另 {overflow} 張順延)。」;其他狀態 []
  *   testModeNotice   start 回 fakeCloud true 才有:'測試模式:批改是假的';false 或還沒 start 時 undefined
  *   answeredCount    question 狀態的已答數 = progress.index - 1;其他狀態 0(T15 的靜態檢查要 App.svelte 寫 view.answeredCount)
  *   totalCount       question 狀態的總數 = progress.total;其他狀態 0
@@ -48,6 +52,8 @@ interface View {
   testModeNotice: string | undefined;
   answeredCount: number;
   totalCount: number;
+  overdueCount: number;
+  summaryLines: string[];
   current: { card: string; type: 'fill' | 'apply'; stage: number; prompt: string; blanks: number; stuck: boolean; overdueDays: number } | undefined;
   submitting: boolean;
   gradingError: string | undefined;
@@ -128,7 +134,15 @@ function fakeFs(files: Record<string, string> = {}): Fs & { reads: string[] } {
   };
 }
 
-const START_READY: Obj = { state: 'ready', today: '2026-09-10', resumed: false, total: 5, answered: 0, deferred: 0, dailyCap: 10, fakeCloud: false };
+const START_READY: Obj = { state: 'ready', today: '2026-09-10', resumed: false, total: 5, answered: 0, deferred: 0, dailyCap: 10, overdue: 2, fakeCloud: false };
+const summaryResult = (over: Obj = {}): Obj => ({
+  passed: 3,
+  returned: 2,
+  retryLater: 0,
+  tomorrow: { total: 6, capped: false, shown: 6, overflow: 0 },
+  snapshot: 'committed',
+  ...over,
+});
 const start = (over: Obj = {}): Obj => ({ ...START_READY, ...over });
 const fillQ = (over: Obj = {}): Obj => ({
   kind: 'question',
@@ -449,7 +463,7 @@ describe('做完要叫 summary(驗收 2 的 done 列)', () => {
       start: [start()],
       next: [fillQ(), { kind: 'done' }],
       submit: [graded()],
-      summary: [{ passed: 1, returned: 0, retryLater: 0, tomorrow: 2, snapshot: 'committed' }],
+      summary: [summaryResult({ passed: 1, returned: 0, tomorrow: { total: 2, capped: false, shown: 2, overflow: 0 } })],
     });
     await s.init();
     await s.submitFill(['a', 'b', 'c']);
@@ -462,14 +476,14 @@ describe('做完要叫 summary(驗收 2 的 done 列)', () => {
   });
 
   it('第一個 next 就是 done(續答到底):一樣要 summary', async () => {
-    const { s, f } = await ready({ start: [start()], next: [{ kind: 'done' }], summary: [{ passed: 0, returned: 0, retryLater: 0, tomorrow: 0, snapshot: 'none' }] });
+    const { s, f } = await ready({ start: [start()], next: [{ kind: 'done' }], summary: [summaryResult({ passed: 0, returned: 0, tomorrow: { total: 0, capped: false, shown: 0, overflow: 0 }, snapshot: 'none' })] });
     await s.init();
     expect(f.count('summary')).toBe(1);
     expect(s.getView().state).toBe('done');
   });
 
   it('看畫面(getView)不會再叫 summary;summary 只在 done 那一刻叫一次', async () => {
-    const { s, f } = await ready({ start: [start()], next: [{ kind: 'done' }], summary: [{ passed: 0, returned: 0, retryLater: 0, tomorrow: 0, snapshot: 'none' }] });
+    const { s, f } = await ready({ start: [start()], next: [{ kind: 'done' }], summary: [summaryResult({ passed: 0, returned: 0, tomorrow: { total: 0, capped: false, shown: 0, overflow: 0 }, snapshot: 'none' })] });
     await s.init();
     s.getView();
     s.getView();
@@ -894,7 +908,7 @@ describe('TestSession 只經 client 與 fs(驗收 2 的最後一條)', () => {
       start: [start()],
       next: [fillQ(), applyQ(), { kind: 'done' }],
       submit: [graded(), graded()],
-      summary: [{ passed: 2, returned: 0, retryLater: 0, tomorrow: 1, snapshot: 'committed' }],
+      summary: [summaryResult({ passed: 2, returned: 0, tomorrow: { total: 1, capped: false, shown: 1, overflow: 0 } })],
     });
     await s.init();
     await s.submitFill(['a', 'b', 'c']);
@@ -904,5 +918,673 @@ describe('TestSession 只經 client 與 fs(驗收 2 的最後一條)', () => {
     expect(fs.reads).toEqual([]);
     expect(f.calls.map((c) => c.method)).toEqual(['start', 'next', 'submit', 'next', 'submit', 'next', 'summary']);
     expect(f.count('status')).toBe(0);
+  });
+});
+
+// ================================================================ T23(06 phase-3)
+
+const STOPPED_TEXT = '複習程式停了。';
+
+/** 走到錯誤畫面:複習程式停了、可重新開始、沒有再試一次(缺欄位的結果走 showStopped,不是 showError) */
+function expectStopped(s: Session, label: string): void {
+  const v = s.getView();
+  expect(v.state, label).toBe('error');
+  expect(v.message, label).toContain(STOPPED_TEXT);
+  expect(v.canRestart, label).toBe(true);
+  expect(v.canRetry, label).toBe(false);
+}
+
+// ---------------------------------------------------------------- 驗收 1:逾期數
+
+describe('readStart 要求 overdue 是有限數字(驗收 1)', () => {
+  it.each([
+    ['缺', undefined],
+    ['字串', '2'],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['null', null],
+    ['布林', true],
+  ])('overdue %s → 複習程式停了,不出題、不叫 next', async (_label, bad) => {
+    const { s, f } = await ready({ start: [start({ overdue: bad })], next: [fillQ()] });
+    await s.init();
+    expectStopped(s, String(_label));
+    expect(f.calls.map((c) => c.method)).toEqual(['start']);
+    expect(s.getView().current).toBeUndefined();
+  });
+
+  it.each(['paused', 'empty'])('%s 的結果也要有 overdue(缺 → 複習程式停了)', async (state) => {
+    const { s } = await ready({ start: [start({ state, overdue: undefined })] });
+    await s.init();
+    expectStopped(s, state);
+  });
+
+  it('overdue 是 0 合法(不是缺)', async () => {
+    const { s } = await ready({ start: [start({ overdue: 0 })], next: [fillQ()] });
+    await s.init();
+    expect(s.getView().state).toBe('question');
+    expect(s.getView().overdueCount).toBe(0);
+  });
+});
+
+describe('header 的逾期數(驗收 1)', () => {
+  it('overdueCount 是 start 的 overdue,不是目前這張卡的 overdueDays', async () => {
+    const { s } = await ready({ start: [start({ overdue: 3 })], next: [fillQ({ overdueDays: 9 })] });
+    await s.init();
+    const v = s.getView();
+    expect(v.overdueCount).toBe(3);
+    expect(v.current!.overdueDays).toBe(9);
+  });
+
+  it('答一題、換下一題,逾期數都不變(每一題的 overdueDays 不同)', async () => {
+    const { s } = await ready({
+      start: [start({ overdue: 3 })],
+      next: [fillQ({ overdueDays: 5 }), applyQ({ overdueDays: 0, progress: { index: 2, total: 5 } }), fillQ({ overdueDays: 1, progress: { index: 3, total: 5 } })],
+      submit: [graded(), graded()],
+    });
+    await s.init();
+    expect(s.getView().overdueCount).toBe(3);
+    await s.submitFill(['a', 'b', 'c']);
+    expect(s.getView().overdueCount).toBe(3);
+    await s.next();
+    expect(s.getView().overdueCount).toBe(3);
+    await s.submitApply('x');
+    await s.next();
+    expect(s.getView().overdueCount).toBe(3);
+    expect(s.getView().answeredCount).toBe(2);
+  });
+
+  it('逾期數 0 也是 0(不是 undefined、不是被省略)', async () => {
+    const { s } = await ready({ start: [start({ overdue: 0 })], next: [fillQ({ overdueDays: 4 })] });
+    await s.init();
+    expect(s.getView().overdueCount).toBe(0);
+  });
+
+  it('重新 init(續答)用新的 start 結果的 overdue', async () => {
+    const { s } = await ready({
+      start: [start({ overdue: 4 }), start({ overdue: 7, resumed: true, answered: 1 })],
+      next: [fillQ(), fillQ({ progress: { index: 2, total: 5 } })],
+    });
+    await s.init();
+    expect(s.getView().overdueCount).toBe(4);
+    await s.init();
+    expect(s.getView().overdueCount).toBe(7);
+    expect(s.getView().answeredCount).toBe(1);
+  });
+
+  it('不是題目狀態時 overdueCount 是 0(paused / empty / done / error)', async () => {
+    const paused = await ready({ start: [start({ state: 'paused', overdue: 5 })] });
+    await paused.s.init();
+    expect(paused.s.getView().overdueCount).toBe(0);
+    const empty = await ready({ start: [start({ state: 'empty', total: 0, overdue: 5 })] });
+    await empty.s.init();
+    expect(empty.s.getView().overdueCount).toBe(0);
+    const done = await ready({ start: [start({ overdue: 5 })], next: [{ kind: 'done' }], summary: [summaryResult()] });
+    await done.s.init();
+    expect(done.s.getView().overdueCount).toBe(0);
+    const err = await ready({ start: [new ReviewError('internal', 'x')] });
+    await err.s.init();
+    expect(err.s.getView().overdueCount).toBe(0);
+  });
+
+  it('已答 / 總數還是 progress 的值(逾期數不插進去、不改字):answeredCount = index - 1,totalCount = total', async () => {
+    const { s } = await ready({ start: [start({ overdue: 3 })], next: [fillQ({ progress: { index: 3, total: 5 } })] });
+    await s.init();
+    expect(s.getView().answeredCount).toBe(2);
+    expect(s.getView().totalCount).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------- 驗收 2:小結
+
+describe('小結(驗收 2)', () => {
+  async function doneWith(summary: Obj): Promise<Session> {
+    const { s } = await ready({ start: [start()], next: [{ kind: 'done' }], summary: [summary] });
+    await s.init();
+    return s;
+  }
+
+  it('通過 3、退回 2、沒超過上限:message 是「今天的複習都做完了。」,後面兩句', async () => {
+    const s = await doneWith(summaryResult());
+    const v = s.getView();
+    expect(v.state).toBe('done');
+    expect(v.message).toBe('今天的複習都做完了。');
+    expect(v.summaryLines).toEqual(['通過 3 張、退回 2 張。', '明天預估 6 張。']);
+  });
+
+  it('passed 與 returned 不對調:通過 1、退回 4', async () => {
+    const s = await doneWith(summaryResult({ passed: 1, returned: 4 }));
+    expect(s.getView().summaryLines[0]).toBe('通過 1 張、退回 4 張。');
+  });
+
+  it('全是 0:「通過 0 張、退回 0 張。」(0 照樣顯示)與「明天預估 0 張。」', async () => {
+    const s = await doneWith(summaryResult({ passed: 0, returned: 0, tomorrow: { total: 0, capped: false, shown: 0, overflow: 0 } }));
+    expect(s.getView().summaryLines).toEqual(['通過 0 張、退回 0 張。', '明天預估 0 張。']);
+  });
+
+  it('retryLater 是 0:不說「評分失敗」', async () => {
+    const s = await doneWith(summaryResult({ retryLater: 0 }));
+    expect(s.getView().summaryLines.join('\n')).not.toContain('評分失敗');
+    expect(s.getView().summaryLines).toHaveLength(2);
+  });
+
+  it('retryLater > 0:在「通過 / 退回」與「明天預估」之間多一句「另有 N 題評分失敗,下次再考。」', async () => {
+    const s = await doneWith(summaryResult({ retryLater: 2 }));
+    expect(s.getView().summaryLines).toEqual(['通過 3 張、退回 2 張。', '另有 2 題評分失敗,下次再考。', '明天預估 6 張。']);
+  });
+
+  it('retryLater = 1 也說(邊界是 > 0,不是 > 1)', async () => {
+    const s = await doneWith(summaryResult({ retryLater: 1 }));
+    expect(s.getView().summaryLines[1]).toBe('另有 1 題評分失敗,下次再考。');
+  });
+
+  it('capped 為 true:說上限與順延張數;shown 是上限', async () => {
+    const s = await doneWith(summaryResult({ tomorrow: { total: 13, capped: true, shown: 10, overflow: 3 } }));
+    expect(s.getView().summaryLines).toEqual(['通過 3 張、退回 2 張。', '明天預估 10 張(已到每天上限,另 3 張順延)。']);
+  });
+
+  it('capped 為 false:不說上限、不說順延(就算 overflow 有值也不說)', async () => {
+    const s = await doneWith(summaryResult({ tomorrow: { total: 6, capped: false, shown: 6, overflow: 0 } }));
+    const text = s.getView().summaryLines.join('\n');
+    expect(text).not.toContain('上限');
+    expect(text).not.toContain('順延');
+  });
+
+  it('retryLater > 0 又 capped:三句依序', async () => {
+    const s = await doneWith(summaryResult({ retryLater: 1, tomorrow: { total: 12, capped: true, shown: 10, overflow: 2 } }));
+    expect(s.getView().summaryLines).toEqual(['通過 3 張、退回 2 張。', '另有 1 題評分失敗,下次再考。', '明天預估 10 張(已到每天上限,另 2 張順延)。']);
+  });
+
+  it('snapshot、answeredThisRun 讀進來但這張不顯示:多給 answeredThisRun 不多一句', async () => {
+    const s = await doneWith(summaryResult({ answeredThisRun: 4, snapshot: 'committed' }));
+    expect(s.getView().summaryLines).toEqual(['通過 3 張、退回 2 張。', '明天預估 6 張。']);
+    expect(s.getView().message).not.toContain('4');
+  });
+
+  it('續答到 done(第一個 next 就是 done):一樣顯示小結', async () => {
+    const { s } = await ready({ start: [start({ resumed: true, answered: 5 })], next: [{ kind: 'done' }], summary: [summaryResult({ passed: 5, returned: 0 })] });
+    await s.init();
+    expect(s.getView().summaryLines[0]).toBe('通過 5 張、退回 0 張。');
+  });
+
+  it('summaryLines 只有 done 才有;題目、錯誤、暫停時是空陣列', async () => {
+    const q = await ready({ start: [start()], next: [fillQ()] });
+    await q.s.init();
+    expect(q.s.getView().summaryLines).toEqual([]);
+    const e = await ready({ start: [new ReviewError('internal', 'x')] });
+    await e.s.init();
+    expect(e.s.getView().summaryLines).toEqual([]);
+  });
+
+  it('summaryLines 在每一個非 done 狀態都是空陣列(loading / paused / empty / reteach / question / error;T23 驗收 S7)', async () => {
+    const loading = await ready({ start: [start()] });
+    expect(loading.s.getView().state).toBe('loading');
+    expect(loading.s.getView().summaryLines).toEqual([]);
+    const paused = await ready({ start: [start({ state: 'paused' })] });
+    await paused.s.init();
+    expect(paused.s.getView().state).toBe('paused');
+    expect(paused.s.getView().summaryLines).toEqual([]);
+    const empty = await ready({ start: [start({ state: 'empty', total: 0 })] });
+    await empty.s.init();
+    expect(empty.s.getView().state).toBe('empty');
+    expect(empty.s.getView().summaryLines).toEqual([]);
+    const re = await ready(
+      { start: [start()], next: [{ kind: 'reteach', card: 'sec-0001', path: SHORT_PATH, short: true }] },
+      { [SHORT_PATH]: '同源指協定、主機、埠號三者相同。' },
+    );
+    await re.s.init();
+    expect(re.s.getView().state).toBe('reteach');
+    expect(re.s.getView().summaryLines).toEqual([]);
+    const q = await ready({ start: [start()], next: [fillQ()] });
+    await q.s.init();
+    expect(q.s.getView().state).toBe('question');
+    expect(q.s.getView().summaryLines).toEqual([]);
+    const err = await ready({ start: [new ReviewError('no-cards', 'x')] });
+    await err.s.init();
+    expect(err.s.getView().state).toBe('error');
+    expect(err.s.getView().summaryLines).toEqual([]);
+  });
+
+  it('done 之後按重新開始(init)→ summaryLines 清掉', async () => {
+    const { s } = await ready({ start: [start(), start()], next: [{ kind: 'done' }, fillQ()], summary: [summaryResult()] });
+    await s.init();
+    expect(s.getView().summaryLines.length).toBeGreaterThan(0);
+    await s.init();
+    expect(s.getView().summaryLines).toEqual([]);
+    expect(s.getView().state).toBe('question');
+  });
+});
+
+describe('readSummary 的必要欄位(驗收 2:缺一個就是 bad-response → 複習程式停了)', () => {
+  const broken: [string, Obj][] = [
+    ['缺 passed', summaryResult({ passed: undefined })],
+    ['passed 是字串', summaryResult({ passed: '3' })],
+    ['passed 是 NaN', summaryResult({ passed: Number.NaN })],
+    ['缺 returned', summaryResult({ returned: undefined })],
+    ['returned 是 Infinity', summaryResult({ returned: Number.POSITIVE_INFINITY })],
+    ['缺 retryLater', summaryResult({ retryLater: undefined })],
+    ['retryLater 是字串', summaryResult({ retryLater: '0' })],
+    ['缺 tomorrow', summaryResult({ tomorrow: undefined })],
+    ['tomorrow 是數字(舊形狀)', summaryResult({ tomorrow: 6 })],
+    ['tomorrow 是 null', summaryResult({ tomorrow: null })],
+    ['tomorrow 缺 total', summaryResult({ tomorrow: { capped: false, shown: 6, overflow: 0 } })],
+    ['tomorrow.total 是字串', summaryResult({ tomorrow: { total: '6', capped: false, shown: 6, overflow: 0 } })],
+    ['tomorrow 缺 capped', summaryResult({ tomorrow: { total: 6, shown: 6, overflow: 0 } })],
+    ['tomorrow.capped 是字串', summaryResult({ tomorrow: { total: 6, capped: 'false', shown: 6, overflow: 0 } })],
+    ['tomorrow.capped 是 0', summaryResult({ tomorrow: { total: 6, capped: 0, shown: 6, overflow: 0 } })],
+    ['tomorrow 缺 shown', summaryResult({ tomorrow: { total: 6, capped: false, overflow: 0 } })],
+    ['tomorrow.shown 是 NaN', summaryResult({ tomorrow: { total: 6, capped: false, shown: Number.NaN, overflow: 0 } })],
+    ['tomorrow 缺 overflow', summaryResult({ tomorrow: { total: 6, capped: false, shown: 6 } })],
+    ['tomorrow.overflow 是字串', summaryResult({ tomorrow: { total: 6, capped: false, shown: 6, overflow: '0' } })],
+    ['缺 snapshot', summaryResult({ snapshot: undefined })],
+    ['snapshot 是數字', summaryResult({ snapshot: 1 })],
+  ];
+  it.each(broken)('%s → 複習程式停了,不顯示小結', async (label, summary) => {
+    const { s } = await ready({ start: [start()], next: [{ kind: 'done' }], summary: [summary] });
+    await s.init();
+    expectStopped(s, label);
+    expect(s.getView().summaryLines).toEqual([]);
+    expect(s.getView().state).not.toBe('done');
+  });
+});
+
+// ---------------------------------------------------------------- 驗收 3:stuck
+
+describe('stuck(驗收 3)', () => {
+  it('next 的 stuck 是 true:current.stuck 為 true;false 為 false', async () => {
+    const t = await ready({ start: [start()], next: [fillQ({ stuck: true })] });
+    await t.s.init();
+    expect(t.s.getView().current!.stuck).toBe(true);
+    const f = await ready({ start: [start()], next: [fillQ({ stuck: false })] });
+    await f.s.init();
+    expect(f.s.getView().current!.stuck).toBe(false);
+  });
+
+  it('stuck 跟著每一題走:stuck 的一題之後的下一題是 false', async () => {
+    const { s } = await ready({
+      start: [start()],
+      next: [fillQ({ stuck: true }), applyQ({ stuck: false, progress: { index: 2, total: 5 } })],
+      submit: [graded()],
+    });
+    await s.init();
+    expect(s.getView().current!.stuck).toBe(true);
+    await s.submitFill(['a', 'b', 'c']);
+    await s.next();
+    expect(s.getView().current!.stuck).toBe(false);
+  });
+
+  it('stuck 不是布林(缺、字串 "true"、1)→ 複習程式停了(不是被當成 false)', async () => {
+    for (const bad of [undefined, 'true', 1, null]) {
+      const { s } = await ready({ start: [start()], next: [fillQ({ stuck: bad })] });
+      await s.init();
+      expectStopped(s, `stuck=${String(bad)}`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------- 驗收 5(b):缺欄位之後只給重新開始
+
+describe('缺欄位的結果:複習程式停了 + 重新開始,沒有再試一次(驗收 5 (b))', () => {
+  it('start 的結果缺必要欄位(讀取函式回 undefined)', async () => {
+    const { s } = await ready({ start: [{ state: 'ready' }] });
+    await s.init();
+    expectStopped(s, 'start');
+  });
+
+  it('next 的結果缺必要欄位', async () => {
+    const { s } = await ready({ start: [start()], next: [{ kind: 'question', card: 'sec-0001' }] });
+    await s.init();
+    expectStopped(s, 'next');
+  });
+
+  it('submit 的結果缺必要欄位', async () => {
+    const { s } = await ready({ start: [start()], next: [fillQ()], submit: [{ status: 'passed' }] });
+    await s.init();
+    await s.submitFill(['a', 'b', 'c']);
+    expectStopped(s, 'submit');
+    expect(s.getView().submitting).toBe(false);
+  });
+
+  it('summary 的結果缺必要欄位', async () => {
+    const { s } = await ready({ start: [start()], next: [{ kind: 'done' }], summary: [{ passed: 1 }] });
+    await s.init();
+    expectStopped(s, 'summary');
+  });
+
+  it('對照:丟 kind 為 no-cards 的 ReviewError 才是「再試一次」(canRetry true、canRestart false)', async () => {
+    const { s } = await ready({ start: [new ReviewError('no-cards', 'x')] });
+    await s.init();
+    expect(s.getView().canRetry).toBe(true);
+    expect(s.getView().canRestart).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------- 驗收 6:結果收窄的缺口(acceptance-T24 §5 第 1–5 組)
+
+describe('第 1 組:readStart 的 today、resumed、deferred、dailyCap', () => {
+  it.each([
+    ['today 缺', { today: undefined }],
+    ['today 是數字', { today: 20260910 }],
+    ['resumed 缺', { resumed: undefined }],
+    ['resumed 是字串', { resumed: 'false' }],
+    ['deferred 缺', { deferred: undefined }],
+    ['deferred 是字串', { deferred: '0' }],
+    ['deferred 是 NaN', { deferred: Number.NaN }],
+    ['dailyCap 缺', { dailyCap: undefined }],
+    ['dailyCap 是字串', { dailyCap: '10' }],
+    ['dailyCap 是 Infinity', { dailyCap: Number.POSITIVE_INFINITY }],
+    ['total 缺', { total: undefined }],
+    ['answered 缺', { answered: undefined }],
+    ['fakeCloud 缺', { fakeCloud: undefined }],
+    ['fakeCloud 是字串', { fakeCloud: 'false' }],
+  ])('%s → 複習程式停了,不叫 next', async (label, over) => {
+    const { s, f } = await ready({ start: [start(over)], next: [fillQ()] });
+    await s.init();
+    expectStopped(s, label);
+    expect(f.calls.map((c) => c.method)).toEqual(['start']);
+  });
+});
+
+describe('第 2 組:readNext 題目的 stage、reteach 的 card', () => {
+  it.each([
+    ['stage 缺', { stage: undefined }],
+    ['stage 是字串', { stage: '1' }],
+    ['stage 是 NaN', { stage: Number.NaN }],
+  ])('題目 %s → 複習程式停了', async (label, over) => {
+    const { s } = await ready({ start: [start()], next: [fillQ(over)] });
+    await s.init();
+    expectStopped(s, label);
+  });
+
+  it.each([
+    ['應用題 stage 缺', applyQ({ stage: undefined })],
+    ['應用題 stage 是字串', applyQ({ stage: '3' })],
+  ])('%s → 複習程式停了', async (label, q) => {
+    const { s } = await ready({ start: [start()], next: [q] });
+    await s.init();
+    expectStopped(s, label);
+  });
+
+  it.each([
+    ['card 缺', { kind: 'reteach', path: 'cards/security/sec-0001.md', short: false }],
+    ['card 是數字', { kind: 'reteach', card: 1, path: 'cards/security/sec-0001.md', short: false }],
+    ['path 缺', { kind: 'reteach', card: 'sec-0001', short: false }],
+    ['short 缺', { kind: 'reteach', card: 'sec-0001', path: 'cards/security/sec-0001.md' }],
+  ])('reteach %s → 複習程式停了,不去讀檔', async (label, reteach) => {
+    const { s, fs } = await ready({ start: [start()], next: [reteach as Obj] }, { 'cards/security/sec-0001.md': '內文' });
+    await s.init();
+    expectStopped(s, label);
+    expect(fs.reads).toEqual([]);
+  });
+});
+
+describe('第 3 組:readSubmit 的 error 與 correctAnswers', () => {
+  async function submitWith(result: Obj): Promise<Session> {
+    const { s } = await ready({ start: [start()], next: [fillQ()], submit: [result] });
+    await s.init();
+    await s.submitFill(['a', 'b', 'c']);
+    return s;
+  }
+
+  it('status error 但 pass 是 false → 複習程式停了(error 的 pass 一定是 null)', async () => {
+    expectStopped(await submitWith({ status: 'error', pass: false, feedback: 'x', cardDone: false }), 'error+false');
+  });
+
+  it('status error 但 pass 是 true → 複習程式停了', async () => {
+    expectStopped(await submitWith({ status: 'error', pass: true, feedback: 'x', cardDone: false }), 'error+true');
+  });
+
+  it('status error 但沒有 pass 欄位 → 複習程式停了', async () => {
+    expectStopped(await submitWith({ status: 'error', feedback: 'x', cardDone: false }), 'error+missing');
+  });
+
+  it('status passed 但 pass 是 null → 複習程式停了', async () => {
+    expectStopped(await submitWith({ status: 'passed', pass: null, feedback: 'x', cardDone: true }), 'passed+null');
+  });
+
+  it('correctAnswers 混一個數字(["協定", 1])→ 複習程式停了(every,不是 some)', async () => {
+    expectStopped(await submitWith(graded({ status: 'failed', pass: false, correctAnswers: ['協定', 1] })), 'mixed');
+  });
+
+  it('correctAnswers 第一個是數字、後面是字串 → 也停了', async () => {
+    expectStopped(await submitWith(graded({ status: 'failed', pass: false, correctAnswers: [1, '協定'] })), 'mixed2');
+  });
+
+  it('correctAnswers 不是陣列 → 停了', async () => {
+    expectStopped(await submitWith(graded({ status: 'failed', pass: false, correctAnswers: '協定' })), 'string');
+  });
+
+  it('對照:correctAnswers 全是字串 → 照常顯示', async () => {
+    const s = await submitWith(graded({ status: 'failed', pass: false, correctAnswers: ['協定', '主機', '埠'] }));
+    expect(s.getView().state).toBe('question');
+    expect(s.getView().result!.correctAnswers).toEqual(['協定', '主機', '埠']);
+  });
+});
+
+describe('第 4 組:reviewOf 的備援分支(不是同一個 class 的 ReviewError)', () => {
+  function foreign(kind: unknown, message = 'x'): Error {
+    const e = new Error(message);
+    e.name = 'ReviewError';
+    (e as unknown as { kind: unknown }).kind = kind;
+    return e;
+  }
+
+  it('Error(不是 ReviewError 的 instance),name 是 "ReviewError"、kind 是 no-cards → 走「再試一次」', async () => {
+    const { s } = await ready({ start: [foreign('no-cards')] });
+    await s.init();
+    const v = s.getView();
+    expect(v.state).toBe('error');
+    expect(v.message).toContain('掃描到 0 張卡');
+    expect(v.canRetry).toBe(true);
+    expect(v.canRestart).toBe(false);
+  });
+
+  it('同一個備援:kind 是 root-mismatch → message 原文接 vault.ts show 與再試一次', async () => {
+    const { s } = await ready({ start: [foreign('root-mismatch', '固定句。')] });
+    await s.init();
+    expect(s.getView().message).toBe('固定句。請在終端機執行 npx tsx scripts/vault.ts show 看原因。改好之後按「再試一次」。');
+    expect(s.getView().canRetry).toBe(true);
+  });
+
+  it('同一個備援:kind 是 paused → 暫停畫面;review-record-changed → 全文加重新開始', async () => {
+    const p = await ready({ start: [foreign('paused')] });
+    await p.s.init();
+    expect(p.s.getView().state).toBe('paused');
+    const r = await ready({ start: [start()], next: [fillQ()], submit: [foreign('review-record-changed', '全文-RRC')] });
+    await r.s.init();
+    await r.s.submitFill(['a', 'b', 'c']);
+    expect(r.s.getView().message).toContain('全文-RRC');
+    expect(r.s.getView().canRestart).toBe(true);
+    expect(r.s.getView().canRetry).toBe(false);
+  });
+
+  it('對照:kind 是空字串 → 複習程式停了', async () => {
+    const { s } = await ready({ start: [foreign('')] });
+    await s.init();
+    expectStopped(s, 'empty kind');
+  });
+
+  it('對照:kind 不是字串 → 複習程式停了', async () => {
+    const { s } = await ready({ start: [foreign(42)] });
+    await s.init();
+    expectStopped(s, 'numeric kind');
+  });
+
+  it('對照:丟的是普通物件 { name: "ReviewError", kind: "no-cards" }(不是 Error)→ 複習程式停了', async () => {
+    const plain = { name: 'ReviewError', kind: 'no-cards', message: 'x' };
+    // fakeClient 把 Error 的 step 當 reject、其他物件當回傳值,所以用函式 step 才丟得出「不是 Error 的東西」
+    const { s } = await ready({ start: [() => Promise.reject(plain)] });
+    await s.init();
+    expectStopped(s, 'plain object');
+  });
+
+  it('對照:name 不是 "ReviewError" 的 Error 帶 kind: no-cards → 複習程式停了', async () => {
+    const other = new Error('x');
+    other.name = 'SomethingElse';
+    (other as unknown as { kind: string }).kind = 'no-cards';
+    const { s } = await ready({ start: [other] });
+    await s.init();
+    expectStopped(s, 'other name');
+  });
+});
+
+describe('第 5 組:stripFrontmatter', () => {
+  async function load(): Promise<(text: string) => string> {
+    const mod = (await import(/* @vite-ignore */ SESSION)) as { stripFrontmatter?: (text: string) => string };
+    if (typeof mod.stripFrontmatter !== 'function') throw new Error('session.ts 沒有匯出 stripFrontmatter');
+    return mod.stripFrontmatter;
+  }
+
+  it('第一行是 ---、後面沒有收尾的 ---:原樣回傳整段(含開頭那行),不吃掉內文', async () => {
+    const strip = await load();
+    const text = '---\ntitle: x\n這是內文\n第二行';
+    expect(strip(text)).toBe(text);
+  });
+
+  it('只有一行 ---:原樣', async () => {
+    expect((await load())('---')).toBe('---');
+  });
+
+  it('有收尾的 ---:去掉到收尾(含);內文後來的 --- 留著', async () => {
+    const strip = await load();
+    expect(strip('---\ntitle: x\n---\n內文\n---\n還有')).toBe('內文\n---\n還有');
+  });
+
+  it('第一行不是剛好 ---(多一個空白、或不是第一行):原樣', async () => {
+    const strip = await load();
+    expect(strip('--- \na\n---\nb')).toBe('--- \na\n---\nb');
+    expect(strip('\n---\na\n---\nb')).toBe('\n---\na\n---\nb');
+  });
+
+  it('經過 reteach 畫面:沒有收尾的 --- 時,顯示的內文是整個檔案', async () => {
+    const text = '---\nid: sec-0001\n沒有收尾\n內文';
+    const { s } = await ready(
+      { start: [start()], next: [{ kind: 'reteach', card: 'sec-0001', path: 'cards/security/sec-0001.md', short: false }] },
+      { 'cards/security/sec-0001.md': text },
+    );
+    await s.init();
+    expect(s.getView().state).toBe('reteach');
+    expect(s.getView().reteach!.text).toBe(text);
+  });
+});
+
+// ---------------------------------------------------------------- 驗收 7:刪重複之後仍要殺得掉
+
+describe('showError 的 clearCard 與 submit() 的 finally(驗收 7)', () => {
+  it.each(['internal', 'no-cards', 'router-unavailable', 'root-mismatch', 'review-record-changed', 'sidecar-exited'])(
+    '答完一題、按「下一題」時側車出錯(%s):錯誤畫面的 view 沒有上一題的 result',
+    async (kind) => {
+      const { s } = await ready({ start: [start()], next: [fillQ(), new ReviewError(kind, 'x')], submit: [graded()] });
+      await s.init();
+      await s.submitFill(['a', 'b', 'c']);
+      expect(s.getView().result).toBeDefined();
+      await s.next();
+      const v = s.getView();
+      expect(v.state).toBe('error');
+      expect(v.result).toBeUndefined();
+      expect(v.gradingError).toBeUndefined();
+      expect(v.current).toBeUndefined();
+    },
+  );
+
+  it('不是 ReviewError 的例外(TypeError)也一樣', async () => {
+    const { s } = await ready({ start: [start()], next: [fillQ(), new TypeError('boom')], submit: [graded()] });
+    await s.init();
+    await s.submitFill(['a', 'b', 'c']);
+    await s.next();
+    expect(s.getView().state).toBe('error');
+    expect(s.getView().result).toBeUndefined();
+  });
+
+  it('評分失敗(gradingError)之後再送出遇到錯誤:錯誤畫面沒有 gradingError', async () => {
+    const { s } = await ready({
+      start: [start()],
+      next: [fillQ()],
+      submit: [{ status: 'error', pass: null, feedback: '掛了', cardDone: false }, new ReviewError('internal', 'x')],
+    });
+    await s.init();
+    await s.submitFill(['a', 'b', 'c']);
+    expect(s.getView().gradingError).toBe('評分失敗,請再試一次');
+    await s.submitFill(['a', 'b', 'c']);
+    const v = s.getView();
+    expect(v.state).toBe('error');
+    expect(v.gradingError).toBeUndefined();
+    expect(v.result).toBeUndefined();
+  });
+
+  it.each(['internal', 'no-cards', 'root-mismatch', 'review-record-changed', 'sidecar-exited', 'timeout'])(
+    '送出出錯(%s)之後 submitting 是 false',
+    async (kind) => {
+      const { s } = await ready({ start: [start()], next: [fillQ()], submit: [new ReviewError(kind, 'x')] });
+      await s.init();
+      await s.submitFill(['a', 'b', 'c']);
+      expect(s.getView().submitting).toBe(false);
+    },
+  );
+
+  it('送出出錯(TypeError)、送出的結果缺欄位之後,submitting 也是 false', async () => {
+    const a = await ready({ start: [start()], next: [fillQ()], submit: [new TypeError('x')] });
+    await a.s.init();
+    await a.s.submitFill(['a', 'b', 'c']);
+    expect(a.s.getView().submitting).toBe(false);
+    const b = await ready({ start: [start()], next: [fillQ()], submit: [{ status: 'passed' }] });
+    await b.s.init();
+    await b.s.submitFill(['a', 'b', 'c']);
+    expect(b.s.getView().submitting).toBe(false);
+  });
+
+  it('送出進行中 submitting 是 true(finally 才改回 false)', async () => {
+    let release: (v: Obj) => void = () => undefined;
+    const pending = new Promise<Obj>((resolve) => {
+      release = resolve;
+    });
+    const { s } = await ready({ start: [start()], next: [fillQ()], submit: [() => pending] });
+    await s.init();
+    const p = s.submitFill(['a', 'b', 'c']);
+    expect(s.getView().submitting).toBe(true);
+    release(graded());
+    await p;
+    expect(s.getView().submitting).toBe(false);
+  });
+
+  it('送出出錯之後可以重新開始、再送出(送出鍵沒被卡死)', async () => {
+    const { s, f } = await ready({
+      start: [start(), start()],
+      next: [fillQ(), fillQ()],
+      submit: [new ReviewError('timeout', 'x'), graded()],
+    });
+    await s.init();
+    await s.submitFill(['a', 'b', 'c']);
+    expect(s.getView().submitting).toBe(false);
+    await s.init();
+    await s.submitFill(['a', 'b', 'c']);
+    expect(f.count('submit')).toBe(2);
+    expect(s.getView().result).toBeDefined();
+  });
+});
+
+describe('root-mismatch、not-configured 的畫面字全文(驗收 7)', () => {
+  it.each([
+    ['root-mismatch', '學習目錄跟指標檔指向的地方不一樣。'],
+    ['not-configured', '學習目錄還沒設定好。'],
+  ])('%s:句子接 vault.ts show 接再試一次,中間沒有多的空白', async (kind, fixed) => {
+    const { s } = await ready({ start: [new ReviewError(kind, fixed)] });
+    await s.init();
+    expect(s.getView().message).toBe(`${fixed}請在終端機執行 npx tsx scripts/vault.ts show 看原因。改好之後按「再試一次」。`);
+  });
+
+  it('不論 message 是什麼,中間都不加空白(message 原文 + 固定的下一句)', async () => {
+    const { s } = await ready({ start: [new ReviewError('root-mismatch', 'ABC')] });
+    await s.init();
+    expect(s.getView().message).toBe('ABC請在終端機執行 npx tsx scripts/vault.ts show 看原因。改好之後按「再試一次」。');
+    expect(s.getView().message).not.toMatch(/。 請/);
+  });
+
+  it('其他兩個啟動錯誤(no-cards、router-unavailable)的全文也固定', async () => {
+    const a = await ready({ start: [new ReviewError('no-cards', 'x')] });
+    await a.s.init();
+    expect(a.s.getView().message).toBe('掃描到 0 張卡 —— 這個 learning 資料夾沒有卡片。改好之後按「再試一次」。');
+    const b = await ready({ start: [new ReviewError('router-unavailable', 'x')] });
+    await b.s.init();
+    expect(b.s.getView().message).toBe('帳本身分驗不過,批改不能用。請在終端機執行 npx tsx scripts/vault.ts show 看原因。改好之後按「再試一次」。');
   });
 });

@@ -16,6 +16,7 @@
  * @manual 的最後一個場景(「The session is pleasant enough to use daily」)
  * 刻意不定義 step,跟 05-grading phase-2 的慣例一致。
  */
+import { p3Active, p3Estimate } from './test-card-phase3.steps.js';
 import { Given, Then, When } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -728,6 +729,7 @@ Given('2 cards were returned today', function (this: LearningWorld) {
 });
 
 When('the estimate is computed', function (this: LearningWorld) {
+  if (p3Active(this)) return p3Estimate(this);
   const s = stateOf(this);
   s.estimate = estimateTomorrow({ dueTomorrowExcludingReturns: s.dueTomorrowExcludingReturns!, returnedToday: s.returnedToday!, dailyCap: 10 });
 });

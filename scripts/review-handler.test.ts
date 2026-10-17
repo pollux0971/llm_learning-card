@@ -185,14 +185,17 @@ describe('起來與回應的形狀(驗收 3、4)', () => {
 describe('start / status(驗收 4)', () => {
   it('有到期的卡:ready,數字對得上,fakeCloud 跟環境變數一致', async () => {
     const r = await rig();
-    expect(ok(await r.send('start'))).toEqual({ state: 'ready', today: TODAY, resumed: false, total: 3, answered: 0, deferred: 0, dailyCap: 10, fakeCloud: false });
+    expect(ok(await r.send('start'))).toEqual({ state: 'ready', today: TODAY, resumed: false, total: 3, answered: 0, deferred: 0, dailyCap: 10, overdue: 3, fakeCloud: false });
     const fake = await rig({ env: { LC_REVIEW_FAKE_CLOUD: '/some/fake.mjs' } });
     expect(ok(await fake.send('start')).fakeCloud).toBe(true);
   });
 
-  it('start 的 result 只有工單的那八個鍵(沒有路徑、沒有 learning 目錄、沒有卡 id 清單)', async () => {
+  it('start 的 result 只有工單的那九個鍵(T23 加了 overdue 整數;沒有路徑、沒有 learning 目錄、沒有卡 id 清單)', async () => {
     const r = await rig();
-    expect(Object.keys(ok(await r.send('start'))).sort()).toEqual(['answered', 'dailyCap', 'deferred', 'fakeCloud', 'resumed', 'state', 'today', 'total']);
+    const res = ok(await r.send('start'));
+    expect(Object.keys(res).sort()).toEqual(['answered', 'dailyCap', 'deferred', 'fakeCloud', 'overdue', 'resumed', 'state', 'today', 'total']);
+    expect(typeof res.overdue).toBe('number');
+    expect(Number.isInteger(res.overdue)).toBe(true);
     expect(JSON.stringify(await r.send('start'))).not.toContain(r.v.dir);
   });
 

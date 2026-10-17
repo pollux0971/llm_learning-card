@@ -45,6 +45,7 @@ function isStringArray(value: unknown): value is string[] {
 interface StartView {
   state: 'ready' | 'paused' | 'empty';
   fakeCloud: boolean;
+  overdue: number;
 }
 
 /** 缺必要欄位就回 undefined,呼叫端當 bad-response。不補預設值。 */
@@ -57,8 +58,9 @@ function readStart(raw: Obj): StartView | undefined {
   if (!isFiniteNumber(raw.answered)) return undefined;
   if (!isFiniteNumber(raw.deferred)) return undefined;
   if (!isFiniteNumber(raw.dailyCap)) return undefined;
+  if (!isFiniteNumber(raw.overdue)) return undefined;
   if (typeof raw.fakeCloud !== 'boolean') return undefined;
-  return { state, fakeCloud: raw.fakeCloud };
+  return { state, fakeCloud: raw.fakeCloud, overdue: raw.overdue };
 }
 
 interface NextQuestion {
@@ -156,6 +158,61 @@ function readSubmit(raw: Obj): SubmitView | undefined {
   return view;
 }
 
+interface TomorrowView {
+  total: number;
+  capped: boolean;
+  shown: number;
+  overflow: number;
+}
+
+interface SummaryView {
+  passed: number;
+  returned: number;
+  retryLater: number;
+  tomorrow: TomorrowView;
+  snapshot: string;
+  answeredThisRun?: number;
+}
+
+function readTomorrow(value: unknown): TomorrowView | undefined {
+  if (!isRecord(value)) return undefined;
+  if (!isFiniteNumber(value.total) || typeof value.capped !== 'boolean') return undefined;
+  if (!isFiniteNumber(value.shown) || !isFiniteNumber(value.overflow)) return undefined;
+  return { total: value.total, capped: value.capped, shown: value.shown, overflow: value.overflow };
+}
+
+/** summary 缺必要欄位就回 undefined,呼叫端當 bad-response。answeredThisRun 可缺,有的話必須是有限數字。 */
+function readSummary(raw: Obj): SummaryView | undefined {
+  if (!isFiniteNumber(raw.passed) || !isFiniteNumber(raw.returned) || !isFiniteNumber(raw.retryLater)) return undefined;
+  const tomorrow = readTomorrow(raw.tomorrow);
+  if (!tomorrow) return undefined;
+  if (typeof raw.snapshot !== 'string') return undefined;
+  const view: SummaryView = {
+    passed: raw.passed,
+    returned: raw.returned,
+    retryLater: raw.retryLater,
+    tomorrow,
+    snapshot: raw.snapshot,
+  };
+  if (raw.answeredThisRun !== undefined) {
+    if (!isFiniteNumber(raw.answeredThisRun)) return undefined;
+    view.answeredThisRun = raw.answeredThisRun;
+  }
+  return view;
+}
+
+/** 小結句子。第一句「今天的複習都做完了。」在 message,不在這裡。 */
+function summaryLinesOf(summary: SummaryView): string[] {
+  const lines = [`通過 ${summary.passed} 張、退回 ${summary.returned} 張。`];
+  if (summary.retryLater > 0) lines.push(`另有 ${summary.retryLater} 題評分失敗,下次再考。`);
+  if (summary.tomorrow.capped) {
+    lines.push(`明天預估 ${summary.tomorrow.shown} 張(已到每天上限,另 ${summary.tomorrow.overflow} 張順延)。`);
+  } else {
+    lines.push(`明天預估 ${summary.tomorrow.shown} 張。`);
+  }
+  return lines;
+}
+
 function reviewOf(err: unknown): { kind: string; message: string } | undefined {
   if (err instanceof ReviewError) return { kind: err.kind, message: err.message };
   if (!(err instanceof Error) || err.name !== 'ReviewError') return undefined;
@@ -188,6 +245,8 @@ export class TestSession {
   private testModeNotice: string | undefined;
   private answeredCount = 0;
   private totalCount = 0;
+  private overdueCount = 0;
+  private summaryLines: string[] = [];
   private question: QuestionView | undefined;
   private submitting = false;
   private gradingError: string | undefined;
@@ -211,6 +270,8 @@ export class TestSession {
     this.canRestart = false;
     this.canRetry = false;
     this.testModeNotice = undefined;
+    this.overdueCount = 0;
+    this.summaryLines = [];
     this.clearCard();
     try {
       const raw = await this.deps.client.start();
@@ -219,6 +280,7 @@ export class TestSession {
         this.showStopped();
         return;
       }
+      this.overdueCount = start.overdue;
       if (start.fakeCloud) this.testModeNotice = TEST_MODE_NOTICE;
       else this.testModeNotice = undefined;
       if (start.state === 'paused') {
@@ -263,6 +325,8 @@ export class TestSession {
       testModeNotice: this.testModeNotice,
       answeredCount: onQuestion ? this.answeredCount : 0,
       totalCount: onQuestion ? this.totalCount : 0,
+      overdueCount: onQuestion ? this.overdueCount : 0,
+      summaryLines: this.phase === 'done' ? this.summaryLines : [],
       current: onQuestion ? this.question : undefined,
       submitting: this.submitting,
       gradingError: this.gradingError,
@@ -311,15 +375,22 @@ export class TestSession {
         return;
       }
       if (next.kind === 'done') {
+        let rawSummary: Obj;
         try {
-          await this.deps.client.summary();
+          rawSummary = await this.deps.client.summary();
         } catch (err) {
           this.showError(err);
+          return;
+        }
+        const summary = readSummary(rawSummary);
+        if (!summary) {
+          this.showStopped();
           return;
         }
         this.clearCard();
         this.phase = 'done';
         this.message = DONE_MESSAGE;
+        this.summaryLines = summaryLinesOf(summary);
         return;
       }
       if (next.kind === 'reteach') {
@@ -382,13 +453,10 @@ export class TestSession {
     this.message = STOPPED_MESSAGE;
     this.canRestart = true;
     this.canRetry = false;
-    this.submitting = false;
   }
 
   /** 啟動就能修好的四種:句子照舊,加「再試一次」,不給「重新開始」,也不說複習程式停了。 */
   private showRetry(message: string): void {
-    this.clearCard();
-    this.submitting = false;
     this.phase = 'error';
     this.message = `${message}${RETRY_HINT}`;
     this.canRestart = false;
@@ -406,7 +474,6 @@ export class TestSession {
       return;
     }
     this.clearCard();
-    this.submitting = false;
     this.phase = 'error';
     if (review.kind === 'no-cards') {
       this.showRetry(NO_CARDS_MESSAGE);
@@ -423,7 +490,7 @@ export class TestSession {
       return;
     }
     if (review.kind === 'root-mismatch' || review.kind === 'not-configured') {
-      this.showRetry(`${review.message} ${VAULT_HINT}`);
+      this.showRetry(`${review.message}${VAULT_HINT}`);
       return;
     }
     this.message = STOPPED_MESSAGE;

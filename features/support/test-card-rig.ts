@@ -32,6 +32,8 @@ export interface View {
   testModeNotice: string | undefined;
   answeredCount: number;
   totalCount: number;
+  overdueCount: number;
+  summaryLines: string[];
   current: { card: string; type: 'fill' | 'apply'; stage: number; prompt: string; blanks: number; stuck: boolean; overdueDays: number } | undefined;
   submitting: boolean;
   gradingError: string | undefined;
@@ -88,11 +90,12 @@ export function envOf(v: Vault, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEn
 
 export type SeedEntry = { stage: number; overdue?: number } & Partial<ReviewRecord>;
 
-export function seed(v: Vault, entries: Record<string, SeedEntry>): void {
+/** `today` 是「逾期幾天」的基準日,預設 TODAY。 */
+export function seed(v: Vault, entries: Record<string, SeedEntry>, today: string = TODAY): void {
   const reviews: Record<string, ReviewRecord> = {};
   for (const [id, e] of Object.entries(entries)) {
     const { stage, overdue, ...rest } = e;
-    reviews[id] = reviewRecord({ ...rest, stage, next_due: addDays(TODAY, -(overdue ?? 1)) });
+    reviews[id] = reviewRecord({ ...rest, stage, next_due: addDays(today, -(overdue ?? 1)) });
   }
   writeReviews(v, reviews);
 }
@@ -152,8 +155,8 @@ export interface Rig {
   fs: ReturnType<typeof vaultFs>;
   session: Session;
   env: NodeJS.ProcessEnv;
-  /** 再開一個全新的 handler + client + TestSession(像關掉重開 app:側車重起,記憶體裡的東西都沒了) */
-  reopen(): Promise<{ session: Session; client: ReviewClient; calls: RecordedCall[]; router: FakeRouter }>;
+  /** 再開一個全新的 handler + client + TestSession(像關掉重開 app:側車重起,記憶體裡的東西都沒了)。`today` 不給就沿用建立時的那天。 */
+  reopen(today?: string): Promise<{ session: Session; client: ReviewClient; calls: RecordedCall[]; router: FakeRouter }>;
   dispose(): void;
 }
 
@@ -164,18 +167,23 @@ export interface RigOpts {
   git?: boolean;
   /** 不佈置 reviews.json(用 fixture 原樣) */
   noSeed?: boolean;
+  /** 這個 handler 的「今天」,預設 TODAY(T23:跨日場景用前一天起手) */
+  today?: string;
+  /** daily_cap(settings.yaml);預設 fixture 的 10 */
+  dailyCap?: number;
 }
 
 export async function createRig(opts: RigOpts = {}): Promise<Rig> {
-  const vault = createVault({ cards: opts.cards ?? 6 });
-  if (!opts.noSeed) seed(vault, opts.entries ?? DEFAULT_FIVE);
+  const vault = createVault({ cards: opts.cards ?? 6, ...(opts.dailyCap !== undefined ? { dailyCap: opts.dailyCap } : {}) });
+  const baseToday = opts.today ?? TODAY;
+  if (!opts.noSeed) seed(vault, opts.entries ?? DEFAULT_FIVE, baseToday);
   if (opts.git) gitInit(vault);
   const env = envOf(vault, opts.env);
   const fs = vaultFs(vault);
 
-  async function open(): Promise<{ session: Session; client: ReviewClient; calls: RecordedCall[]; router: FakeRouter }> {
+  async function open(today: string = baseToday): Promise<{ session: Session; client: ReviewClient; calls: RecordedCall[]; router: FakeRouter }> {
     const router = fakeRouter();
-    const handler = createReviewHandler({ learningDir: vault.dir, today: TODAY, routerFactory: () => router, env });
+    const handler = createReviewHandler({ learningDir: vault.dir, today, routerFactory: () => router, env });
     const spy = spyClient(createReviewClient({ handler }));
     const session = await makeSession(spy.client, fs);
     return { session, client: spy.client, calls: spy.calls, router };

@@ -1,0 +1,15 @@
+{
+  "score": 78.21,
+  "killed": 201,
+  "timeout": 0,
+  "survived": 56,
+  "noCoverage": 0,
+  "ignored": 0,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- /tmp/claude-1000/-data-python-llm-learning-cards/32cdcb72-eeac-4c57-90e6-7edbdc84bff9/scratchpad/stryker.t23-handler.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.t23-handler.json",
+  "commit": "4b0521f"
+}
