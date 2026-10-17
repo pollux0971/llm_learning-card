@@ -64,7 +64,7 @@ async function protocol(): Promise<Protocol> {
 
 const SIDECAR_KINDS = [
   'bad-request', 'unsupported-version', 'unknown-method', 'too-large', 'root-mismatch', 'router-unavailable', 'no-cards',
-  'paused', 'no-session', 'no-question', 'review-record-changed', 'internal',
+  'paused', 'no-session', 'no-question', 'review-record-changed', 'internal', 'credential-unavailable',
 ];
 const RUST_KINDS = ['not-configured', 'sidecar-unavailable', 'sidecar-exited', 'timeout', 'busy', 'bad-envelope', 'bad-response'];
 /** T26 定的全文 */
@@ -79,7 +79,7 @@ describe('常數與固定清單(驗收 3)', () => {
     expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status']);
   });
 
-  it('錯誤 kind 的固定清單:側車 12 個 + Rust 7 個,不多不少', async () => {
+  it('錯誤 kind 的固定清單:側車 13 個(T30 加 credential-unavailable)+ Rust 7 個,不多不少', async () => {
     const p = await protocol();
     expect([...p.ERROR_KINDS].sort()).toEqual([...SIDECAR_KINDS, ...RUST_KINDS].sort());
   });
@@ -99,6 +99,13 @@ describe('常數與固定清單(驗收 3)', () => {
   it('review-record-changed 的句子是 T26 定的全文', async () => {
     const p = await protocol();
     expect(p.ERROR_MESSAGES['review-record-changed']).toBe(REVIEW_RECORD_CHANGED_MESSAGE);
+  });
+
+  it('credential-unavailable(T30)有一句備用的固定句子;視窗收到帶樣板訊息的錯誤行也合法', async () => {
+    const p = await protocol();
+    expect(p.ERROR_MESSAGES['credential-unavailable']).toBe('批改要用的金鑰不能用。請在專案根目錄的 .env 檢查。');
+    const line = JSON.stringify({ v: 1, id: 3, ok: false, error: { kind: 'credential-unavailable', message: '批改要用的金鑰沒有設定:GATEWAY_API_KEY。請在專案根目錄的 .env 加上。' } });
+    expect(p.parseResponseLine(line).ok).toBe(true);
   });
 });
 

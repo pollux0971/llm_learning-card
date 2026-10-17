@@ -333,6 +333,8 @@ export interface RunOpts {
   applyText?: string;
   /** 覆蓋環境變數;undefined = 刪掉那個變數 */
   env?: Record<string, string | undefined>;
+  /** `--import` 的假網路層模組(絕對路徑);預設 `_fake-review-cloud.mjs`。T30:換成回 401 的那一個 */
+  fakeCloud?: string;
   /** 不帶 --dir(給 rawArgs 以外的情況用不到,保留) */
   timeoutMs?: number;
   /**
@@ -395,7 +397,7 @@ export async function runReview(vault: Vault, opts: RunOpts = {}): Promise<RunOu
   const args = opts.rawArgs ?? ['--dir', vault.dir, '--today', today, ...(opts.args ?? [])];
   const limit = opts.answers ?? 'all';
   const wrongAt = new Set(opts.wrongAt ?? []);
-  const child = spawn(process.execPath, ['--import', TSX_LOADER, '--import', FAKE_CLOUD, REVIEW_SCRIPT, ...args], {
+  const child = spawn(process.execPath, ['--import', TSX_LOADER, '--import', opts.fakeCloud ?? FAKE_CLOUD, REVIEW_SCRIPT, ...args], {
     cwd: runCwd(vault),
     env: childEnv(vault, opts.env),
     stdio: ['pipe', 'pipe', 'pipe'],
