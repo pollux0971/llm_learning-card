@@ -15,21 +15,20 @@ must_catch:
   - 結尾的 `\r` 或 `\n` 沒去掉(CRLF 結尾多一個 `\r`,或多一個空行):純函式測試必須紅
   - 一行分成好幾次寫進 app stderr(例如 `writeln!` 把內容和換行分兩次寫,會跟別的執行緒的輸出交錯):轉送迴圈的測試必須紅
   - forward_stderr 換成空函式(T22 驗收 cargo-mutants 唯一「缺口沒有補」的那一個):接線測試必須紅
-  - (驗收 3,前端提議,顧問審時決定留不留)側車 stderr 一行有不合法的 UTF-8,轉送就停了、之後的行都不轉:轉送迴圈與接線測試必須紅
-  - (驗收 3,同上)app 的 stderr 寫失敗時轉送就不讀了:轉送迴圈的測試必須紅
+  - 側車 stderr 一行有不合法的 UTF-8,轉送就停了、之後的行都不轉(驗收 3):轉送迴圈與接線測試必須紅
+  - app 的 stderr 寫失敗時轉送就不讀了,或轉送執行緒 panic(例如照舊用 `eprintln!`)(驗收 3):轉送迴圈的測試必須紅
   - 側車自己的前綴被拿掉或改字(`scripts/review-sidecar.ts` 不在 touches):既有 `scripts/review-sidecar.test.ts` 必須紅
 ---
 
 # 工單 T28:側車 stderr 轉到 app 時,前綴只印一次
 
-> 狀態:草稿,待技術顧問審(派令來自顧問,經協調者 2026-10-17)。優先度:**低,排在 T24 之後**。
+> 狀態:**顧問審過 2026-10-17(驗收 3 照 A 留)**。派令來自顧問,經協調者 2026-10-17。優先度:**低,排在 T24 之後**。檔頭 status 維持 todo,協調者排到時再改 ready。
 > 作者:UI/Tauri 負責人(10 的規格作者,不是實作者)。編號:協調者配(T28)。派工:協調者。
 > 實作:worker-grok(opencode grok-4.7)。紅測試:-e5(先做 T24)。驗收:-ed。觀感與 `@manual`:前端做、技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 > 來源:`../reviews/T22-manual-2026-10-17.md` 的 O1;`../reviews/acceptance-T22.md` 的 cargo-mutants 一節(forward_stderr 換成空函式存活)。
 > 決策:ADR-075(`../02-decision-map.md`)。**不需要新 ADR**:ADR-075 第 5 條定的是側車**自己**的 stderr 格式(`[review-sidecar] <kind>`),這張不動它;
-> Rust 轉送時怎麼加前綴是 T22 工單驗收 5 的實作細節。顧問審時若要記成 ADR,號碼由寫入的人**在寫入當下**用這條指令取:
-> `grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n | tail -1`(取到的數字加 1;不在這裡配號)。
+> Rust 轉送時怎麼加前綴是 T22 工單驗收 5 的實作細節。顧問 2026-10-17 同意不記 ADR;開發 worker 不寫 ADR。
 > 基底:最新的 origin/main(T22 與它的 `@manual` 已合併)。
 
 ## 為什麼有這張
@@ -43,11 +42,13 @@ T22 的 `@manual` 在真的 app 裡看到 app stderr 是 `[review-sidecar] [revi
 2. 「一行怎麼加前綴」抽成純函式,補單元測試;順便蓋掉 T22 驗收時 cargo-mutants 存活的 forward_stderr 那一個。
 3. 落點只有 `apps/desktop/src-tauri/src/review_sidecar.rs`。
 
-寫這張時另外查到一件事,放在驗收 3,**由顧問審時決定留不留**(刪掉的話,其他各條照舊):
+寫這張時另外查到一件事,顧問裁決一起修(驗收 3,選 A):
 T22 的轉送用 `BufRead::read_line`,讀到不合法的 UTF-8 會回 `Err`,迴圈就 `break`,reader 被丟掉。之後側車寫 stderr 會 `EPIPE`。
 側車回業務錯誤前會用 `writeSync` 寫一行 stderr(`noteError`),這一行丟錯就跳出主迴圈,`main().catch` 裡再寫一次又丟錯,側車 exit 1,**那一個請求的回應沒寫出去**,webview 拿到 `sidecar-exited`。
 前端用兩個小複製品確認過這條鏈(不是在真的 app 裡):Rust 的 `read_line` 讀 `b"ok\nbad \xff\nafter\n"`,第二行回 `Err`、`after` 沒轉;Node 照側車主迴圈的形狀、stderr 讀端關掉後 exit 1、stdout 沒有回應。
-平常 node 與 tsx 只印 UTF-8,所以很少發生;但只要發生一次,後面每一個業務錯誤都會把側車弄死。修法跟這張是同一個函式,所以一起提。
+平常 node 與 tsx 只印 UTF-8,所以很少發生;但只要發生一次,後面每一個業務錯誤都會把側車弄死。修法跟這張是同一個函式。
+另一條路會走到同一個結果(顧問審時補):現在的 `eprintln!` 寫 app 的 stderr 失敗時(例如 `EPIPE`、`EIO`)會 **panic**,轉送執行緒死掉、reader 被丟掉,側車接著碰到 `EPIPE`。
+驗收 3 的「`sink` 寫失敗也讀到 EOF」把這條也蓋掉:轉送迴圈不用 `eprintln!`,寫失敗只看 `write_all` 回的 `Err`,不 panic。
 
 ## 驗收條件
 
@@ -96,10 +97,10 @@ pub fn forward_lines(reader: impl BufRead, sink: impl Write) -> usize;
 - Rust 自己印的 `[review-sidecar] dropped non-protocol line`(兩個地方)不經過這裡,照舊。
 - 接線要有測試證明:`SidecarHost` 起的側車往 stderr 印的字,真的出現在 app 行程的 stderr,而且每一行剛好一個前綴(做法見「紅測試」)。
 
-### 3. 轉送不會自己停(前端提議;顧問審時刪掉的話,must_catch 標「驗收 3」的兩條一起刪)
+### 3. 轉送不會自己停
 
 - 不合法的 UTF-8:照驗收 1 換成 U+FFFD,**繼續讀下一行**(用 `read_until` 讀位元組,不用 `read_line`)。
-- `sink` 寫失敗(app 的 stderr 關了或壞了):**繼續讀到 EOF**,之後的行讀了就丟,不再試著寫也可以。不能因為寫不出去就不讀 —— 不讀的話側車的 stderr 管子會滿或斷,側車就卡住或死掉(見「為什麼有這張」)。
+- `sink` 寫失敗(app 的 stderr 關了或壞了):**繼續讀到 EOF**,之後的行讀了就丟,不再試著寫也可以。**不 panic**:不用 `eprintln!`,也不 `unwrap` / `expect` 寫的結果。不能因為寫不出去就不讀 —— 不讀的話側車的 stderr 管子會滿或斷,側車就卡住或死掉(見「為什麼有這張」)。
 
 ### 4. 不退步
 
@@ -141,9 +142,9 @@ pub fn forward_lines(reader: impl BufRead, sink: impl Write) -> usize;
 |---|---|---|---|
 | 1 | `STDERR_PREFIX` 與 `host_stderr_line` | `tests/` 新檔,驗收 1 的表逐列;常數逐字比對 | 紅(編不過 —— 用 Rust 紅測試的老規矩:逐檔 `--no-run` 證明是「還沒有」而不是寫壞) |
 | 2 | `forward_lines` | 記錄每一次 `write` 呼叫的假 sink:三行輸入 → 剛好三次 `write`,每次是「換好的一行 + `\n`」;回傳 3;空輸入回 0、不寫 | 紅 |
-| 2 | 接線(蓋掉 forward_stderr 換成空函式) | 測試 binary 用 `std::env::current_exe()`,帶 `--exact <這條的名字> --nocapture` 與一個環境變數重跑自己一次。子行程裡:`SidecarHost` + 現有 `tests/review_sidecar.rs` 那種 `sh -c` 假側車,先往 stderr 印幾行(含已經有前綴的、沒有的、CRLF 的)再印 hello、回一則;`call` 一次、`shutdown`、等約 300 ms 再結束。父行程讀子行程的 stderr,這幾行要剛好是換好的樣子、順序一樣、各一次。(子行程要 `--nocapture`:libtest 會攔測試開的執行緒的輸出。) | 紅 |
+| 2 | 接線(蓋掉 forward_stderr 換成空函式) | 測試 binary 用 `std::env::current_exe()`,帶 `--exact <這條的名字> --nocapture` 與一個環境變數重跑自己一次。子行程裡:`SidecarHost` + 現有 `tests/review_sidecar.rs` 那種 `sh -c` 假側車,先往 stderr 印幾行(含已經有前綴的、沒有的、CRLF 的)再印 hello、回一則;`call` 一次、`shutdown`,**等至少 1 秒**再結束,或改用不靠計時的做法(紅測試作者定;整鏈在高 load 下紅過兩次計時型測試,300 ms 在 load 14 時不夠保險)。父行程讀子行程的 stderr,這幾行要剛好是換好的樣子、順序一樣、各一次。(子行程要 `--nocapture`:libtest 會攔測試開的執行緒的輸出。) | 紅 |
 | 3 | 壞位元組不停 | `forward_lines` 讀 `b"a\nbad \xff\nlast\n"`:三行都寫出、第二行有 U+FFFD;接線測試的假側車也印一行 `printf 'bad \377 byte\n' >&2`,後面那一行還要出現 | 紅 |
-| 3 | 寫失敗也讀到 EOF | 每次 `write` 都回 `Err` 的假 sink:`forward_lines` 仍回傳全部的行數,reader 讀到底(用一個會記錄讀到哪的 reader) | 紅 |
+| 3 | 寫失敗也讀到 EOF、不 panic | 每次 `write` 都回 `Err` 的假 sink:`forward_lines` 正常回傳(不 panic)、回傳全部的行數,reader 讀到底(用一個會記錄讀到哪的 reader) | 紅 |
 | 4 | 不退步 | 既有測試不改;`review-sidecar-static.test.ts` 那一條只改標題 | 綠 |
 
 - 寫完對正確實作想一遍:接線測試是不是只在測自己的假側車(例如父行程比對的字串剛好也是子行程自己印的)。比對的應該是**只有轉送才會產生**的那幾行(前綴是 Rust 加的那幾行)。
