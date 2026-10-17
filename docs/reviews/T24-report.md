@@ -119,3 +119,7 @@ session `ses_eb7c9326affeMvSXlj4CjL6Dda`,opencode `session_v2.cost` = **$9.94938
 ## 待協調
 
 無。`@manual` 與 `tauri build` 依工單是前端的事,這次位子沒有要求,沒跑。
+
+## 補一輪(顧問 2026-10-17)
+
+快轉 `t24-fix-start`(`8d0f61b`)。四種啟動錯誤(`no-cards`、`router-unavailable`、`root-mismatch`、`not-configured`)維持原句,另加「改好之後按「再試一次」。」與一顆「再試一次」(view.canRetry,按了重新 init);不顯示「複習程式停了」,canRestart 與 canRetry 不同時為 true。session 類錯誤與 review-record-changed 仍是「重新開始」。`fake-cloud.mjs` 的 chat completions 在 `messages[0].content` 不是字串時丟錯(訊息含 messages);第 28 行的 body 讀取不改,也不登記進 NOT_INSTRUMENTED。沒有改測試檔,沒有再跑 cucumber。本輪結束時同一 session 累計 $22.866410。

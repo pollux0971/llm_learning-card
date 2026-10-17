@@ -122,6 +122,9 @@
     {#if view.canRestart}
       <HudButton onclick={restart}>重新開始</HudButton>
     {/if}
+    {#if view.canRetry}
+      <HudButton onclick={restart}>再試一次</HudButton>
+    {/if}
   {:else if view.state === 'reteach' && view.reteach}
     {#if view.reteach.notice}
       <p class="notice">{view.reteach.notice}</p>

@@ -46,7 +46,9 @@ globalThis.fetch = async function fakeCloudFetch(input, init) {
 
   if (url.includes('/chat/completions')) {
     const body = JSON.parse(await readBody(input, init));
-    const prompt = String(body.messages?.[0]?.content ?? '');
+    const first = Array.isArray(body.messages) ? body.messages[0] : undefined;
+    const prompt = first && typeof first.content === 'string' ? first.content : undefined;
+    if (typeof prompt !== 'string') throw new Error('fake-cloud: messages[0].content 不是字串');
     return jsonResponse({
       id: 'chatcmpl_fake_review',
       object: 'chat.completion',

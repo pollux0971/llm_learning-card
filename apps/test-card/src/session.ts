@@ -23,6 +23,7 @@ const STOPPED_MESSAGE = '複習程式停了。';
 const NO_CARDS_MESSAGE = '掃描到 0 張卡 —— 這個 learning 資料夾沒有卡片。';
 const ROUTER_MESSAGE = '帳本身分驗不過,批改不能用。請在終端機執行 npx tsx scripts/vault.ts show 看原因。';
 const VAULT_HINT = '請在終端機執行 npx tsx scripts/vault.ts show 看原因。';
+const RETRY_HINT = '改好之後按「再試一次」。';
 const GRADING_ERROR = '評分失敗,請再試一次';
 const TEST_MODE_NOTICE = '測試模式:批改是假的';
 const SHORT_NOTICE = '這張卡連續答錯兩次;縮短版還沒有產生,先看原卡。';
@@ -183,6 +184,7 @@ export class TestSession {
   private phase: SessionState = 'loading';
   private message: string | undefined;
   private canRestart = false;
+  private canRetry = false;
   private testModeNotice: string | undefined;
   private answeredCount = 0;
   private totalCount = 0;
@@ -207,6 +209,7 @@ export class TestSession {
     this.phase = 'loading';
     this.message = undefined;
     this.canRestart = false;
+    this.canRetry = false;
     this.testModeNotice = undefined;
     this.clearCard();
     try {
@@ -256,6 +259,7 @@ export class TestSession {
       state: this.phase,
       message: this.message,
       canRestart: this.canRestart,
+      canRetry: this.canRetry,
       testModeNotice: this.testModeNotice,
       answeredCount: onQuestion ? this.answeredCount : 0,
       totalCount: onQuestion ? this.totalCount : 0,
@@ -369,6 +373,7 @@ export class TestSession {
     this.phase = 'paused';
     this.message = PAUSED_MESSAGE;
     this.canRestart = false;
+    this.canRetry = false;
   }
 
   private showStopped(): void {
@@ -376,7 +381,18 @@ export class TestSession {
     this.phase = 'error';
     this.message = STOPPED_MESSAGE;
     this.canRestart = true;
+    this.canRetry = false;
     this.submitting = false;
+  }
+
+  /** 啟動就能修好的四種:句子照舊,加「再試一次」,不給「重新開始」,也不說複習程式停了。 */
+  private showRetry(message: string): void {
+    this.clearCard();
+    this.submitting = false;
+    this.phase = 'error';
+    this.message = `${message}${RETRY_HINT}`;
+    this.canRestart = false;
+    this.canRetry = true;
   }
 
   private showError(err: unknown): void {
@@ -393,26 +409,25 @@ export class TestSession {
     this.submitting = false;
     this.phase = 'error';
     if (review.kind === 'no-cards') {
-      this.message = NO_CARDS_MESSAGE;
-      this.canRestart = false;
+      this.showRetry(NO_CARDS_MESSAGE);
       return;
     }
     if (review.kind === 'router-unavailable') {
-      this.message = ROUTER_MESSAGE;
-      this.canRestart = false;
+      this.showRetry(ROUTER_MESSAGE);
       return;
     }
     if (review.kind === 'review-record-changed') {
       this.message = review.message;
       this.canRestart = true;
+      this.canRetry = false;
       return;
     }
     if (review.kind === 'root-mismatch' || review.kind === 'not-configured') {
-      this.message = `${review.message} ${VAULT_HINT}`;
-      this.canRestart = false;
+      this.showRetry(`${review.message} ${VAULT_HINT}`);
       return;
     }
     this.message = STOPPED_MESSAGE;
     this.canRestart = true;
+    this.canRetry = false;
   }
 }

@@ -40,6 +40,8 @@ export interface SessionView {
   state: SessionState;
   message: string | undefined;
   canRestart: boolean;
+  /** 只有 no-cards、router-unavailable、root-mismatch、not-configured。與 canRestart 不同時為 true。 */
+  canRetry: boolean;
   testModeNotice: string | undefined;
   answeredCount: number;
   totalCount: number;
