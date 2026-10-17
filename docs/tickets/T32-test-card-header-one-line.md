@@ -7,11 +7,11 @@ budget_usd: 1
 status: todo
 owner: worker-grok
 must_catch:
-  - "`.progress` 照舊是一欄的 grid,或改成 `flex-direction: column`:「已答 / 總數」與「逾期 N」還是上下兩行,同一行的測試必須紅"
-  - '只寫 `display: flex` 加 `gap`,HP 條沒有自己一行:HP 條被擠進同一行、寬度只剩兩條邊框(約 2 px),HP 條寬度與位置的測試必須紅(T15 的 HP 條渲染測試這時是空過,見「一個陷阱」)'
+  - `.progress` 照舊是一欄的 grid,或改成 `flex-direction: column`:「已答 / 總數」與「逾期 N」還是上下兩行,同一行的測試必須紅
+  - 只寫 `display: flex` 加 `gap`,HP 條沒有自己一行:HP 條被擠進同一行、寬度只剩兩條邊框(約 2 px),HP 條寬度與位置的測試必須紅(T15 的 HP 條渲染測試這時是空過,見「一個陷阱」)
   - 讓 HP 條換行的規則寫成 `.progress > [data-hud="hp-bar"]`(沒有 `:global`):Svelte 把它當沒用到的選擇器丟掉、只給一個 warning,結果跟上一條一樣,HP 條寬度與位置的測試必須紅
-  - '「逾期 N」畫在「已答 / 總數」左邊(`order`、`row-reverse`、`direction: rtl`):左右順序的測試必須紅(T15 讀的是 innerText 的第一個數字,版面順序換了它看不出來)'
-  - '兩段之間的空白小於 8 px(例如沿用 `gap: 0.2rem` 只有 3.2 px,兩段字黏在一起),或大於 24 px(`justify-content: space-between` 把逾期數推到最右邊):間距的測試必須紅'
+  - 「逾期 N」畫在「已答 / 總數」左邊(`order`、`row-reverse`、`direction: rtl`):左右順序的測試必須紅(T15 讀的是 innerText 的第一個數字,版面順序換了它看不出來)
+  - 兩段之間的空白小於 8 px(例如沿用 `gap: 0.2rem` 只有 3.2 px,兩段字黏在一起),或大於 24 px(`justify-content: space-between` 把逾期數推到最右邊):間距的測試必須紅
   - HP 條跟上面那一行的間距不是原本的 0.2rem(row-gap 拿掉或加大):HP 條位置的測試必須紅;`@manual` 的「送出」y 對不上 T24
   - 動到 `<style>` 以外(合成一個 span、改字、HpBar 搬出 header、加 class 或包一層):驗收的 diff 檢查必須擋下;靜態測試擋得到的那幾種(字改了、HpBar 不在 header 裡、兩段文件順序反了)照舊紅
   - T15、T23 的考試卡渲染測試與靜態測試任一條變紅,或任何 `.feature` 被改:不退步必須紅

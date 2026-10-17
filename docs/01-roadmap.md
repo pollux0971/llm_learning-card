@@ -9,11 +9,11 @@
 
 | 欄位 | 值 |
 |---|---|
-| 目前階段 | **I2 · 複習迴圈 —— 自動場景通過(T13 已合併),沒有 tag**:卡片要被教學卡標成「學過」才會進複習,CLI 沒有這條路,真的 `learning/` 沒有到期的卡,`@e2e` 與 `@manual` 做不到,所以人工確認延到 I4、和 I4 一起問使用者(使用者 2026-10-16 選 B,不加 CLI 的學新卡指令,見 ADR-073)。I3 在 I2 自動驗收通過的基礎上開工。**更早的狀態:** I1 · 內容管線 —— 通過(2026-09-04,tag `I1`)。第四次真呼叫 `@e2e @llm` 全綠,兩條人工確認由技術顧問判定 PASS。12-prompt-quality/phase-2 已於 2026-10-15 完成(第一次真模型基準),下一步:`prompts/ingest/children` 的「子卡不得重述父卡」工單,之後 `/integrate I2` |
-| 目前 sprint | **2026-W37** — **沒有 feature phase 推進**,整週在基礎設施與量尺(見 `docs/sprints/2026-W37.md`)。⚠️ 09-12 發現**花錢的煞車在 `--live` 這條路上沒有接**:真呼叫不進 `learning/state/log.jsonl`,`llm-spend --today` 回報「確信的零」,每日上限一次都不會觸發。**修好之前不跑任何 `--live`。** 驗證中,見工單 T1。(2026-10-15 補:T1/T5/T8/T9 合併、三項檢查綠,`--live` 煞車已解除,見 `.claude/skills/autopilot/SKILL.md` §4g 第 22 條。) |
-| 下一個 gate 已解除但沒人排的 | 無。(`12-prompt-quality/phase-2` 的 gate 自 2026-09-04 解除、2026-09-12 排時撞出花錢煞車沒接上的洞,修好後 2026-10-15 完成。) |
-| 契約版本 | 1.4.0(§12 加帳本身分、§1 CategoryId 收窄,見 ADR-066、ADR-067) |
-| 最後更新 | 2026-09-12 |
+| 目前階段 | **I3 · 桌面複習 —— 盤點中(2026-10-18)**:要的四個 phase(10-desktop-shell phase-2、06-test-card phase-2 與 phase-3、11-review-cli phase-2)都 `done`,兩項整合工作在 T24 做完(合併 `341b663`,形狀照 ADR-075)。`i3-desktop-review.feature` 的五條自動場景還沒有步驟定義(行為由各 phase 的場景守著,真跑全綠);Wayland 的一次性提示在真前端不見了。兩件都在 T34。I3 照 ADR-073 **不打 tag**:T34 之後自動場景全綠、三條用 fixture 做的人工確認由技術顧問判過,就算 I3 自動驗收通過;要真資料的 `@e2e @manual` 併到 I4 一起問使用者。見 [I3 盤點](reviews/I3-inventory.md)。**更早的狀態:** I2 · 複習迴圈 —— 自動場景通過(T13 已合併),**沒有 tag**,人工確認延到 I4(使用者 2026-10-16 選 B,不加 CLI 的學新卡指令,ADR-073)。I1 · 內容管線 —— 通過(2026-09-04,tag `I1`)。 |
+| 目前 sprint | **待確認。** 最後一份 sprint 檔是 `sprints/2026-W37.md`(那一週沒有 feature phase 推進,整週在基礎設施與量尺);W38 之後沒有 sprint 檔。`--live` 花錢煞車沒接上的問題 2026-10-15 已解除(T1/T5/T8/T9 合併,見 `.claude/skills/autopilot/SKILL.md` §4g 第 22 條)。 |
+| 下一個 gate 已解除但沒人排的 | **待確認有沒有人排。** gate 都已滿足、`docs/tickets/` 裡沒有工單的:02-ingest-pipeline/phase-3(phase-2 `done`、I1 已通過)、03-llm-router/phase-3(gate 由 ADR-039 解除)、07-teach-card/phase-4(只要 phase-1 `done`)。13-work-dag/phase-1 是 `ready`,協調者已配 T33。07-teach-card/phase-2 等「桌面複習的自動驗收通過」(ADR-073,由技術顧問判),現在還沒過。 |
+| 契約版本 | 1.4.0(`contracts/types.md` 檔頭;§12 加帳本身分、§1 CategoryId 收窄,見 ADR-066、ADR-067;之後沒有升版) |
+| 最後更新 | 2026-10-18 |
 
 ## 全貌
 
@@ -123,6 +123,14 @@ order 齊全 / 驗證器 25/25,三筆 `cycle_removed` 證明多重循環修復�
 **整合工作**:06 丟掉 stub 改用 core;`MemoryFs` 換成 Tauri 的 `LearningFs`。
 
 **驗收**:[i3-desktop-review.feature](integration/i3-desktop-review.feature)
+
+**實際狀態(2026-10-18,ADR-073)**:四個 phase 都 `done`。整合工作在 T24 做完,但形狀照 ADR-075 改過:排程與批改不在 webview 算,
+跑在 Node 側車(`scripts/review-sidecar.ts`,跟 CLI 同一份 core),webview 的 `LearningFs` 只剩讀 reteach 的卡。
+驗收檔的五條自動場景還沒有步驟定義,Wayland 的一次性提示在真前端不見了,兩件都在 T34。盤點見 [I3 盤點](reviews/I3-inventory.md)。
+
+**I3 的 gate**:不打 tag。「I3 自動驗收通過」= T34 合併後 `--tags '@i3 and not @manual'` 全綠,加上三條用暫存根與 fixture 做的 `@manual`
+(視窗位置重開保留、X11 置頂、Wayland 偵測與說明)由技術顧問判過。**併到 I4、和 I4 一起問使用者的**:`@e2e @manual`「A person completes a review session in the window」
+(要在真的 `learning/` 上有到期的卡,卡要先被教學卡標成學過)。延後,不是跳過:I4 通過前補做,結果回頭寫進 I3。
 
 ---
 
