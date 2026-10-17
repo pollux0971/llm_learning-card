@@ -141,6 +141,51 @@ describe('種子與假雲端的檔', () => {
   });
 });
 
+describe('fake-cloud 讀請求本文(顧問 2026-10-17:缺 messages 不補空字串)', () => {
+  /** 在乾淨的 node 行程載入 fake-cloud.mjs,對 chat/completions 送 body,回 { ok, error?, status? } */
+  async function ask(body: unknown): Promise<{ ok: boolean; status?: number; error?: string }> {
+    const { spawnSync } = await import('node:child_process');
+    const script = `
+      await import(${JSON.stringify(pathToFileURL(FAKE_CLOUD).href)});
+      try {
+        const res = await globalThis.fetch('http://fake.invalid/v1/chat/completions', { method: 'POST', body: ${JSON.stringify(JSON.stringify(body))} });
+        console.log(JSON.stringify({ ok: true, status: res.status }));
+      } catch (e) {
+        console.log(JSON.stringify({ ok: false, error: String(e && e.message || e) }));
+      }
+    `;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, FAKE_REVIEW_REQUEST_LOG: '' } });
+    const line = r.stdout.trim().split('\n').pop() ?? '';
+    if (!line) throw new Error(`fake-cloud 載入就失敗:${r.stderr}`);
+    return JSON.parse(line) as { ok: boolean; status?: number; error?: string };
+  }
+
+  it('請求本文缺 messages → 丟錯,不回「全對」的假回應', async () => {
+    const out = await ask({ model: 'm' });
+    expect(out.ok, JSON.stringify(out)).toBe(false);
+    expect(out.error ?? '').toMatch(/messages/);
+  });
+
+  it('messages[0].content 不是字串(缺、數字、陣列)→ 丟錯', async () => {
+    for (const messages of [[{ role: 'user' }], [{ role: 'user', content: 7 }], [{ role: 'user', content: ['x'] }], []]) {
+      const out = await ask({ model: 'm', messages });
+      expect(out.ok, JSON.stringify({ messages, out })).toBe(false);
+    }
+  });
+
+  it('對照:messages[0].content 是字串 → 照常回 200', async () => {
+    const out = await ask({ model: 'm', messages: [{ role: 'user', content: 'hello' }] });
+    expect(out).toEqual({ ok: true, status: 200 });
+  });
+
+  it('GET /v1/models 不看本文,照常回 200(第 28 行那條不改)', async () => {
+    const { spawnSync } = await import('node:child_process');
+    const script = `await import(${JSON.stringify(pathToFileURL(FAKE_CLOUD).href)}); const r = await globalThis.fetch('http://fake.invalid/v1/models'); console.log(r.status);`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+    expect(r.stdout.trim()).toBe('200');
+  });
+});
+
 describe('暫存根(驗收 5 第 1、2 點、「不寫 contracts/fixtures」)', () => {
   it('暫存根在 os.tmpdir() 底下、不在 contracts/fixtures/ 底下;learning 是 learning-minimal 的複本', async () => {
     const before = digestTree(FIXTURES);

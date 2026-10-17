@@ -7,7 +7,7 @@
  * the real scheduler 的清單與順序、答案馬上落地、視窗與終端機同一份、批改失敗不動卡片。
  * 另外固定:真的 reteach(有 / 沒有縮短版)、真的 review-record-changed、真的暫停與 0 張卡、做完的 summary。
  */
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { openDay, pauseDay } from '../../packages/core/src/session/engine.js';
@@ -222,6 +222,7 @@ describe('真的 review-record-changed(T26)', () => {
     expect(v.state).toBe('error');
     expect(v.message).toContain(FULL);
     expect(v.canRestart).toBe(true);
+    expect(v.canRetry).toBe(false);
     expect(readFileSync(reviewsPath(r.vault), 'utf8')).toBe(external);
     expect(readReviews(r.vault)[card]!.history).toHaveLength(0);
 
@@ -254,6 +255,23 @@ describe('真的暫停與 0 張卡', () => {
     expect(v.state).toBe('error');
     expect(v.message).toContain('掃描到 0 張卡');
     expect(v.message).not.toContain('今天沒有到期');
+    expect(v.message).toContain('改好之後按「再試一次」。');
+    expect(v.canRetry).toBe(true);
+    expect(v.canRestart).toBe(false);
+  });
+
+  it('資料夾沒有任何卡 → 把卡放回去 → 按「再試一次」:重新 start,出題(真 core 的 start 會重掃卡片)', async () => {
+    const r = await rig();
+    const backup = join(r.vault.dir, 'cards-away');
+    renameSync(join(r.vault.dir, 'cards'), backup);
+    const again = await r.reopen();
+    await again.session.init();
+    expect(again.session.getView().canRetry).toBe(true);
+    renameSync(backup, join(r.vault.dir, 'cards'));
+    await again.session.init();
+    expect(again.calls.map((c) => c.method).filter((m) => m === 'start')).toHaveLength(2);
+    expect(again.session.getView().state).toBe('question');
+    expect(again.session.getView().canRetry).toBe(false);
   });
 
   it('沒有到期的卡:empty,「今天沒有到期」', async () => {

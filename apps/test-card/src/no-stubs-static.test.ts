@@ -133,10 +133,12 @@ describe('驗收 3:桌面版與單獨執行的接法', () => {
     expect(wired).toMatch(/read\s*[:(][^]*?throw/);
   });
 
-  it('App.svelte:測試模式一行用 --hud-fail 的字色、錯誤畫面有「重新開始」', () => {
+  it('App.svelte:測試模式一行用 --hud-fail 的字色、錯誤畫面有「重新開始」與「再試一次」', () => {
     const app = text('src/App.svelte');
     expect(app).toContain('--hud-fail');
     expect(app).toContain('重新開始');
+    expect(app).toContain('再試一次');
+    expect(app).toContain('canRetry');
     expect(app).toContain('testModeNotice');
   });
 

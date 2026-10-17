@@ -10,6 +10,8 @@
  *   state            'loading' | 'paused' | 'empty' | 'question' | 'reteach' | 'done' | 'error'
  *   message          paused / empty / done / error 時畫面上那段主文字(其他狀態 undefined)
  *   canRestart       error 狀態有沒有「重新開始」(按了 = 再呼叫一次 init())
+ *   canRetry         error 狀態有沒有「再試一次」(啟動錯誤四種:no-cards、router-unavailable、root-mismatch、not-configured;按了 = 再呼叫一次 init(),從 start 開始)。
+ *                    canRetry 與 canRestart 不會同時為 true;兩個都 false = 沒有按鈕(例如 paused / empty 的錯誤畫面以外的狀態)
  *   testModeNotice   start 回 fakeCloud true 才有:'測試模式:批改是假的';false 或還沒 start 時 undefined
  *   answeredCount    question 狀態的已答數 = progress.index - 1;其他狀態 0(T15 的靜態檢查要 App.svelte 寫 view.answeredCount)
  *   totalCount       question 狀態的總數 = progress.total;其他狀態 0
@@ -42,6 +44,7 @@ interface View {
   state: string;
   message: string | undefined;
   canRestart: boolean;
+  canRetry: boolean;
   testModeNotice: string | undefined;
   answeredCount: number;
   totalCount: number;
@@ -587,6 +590,10 @@ describe('側車錯誤:畫面不卡住(驗收 4)', () => {
     expect(v.message).toContain('掃描到 0 張卡');
     expect(v.message).toContain('這個 learning 資料夾沒有卡片');
     expect(v.message).not.toContain('今天沒有到期');
+    expect(v.message).not.toContain('複習程式停了');
+    expect(v.message).toContain('改好之後按「再試一次」。');
+    expect(v.canRetry).toBe(true);
+    expect(v.canRestart).toBe(false);
     expect(v.current).toBeUndefined();
   });
 
@@ -597,6 +604,10 @@ describe('側車錯誤:畫面不卡住(驗收 4)', () => {
     expect(v.state).toBe('error');
     expect(v.message).toContain('帳本身分驗不過,批改不能用');
     expect(v.message).toContain(VAULT_HINT);
+    expect(v.message).toContain('改好之後按「再試一次」。');
+    expect(v.message).not.toContain('複習程式停了');
+    expect(v.canRetry).toBe(true);
+    expect(v.canRestart).toBe(false);
   });
 
   it('paused(ReviewError,例如別處先暫停了):跟 start 回 paused 同一句話', async () => {
@@ -618,6 +629,7 @@ describe('側車錯誤:畫面不卡住(驗收 4)', () => {
     expect(v.state).toBe('error');
     expect(v.message).toContain(full);
     expect(v.canRestart).toBe(true);
+    expect(v.canRetry).toBe(false);
     expect(v.result).toBeUndefined();
     expect(v.submitting).toBe(false);
   });
@@ -645,16 +657,57 @@ describe('側車錯誤:畫面不卡住(驗收 4)', () => {
     expect(s.getView().canRestart).toBe(false);
   });
 
-  it.each(['root-mismatch', 'not-configured'])('%s:顯示 ReviewError.message 原文加 vault.ts show,不給「重新開始」', async (kind) => {
+  it.each(['root-mismatch', 'not-configured'])('%s:顯示 ReviewError.message 原文加 vault.ts show 加「再試一次」,不顯示「複習程式停了」,沒有「重新開始」', async (kind) => {
     const { s } = await ready({ start: [new ReviewError(kind, `固定句-${kind}`)] });
     await s.init();
     const v = s.getView();
     expect(v.state).toBe('error');
     expect(v.message).toContain(`固定句-${kind}`);
     expect(v.message).toContain(VAULT_HINT);
+    expect(v.message).toContain('改好之後按「再試一次」。');
     expect(v.message).not.toContain('複習程式停了');
+    expect(v.canRetry).toBe(true);
     expect(v.canRestart).toBe(false);
   });
+
+  it.each([
+    ['no-cards', '卡片目錄裡沒有任何卡片。'],
+    ['router-unavailable', '帳本現在無法使用。'],
+    ['root-mismatch', '固定句-root-mismatch'],
+    ['not-configured', '固定句-not-configured'],
+  ])('%s:按「再試一次」(init)= 重新 start(不是 next / submit),改好之後出題', async (kind, msg) => {
+    const { s, f } = await ready({ start: [new ReviewError(kind, msg), start()], next: [fillQ()] });
+    await s.init();
+    expect(s.getView().canRetry).toBe(true);
+    await s.init();
+    expect(f.calls.map((c) => c.method)).toEqual(['start', 'start', 'next']);
+    const v = s.getView();
+    expect(v.state).toBe('question');
+    expect(v.message).toBeUndefined();
+    expect(v.canRetry).toBe(false);
+    expect(v.canRestart).toBe(false);
+  });
+
+  it.each(['no-cards', 'router-unavailable', 'root-mismatch', 'not-configured'])('%s:按了「再試一次」還是同一個錯 → 還在錯誤畫面、還有「再試一次」(不卡死、不跳成別的狀態)', async (kind) => {
+    const { s, f } = await ready({ start: [new ReviewError(kind, 'a'), new ReviewError(kind, 'b')] });
+    await s.init();
+    await s.init();
+    expect(f.count('start')).toBe(2);
+    const v = s.getView();
+    expect(v.state).toBe('error');
+    expect(v.canRetry).toBe(true);
+    expect(v.message).not.toContain('複習程式停了');
+  });
+
+  it.each(['paused', 'sidecar-exited', 'timeout', 'sidecar-unavailable', 'internal', 'busy', 'no-session', 'bad-response', 'review-record-changed'])(
+    '%s:不是啟動錯誤,沒有「再試一次」',
+    async (kind) => {
+      const { s } = await ready({ start: [start()], next: [fillQ()], submit: [new ReviewError(kind, 'x')] });
+      await s.init();
+      await s.submitFill(['a', 'b', 'c']);
+      expect(s.getView().canRetry).toBe(false);
+    },
+  );
 
   it.each(['sidecar-exited', 'timeout', 'sidecar-unavailable', 'internal', 'busy', 'no-session', 'bad-response', 'no-question', 'totally-unknown-kind'])(
     '%s:「複習程式停了。」加「重新開始」,不露出 message 原文',
