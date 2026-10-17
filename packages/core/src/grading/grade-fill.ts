@@ -1,10 +1,35 @@
+import { witness } from '@contracts/witness.js';
+import {
+  GatewayCallError,
+  GatewayModelRejectedError,
+  llmUnavailableReason,
+  MissingCredentialError,
+  NoModelError,
+} from '@core/llm/index.js';
 import { normalize } from './normalize.js';
 import { matchFuzzy } from './fuzzy.js';
-import { witness } from '@contracts/witness.js';
 import type { FillQuestion, Grader, GradeResult, LlmRouter } from './types.js';
 
 function buildSynonymPrompt(accepted: string[], typed: string): string {
   return ['標準答案:' + accepted.join('、'), '使用者回答:' + typed, '這兩者是否語意相同?只回答 yes 或 no。'].join('\n');
+}
+
+/**
+ * 契約 §7「沒有本機模型」那一家。llmUnavailableReason 會把憑證排除掉,所以缺閘道鍵、
+ * 閘道 401、模型名被拒要在這裡另外認,才不會把「沒有本機模型」丟成 internal。
+ * 只看丟出來的那個錯本身,不沿 cause 把包在外面的 bug 一起收掉。
+ */
+function isNoLocalModel(err: unknown): boolean {
+  if (err instanceof NoModelError) return true;
+  if (err instanceof GatewayModelRejectedError) return true;
+  if (err instanceof MissingCredentialError && err.envVar === 'GATEWAY_API_KEY') return true;
+  if (err instanceof GatewayCallError && err.status === 401) return true;
+  return false;
+}
+
+function shouldFallbackStrict(err: unknown): boolean {
+  if (llmUnavailableReason(err) !== undefined) return true;
+  return isNoLocalModel(err);
 }
 
 /**
@@ -31,7 +56,8 @@ export async function gradeFillBlank(accepted: string[], rawInput: string, route
     const result = await router.call('grade.fill.llm', buildSynonymPrompt(accepted, rawInput));
     const pass = result.text.trim().toLowerCase() === 'yes';
     return { pass, feedback: pass ? '模型判定語意相同' : '模型判定語意不同', grader: 'local-llm' };
-  } catch {
+  } catch (err) {
+    if (!shouldFallbackStrict(err)) throw err;
     witness('grading.fill.llm-failed-strict');
     return { pass: false, feedback: '沒有可用模型,無法判斷語意是否相同', grader: 'fallback-strict' };
   }

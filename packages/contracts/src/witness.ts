@@ -108,7 +108,7 @@ export const DEGRADED_SIGNALS = {
   'grading.fill.llm-failed-strict': {
     kind: 'swallow',
     owner: '05-grading',
-    summary: 'grade.fill.llm 呼叫丟錯 → 回 { pass: false, grader: "fallback-strict" } 的正常 GradeResult',
+    summary: 'grade.fill.llm 的 router 回報模型不能用或沒有本機模型時 → 回 { pass: false, grader: "fallback-strict" } 的正常 GradeResult',
   },
   'grading.apply.invalid-response-retry': {
     kind: 'swallow',
@@ -119,6 +119,11 @@ export const DEGRADED_SIGNALS = {
     kind: 'swallow',
     owner: '05-grading',
     summary: 'grade.apply 兩次都解析不出 → 回 { pass: null, grader: "error" },本次審核略過',
+  },
+  'grading.apply.llm-unavailable': {
+    kind: 'swallow',
+    owner: '05-grading',
+    summary: 'grade.apply 的 router 回報模型不能用(逾時、截斷、沒有模型、網路、限流、5xx)→ 回 { pass: null, grader: "error" },不自動重打',
   },
 
   // ── 02-ingest-pipeline ────────────────────────────────────────────────────

@@ -67,7 +67,7 @@
   {
     "from": "05-grading",
     "to": "03-llm-router",
-    "reason": "T13(I2 整合):scripts/grade.ts 第三層才用 createLiveGatewayRouter({ ledger })(與 scripts/llm.ts 同一條真呼叫路)。第一、二層不碰 router、不要求指標檔。硬規則:LLM 呼叫一律經過 llm-router 的介面,不在別處 import provider SDK——這條例外正是為了遵守那條,而不是繞過它"
+    "reason": "T13(I2 整合):scripts/grade.ts 第三層才用 createLiveGatewayRouter({ ledger })(與 scripts/llm.ts 同一條真呼叫路)。第一、二層不碰 router、不要求指標檔。硬規則:LLM 呼叫一律經過 llm-router 的介面,不在別處 import provider SDK——這條例外正是為了遵守那條,而不是繞過它。T31:grade-apply.ts、grade-fill.ts 用 03 的 llmUnavailableReason 與錯誤類別分辨「模型不能用」與 bug,不在 05 另寫一份"
   },
   {
     "from": "05-grading",

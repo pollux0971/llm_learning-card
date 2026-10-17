@@ -23,7 +23,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { CardId, Review } from '@contracts/index.js';
 import type { LlmRouter } from '@core/grading/index.js';
-import { fixtureRouter, loadFixturesFromDir } from '../support/fixture-router.js';
+import { fixtureRouter, loadFixturesFromDir, noRecordingIsNoModel } from '../support/fixture-router.js';
 import { nextCalendarDay } from '@core/schema/review.js';
 import { buildTodaySession } from '../../packages/core/src/session/build.js';
 import { presentNextCard } from '../../packages/core/src/session/present.js';
@@ -62,7 +62,8 @@ function stateOf(world: LearningWorld): ReviewCliState {
 }
 
 function makeRouter(): LlmRouter {
-  return fixtureRouter(loadFixturesFromDir(LLM_FIXTURES_DIR));
+  // 填空題的同義判斷沒錄 fixture = 沒有模型(T31:只有模型不能用才收成嚴格比對)
+  return noRecordingIsNoModel(fixtureRouter(loadFixturesFromDir(LLM_FIXTURES_DIR)));
 }
 
 function reviewsPath(world: LearningWorld): string {

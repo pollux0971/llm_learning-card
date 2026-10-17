@@ -85,7 +85,7 @@ function makeRouter(id: string, steps: ApplyStep[] = []): Router {
     probes: 0,
     async call(task, prompt) {
       r.calls += 1;
-      if (task !== 'grade.apply') throw new Error('沒有本機模型');
+      if (task !== 'grade.apply') throw new NoModelError('grade.fill.llm');
       r.applyCalls += 1;
       const step = queue.shift() ?? 'pass';
       if (step !== 'pass') throw step;

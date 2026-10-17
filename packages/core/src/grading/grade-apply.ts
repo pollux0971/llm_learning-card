@@ -49,6 +49,8 @@
  *        rubric 對不上)就記一筆 'warning' log 並重試一次,重試用同一份 prompt
  *        (phase-2.feature「An unparseable response is retried once」「A verdict
  *        count that does not match the rubric is invalid」)。
+ *        router.call 丟錯時先分類:模型這次不能用 → 記 witness 與 warning,回
+ *        pass null(不自動重打);bug、設定錯誤、憑證原樣往外丟。
  *     3. 兩次都無效 → `{ pass: null, feedback: '...', grader: 'error' }`,不帶
  *        criteria。呼叫端(04-scheduler)看到 grader==='error' 不得推進或回退
  *        stage(契約 §5 GradeResult.pass 的註解)——這條規則不在這個函式的
@@ -65,6 +67,7 @@ import type { LogEvent } from '@contracts/index.js';
 import { recordEvent } from '@core/schema/log.js';
 import { countWords } from '@core/schema/word-count.js';
 import { witness } from '@contracts/witness.js';
+import { llmUnavailableReason } from '@core/llm/index.js';
 import type { LlmRouter } from './types.js';
 
 /** 契約 §3 ApplyQuestion 的可執行版本(05 自己的落點內複製,理由同 ./types.ts 開頭的說明)。 */
@@ -106,6 +109,9 @@ export interface GradeApplyOptions {
 
 /** 契約 §5:feedback <= 40 字,字數演算法見契約 §2、`@core/schema/word-count.ts`。 */
 export const APPLY_FEEDBACK_WORD_LIMIT = 40;
+
+/** 模型這次不能用時給使用者的那一句。不含例外原文。 */
+const LLM_UNAVAILABLE_FEEDBACK = '這次沒辦法批改(模型暫時連不上),請再試一次。';
 
 const VerdictShapeSchema = z.object({
   criteria: z.array(z.boolean()),
@@ -189,7 +195,15 @@ export async function gradeApply(
   let llmResult;
   let verdict: ApplyVerdict | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
-    llmResult = await router.call('grade.apply', prompt, opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs });
+    try {
+      llmResult = await router.call('grade.apply', prompt, opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs });
+    } catch (err) {
+      const reason = llmUnavailableReason(err);
+      if (reason === undefined) throw err;
+      witness('grading.apply.llm-unavailable');
+      log({ ts: new Date().toISOString(), type: 'warning', task: 'grade.apply', reason: 'llm_unavailable', cause: reason });
+      return { pass: null, feedback: LLM_UNAVAILABLE_FEEDBACK, grader: 'error' };
+    }
     verdict = parseApplyVerdict(llmResult.text, rubricCriteriaCount);
     if (verdict) break;
     if (attempt === 0) {
