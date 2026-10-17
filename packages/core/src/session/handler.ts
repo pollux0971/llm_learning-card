@@ -81,6 +81,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
 
   function day(): string {
     if (roundDay !== undefined) return roundDay;
+    if (typeof deps.today === 'function') return deps.today();
     throw new Error('internal: today 還沒在 start 算過');
   }
 

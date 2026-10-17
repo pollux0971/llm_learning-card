@@ -133,3 +133,40 @@ session `ses_eb58ae8d3ffe50TYb32RKMsbM3`,opencode `session_v2.cost` = **$5.56045
 ## 待協調
 
 沒有。
+
+## 第二輪(F1)
+
+驗收發現 start 之前叫 status、today 是函式時,day() 丟錯變成 internal。只改 packages/core/src/session/handler.ts 的 day()(第 82 行)。第 84 行:roundDay 還沒值、而 deps.today 是函式時,回傳 deps.today(),不寫進 roundDay、不鎖。today 給字串仍在建立時寫進 roundDay,照舊固定。start 仍每次呼叫 today 恰好一次並鎖定;鎖定之後的 next / submit / summary / status 用那一天。沒改任何測試檔。
+
+改前 `features/support/t30-handler.test.ts`:
+
+```text
+ Test Files  1 failed (1)
+      Tests  3 failed | 40 passed (43)
+   Start at  01:13:45
+   Duration  4.20s (transform 201ms, setup 48ms, import 950ms, tests 3.10s, environment 0ms)
+```
+
+三條紅都是 today 函式那個 describe 裡的 F1。改後:
+
+```text
+ Test Files  1 passed (1)
+      Tests  43 passed (43)
+   Start at  01:14:10
+   Duration  1.64s (transform 203ms, setup 45ms, import 973ms, tests 527ms, environment 0ms)
+```
+
+範圍 vitest(`CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 npx vitest run packages/core/src/session scripts/review-handler.test.ts features/support/t30-handler.test.ts features/support/t30-sidecar.test.ts packages/ui-shared/src/hud/card-static.test.ts packages/ui-shared/src/hud/card-static-self.test.ts packages/ui-shared/src/hud/card-regression.test.ts`):
+
+```text
+ Test Files  23 passed (23)
+      Tests  489 passed (489)
+   Start at  01:14:17
+   Duration  22.19s (transform 458ms, setup 256ms, import 5.65s, tests 14.20s, environment 2ms)
+```
+
+`npx tsc --noEmit`:退出碼 0,沒有輸出。沒有跑 cucumber、沒有跑變異測試。
+
+learning/ 開工與收工相同:sha256 前 16 是 c2e4dd6d71de3976,64 檔,state/log.jsonl 108 行。量的是主簽出的 learning/。
+
+session `ses_eb58ae8d3ffe50TYb32RKMsbM3`,opencode `session_v2.cost` = **$8.98193**(tokens in 533735、out 19640、reasoning 54814、cache read 11735808)。第一輪快照是 $5.560458;這是第二輪提交報告前的累計。LLM 真呼叫:0。
