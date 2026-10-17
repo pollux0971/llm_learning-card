@@ -563,6 +563,7 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 - 指令:`VITEST_MAX_WORKERS=1 TEMPLATE_DIR=<目錄> npm run check:all`。
 - **回報要帶**:host、核數、worker 數、起跑與結束的 1/5/15 分 load、樹 sha 前後。沒有這些欄位,事後分不出「程式變慢」和「機器變忙」。
 - 上一條的處理是量測條件,不是標準;T3 / T4 會把它們變成機制。
+- **預熱後先 `sync` 再等 IO 安靜,才起 `check:all`**(顧問 2026-10-18,T29 根因):真 fsync 型測試的逾時,都落在預熱(`cargo build --bin lc-fs`)結束後 1–2 分鐘——cargo 留下的髒頁在這時被核心寫回,壓在 vitest 剛開跑的時候(a2e5c3c:03:42–03:43 IO full 到 82;17a1387:20:02:30–20:03:30 到 44;中間 15–17 分鐘是 0)。鏈的程序:預熱完 → `sync` → 等 `/proc/pressure/io` 的 `full` `avg10` < 5(上限 3 分鐘,**等了多久記進 meta**)→ 才起 `npm run check:all`;每秒取樣多記 `/proc/meminfo` 的 `Dirty`、`Writeback`。鏈尾還有一個 IO 尖峰(04:00 到 46、20:21 到 41),是哪一步造的下次看 JSON reporter + 取樣,先記不修。連看 3 次整鏈(加了等待之後),預熱窗外還有真 fsync 型逾時,才回頭做 T29 原本的「fixture 改 `writeFileSync`」。
 - **整鏈有逾時紅時,送「請驗推」的條件**(顧問 2026-10-18 裁決,T31 a2e5c3c):
   1. 紅的只有逾時(`Test timed out`),0 條斷言失敗;
   2. 這批沒碰那個測試檔,也沒碰它 import 的模組;
