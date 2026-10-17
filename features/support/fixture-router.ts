@@ -17,7 +17,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CloudLlmRouter } from '@core/llm/index.js';
+import { CloudLlmRouter, NoModelError } from '@core/llm/index.js';
 import type { CloudAdapter, LlmRouter, LlmTask } from '@core/llm/index.js';
 
 export interface FixtureEntry {
@@ -88,5 +88,28 @@ export function fixtureRouter(fixtures: FixtureEntry[], onCall?: (call: Recorded
     async probeLocal() {
       return fixtures.length > 0 ? { available: true, models: ['fake'] } : { available: false, models: [] };
     },
+  };
+}
+
+/**
+ * T31:有些場景只檢查「第三層(填空同義判斷)被打到」,沒有為那個 prompt 錄 fixture(例如「Short answers skip the fuzzy layer」)。
+ * 以前 `gradeFillBlank` 把任何例外都收成嚴格比對,那些場景就靠「沒錄」這個例外走到 fallback-strict。
+ * T31 之後只有「模型不能用」才收,所以這裡明講:沒錄製 = 沒有模型(NoModelError,`cause` 留著原本那個「沒有錄製」的錯)。
+ * 只轉換「沒有錄製」這一種;其他的錯(包括對不上 attempt)原樣丟出。要真的驗回應的場景自己錄 fixture,不要包這層。
+ */
+export function noRecordingIsNoModel(router: LlmRouter): LlmRouter {
+  return {
+    async call(task: LlmTask, prompt: string, opts?: { timeoutMs?: number; maxTokens?: number }) {
+      try {
+        return await router.call(task, prompt, opts);
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('fixture-router: 沒有錄製')) {
+          throw new NoModelError(task, { detail: '沒有預錄的回應', cause: err });
+        }
+        throw err;
+      }
+    },
+    probeOnline: () => router.probeOnline(),
+    probeLocal: () => router.probeLocal(),
   };
 }

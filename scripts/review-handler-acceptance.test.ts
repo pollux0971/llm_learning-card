@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { snapshotMessage } from '@core/schema/git-repo.js';
+import { NoModelError } from '../packages/core/src/llm/errors.js';
 import { ERROR_MESSAGES } from '../packages/core/src/session/protocol.js';
 import { createReviewHandler } from '../packages/core/src/session/handler.js';
 import { openDay, snapshotAfterReview } from '../packages/core/src/session/engine.js';
@@ -37,7 +38,7 @@ function envOf(v: Vault): NodeJS.ProcessEnv {
 }
 const noRouter = {
   async call(): Promise<never> {
-    throw new Error('沒有本機模型');
+    throw new NoModelError('grade.fill.llm');
   },
   async probeOnline(): Promise<boolean> {
     return false;
