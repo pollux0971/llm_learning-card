@@ -4,10 +4,11 @@
  *
  * 開法:`openApp(卡片目錄, …)`(render-test-support.ts 一般化的版本),傳**目錄路徑**,不 import 06、07 的模組。
  * 互動全走 DOM:填答案用原生 setter + input 事件(Svelte 的 bind:value 聽 input),點鍵用 `click()`。
- * 考試卡的答案從 `apps/test-card/src/stubs/fixtures.ts` 的文字裡讀(fs,不 import)。
+ * 考試卡的答案從 `contracts/fixtures/learning-minimal/questions/*.yaml` 讀(fs,不 import;T24 之後 stubs 沒了)。
  * 每項檢查都先 `page.reset()` 重新載入,檢查之間不互相影響。數值都在 card-design-values-test-support.ts。
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 import { join } from 'node:path';
 import {
   ACCENT_CHANNEL_TOLERANCE, ACCENT_MIN_PIXELS, CARD_DIRS, CARD_VIEWPORT, CUT_CORNER_TOLERANCE, EXAMPLE_BORDER_LEFT_PX, EXAMPLE_MIN_MARGIN_PX, FACE_CHANNEL_TOLERANCE, FACE_TEST_BACKDROP, FACE_TEST_PANEL, HP_FILL_TOLERANCE_PX, HP_PERCENT_ONE_THIRD, NEXT_LABEL,
@@ -132,13 +133,16 @@ export async function exampleMarginProblems(page: GalleryPage): Promise<string[]
 }
 
 // ───────────────────────────── 考試卡:fixture 答案與操作
-/** 從 stubs/fixtures.ts 的文字讀出每個填空題的「提示 → 每格第一個可接受寫法」;fs 讀,不 import */
+/**
+ * 每個填空題的「提示 → 每格第一個可接受寫法」。T24 之後考試卡的題目來自單獨執行的暫存根(learning-minimal 的複本),
+ * 所以直接讀 `contracts/fixtures/learning-minimal/questions/*.yaml`(fs 讀,不 import 卡片的模組)。
+ */
 export function fixtureFillAnswers(): Map<string, string[]> {
-  const text = readFileSync(join(CARD_DIRS['test-card'], 'src/stubs/fixtures.ts'), 'utf8');
+  const dir = join(CARD_DIRS['test-card'], '../../contracts/fixtures/learning-minimal/questions');
   const out = new Map<string, string[]>();
-  for (const m of text.matchAll(/- prompt: "([^"]*)"\n\s+answers:\n((?:\s+- \[[^\n]*\]\n)+)/g)) {
-    const answers = m[2]!.split('\n').filter((l) => l.trim().startsWith('- [')).map((l) => (JSON.parse(l.trim().slice(2)) as string[])[0]!);
-    out.set(m[1]!, answers);
+  for (const name of readdirSync(dir).filter((n) => n.endsWith('.yaml')).sort()) {
+    const file = parseYaml(readFileSync(join(dir, name), 'utf8')) as { fill?: { prompt: string; answers: string[][] }[] };
+    for (const q of file.fill ?? []) out.set(q.prompt, q.answers.map((group) => group[0]!));
   }
   return out;
 }
@@ -158,10 +162,14 @@ async function setValue(page: GalleryPage, selector: string, index: number, valu
 async function click(page: GalleryPage, label: string): Promise<void> {
   const ok = await page.evaluate<boolean>(`(() => { const b = ${BUTTON_BY_TEXT(label)}; if (!b) return false; b.click(); return true; })()`);
   if (!ok) throw new Error(`畫面上找不到字是「${label}」的按鈕`);
+  // T24 之後「下一題」要問側車(非同步):等上一題的結果從畫面上消失(換成下一題或結束)再往下量
+  if (label === NEXT_LABEL) await waitFor(page, `!(${RESULT_SHOWN})`);
 }
 
 /** 目前題目的題型與提示 */
 async function currentQuestion(page: GalleryPage): Promise<{ prompt: string; inputs: number; textareas: number }> {
+  // T24 之後題目是問側車來的(非同步):等題目出現(最多 5 秒);沒有題目(結束、錯誤)就照現狀回
+  await waitFor(page, `document.querySelector('.prompt')?.textContent?.trim()`, 5000);
   return page.evaluate(`({
     prompt: (document.querySelector('.prompt')?.textContent ?? '').trim(),
     inputs: document.querySelectorAll('input[type="text"]').length,

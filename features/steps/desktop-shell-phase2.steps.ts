@@ -1349,3 +1349,12 @@ Then('the check fails and names the file', function (this: LearningWorld) {
   assert.ok(problems.length > 0, 'T2b 的 teach.html 應該讓檢查失敗');
   assert.ok(problems.some((p) => p.includes('/teach-card/src/main.ts')), problems.join('\n'));
 });
+
+/**
+ * 06-test-card phase-2(T24)用:考試卡用的 LearningFs(webview 端真的那一份,經 probe 到跟 Tauri command 同一個 learning_fs)
+ * 被要求讀 learning 目錄外面的檔。之後的 Then('the request is refused') 看的就是這裡留下的 bag。
+ */
+export async function requestPathOutsideDirectory(world: LearningWorld): Promise<void> {
+  ensure(world, 'boundary');
+  await callOp(world, 'read', '../outside/secret');
+}
