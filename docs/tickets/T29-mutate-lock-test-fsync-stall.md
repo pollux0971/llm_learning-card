@@ -1,7 +1,7 @@
 ---
 id: T29
 deps: []
-touches: [scripts/mutate.test.ts, scripts/run-tests.test.ts]
+touches: [scripts/mutate.test.ts]
 cpu: light
 budget_usd: 1
 status: todo
@@ -12,10 +12,10 @@ must_catch:
   - 改了 `scripts/mutate.ts`、`scripts/run-tests.ts` 或它們的行為(拿鎖、清殘鎖、重試間隔、2 小時規則、90 分鐘上限、超集規則):既有行為測試必須紅;這張只動測試
 ---
 
-# 工單 T29:scripts 測試在整鏈裡偶發撞 5 秒逾時,先量再修
+# 工單 T29:mutate.test.ts 的鎖測試在 IO 停頓時撞 5 秒逾時
 
-> 狀態:**顧問裁決 2026-10-17 第二次改寫(範圍擴大,fsync 假說已被推翻)**。優先度:**低,排在 T24 推出之後**。
-> 作者:協調者(短版)。測試改動:-e5。驗收:-ed。**這張不改產品碼。**
+> 狀態:**顧問裁決 2026-10-17 第三次改寫(量測做完,收窄到 IO 型)**。量測見 [measure-T29.md](../reviews/measure-T29.md)。優先度:低。
+> 作者:協調者(短版)。測試改動:-e5。驗收:-ed。**這張不改產品碼、不改 `scripts/run-tests.test.ts`。**
 
 ## 為什麼有這張
 
@@ -33,26 +33,32 @@ must_catch:
 - 原本的假說是「測試準備呼叫被測的 `tryAcquire` 會 `fsync`,整鏈寫磁碟時偶爾停頓好幾秒」。**2026-10-17 的量測把它推翻了**:06209d6 兩次整鏈都每秒取樣 `/proc/pressure/io`,`run-tests` 那條逾時的時間窗(第 1 次 16:21 之後)沒有任何一秒 full 停頓超過 300ms;第 2 次 16:44 之後沒有超過 200ms。所以**至少那一條不是磁碟停頓**。
 - 更像是 CPU 或事件迴圈被佔住(單 worker 的整鏈裡同時有別的行程),或這條測試本身要掃目錄、起行程;**都還沒量**。
 
-## 要做什麼
+## 量測結果(-e5,2026-10-17,見 [measure-T29.md](../reviews/measure-T29.md))
 
-1. **先量**(-e5 或 -ed;不改程式,量測用的修改不進 git):
-   - 之後的整鏈開 vitest 的 JSON reporter(只在驗證簽出裡加,不進版控),拿每條測試的鏈內耗時。
-   - 列出鏈內耗時超過 2 秒、或是單跑時間 3 倍以上的測試。範圍:scripts 底下「做真 I/O 或起真行程」的測試。
-   - 同時每秒取樣 `/proc/pressure/io`(協調者已有取樣腳本放在 scratchpad)與 load,對得上才說是磁碟;對不上就老實寫「不是磁碟」。
-   - 記 `tmp()` 落在哪個檔案系統(協調者 2026-10-17 量到:`/tmp` 與 `/` 同在 `/dev/nvme1n1p2`)。
-2. **修法**(只對量到的那幾條):
-   - 準備階段用 `writeFileSync` 直接寫鎖檔內容,**不要用被測的 `tryAcquire` 造 fixture**(準備不該依賴被測函式,也少一次 `fsync`)。鎖檔格式不變;`tryAcquire` 自己的 `fsync` 行為仍由專門的測試覆蓋。
-   - 仍會真的起行程、寫鎖檔、`fsync` 的測試,**單條**設明確逾時(例如 30 秒),註解寫理由並引用量測。**不調全域 `testTimeout`,不改產品碼。**
+- **IO 型重現**:另一個行程連續 `dd conv=fsync`(同檔案系統)時,`tryAcquire` 30 次 p90 5016 ms、最大 6754 ms(空閒中位 0.95 ms)。`mutate.test.ts` 在這風暴下「活鎖時每 15 秒重試…」7782 ms 逾時;整檔 41.9 秒(單跑 12.4、整鏈 31–52)。停頓落在哪一條是碰運氣。
+- **非 IO 型沒重現**:`run-tests.test.ts`「三個根:鎖被別人握著照樣立刻跑」單跑 3.6–5.2 ms,風暴下 3.2 ms;掃目錄約 2 ms。整鏈那次整檔 11.4 秒(單跑 0.94 秒的 12 倍)而 PSI 沒停頓,**原因不明**。
+
+## 要做什麼(只修 IO 型)
+
+1. 範圍:`scripts/mutate.test.ts` 的鎖測試。準備階段改用 `writeFileSync` 直接寫鎖檔內容,**不要用被測的 `tryAcquire` 造 fixture**;鎖檔格式不變;`tryAcquire` 自己的 `fsync` 行為仍由專門的測試覆蓋。
+2. 被測流程本身仍會走 `tryAcquire`(例如「活鎖時每 15 秒重試」裡 `acquireLock` 自己的那次)的測試,**單條**設明確逾時(例如 30 秒),註解寫理由並引 measure-T29.md 第 3、4 節。**不調全域 `testTimeout`,不改產品碼。**
 3. 斷言強度不變:每條原有斷言都在;驗收者對每一條有改動的測試做一個丟棄式改壞,確認會紅。
 
 ## 驗收
 
-- 先量的結果寫進 `docs/reviews/`(只印數字,不貼 `learning/` 內容)。
-- 選定修法後:`scripts/mutate.test.ts`、`scripts/run-tests.test.ts` 全綠;再在**高 load**(同時跑 `VITEST_MAX_WORKERS=1` 的整套測試)下連跑 3 次都綠。
-- `npm run check:all` 綠;沒有未登記的新 `scripts/*.ts`。
+- 在 -e5 量測用的那個 `dd` 風暴開著的同條件下,`scripts/mutate.test.ts` 連跑 3 次全綠;斷言數不減;改壞會紅。
+- 沒開風暴時 `scripts/mutate.test.ts` 全綠;`npm run check:all` 綠;沒有未登記的新 `scripts/*.ts`。
+
+## 待診斷(這張不修)
+
+- `scripts/run-tests.test.ts`「三個根:鎖被別人握著照樣立刻跑」:原因不明。原因找到之前,它跟 T29 這一類一樣:整鏈裡紅了,在同一份簽出單步重跑,綠就收。下次整鏈在驗證簽出加診斷(vitest JSON reporter、每秒 `ps` 前 5 名 CPU、`/proc/pressure/{cpu,io,memory}`,都不進版控),逾時那一刻的取樣跟原本那幾個檔放一起。
+
+## 觀察(這張不修)
+
+- `mutate.test.ts`「兩個行程同時搶…」單跑固定 8.0 秒(3 次都一樣,像固定等待)。
 
 ## 不在範圍
 
 - `degraded-report.test.ts` 那種內層 vitest 慢,是另一個問題,見 SKILL §4e。
-- `apps/test-card/dev/standalone.test.ts` 的 vite 收尾卡住:那是 T24 的補丁,不在這張。
+- `apps/test-card/dev/standalone.test.ts` 的 vite 收尾卡住:那是 T24 的補丁,已完成。
 - 改 `mutate.ts` 的重試間隔、2 小時、90 分鐘規則;改 `run-tests.ts` 的超集規則。
