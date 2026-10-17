@@ -1381,8 +1381,9 @@ describe('第 4 組:reviewOf 的備援分支(不是同一個 class 的 ReviewErr
   });
 
   it('對照:丟的是普通物件 { name: "ReviewError", kind: "no-cards" }(不是 Error)→ 複習程式停了', async () => {
-    const plain = { name: 'ReviewError', kind: 'no-cards', message: 'x' } as unknown as Error;
-    const { s } = await ready({ start: [plain] });
+    const plain = { name: 'ReviewError', kind: 'no-cards', message: 'x' };
+    // fakeClient 把 Error 的 step 當 reject、其他物件當回傳值,所以用函式 step 才丟得出「不是 Error 的東西」
+    const { s } = await ready({ start: [() => Promise.reject(plain)] });
     await s.init();
     expectStopped(s, 'plain object');
   });

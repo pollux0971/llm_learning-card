@@ -92,7 +92,7 @@ describe('reteach 的「繼續」在內文上方(驗收 3,O5)', () => {
     const from = src.search(/\{:else if\s+view\.state\s*===\s*'reteach'/);
     expect(from, 'App.svelte 找不到 reteach 區塊').toBeGreaterThanOrEqual(0);
     const rest = src.slice(from + 5);
-    const next = rest.search(/\{:else if\s|\{\/if\}/);
+    const next = rest.search(/\{:else if\s+view\.state\b/);
     return src.slice(from, from + 5 + (next < 0 ? rest.length : next));
   }
 
