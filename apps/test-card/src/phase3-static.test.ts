@@ -124,6 +124,23 @@ describe('小結怎麼畫出來(驗收 2)', () => {
     expect(src).not.toContain('{@html');
   });
 
+  it("小結的句子只在 done 分支裡畫(整段拿掉會紅;T23 驗收 A4):view.summaryLines 外面包著的 {#if}/{:else if} 條件是 view.state === 'done'", () => {
+    const src = app();
+    expect(src).toContain('view.summaryLines');
+    const at = src.indexOf('view.summaryLines');
+    // 逐個標籤走一遍,維持巢狀堆疊;只看 at 之前打開、還沒關的 if 分支
+    const stack: { cond: string }[] = [];
+    for (const m of src.slice(0, at).matchAll(/\{(#if|:else if|:else|\/if)\b\s*([^}]*)\}/g)) {
+      const tag = m[1]!;
+      if (tag === '#if') stack.push({ cond: (m[2] ?? '').trim() });
+      else if (tag === ':else if') stack[stack.length - 1] = { cond: (m[2] ?? '').trim() };
+      else if (tag === ':else') stack[stack.length - 1] = { cond: 'else' };
+      else stack.pop();
+    }
+    const conds = stack.map((x) => x.cond);
+    expect(conds.some((c) => /^view\.state\s*===\s*'done'$/.test(c)), `外面的條件:${JSON.stringify(conds)}`).toBe(true);
+  });
+
   it('session.ts 讀 summary 的結果(readSummary),不是丟掉', () => {
     const src = read('src/session.ts');
     expect(src).toMatch(/\breadSummary\b/);

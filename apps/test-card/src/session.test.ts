@@ -1115,6 +1115,35 @@ describe('小結(驗收 2)', () => {
     expect(e.s.getView().summaryLines).toEqual([]);
   });
 
+  it('summaryLines 在每一個非 done 狀態都是空陣列(loading / paused / empty / reteach / question / error;T23 驗收 S7)', async () => {
+    const loading = await ready({ start: [start()] });
+    expect(loading.s.getView().state).toBe('loading');
+    expect(loading.s.getView().summaryLines).toEqual([]);
+    const paused = await ready({ start: [start({ state: 'paused' })] });
+    await paused.s.init();
+    expect(paused.s.getView().state).toBe('paused');
+    expect(paused.s.getView().summaryLines).toEqual([]);
+    const empty = await ready({ start: [start({ state: 'empty', total: 0 })] });
+    await empty.s.init();
+    expect(empty.s.getView().state).toBe('empty');
+    expect(empty.s.getView().summaryLines).toEqual([]);
+    const re = await ready(
+      { start: [start()], next: [{ kind: 'reteach', card: 'sec-0001', path: SHORT_PATH, short: true }] },
+      { [SHORT_PATH]: '同源指協定、主機、埠號三者相同。' },
+    );
+    await re.s.init();
+    expect(re.s.getView().state).toBe('reteach');
+    expect(re.s.getView().summaryLines).toEqual([]);
+    const q = await ready({ start: [start()], next: [fillQ()] });
+    await q.s.init();
+    expect(q.s.getView().state).toBe('question');
+    expect(q.s.getView().summaryLines).toEqual([]);
+    const err = await ready({ start: [new ReviewError('no-cards', 'x')] });
+    await err.s.init();
+    expect(err.s.getView().state).toBe('error');
+    expect(err.s.getView().summaryLines).toEqual([]);
+  });
+
   it('done 之後按重新開始(init)→ summaryLines 清掉', async () => {
     const { s } = await ready({ start: [start(), start()], next: [{ kind: 'done' }, fillQ()], summary: [summaryResult()] });
     await s.init();
