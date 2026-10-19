@@ -1,4 +1,4 @@
-@wave0 @work-dag @phase-1
+@wave0 @work-dag @phase-1 @standalone
 # The @standalone tag is deliberately NOT on this file yet. check:dry-run fails when the
 # standalone set has undefined steps, and this phase has no step definitions until it is
 # implemented. Whoever implements phase-1 adds @standalone to the tag line in the same
