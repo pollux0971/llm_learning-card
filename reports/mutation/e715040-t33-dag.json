@@ -1,0 +1,15 @@
+{
+  "score": 69.46,
+  "killed": 574,
+  "timeout": 6,
+  "survived": 255,
+  "noCoverage": 0,
+  "ignored": 0,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.t33-dag.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.t33-dag.json",
+  "commit": "e715040"
+}
