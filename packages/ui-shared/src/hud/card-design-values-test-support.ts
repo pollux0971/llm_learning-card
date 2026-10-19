@@ -131,3 +131,20 @@ export const HEADER_GAP_MAX_PX = 24;
 export const HEADER_HP_ROW_GAP_REM = 0.2;
 /** 同一行(上緣 y)、HP 條間距、HP 條寬度與左緣的容許誤差 */
 export const HEADER_LAYOUT_TOLERANCE_PX = 1;
+
+// ── T34:Wayland 一次性提示(顧問 2026-10-18 審過) ──────────────────────────
+/** 提示的字樣(照 placeholder 的;一顆按鈕,字是「知道了」) */
+export const WAYLAND_NOTE_TEXT = 'Wayland 底下無法強制視窗置頂,請在桌面環境設定「永遠在最上層」。';
+export const WAYLAND_NOTE_DISMISS_LABEL = '知道了';
+/** 按掉之後存在頁面 localStorage 的鍵(兩張卡同一個來源,按一次就夠);值是 '1' */
+export const WAYLAND_NOTE_STORAGE_KEY = 'lc-wayland-note-dismissed';
+/** Rust 用 include_str! 帶進去的那一段頁面程式(測試與 Rust 讀同一個檔) */
+export const WAYLAND_NOTE_JS = join(REPO_ROOT, 'apps/desktop/src-tauri/src/wayland_note.js');
+/**
+ * 桌面程式頁面的 CSP 是 `default-src 'self'; script-src 'self'; …`(apps/desktop/src-tauri/tauri.conf.json,靜態測試釘住前兩段),
+ * 沒有 unsafe-inline,所以不能用 style 屬性、不能 innerHTML 塞樣式。
+ * 真 Chrome 的 dev server 頁面,樣式是 vite 用 JS 塞 <style> 進去的(打包後是檔案),所以這條多開 style-src-elem 的 unsafe-inline;
+ * style 屬性(style-src-attr 退回 default-src)與行內程式照樣被擋。
+ */
+export const DESKTOP_PAGE_CSP_PREFIX = "default-src 'self'; script-src 'self'";
+export const DEV_PAGE_CSP = `${DESKTOP_PAGE_CSP_PREFIX}; style-src-elem 'self' 'unsafe-inline'`;
