@@ -1,7 +1,10 @@
 //! 合成器判定、頁面模式、載入完才顯示的逾時退路(T16 / ADR-072)。
+//! Wayland 一次性提示:session_actions 決定要不要置頂、要不要把提示程式接進頁面(T34)。
 //! 不開視窗、不碰時鐘:main.rs 負責問 GDK、把這段程式交給 WebKit、計時與 show。
 
 use std::time::Duration;
+
+use crate::session::SessionType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowMode {
@@ -27,6 +30,34 @@ pub fn init_script(mode: WindowMode) -> String {
         "solid": mode.solid,
     });
     format!("window.__LC_WINDOW_MODE__ = {json};\n{}", include_str!("window_mode.js"))
+}
+
+/// 這個 session 要不要置頂、要不要把一次性提示交給頁面。兩者恰好一個。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionActions {
+    pub always_on_top: bool,
+    pub show_wayland_note: bool,
+}
+
+pub fn session_actions(session: SessionType) -> SessionActions {
+    match session {
+        SessionType::X11 => SessionActions {
+            always_on_top: true,
+            show_wayland_note: false,
+        },
+        SessionType::Wayland => SessionActions {
+            always_on_top: false,
+            show_wayland_note: true,
+        },
+    }
+}
+
+/// Wayland:在 init script 後面逐字接 `wayland_note.js`。X11:原樣,不帶提示。
+pub fn with_wayland_note(script: String, session: SessionType) -> String {
+    if !session_actions(session).show_wayland_note {
+        return script;
+    }
+    format!("{script}\n{}", include_str!("wayland_note.js"))
 }
 
 /// 每個視窗一顆:載入完成與逾時,先到的那一次要顯示,後到的什麼都不做。

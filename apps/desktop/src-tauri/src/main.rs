@@ -17,21 +17,17 @@ use tauri::webview::PageLoadEvent;
 use tauri::{App, AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 /// X11:視窗建立後立刻置頂,並在每次拿到焦點時重新置頂(有些視窗管理器點擊別的視窗後會把置頂效果蓋掉)。
-/// Wayland:不強制置頂(協定不允許客戶端這樣做),改為呼叫 placeholder 頁面自己的一次性提示。
+/// Wayland:不呼叫 set_always_on_top。一次性提示由 initialization_script 在頁面載入完之後顯示。
 fn apply_session_behaviour(window: &WebviewWindow, session: SessionType) {
-    match session {
-        SessionType::X11 => {
-            let _ = window.set_always_on_top(true);
-            let w = window.clone();
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::Focused(true) = event {
-                    let _ = w.set_always_on_top(true);
-                }
-            });
-        }
-        SessionType::Wayland => {
-            let _ = window.eval("window.__lcShowWaylandNote && window.__lcShowWaylandNote();");
-        }
+    let actions = window_mode::session_actions(session);
+    if actions.always_on_top {
+        let _ = window.set_always_on_top(true);
+        let w = window.clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::Focused(true) = event {
+                let _ = w.set_always_on_top(true);
+            }
+        });
     }
 }
 
@@ -125,7 +121,7 @@ fn arm_order_backstop(app: AppHandle, focus: Arc<Mutex<window_mode::StartupFocus
 fn open_windows(app: &App, state: StartState) -> Result<(), Box<dyn std::error::Error>> {
     let session = session::detect_from_env();
     let mode = window_mode::mode_for(desktop_is_composited());
-    let script = window_mode::init_script(mode);
+    let script = window_mode::with_wayland_note(window_mode::init_script(mode), session);
     let surface = window_mode::surface_for(mode);
     let labels = start_screen::windows(state);
     let focus = Arc::new(Mutex::new(window_mode::StartupFocus::new(labels)));
