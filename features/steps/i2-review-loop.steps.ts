@@ -203,6 +203,9 @@ export function isI2Loop(world: LearningWorld): boolean {
 
 Before(function (this: LearningWorld, { pickle }) {
   if (pickle.uri.endsWith('docs/integration/i2-review-loop-headless.feature')) st(this).active = true;
+  // I3 的 @regression 場景(「The terminal review loop still works as in I2」)與它的 Background(「5 cards are due today」要真的佈置磁碟)
+  // 用的是同一套 I2 headless 步驟:這個 feature 的場景也走 I2 的分派。
+  if (pickle.uri.endsWith('docs/integration/i3-desktop-review.feature')) st(this).active = true;
 });
 
 After(function (this: LearningWorld) {
@@ -613,6 +616,29 @@ Then('{string} reflects all three outcomes', async function (this: LearningWorld
   const after = readReviews(this);
   const outcomes = st(this).presentedPerRun[0]!.map((card) => after[card]!.history.map((h) => h.pass));
   assert.deepEqual(outcomes, [[true], [true], [false]], `三張卡的紀錄應該各一筆:通過、通過、答錯:${JSON.stringify(after)}`);
+});
+
+/**
+ * I3 的 @regression 場景「a full session can be completed as in I2」:用 I2 headless 同一套(真的 scripts/review.ts、假網路層、
+ * stdin 逐題送答案)把 Background 佈置的 5 張到期的卡一次答完、全部答對,量退出碼、小結、reviews.json。
+ */
+Then('a full session can be completed as in I2', { timeout: 300_000 }, async function (this: LearningWorld) {
+  const s = st(this);
+  const seeded = s.seededCards;
+  assert.equal(seeded.length, 5, `Background 應該佈置了 5 張到期的卡:${JSON.stringify(seeded)}`);
+  s.script = seeded.map(() => 'correct');
+  s.onExhausted = 'empty';
+  s.runs = [];
+  const before = readReviews(this);
+  const run = await runFreshSession(this);
+  assert.equal(run.status, 0, `一整輪應該 exit 0:\n${run.output}`);
+  assert.equal(s.presentedPerRun[0]!.length, 5, `應該問滿 5 張卡:\n${run.output}`);
+  assert.ok(run.output.includes('5 passed, 0 returned.'), `小結要說 5 passed, 0 returned:\n${run.output}`);
+  const after = readReviews(this);
+  for (const card of seeded) {
+    assert.equal(after[card]!.stage, before[card]!.stage + 1, `${card} 答對之後要進一個 stage`);
+    assert.equal(after[card]!.history.at(-1)?.pass, true, `${card} 最後一筆紀錄要是通過`);
+  }
 });
 
 Then('the session prints a summary of {int} passed and {int} returned', async function (this: LearningWorld, passed: number, returned: number) {

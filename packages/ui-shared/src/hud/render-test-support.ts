@@ -200,6 +200,13 @@ export interface OpenAppOptions {
   viewport?: { width: number; height: number };
   /** reset() 等到這個選擇器出現才算載好(最多 5 秒,到時不丟錯,讓後面的檢查自己報「找不到」);預設面板 */
   ready?: string;
+  /**
+   * 每次載入頁面時、在頁面自己的腳本之前執行的一段程式(CDP 的 Page.addScriptToEvaluateOnNewDocument)。
+   * 跟 Tauri 的 `initialization_script` 同一個時機:document 還沒有 body。T34 用它把 Rust 組出來的提示程式交給真 Chrome。
+   */
+  initScript?: string;
+  /** dev server 回應的標頭(例如 Tauri 的 CSP,看提示程式有沒有被它擋);預設沒有 */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -216,7 +223,7 @@ export async function openApp(appDir: string, opts: OpenAppOptions = {}): Promis
   const configFile = existsSync(join(galleryDir, 'vite.config.ts')) ? join(galleryDir, 'vite.config.ts') : false;
   const server = await createServer({
     configFile, root: galleryDir, logLevel: 'error', clearScreen: false,
-    server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false },
+    server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false, ...(opts.headers ? { headers: opts.headers } : {}) },
   });
   await server.listen();
   const url = server.resolvedUrls?.local[0];
@@ -263,6 +270,7 @@ export async function openApp(appDir: string, opts: OpenAppOptions = {}): Promis
     cdp = await Cdp.connect(pageWs);
     for (const d of ['Page.enable', 'Runtime.enable', 'DOM.enable', 'CSS.enable']) await cdp.send(d);
     await cdp.send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: false });
+    if (opts.initScript !== undefined) await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: opts.initScript });
   } catch (e) {
     await cleanup();
     throw e;
