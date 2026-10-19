@@ -723,6 +723,30 @@ export const ROSTER: Record<string, Entry> = {
     ],
   },
 
+  // ── 工作圖(T33):只讀 features/ 與 git tag,沒有設定檔 ──
+  'scripts/dag.ts': {
+    kind: 'entry',
+    commands: [
+      {
+        label: 'dag',
+        baselines: {
+          healthy: (s) => {
+            const root = emptyDir(s, 'tree');
+            file(root, 'features/01-alpha/FEATURE.md', '# x\n\n## Phase\n\n| Phase | 標題 | 階段 | 狀態 | 完成日 |\n|---|---|---|---|---|\n| 1 | t | Wave 0 | todo | |\n');
+            file(root, 'features/01-alpha/NEXT.md', '**phase-1**:無 gate。\n');
+            return { args: ['--root', root] };
+          },
+        },
+        probes: [
+          { kind: 'empty', name: '--root 是空目錄', build: (s) => ({ args: ['--root', emptyDir(s, 'empty')] }) },
+          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+          { kind: 'malformed', name: 'FEATURE.md 是目錄不是檔', build: (s) => { const root = emptyDir(s, 'tree'); emptyDir(root, 'features/01-alpha/FEATURE.md'); return { args: ['--root', root] }; } },
+          { kind: 'wrong-type', name: '--root 指到檔案不是目錄', build: (s) => ({ args: ['--root', file(s, 'not-a-dir', 'hello\n')] }) },
+        ],
+      },
+    ],
+  },
+
   // ── 功能入口 ──
   'scripts/due.ts': {
     kind: 'entry',

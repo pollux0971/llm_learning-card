@@ -69,6 +69,11 @@
     "interactive": false,
     "expect": "golden"
   },
+  "13-work-dag": {
+    "cmd": "npx tsx scripts/dag.ts --root features/13-work-dag/fixtures/basic",
+    "interactive": false,
+    "expect": "gate=dag"
+  },
   "14-hud-skin": {
     "cmd": "npx vite packages/ui-shared/src/hud/gallery",
     "interactive": true
