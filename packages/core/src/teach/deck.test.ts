@@ -8,9 +8,12 @@
  *   nextUnlearned(deck, reviews): string | undefined         deck 裡第一張不在 reviews 的卡;全學過 = undefined
  *   remainingCount(deck, reviews): number                    deck 裡不在 reviews 的卡數
  *   unlearnedPrereqs(prereqs, reviews, onDisk): string[]     照 prereqs 的順序,去掉已學過的與磁碟上沒有的
- *   readOrderFile(learningDir, category): { kind: 'missing' } | { kind: 'ok'; ids: string[] }
- *     「沒有檔」是明確的狀態,不是空陣列(ADR-038 第 1 點)。
  * 「未學」= 不在 reviews.json(reviews 傳進來的是 `Record<CardId, 任何值>`)。
+ *
+ * 讀 order 檔的函式不在這裡(B-lite,ADR-077:teach/ 是純函式、不碰 fs、不 import node: 模組):
+ *   `packages/core/src/schema/graph.ts` 的 readOrderFile(learningDir, category): { kind: 'missing' } | { kind: 'ok'; ids: string[] }
+ *     「沒有檔」是明確的狀態,不是空陣列(ADR-038 第 1 點)。下面最後一組量的是它。
+ * teach/ 底下不 import node: 的靜態檢查在 `no-node-static.test.ts`。
  *
  * 動態 import 算出來的 file URL:基底上是「功能還沒有」而紅,不是 tsc 錯。
  */
@@ -25,7 +28,14 @@ interface DeckModule {
   nextUnlearned(deck: readonly string[], reviews: Record<string, unknown>): string | undefined;
   remainingCount(deck: readonly string[], reviews: Record<string, unknown>): number;
   unlearnedPrereqs(prereqs: readonly string[], reviews: Record<string, unknown>, onDisk: readonly string[]): string[];
+}
+interface GraphModule {
   readOrderFile(learningDir: string, category: string): { kind: 'missing' } | { kind: 'ok'; ids: string[] };
+}
+
+async function graph(): Promise<GraphModule> {
+  const url = pathToFileURL(join(import.meta.dirname, '../schema/graph.ts')).href;
+  return (await import(/* @vite-ignore */ url)) as GraphModule;
 }
 
 async function deck(): Promise<DeckModule> {
@@ -143,27 +153,27 @@ describe('readOrderFile:沒有檔是明確的狀態', () => {
   };
 
   it('檔在:ok 與 id 陣列(照檔的順序)', async () => {
-    const d = await deck();
+    const d = await graph();
     const r = root();
     writeFileSync(join(r, 'graph', 'order-language.json'), JSON.stringify(['lang-0003', 'lang-0001']), 'utf8');
     expect(d.readOrderFile(r, 'language')).toEqual({ kind: 'ok', ids: ['lang-0003', 'lang-0001'] });
   });
 
   it('沒有那個檔:missing(不是 ok 加空陣列)', async () => {
-    const d = await deck();
+    const d = await graph();
     const r = root();
     expect(d.readOrderFile(r, 'network')).toEqual({ kind: 'missing' });
   });
 
   it('空陣列的檔是 ok 加空陣列(檔在,只是沒列卡)', async () => {
-    const d = await deck();
+    const d = await graph();
     const r = root();
     writeFileSync(join(r, 'graph', 'order-security.json'), '[]', 'utf8');
     expect(d.readOrderFile(r, 'security')).toEqual({ kind: 'ok', ids: [] });
   });
 
   it('只看自己那個類別的檔', async () => {
-    const d = await deck();
+    const d = await graph();
     const r = root();
     writeFileSync(join(r, 'graph', 'order-language.json'), JSON.stringify(['lang-0001']), 'utf8');
     expect(d.readOrderFile(r, 'network')).toEqual({ kind: 'missing' });
