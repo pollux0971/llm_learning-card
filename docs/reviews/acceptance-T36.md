@@ -45,7 +45,7 @@
 | m2 | 逾時時拿掉 `child.kill('SIGKILL')` | **存活**:4 條逾時測試全綠(見 G1) |
 | m3 | 逾時時不等 close,直接 `resolveStatus(null)` | **存活**:4 條全綠(見 G1) |
 
-### G1(補強建議,低):「逾時後子行程收得掉」沒有被任何測試真正證明
+### G1(補強建議,低;第二輪已補,見下):「逾時後子行程收得掉」沒有被任何測試真正證明
 
 新測試用 `timeoutMs: 1`,行程在 1 毫秒時才剛起來;不殺它,它也會自己跑完退出,所以「不留行程」那個斷言怎樣都綠。m2、m3 因此存活。我用丟棄式測試證實這是測試的洞,不是等價突變:讓子行程卡住(`beforeAnswer` 睡 12 秒,`timeoutMs: 2000`),逾時之後檢查 `processesFor`——正確實作綠;m2(拿掉 SIGKILL)紅:`AssertionError: 逾時之後不留行程: expected [ <pid> ] to deeply equal []`。丟棄式測試不進 git、已刪。修法在測試端:新加一條「卡住的子行程」的逾時測試(測試 agent 改,我不改)。這不影響 must_catch 五條(都抓到了),但工單驗收條件「子行程照舊收得掉」目前只是宣稱。
 
@@ -81,6 +81,46 @@
 
 這張工單沒有 LLM 花費(只改測試,我的驗收沒呼叫模型)。預算 1 美元,比值 0。算不出測試 agent 自己的用量,寫「不知道」。
 
+## 第二輪:G1 補完後重驗(最終 tip 17f61dd)
+
+- 被驗:`t36-tests` 最終 tip **17f61dd**(疊序 a7e9554、f12ef6a、88a67ba、17f61dd);對基底 4c5aa62 共 3 檔 +174/−13,`mutants.out` 0。tree sha 開跑與跑完同為 **a7641faa1173b10b0509110b0866332a9d626179**,簽出乾淨,`ls .env` 無。load 開跑約 2.5、跑完約 5.5。
+- 新 commit 只動測試檔與步驟檔(88a67ba:review-session.test.ts +36;17f61dd:步驟檔 +7/−1)。
+
+### 88a67ba:卡住的子行程測試
+
+讀:啟動前用 50 毫秒輪詢 /proc 收集所有命令列帶這個暫存目錄的 pid;`beforeAnswer` 睡 6 秒、timeoutMs 1500;丟錯之後對每個 pid 做 `kill(pid, 0)`(殭屍也算還在)。有「量尺」斷言:至少抓到一個子行程。沒有碰真路徑。
+
+| 改壞 | 結果 |
+|---|---|
+| m2 逾時時拿掉 `child.kill('SIGKILL')` | 紅:`AssertionError: 逾時錯誤丟出時,子行程還在: expected [ <pid> ] to deeply equal []`;還原後綠 |
+| m3 不等 close(`giveUp` 那行換成立刻 `resolveStatus(null)`) | **存活**。原因:SIGKILL 一送出行程幾毫秒內就被收掉,測試在停止輪詢後還有最多 50 毫秒的空檔才檢查,所以「是不是等 close 才往下」分不出來。它是 SIGKILL 之上的次要保證(行程已經殺了),評為低、近似等價,不要求再補 |
+
+### 17f61dd:runInteractiveReview 整組殺
+
+讀:`spawn('npx', …, { detached: true })` 讓 child 自成行程群組(群組 id = child.pid);逾時 `process.kill(-child.pid!, 'SIGKILL')`,丟例外(例如 pid 沒有)就退回 `child.kill('SIGKILL')`。只對自己 spawn 的那個 child 的群組送訊號,沒有碰別人的 pid;`detached` 只在這一個 spawn 上;正常結束時不送訊號。
+
+重做「INTERACTIVE_LIMIT_MS 改短,跑 `@i2` 續答場景」:
+
+| 設定 | 結果 |
+|---|---|
+| 1 秒、1.6 秒(在 17f61dd 上) | 紅,訊息 `runInteractiveReview 1 秒逾時被 SIGKILL(不是斷言錯:…)`(1.6 秒版寫 1.6);用 `ps` 找命令列帶 review.ts 或 _fake-review-cloud 的行程:跑完當下與 3~4 秒後都是空的 |
+| 同上,但把整組殺換回 `child.kill`(拿掉 17f61dd 的修法) | 一樣紅,`ps` 也是空的 |
+| 2.5 秒 | 沒逾時(步驟 2.4 秒就跑完),不算 |
+
+結論:這台上我**重現不出**「只殺 npx 會留孤兒」(兩種寫法 `ps` 都乾淨;npx 一死,管線關閉,review.ts 讀到 EOF 就自己結束),所以 17f61dd 的修法在這個場景下我分辨不出有無。程式本身讀起來安全(只殺自己的群組、失敗有退路)。改壞後我另外掃過並清掉殘留(本來就沒有)。
+
+### 重跑
+
+| 項目 | 結果 |
+|---|---|
+| `scripts/review-session.test.ts` | 48 passed(含卡住的那條),約 67 秒 |
+| `@i2 and not @manual` | 93 scenarios、464 steps 全過 |
+| 使用者資料 前 / 後 | 64 檔、c2e4dd6d71de3976、108 行 / 相同 |
+
+### 交顧問判:runDryRun
+
+`runDryRun` 用 `spawnSync` 加 120 秒逾時,同型但非互動,測試 agent 沒動。spawnSync 逾時會回 `status` 為 null(帶 `signal`),呼叫處照樣往下比;影響與原來的 runReview 同形。要不要比照處理,請顧問判。
+
 ## 結論
 
-通過(附 G1 補強建議,交顧問判是否擋)
+通過
