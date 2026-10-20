@@ -108,5 +108,10 @@
     "from": "07-teach-card",
     "to": "10-desktop-shell",
     "reason": "ADR-077(refines ADR-075):教學卡的判斷與寫入也跑在側車,視窗用桌面殼的 ReviewClient 與 LearningFs,跟 06 → 10 同一條理由。只開這一條單向 import(沒有 10 → 07)。"
+  },
+  {
+    "from": "11-review-cli",
+    "to": "07-teach-card",
+    "reason": "組合層(ADR-021 例外,同 11 → 04/05):側車 handler 呼叫 07 的純 deck 函式;ADR-077。只開這一條單向,沒有 07 → 11。"
   }
 ]
