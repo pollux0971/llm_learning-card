@@ -469,10 +469,12 @@ function tailOf(text: string, n = 12): string {
 }
 
 async function runInteractiveReview(world: LearningWorld, plan: AnswerLines[], eofWhenExhausted: boolean, limitMs = INTERACTIVE_LIMIT_MS): Promise<RunResult & { timedOut: boolean }> {
+  // detached:自成一個行程群組。`npx` 底下還有 sh 與 node(review.ts),只殺 npx 會留下孤兒(T36 G1 量到),逾時要整組殺
   const child = spawn('npx', [...REVIEW_CMD, '--dir', dirOf(world), '--today', world.today], {
     cwd: ROOT,
     env: childEnv(world),
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
   });
   let stdout = '';
   let stderr = '';
@@ -520,7 +522,11 @@ async function runInteractiveReview(world: LearningWorld, plan: AnswerLines[], e
     let giveUp: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
       // 等 close:行程真的收掉了才往下(逾時之後不留行程)。5 秒內沒等到就不等了。
       giveUp = setTimeout(() => resolveStatus(null), 5_000);
     }, limitMs);
