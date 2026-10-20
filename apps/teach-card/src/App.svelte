@@ -28,6 +28,12 @@
   }
 
   const shown = $derived(parsed());
+  const finished = $derived(view.state !== 'card' || !view.canNext || view.controlsDisabled);
+
+  function handleNext(): void {
+    if (finished) return;
+    void act(() => session.next());
+  }
 
   async function act(run: () => Promise<void>): Promise<void> {
     await run();
@@ -86,9 +92,7 @@
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <div class="body">{@html shown.html}</div>
     <div class="controls">
-      {#if view.canNext}
-        <HudButton onclick={() => void act(() => session.next())} disabled={view.controlsDisabled}>下一個</HudButton>
-      {/if}
+      <HudButton onclick={handleNext} disabled={finished}>下一個</HudButton>
       <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
     </div>
   {/if}
