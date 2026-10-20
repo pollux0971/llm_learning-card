@@ -14,6 +14,7 @@
   - 五條自動場景**都還沒有步驟定義**(cucumber 回 undefined)。每一條要的行為,phase 層都有一對一的場景守著,真的跑全綠。
   - 三條 `@manual` 不用真資料。這次在隔離的顯示裡做了:視窗位置重開保留**過**、X11 置頂**過**。
     Wayland 偵測與說明**不過**:真前端的頁面沒有那個提示(見第 4、5 節)。
+    (2026-10-21 更新:T34 後重做,Wayland 這條**過**,見 T34-manual-2026-10-21.md;O1 提示蓋住捲到底的按鈕,開補丁票 T35。)
   - 一條 `@e2e @manual` 要真資料上有到期的卡,現在做不到,照 ADR-073 併到 I4。
 - **缺口兩件,開成一張 T34**(協調者配號;草稿另交顧問審):(A) 整合層的步驟定義;(B) Wayland 提示接到真前端。
 - **I3 照 ADR-073 不打 tag。** 「I3 自動驗收通過」= T34 合併後 i3 的自動場景全綠,而且三條 fixture 的 `@manual` 顧問判過(Wayland 那條要 T34 之後重做)。
@@ -32,7 +33,7 @@
 | The window and the terminal see the same state(36) | — | **步驟 undefined**(4 條) | 06 phase-2「The interface and the terminal agree」(`../../features/06-test-card/phase-2.feature:23`;步驟 `../../features/steps/test-card-phase2.steps.ts:122`、`:131`、`:136`) | 「視窗」同上,是程序內的 handler |
 | Window position survives a restart(43) | `@manual` | **這次做了,過**(第 4 節) | 10 phase-1 同名的 `@manual`(T16 `@manual` 證據 `T16-manual-2026-10-16.md`,當時沒有視窗管理員) | — |
 | Windows stay on top under X11(49) | `@manual` | **這次做了,過**(第 4 節) | `_NET_WM_STATE_ABOVE` 在 T16 量過;偵測 X11 / Wayland 是 10 phase-1 的自動場景「Detecting the session type」與 `session.rs` 的單元測試 | — |
-| Wayland is detected and explained rather than hacked(55) | `@manual` | **這次做了,不過**(第 4、5 節) | 偵測:同上。「不設置頂」:`../../apps/desktop/src-tauri/src/main.rs:21` 的 `apply_session_behaviour`,Wayland 分支沒有呼叫 `set_always_on_top` | 提示不會出現:真前端沒有 `__lcShowWaylandNote` → T34 (B) |
+| Wayland is detected and explained rather than hacked(55) | `@manual` | **這次做了,不過**(第 4、5 節) | 偵測:同上。「不設置頂」:`../../apps/desktop/src-tauri/src/main.rs:21` 的 `apply_session_behaviour`,Wayland 分支沒有呼叫 `set_always_on_top` | 提示不會出現:真前端沒有 `__lcShowWaylandNote` → T34 (B) | (2026-10-21 重做:過;O1 開 T35)
 | The terminal review loop still works as in I2(61) | `@regression` | **步驟 undefined**(背景第 1 條、Then 那條) | `../integration/i2-review-loop-headless.feature` 全部的自動場景(`@i2 and not @manual` 93 / 93 綠,其中 i2 headless 14 條) | 只缺一條把「as in I2」接到 i2 那幾條的步驟 |
 
 背景的三條:「Given the desktop application is built for Linux」沒有定義;另兩條有(`../../features/steps/common.steps.ts:27`、`../../features/steps/scheduler.steps.ts:550`)。
@@ -66,7 +67,7 @@ roadmap 寫的是 ADR-075 之前的想法(「webview import core + LearningFs」
 | A person completes a review session in the window | **要真資料**:真的 learning/ 上要有到期的卡。卡要先被教學卡標成學過(I4) | 併到 I4,和 I2 的人工確認一起問使用者(ADR-073) |
 | Window position survives a restart | 暫存根 + fixture 就能做 | 前端這次做了,顧問判 |
 | Windows stay on top under X11 | 暫存根 + fixture 就能做(要有真的視窗管理員) | 前端這次做了,顧問判 |
-| Wayland is detected and explained rather than hacked | 暫存根 + fixture 就能做(要有 Wayland 合成器) | 前端這次做了(不過),T34 之後重做 |
+| Wayland is detected and explained rather than hacked | 暫存根 + fixture 就能做(要有 Wayland 合成器) | 前端這次做了(不過),T34 之後重做 |(2026-10-21 重做:過,O1 開補丁票 T35)
 
 ### 怎麼做的
 

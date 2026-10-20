@@ -15,7 +15,9 @@
 **phase-2** 需要:
 - [ ] 自身:phase-1 `done`
 - [ ] 跨資料夾:01 phase-3 `done`、10 phase-2 `done`
-- [ ] 整合:桌面複習那個整合點的**自動驗收通過**(ADR-073 第 4 點的同一個意思:那個整合點不打 tag,過了沒由技術顧問判)
+- [x] 整合:無(桌面複習的自動驗收已通過,理由見下)
+
+理由:2026-10-21 技術顧問判 I3 自動驗收通過(ADR-073,不打 tag;證據 `docs/reviews/T34-manual-2026-10-21.md`)。
 
 **phase-3** 需要:phase-2 `done`、03 phase-2 `done`、02 phase-2 `done`
 **phase-4** 需要:phase-1 `done` 即可
