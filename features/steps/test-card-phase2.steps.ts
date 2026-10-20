@@ -11,6 +11,7 @@ import { After, Given, When, Then } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import type { LearningWorld } from './_world.js';
 import { requestPathOutsideDirectory } from './desktop-shell-phase2.steps.js';
+import { i3AnsweredOneQuestion, i3FixedDirectoryAndDate, isI3 } from './i3-desktop-review.steps.js';
 import {
   DEFAULT_FIVE_ORDER,
   TODAY,
@@ -66,6 +67,8 @@ Given('the desktop application is running against a real learning directory', as
 // ---------------------------------------------------------------- 場景:清單跟真的 scheduler 一樣
 
 Given('a fixed learning directory and a fixed date', async function (this: LearningWorld) {
+  // 同一句也在 docs/integration/i3-desktop-review.feature:那邊的版本在 i3-desktop-review.steps.ts(真側車)
+  if (isI3(this)) return i3FixedDirectoryAndDate(this);
   const s = p2(this);
   assert.equal(this.today, TODAY, '固定日期應該是 2026-09-10');
   // 真的 scheduler 的答案由終端機那條路(scripts/review.ts --dry-run)給
@@ -96,6 +99,8 @@ When('the interface is made to request a path outside the directory', async func
 // ---------------------------------------------------------------- 場景:答案馬上寫進去
 
 Given('the person has answered one question', async function (this: LearningWorld) {
+  // 同一句也在 I3:那邊的版本在 i3-desktop-review.steps.ts(真側車)
+  if (isI3(this)) return i3AnsweredOneQuestion(this);
   const s = p2(this);
   await s.rig.session.init();
   s.answeredCard = s.rig.session.getView().current!.card;
