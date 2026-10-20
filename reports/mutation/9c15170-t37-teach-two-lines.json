@@ -1,0 +1,15 @@
+{
+  "score": 86.67,
+  "killed": 13,
+  "timeout": 0,
+  "survived": 2,
+  "noCoverage": 0,
+  "ignored": 0,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.t37-teach.json --mutate 'packages/core/src/schema/graph.ts:84-84,packages/core/src/session/teach.ts:223-223'",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.t37-teach.json",
+  "commit": "9c15170"
+}
