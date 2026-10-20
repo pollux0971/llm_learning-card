@@ -832,7 +832,8 @@ Then('it is still graded correctly', async function (this: LearningWorld) {
 
 // ---------------------------------------------------------------- S7:每日上限
 
-Then('exactly {int} questions are presented', async function (this: LearningWorld, n: number) {
+// 150 秒:這一步經 ensureRun 可能跑一整輪 runInteractiveReview(自己的 120 秒計時器),步驟的上限要比它長(T36);@i2 全跑時量到 3.4 秒,cucumber 預設 5 秒餘裕太小
+Then('exactly {int} questions are presented', { timeout: 150_000 }, async function (this: LearningWorld, n: number) {
   const run = await ensureRun(this);
   const lines = questionLines(run.stdout);
   assert.equal(lines.length, n, `應該問了 ${n} 題,實際 ${lines.length}:\n${run.output}`);
