@@ -10,6 +10,7 @@ import type { LearningWorld } from './_world.js';
 import { renderMarkdown, EXAMPLE_CLASS } from '../../packages/ui-shared/src/index.js';
 import { createDeck, currentCardId, pressNext, type DeckState } from '../../apps/teach-card/src/lib/deck.js';
 import { fakeOrder } from '../../apps/teach-card/src/stubs/order.js';
+import { phase2Active, phase2PressNext } from './teach-card-phase2.steps.js';
 
 // fixture-data.ts 用 Vite 的 `?raw` import 讀卡片內容,只在 Vite/vitest 底下能跑,
 // cucumber 用純 tsx(沒有 Vite 轉譯層)沒辦法載入它。這裡只需要卡片 id 順序,不需要內容,
@@ -59,7 +60,12 @@ When('a card is displayed', function (this: LearningWorld) {
   getOrCreateDeck(this);
 });
 
-When('the person presses next', function (this: LearningWorld) {
+When('the person presses next', async function (this: LearningWorld) {
+  // phase-2 的 Background(真的側車)把 world 標成 phase-2 之後,改派到 teach-card-phase2.steps.ts
+  if (phase2Active(this)) {
+    await phase2PressNext(this);
+    return;
+  }
   pressNext(getOrCreateDeck(this));
 });
 

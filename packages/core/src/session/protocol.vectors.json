@@ -650,6 +650,282 @@
    },
    "rust": "n/a",
    "note": "先判大小,再判 JSON"
+  },
+  {
+   "name": "valid teach.open {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.open\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid teach.open {\"category\": \"language\"}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.open\",\"params\":{\"category\":\"language\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid teach.open with a non-ascii category id",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.open\",\"params\":{\"category\":\"語言\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid teach.next {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.next\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid teach.switch {\"category\": \"security\"}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.switch\",\"params\":{\"category\":\"security\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid teach.prereq {\"index\": 0}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.prereq\",\"params\":{\"index\":0}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "valid teach.prereq {\"index\": 7}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.prereq\",\"params\":{\"index\":7}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "params content: teach.open {\"path\": \"cards/security/sec-0001.md\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.open\",\"params\":{\"path\":\"cards/security/sec-0001.md\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.open 不帶路徑(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.open {\"category\": \"language\", \"card\": \"sec-0001\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.open\",\"params\":{\"category\":\"language\",\"card\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.open 不帶卡 id(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.open {\"category\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.open\",\"params\":{\"category\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "category 要是字串(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.open {\"category\": null}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.open\",\"params\":{\"category\":null}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "category 可以省略,不能是 null(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.next {\"x\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.next\",\"params\":{\"x\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.next 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.next {\"card\": \"sec-0001\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.next\",\"params\":{\"card\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.next 不帶卡 id(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.switch {}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.switch\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.switch 一定要有 category(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.switch {\"category\": 5}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.switch\",\"params\":{\"category\":5}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "category 要是字串(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.switch {\"category\": null}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.switch\",\"params\":{\"category\":null}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "category 不能是 null(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.switch {\"category\": \"language\", \"path\": \"cards/language\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.switch\",\"params\":{\"category\":\"language\",\"path\":\"cards/language\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.switch 不帶路徑(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.prereq {}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.prereq\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.prereq 一定要有 index(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.prereq {\"index\": \"0\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.prereq\",\"params\":{\"index\":\"0\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "index 要是數字,不是字串(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.prereq {\"index\": -1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.prereq\",\"params\":{\"index\":-1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "index 不能是負數(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.prereq {\"index\": 1.5}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.prereq\",\"params\":{\"index\":1.5}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "index 要是整數(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.prereq {\"index\": null}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.prereq\",\"params\":{\"index\":null}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "index 不能是 null(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.prereq {\"index\": 0, \"card\": \"sec-0001\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.prereq\",\"params\":{\"index\":0,\"card\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.prereq 不帶卡 id(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "method teach (no action)",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method Teach.open (case differs)",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"Teach.open\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method teach.previous",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach.previous\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method teach.write",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach.write\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
   }
  ],
  "responses": [
