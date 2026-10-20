@@ -257,6 +257,7 @@ must_catch: [ … ]                       # 驗收必須證明測試抓得到的
   (測試專用的縫,正式路徑永遠不走)。代價是測試要起 git。(顧問未反對,實作時再確認。)
 - **進行中的 phase 要不要參與 R2**:phase 沒有 `touches`;本規格選不參與(顧問同意)。
 - **`--orca` 的 `<id 欄位>`**:phase-2 實作者開工前量,見上。
+- **commit gate 要寫含字母的 sha**(全數字的短 sha 工具不認);要不要對齊 check-next-gates,phase-2 再決定。
 
 已定案(不再是問題):fixture 放自己資料夾底下的例外(ADR-065 已記)、phase-1 暫不掛 `@standalone`、`touches` 對落點的規則、
 受限 YAML、重複 id 算 PROBLEM、`owner` 加 `worker-codex`、`budget_usd: 0` 的條件、沒檔頭的工單算紅。
