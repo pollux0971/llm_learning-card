@@ -981,7 +981,7 @@ describe('dashItemText(一行清單項)', () => {
     expect(t('- [x]X')).toBe('X');
   });
   it('不是清單行回 null:沒有 `-`、`-` 後面沒空白、`-` 不在行首(只有空白可以在前面)、別種符號、空字串', () => {
-    for (const line of ['普通文字', '-沒空白', 'a - b', 'x- y', '* 項目', '+ 項目', '-- 項目', '', '[ ] 沒有橫線', '-[ ] 框前沒空白', '  普通縮排文字']) {
+    for (const line of ['普通文字', '-沒空白', 'a - b', 'x- y', 'a - [ ] b', 'x- [x] y', 'foo - [ ] 項目', '* 項目', '+ 項目', '-- 項目', '', '[ ] 沒有橫線', '-[ ] 框前沒空白', '  普通縮排文字']) {
       expect(t(line), JSON.stringify(line)).toBeNull();
     }
   });
@@ -1027,6 +1027,10 @@ describe('parseNext:清單項與續行(補測)', () => {
     expect(refsOf('**phase-2** 需要:\n- ADR-040\nx- [ ] ADR-099\n')).toEqual([ADR('040')]);
     expect(refsOf('**phase-2** 需要:\n- ADR-040\n-ADR-099\n')).toEqual([ADR('040')]);
     expect(refsOf('**phase-2** 需要:\n- ADR-040\n未縮排的文字 ADR-099\n')).toEqual([ADR('040')]);
+  });
+  it('打了框的項目後面的縮排續行也收(續行不只跟在一般項目後面)', () => {
+    expect(refsOf('**phase-2** 需要:\n- [ ] phase-1 `done`\n  ADR-040 續\n')).toEqual([P1, ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\n- [x] phase-1 `done`\n  ADR-040 續\n    ADR-041 再續\n')).toEqual([P1, ADR('040'), ADR('041')]);
   });
   it('縮排的續行(不是 `-` 開頭)是這一項的後續:一個或多個空白都行;行中間的 ` - ` 不影響', () => {
     expect(refsOf('**phase-2** 需要:phase-1 `done`、\n  ADR-040 已決定\n')).toEqual([P1, ADR('040')]);
@@ -1134,6 +1138,11 @@ describe('compareNatural:補測(輸入順序反過來才看得出方向)', () =>
     both('x9', 'x010', -1);
     both('x010', 'x11', -1);
   });
+  it('前導零之後長度相同的數字:數值小的在前,就算寫法(文字)的順序相反', () => {
+    both('x3', 'x04', -1);
+    both('x03', 'x4', -1);
+    both('x04', 'x13', -1);
+  });
   it('文字段按碼位比,不按長度:ab 在 b 前面、a-1 的 -bb 在 -c 前面(兩個方向)', () => {
     both('ab', 'b', -1);
     both('a1-bb', 'a1-c', -1);
@@ -1172,6 +1181,12 @@ describe('parsePhaseTable:補測', () => {
   it('表的每一列前後可以有空白(縮排的表也讀得到)', () => {
     const md = '  | Phase | 標題 | 階段 | 狀態 | 完成日 |  \n  |---|---|---|---|---|  \n  | 1 | t | Wave 0 | done | |  \n  | 2 | t | Wave 0 | todo | |  \n';
     expect(dag.parsePhaseTable(md)).toEqual([{ phase: 1, status: 'done' }, { phase: 2, status: 'todo' }]);
+  });
+  it('只有一個 | 的行結束這張表;一格的列(| 說明 |)不結束,只是略過', () => {
+    const lone = `${HEAD}| 1 | t | Wave 0 | done | |\n|\n| 2 | t | Wave 0 | todo | |\n`;
+    expect(dag.parsePhaseTable(lone)).toEqual([{ phase: 1, status: 'done' }]);
+    const note = `${HEAD}| 1 | t | Wave 0 | done | |\n| 說明 |\n| 2 | t | Wave 0 | todo | |\n`;
+    expect(dag.parsePhaseTable(note)).toEqual([{ phase: 1, status: 'done' }, { phase: 2, status: 'todo' }]);
   });
   it('第一個不是表列的行(不以 | 開頭)就結束這張表:後面的列不算,就算長得像列', () => {
     const md = `${HEAD}| 1 | t | Wave 0 | done | |\n說明文字\n| 2 | t | Wave 0 | todo | |\n`;
