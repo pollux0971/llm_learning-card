@@ -178,4 +178,26 @@ describe('readOrderFile:沒有檔是明確的狀態', () => {
     writeFileSync(join(r, 'graph', 'order-language.json'), JSON.stringify(['lang-0001']), 'utf8');
     expect(d.readOrderFile(r, 'network')).toEqual({ kind: 'missing' });
   });
+  it('壞檔(G-b):不是陣列、或陣列裡有非字串 → 丟錯,不是 ok', async () => {
+    const d = await graph();
+    const r = root();
+    writeFileSync(join(r, 'graph', 'order-language.json'), '{"ids":["a"]}', 'utf8');
+    expect(() => d.readOrderFile(r, 'language')).toThrow();
+    writeFileSync(join(r, 'graph', 'order-language.json'), JSON.stringify(['lang-0001', 3]), 'utf8');
+    expect(() => d.readOrderFile(r, 'language')).toThrow();
+    writeFileSync(join(r, 'graph', 'order-language.json'), '"lang-0001"', 'utf8');
+    expect(() => d.readOrderFile(r, 'language')).toThrow();
+  });
+
+  it('不合法的分類 id 不當路徑去讀(G-e):回 missing,就算「走一圈」會落在真的檔上', async () => {
+    const d = await graph();
+    const r = root();
+    // join 會把 order-x/../language.json 化成 graph/language.json;檔真的在,所以不驗 id 就會讀到 ok
+    writeFileSync(join(r, 'graph', 'language.json'), JSON.stringify(['evil-0001']), 'utf8');
+    writeFileSync(join(r, 'graph', 'order-language.json'), JSON.stringify(['lang-0001']), 'utf8');
+    expect(d.readOrderFile(r, 'x/../language')).toEqual({ kind: 'missing' });
+    expect(d.readOrderFile(r, '../graph/order-language')).toEqual({ kind: 'missing' });
+    expect(d.readOrderFile(r, '')).toEqual({ kind: 'missing' });
+    expect(d.readOrderFile(r, 'language')).toEqual({ kind: 'ok', ids: ['lang-0001'] });
+  });
 });

@@ -72,7 +72,7 @@ describe('teach/ 底下(非測試)的檔案不 import node: 內建模組', () =>
     }
     const fine = [
       "import { z } from 'zod';",
-      "import { applyLearnedTransition } from '../scheduler/transitions.js';",
+      "import { orderDeck } from './deck.js';",
       "// import { readFileSync } from 'node:fs';",
       "/* import fs from 'fs'; */",
       "import { x } from './fsutil.js';",

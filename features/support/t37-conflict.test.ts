@@ -40,6 +40,8 @@ const control = vi.hoisted(() => ({
   /** 還要讓幾次呼叫在真的函式之前被「別的行程」搶先改一次 */
   sabotage: 0,
   foreign: undefined as undefined | ((dir: string, n: number) => void),
+  /** 設了就在真的函式之前直接丟這個錯(模擬磁碟寫入失敗;不是 reviews-changed) */
+  failWith: undefined as undefined | Error,
 }));
 
 vi.mock('../../packages/core/src/session/io.ts', async (importOriginal) => {
@@ -53,6 +55,7 @@ vi.mock('../../packages/core/src/session/io.ts', async (importOriginal) => {
       const path = joinPath(dir, 'state/reviews.json');
       const diskBefore = exists(path) ? hash('sha256').update(read(path)).digest('hex') : 'absent';
       control.calls.push({ expected, diskBefore });
+      if (control.failWith) throw control.failWith;
       if (control.sabotage > 0) {
         control.sabotage -= 1;
         control.foreign?.(dir, control.calls.length);
@@ -73,6 +76,7 @@ beforeEach(() => {
   control.calls.length = 0;
   control.sabotage = 0;
   control.foreign = undefined;
+  control.failWith = undefined;
 });
 
 const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -224,5 +228,32 @@ describe('reviews.json 位元組:失敗時教學卡沒有動它', () => {
     await r.send('teach.next');
     expect(sha(reviewsPath(r.v))).toBe(createHash('sha256').update(reviewsText(r.v)).digest('hex'));
     expect(JSON.parse(reviewsText(r.v))['sec-0002']).toBeUndefined();
+  });
+});
+
+describe('寫入遇到「不是記錄被改過」的錯誤:真錯誤往上丟,不當成衝突重試(G-a)', () => {
+  it('磁碟寫入失敗(EIO):回 internal,不是 teach-record-changed;只呼叫一次、不重試;reviews.json 與 log.jsonl 不動', async () => {
+    const r = await rig();
+    await r.send('teach.open');
+    const reviewsBefore = reviewsText(r.v);
+    const logBefore = logText(r.v);
+    control.failWith = Object.assign(new Error('EIO: i/o error, write'), { code: 'EIO' });
+    const res = await r.send('teach.next');
+    expect(res.ok, JSON.stringify(res)).toBe(false);
+    expect((res.error as Obj).kind).toBe('internal');
+    expect(control.calls).toHaveLength(1);
+    expect(reviewsText(r.v)).toBe(reviewsBefore);
+    expect(logText(r.v)).toBe(logBefore);
+    expect(learnedEvents(r.v)).toEqual([]);
+  });
+
+  it('同一種錯誤在 teach.switch 也一樣:internal、只呼叫一次', async () => {
+    const r = await rig();
+    await r.send('teach.open');
+    control.failWith = new Error('ENOSPC');
+    const res = await r.send('teach.switch', { category: 'language' });
+    expect((res.error as Obj).kind).toBe('internal');
+    expect(control.calls).toHaveLength(1);
+    expect(learnedEvents(r.v)).toEqual([]);
   });
 });
