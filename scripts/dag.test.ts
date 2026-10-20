@@ -11,6 +11,7 @@
  *                               (`todo(gate 已由 ADR-039 解除)` → `todo`);不認得的原樣(去頭尾空白)。
  *   parseGateRefs(text)         從一段 gate 文字依出現順序抽出參照:phase(raw = 原文寫法,folder = 資料夾名/兩位前綴/null=自己)、
  *                               integration(`I<N>`)、decision(`ADR-NNN`、`§N[a-z]`、`commit <hex>`)。
+ *   dashItemText(line)         一行 `- 項目` / `- [ ] 項目` / `- [x] 項目` 的項目文字(縮排可有);不是清單行回 null。不把行首反引號當語法、不把行內 # 當註解(phase-2 讀工單檔頭重用它)。
  *   parseNext(nextMd)           讀 NEXT.md,依出現順序回 [{ phase, noGate, refs }]:`**phase-N**` 開頭的段落,
  *                               `無 gate` → noGate,`需要:` 後的同一行內容與緊接的 `- [ ]` / `- [x]` 項目 → refs(勾選不讀)。
  *   analyzeTree({ folders, tags })  純計算:回 { lines, edges, counts }。lines = 排好序的記錄行(不含摘要行);
@@ -28,7 +29,7 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -59,6 +60,7 @@ interface DagModule {
   parsePhaseTable(featureMd: string): { phase: number; status: Status }[];
   parseGateRefs(text: string): GateRef[];
   parseNext(nextMd: string): { phase: number; noGate: boolean; refs: GateRef[] }[];
+  dashItemText(line: string): string | null;
   analyzeTree(input: TreeInput): Analysis;
   renderReport(analysis: Analysis): string;
 }
@@ -956,6 +958,445 @@ describe('scripts/dag.ts 當指令跑', () => {
     expect([Number(m![1]), Number(m![2]), Number(m![3]), Number(m![4])]).toEqual([count('READY'), count('BLOCKED'), count('HUMAN'), count('PROBLEM')]);
     expect(lines).toContain('graph TD');
   }, 120_000);
+});
+
+// ═══════════════════════════════════════════════════════════════════ T33 補測(變異測試 69.46% → 補存活點;-ed 的存活清單)
+describe('dashItemText(一行清單項)', () => {
+  const t = (line: string) => dag.dashItemText(line);
+  it('`- 項目` 回項目文字;`- [ ]`、`- [x]`、`- [X]` 的框不算在文字裡', () => {
+    expect(t('- 項目')).toBe('項目');
+    expect(t('- [ ] 項目')).toBe('項目');
+    expect(t('- [x] 項目')).toBe('項目');
+    expect(t('- [X] 項目')).toBe('項目');
+  });
+  it('縮排(空白或 tab)的項目也是清單項,回的文字不含縮排', () => {
+    expect(t('  - 縮排兩格')).toBe('縮排兩格');
+    expect(t('\t- tab 縮排')).toBe('tab 縮排');
+    expect(t('  - [ ] 縮排的框')).toBe('縮排的框');
+    expect(t('   - [x] 縮排三格的勾')).toBe('縮排三格的勾');
+  });
+  it('`- ` 後面的空白不限一個;框後面的空白最多吃一個,框後面沒空白也行', () => {
+    expect(t('-   三個空白')).toBe('三個空白');
+    expect(t('- [ ]沒有空白')).toBe('沒有空白');
+    expect(t('- [x]X')).toBe('X');
+  });
+  it('不是清單行回 null:沒有 `-`、`-` 後面沒空白、`-` 不在行首(只有空白可以在前面)、別種符號、空字串', () => {
+    for (const line of ['普通文字', '-沒空白', 'a - b', 'x- y', '* 項目', '+ 項目', '-- 項目', '', '[ ] 沒有橫線', '-[ ] 框前沒空白', '  普通縮排文字']) {
+      expect(t(line), JSON.stringify(line)).toBeNull();
+    }
+  });
+  it('框裡不是空白或 x/X 的不算框:`- [y] 項目` 的文字是 `[y] 項目`(整段都是項目文字)', () => {
+    expect(t('- [y] 項目')).toBe('[y] 項目');
+    expect(t('- [] 項目')).toBe('[] 項目');
+  });
+  it('不把行首反引號當語法、不把行內 # 當註解(phase-2 讀工單檔頭的 `- 項目` 要用)', () => {
+    expect(t('- `code` 開頭')).toBe('`code` 開頭');
+    expect(t('- [ ] `code` 開頭')).toBe('`code` 開頭');
+    expect(t('- 項目 # 不是註解')).toBe('項目 # 不是註解');
+    expect(t('- 含,逗號、頓號;分號')).toBe('含,逗號、頓號;分號');
+  });
+  it('整行都留下:框後面的字、行內的 - 與 [ ] 都不被吃掉', () => {
+    expect(t('- 前 - 中 [ ] 後')).toBe('前 - 中 [ ] 後');
+    expect(t('- [ ] 前 [x] 後')).toBe('前 [x] 後');
+  });
+});
+
+describe('parseNext:清單項與續行(補測)', () => {
+  const refsOf = (md: string) => dag.parseNext(md)[0]!.refs;
+  const ADR = (n: string): GateRef => ({ kind: 'decision', ref: `ADR-${n}` });
+  const P1: GateRef = { kind: 'phase', raw: 'phase-1', folder: null, num: 1 };
+  it('一般的 `- 項目`(沒有框)也是 gate 項', () => {
+    expect(refsOf('**phase-2** 需要:\n- phase-1 `done`\n- ADR-040\n')).toEqual([P1, ADR('040')]);
+  });
+  it('框前面可以有縮排:`  - [ ] 項目` 與 `  - [x] 項目` 照收', () => {
+    expect(refsOf('**phase-2** 需要:\n  - [ ] ADR-040\n   - [x] ADR-041\n')).toEqual([ADR('040'), ADR('041')]);
+  });
+  it('一般項目(沒有框)必須在行首:縮排的 `- 項目` 是說明,不收', () => {
+    expect(refsOf('**phase-2** 需要:phase-1 `done`\n  - ADR-099 是說明\n')).toEqual([P1]);
+    expect(refsOf('**phase-2** 需要:phase-1 `done`\n- ADR-040\n  - ADR-099 子項是說明\n')).toEqual([P1, ADR('040')]);
+  });
+  it('框後面不要求空白:`- [ ]ADR-040`', () => {
+    expect(refsOf('**phase-2** 需要:\n- [ ]ADR-040\n- [x]ADR-041\n')).toEqual([ADR('040'), ADR('041')]);
+  });
+  it('清單項的框裡只有空白與 x/X:`- [y] ADR-040` 仍是一般項目,文字整段(含 [y])去抽參照', () => {
+    expect(refsOf('**phase-2** 需要:\n- [y] ADR-040\n')).toEqual([ADR('040')]);
+  });
+  it('沒有 `-` 的東西、`-` 不在行首的東西不是項目:遇到就結束', () => {
+    expect(refsOf('**phase-2** 需要:\n- ADR-040\nfoo - ADR-099\n- ADR-098\n')).toEqual([ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\n- ADR-040\nfoo - [ ] ADR-099\n')).toEqual([ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\n- ADR-040\nx- [ ] ADR-099\n')).toEqual([ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\n- ADR-040\n-ADR-099\n')).toEqual([ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\n- ADR-040\n未縮排的文字 ADR-099\n')).toEqual([ADR('040')]);
+  });
+  it('縮排的續行(不是 `-` 開頭)是這一項的後續:一個或多個空白都行;行中間的 ` - ` 不影響', () => {
+    expect(refsOf('**phase-2** 需要:phase-1 `done`、\n  ADR-040 已決定\n')).toEqual([P1, ADR('040')]);
+    expect(refsOf('**phase-2** 需要:phase-1 `done`、\n ADR-040 單一空白縮排\n')).toEqual([P1, ADR('040')]);
+    expect(refsOf('**phase-2** 需要:phase-1 `done`、\n  ADR-040 - 行中間的橫線\n')).toEqual([P1, ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\n- phase-1 `done`\n  ADR-040 續\n    ADR-041 再續\n')).toEqual([P1, ADR('040'), ADR('041')]);
+  });
+  it('還沒有任何內容時(`需要:` 後面沒東西、也沒有項目),縮排的文字不算續行', () => {
+    expect(refsOf('**phase-2** 需要:\n  ADR-040\n')).toEqual([]);
+  });
+  it('空白行(含只有空白的行)不結束宣告:前後的項目都收', () => {
+    expect(refsOf('**phase-2** 需要:\n\n- [ ] phase-1 `done`\n\n- ADR-040\n   \n- ADR-041\n')).toEqual([P1, ADR('040'), ADR('041')]);
+  });
+  it('遇到 `## ` 標題就結束(縮排的標題也算);`##x`(後面沒空白)與行中間的 `## ` 不是標題', () => {
+    expect(refsOf('**phase-2** 需要:\n- phase-1 `done`\n## 其他\n- ADR-099\n')).toEqual([P1]);
+    expect(refsOf('**phase-2** 需要:\n- phase-1 `done`\n  ## 縮排的標題\n- ADR-099\n')).toEqual([P1]);
+    expect(refsOf('**phase-2** 需要:\n##x 不是標題\n- ADR-040\n')).toEqual([ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\nfoo ## bar\n- ADR-040\n')).toEqual([ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\nabc## bar\n- ADR-040\n')).toEqual([ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\n- [ ] ADR-040 ## 行內的井字\n')).toEqual([ADR('040')]);
+  });
+  it('遇到下一個 `**phase-N**` 標頭就結束(兩位數、縮排的也算);行中間的 `**phase-N**` 不是標頭', () => {
+    const entries = dag.parseNext('**phase-2** 需要:\n**phase-10**:無 gate\n- ADR-077\n');
+    expect(entries.map((e) => [e.phase, e.noGate, e.refs.length])).toEqual([[2, false, 0], [10, true, 0]]);
+    const indented = dag.parseNext('**phase-2** 需要:\n  **phase-3**:無 gate\n- ADR-077\n');
+    expect(indented.map((e) => [e.phase, e.noGate, e.refs.length])).toEqual([[2, false, 0], [3, true, 0]]);
+    expect(refsOf('**phase-2** 需要:phase-1 `done`、\n  續行 **phase-9** 內文 ADR-040\n')).toEqual([P1, ADR('040')]);
+    expect(refsOf('**phase-2** 需要:\nx**phase-3** 不是標頭\n- ADR-040\n')).toEqual([ADR('040')]);
+  });
+  it('標頭本身可以縮排;前面有別的字就不是標頭', () => {
+    expect(dag.parseNext('  **phase-3** 需要:ADR-040\n')).toEqual([{ phase: 3, noGate: false, refs: [ADR('040')] }]);
+    expect(dag.parseNext('x**phase-3** 需要:ADR-040\n')).toEqual([]);
+    expect(dag.parseNext('see **phase-3** 需要:ADR-040\n')).toEqual([]);
+  });
+  it('標頭後面既不是「:無 gate」也不是「需要:」→ 不是宣告,也不崩潰', () => {
+    expect(dag.parseNext('**phase-2** 備註一下\n')).toEqual([]);
+    expect(dag.parseNext('**phase-2**\n')).toEqual([]);
+  });
+  it('「:無 gate」:冒號後面的空白可有可無,gate 前面的空白可有可無;不在標頭後面的不算', () => {
+    expect(dag.parseNext('**phase-1**: 無 gate\n')).toEqual([{ phase: 1, noGate: true, refs: [] }]);
+    expect(dag.parseNext('**phase-1**:無gate\n')).toEqual([{ phase: 1, noGate: true, refs: [] }]);
+    expect(dag.parseNext('**phase-1** 說明:無 gate\n')).toEqual([]);
+  });
+  it('「需要:」:冒號前面的空白可有可無;前面有別的字(不需要:)不算', () => {
+    expect(dag.parseNext('**phase-2** 需要 :ADR-040\n')[0]?.refs).toEqual([ADR('040')]);
+    expect(dag.parseNext('**phase-2** 不需要:ADR-040\n')).toEqual([]);
+  });
+  it('各項之間以換行相接,不黏在一起(`ADR-04` 與 `0` 不會變成 `ADR-040`)', () => {
+    expect(refsOf('**phase-2** 需要:\n- ADR-04\n- 0\n')).toEqual([ADR('04')]);
+  });
+  it('單獨的 phase-N 要緊接 done 才算依賴;說明裡提到的 phase-N 不算;有資料夾前綴的照算', () => {
+    expect(refsOf('**phase-2** 需要:phase-1 `done`、phase-3 這個說明文字\n')).toEqual([P1]);
+    expect(refsOf('**phase-2** 需要:phase-1 done、ADR-040\n')).toEqual([P1, ADR('040')]);
+    expect(refsOf('**phase-2** 需要:03 phase-3、ADR-040\n')).toEqual([{ kind: 'phase', raw: '03 phase-3', folder: '03', num: 3 }, ADR('040')]);
+  });
+  it('同一行的內容與清單項、續行合在一起讀', () => {
+    expect(refsOf('**phase-2** 需要:phase-1 `done`、\n- ADR-040\n  ADR-041 續\n')).toEqual([P1, ADR('040'), ADR('041')]);
+  });
+  it('同一個 phase 宣告兩次(一次無 gate、一次需要:無):兩筆都留著,順序照出現', () => {
+    expect(dag.parseNext('**phase-2**:無 gate\n\n**phase-2** 需要:無\n').map((e) => e.noGate)).toEqual([true, false]);
+  });
+});
+
+describe('parseGateRefs:同一個資料夾的兩條寫法(補測)', () => {
+  it('`NN phase-A 與 phase-B` 是同一個資料夾的兩條依賴', () => {
+    expect(dag.parseGateRefs('01 phase-1 與 phase-2 `done`')).toEqual([
+      { kind: 'phase', raw: '01 phase-1', folder: '01', num: 1 },
+      { kind: 'phase', raw: '01 phase-2', folder: '01', num: 2 },
+    ]);
+    expect(dag.parseGateRefs('01-alpha phase-3 與 phase-4')).toEqual([
+      { kind: 'phase', raw: '01-alpha phase-3', folder: '01-alpha', num: 3 },
+      { kind: 'phase', raw: '01-alpha phase-4', folder: '01-alpha', num: 4 },
+    ]);
+  });
+  it('`NN phase-A/B` 也是同一個資料夾的兩條依賴', () => {
+    expect(dag.parseGateRefs('02 phase-2/3 `done`')).toEqual([
+      { kind: 'phase', raw: '02 phase-2', folder: '02', num: 2 },
+      { kind: 'phase', raw: '02 phase-3', folder: '02', num: 3 },
+    ]);
+  });
+});
+
+describe('compareNatural:補測(輸入順序反過來才看得出方向)', () => {
+  const sign = (n: number) => Math.sign(n);
+  const both = (a: string, b: string, want: -1 | 1) => {
+    expect(sign(dag.compareNatural(a, b)), `${a} vs ${b}`).toBe(want);
+    expect(sign(dag.compareNatural(b, a)), `${b} vs ${a}`).toBe(-want);
+  };
+  it('同樣長度、不同數字:phase-3 在 phase-4 前面(兩個方向)', () => {
+    both('phase-3', 'phase-4', -1);
+    both('x19', 'x21', -1);
+    both('x7', 'x9', -1);
+  });
+  it('不同長度的數字:短的在前(數值),不管字典序', () => {
+    both('phase-9', 'phase-10', -1);
+    both('x99', 'x100', -1);
+  });
+  it('前導零:數值相同時寫法短的/碼位小的在前,而且全序(兩個方向相反)', () => {
+    both('x007', 'x7', -1);
+    both('phase-02', 'phase-2', -1);
+    both('x002', 'x02', -1);
+    both('x0', 'x00', -1);
+  });
+  it('前導零的數字照數值比,不當文字比:010 比 9 大', () => {
+    both('x9', 'x010', -1);
+    both('x010', 'x11', -1);
+  });
+  it('文字段按碼位比,不按長度:ab 在 b 前面、a-1 的 -bb 在 -c 前面(兩個方向)', () => {
+    both('ab', 'b', -1);
+    both('a1-bb', 'a1-c', -1);
+    both('abc', 'abd', -1);
+    both('B', 'a', -1);
+  });
+  it('文字段比到分出高下為止:數字前面的字不同,後面的數字不看', () => {
+    both('a9', 'b1', -1);
+    both('aa1', 'ab0', -1);
+  });
+  it('數字段對文字段:數字在前,不管長度(10 在 a 前面)', () => {
+    both('10', 'a', -1);
+    both('1a', 'a1', -1);
+    both('99x', 'x', -1);
+  });
+  it('一段是另一段的前綴(段落個數不同):短的在前,不會因為讀到第 n+1 段而崩潰', () => {
+    both('a1', 'a1b', -1);
+    both('x', 'x1', -1);
+    both('a1b2', 'a1b2c', -1);
+    both('phase-2', 'phase-2-b', -1);
+  });
+  it('排一串(輸入順序是反的):phase-2、phase-3、phase-4、phase-10、phase-11', () => {
+    const shuffled = ['phase-11', 'phase-4', 'phase-10', 'phase-2', 'phase-3'];
+    expect([...shuffled].sort(dag.compareNatural)).toEqual(['phase-2', 'phase-3', 'phase-4', 'phase-10', 'phase-11']);
+    expect([...shuffled].reverse().sort(dag.compareNatural)).toEqual(['phase-2', 'phase-3', 'phase-4', 'phase-10', 'phase-11']);
+  });
+  it('每一組都滿足全序:反對稱,而且排好之後相鄰兩個的比較是小於', () => {
+    const pool = ['', 'a', 'b', 'a1', 'a01', 'a1b', 'a10', 'a2', '1', '01', '10', 'x007', 'x7', 'ab', 'abc', 'B', '-', 'phase-1', 'phase-10', 'phase-2'];
+    for (const x of pool) for (const y of pool) expect(sign(dag.compareNatural(x, y)) + sign(dag.compareNatural(y, x)), `${x} / ${y}`).toBe(0);
+    const sorted = [...pool].sort(dag.compareNatural);
+    for (let i = 1; i < sorted.length; i += 1) expect(dag.compareNatural(sorted[i - 1]!, sorted[i]!)).toBeLessThan(0);
+  });
+});
+
+describe('parsePhaseTable:補測', () => {
+  it('表的每一列前後可以有空白(縮排的表也讀得到)', () => {
+    const md = '  | Phase | 標題 | 階段 | 狀態 | 完成日 |  \n  |---|---|---|---|---|  \n  | 1 | t | Wave 0 | done | |  \n  | 2 | t | Wave 0 | todo | |  \n';
+    expect(dag.parsePhaseTable(md)).toEqual([{ phase: 1, status: 'done' }, { phase: 2, status: 'todo' }]);
+  });
+  it('第一個不是表列的行(不以 | 開頭)就結束這張表:後面的列不算,就算長得像列', () => {
+    const md = `${HEAD}| 1 | t | Wave 0 | done | |\n說明文字\n| 2 | t | Wave 0 | todo | |\n`;
+    expect(dag.parsePhaseTable(md)).toEqual([{ phase: 1, status: 'done' }]);
+    const stray = `${HEAD}| 1 | t | Wave 0 | done | |\nnote | 9 | t | Wave | done | |\n`;
+    expect(dag.parsePhaseTable(stray)).toEqual([{ phase: 1, status: 'done' }]);
+  });
+  it('表在檔尾、最後一行後面沒有換行也讀得到(不會讀過檔尾)', () => {
+    const md = `${HEAD}| 1 | t | Wave 0 | done | |\n| 2 | t | Wave 0 | ready | |`;
+    expect(dag.parsePhaseTable(md)).toEqual([{ phase: 1, status: 'done' }, { phase: 2, status: 'ready' }]);
+  });
+  it('「狀態」可以在第一欄(欄的位置用表頭找,第 0 欄也行)', () => {
+    expect(dag.parsePhaseTable('| 狀態 | Phase |\n|---|---|\n| done | 1 |\n| todo | 2 |\n')).toEqual([{ phase: 1, status: 'done' }, { phase: 2, status: 'todo' }]);
+  });
+  it('有「狀態」但沒有「Phase」的表不算;後面真正的 Phase 表照讀', () => {
+    const md = `| 標題 | 狀態 |\n|---|---|\n| 甲 | done |\n\n${HEAD}| 4 | t | Wave 0 | todo | |\n`;
+    expect(dag.parsePhaseTable(md)).toEqual([{ phase: 4, status: 'todo' }]);
+  });
+  it('有「Phase」但沒有「狀態」的表不算;後面真正的 Phase 表照讀', () => {
+    const md = `| Phase | 需要 |\n|---|---|\n| 1 | x |\n\n${HEAD}| 5 | t | Wave 0 | done | |\n`;
+    expect(dag.parsePhaseTable(md)).toEqual([{ phase: 5, status: 'done' }]);
+  });
+  it('第一格不是整個數字的列略過:2b、a2、phase 3、空白、小數', () => {
+    const md = `${HEAD}| 2b | t | Wave 0 | todo | |\n| a2 | t | Wave 0 | todo | |\n| phase 3 | t | Wave 0 | todo | |\n|  | t | Wave 0 | todo | |\n| 1.5 | t | Wave 0 | todo | |\n| 7 | t | Wave 0 | done | |\n`;
+    expect(dag.parsePhaseTable(md)).toEqual([{ phase: 7, status: 'done' }]);
+  });
+  it('分隔列的各種寫法(冒號對齊、多個減號)都不是資料列', () => {
+    const md = '| Phase | 狀態 |\n|:---|---:|\n| 1 | done |\n|:-:|:-:|\n| 2 | todo |\n';
+    expect(dag.parsePhaseTable(md)).toEqual([{ phase: 1, status: 'done' }, { phase: 2, status: 'todo' }]);
+  });
+  it('CRLF 換行也讀得到', () => {
+    expect(dag.parsePhaseTable('| Phase | 狀態 |\r\n|---|---|\r\n| 1 | done |\r\n| 2 | todo |\r\n')).toEqual([{ phase: 1, status: 'done' }, { phase: 2, status: 'todo' }]);
+  });
+  it('狀態只取開頭的關鍵字:後面接字母或減號的不算(todox、done-ish),接標點空白的算', () => {
+    const rows = dag.parsePhaseTable(featureMd([[1, 'todox'], [2, 'done-ish'], [3, 'ready(等 I4)'], [4, 'in-progress 做了一半'], [5, 'blocked,等人']]));
+    expect(rows.map((r) => r.status)).toEqual(['todox', 'done-ish', 'ready', 'in-progress', 'blocked']);
+  });
+  it('狀態格是空的:status 是空字串,不崩潰', () => {
+    expect(dag.parsePhaseTable(featureMd([[1, '']]))).toEqual([{ phase: 1, status: '' }]);
+  });
+  it('第一張符合的表就是 Phase 表:後面另一張也有 Phase 與狀態的表不讀', () => {
+    const md = `${HEAD}| 1 | t | Wave 0 | done | |\n\n${HEAD}| 2 | t | Wave 0 | todo | |\n`;
+    expect(dag.parsePhaseTable(md)).toEqual([{ phase: 1, status: 'done' }]);
+  });
+});
+
+describe('analyzeTree:補測', () => {
+  it('同一個 phase 在表裡出現兩列:第一列算', () => {
+    const a = run({ [A]: { rows: [[1, 'done'], [2, 'todo'], [2, 'done']], next: NO_GATE(1) + NEEDS(2, 'phase-1 `done`') } });
+    expect(a.lines).toEqual([`READY ${A}/phase-2 (table says todo)`]);
+  });
+  it('同一個 phase 宣告兩次:任一次有 gate 就算有 gate(READY 加表上狀態註記)', () => {
+    const a = run({ [A]: { rows: [[2, 'todo']], next: '**phase-2**:無 gate\n\n**phase-2** 需要:無\n' } });
+    expect(a.lines).toEqual([`READY ${A}/phase-2 (table says todo)`]);
+  });
+  it('資料夾前綴(NN)對到不只一個資料夾:解不開 → unresolved-ref;對到剛好一個才算', () => {
+    const a = run({
+      '01-a': { rows: [[1, 'done']], next: NO_GATE(1) },
+      '01-b': { rows: [[1, 'done']], next: NO_GATE(1) },
+      '02-c': { rows: [[1, 'todo']], next: NEEDS(1, '01 phase-1 `done`') },
+    });
+    expect(a.lines).toContain('PROBLEM unresolved-ref 02-c/phase-1 01 phase-1');
+    expect(ofKind(a, 'READY')).toEqual([]);
+  });
+  it('資料夾全名寫得出來就用全名(就算前綴不只一個資料夾也解得開)', () => {
+    const a = run({
+      '01-a': { rows: [[1, 'done']], next: NO_GATE(1) },
+      '01-b': { rows: [[1, 'done']], next: NO_GATE(1) },
+      '02-c': { rows: [[1, 'todo']], next: NEEDS(1, '01-a/phase-1 `done`') },
+    });
+    expect(a.lines).toEqual(['READY 02-c/phase-1 (table says todo)']);
+  });
+  it('同一個解不開的參照寫兩次:只報一行', () => {
+    const a = run({ [A]: { rows: [[1, 'todo']], next: NEEDS(1, '09 phase-7 `done`、09 phase-7 `done`') } });
+    expect(ofKind(a, 'PROBLEM')).toEqual([`PROBLEM unresolved-ref ${A}/phase-1 09 phase-7`]);
+  });
+  it('done 或 in-progress 的 phase 有決策 gate:不出 HUMAN(不列)', () => {
+    for (const status of ['done', 'in-progress']) {
+      const a = run({ [A]: { rows: [[1, status]], next: NEEDS(1, 'ADR-040 已決定') } });
+      expect(a.lines, status).toEqual([]);
+      expect(a.counts.human, status).toBe(0);
+    }
+  });
+  it('不認得的狀態(wip)不列:沒有 READY、BLOCKED、HUMAN,也不報 gate-not-declared', () => {
+    const a = run({ [A]: { rows: [[1, 'wip'], [2, 'wip']], next: NO_GATE(1) } });
+    expect(a.lines).toEqual([]);
+  });
+  it('環上有已完成的節點:環上的 todo 節點仍然不是 READY(就算它需要的都 done)', () => {
+    const a = run({
+      '01-a': { rows: [[1, 'todo']], next: NEEDS(1, '02 phase-1 `done`') },
+      '02-b': { rows: [[1, 'done']], next: NEEDS(1, '01 phase-1 `done`') },
+    });
+    expect(ofKind(a, 'READY')).toEqual([]);
+    expect(ofKind(a, 'PROBLEM')).toEqual(['PROBLEM cycle 01-a/phase-1 -> 02-b/phase-1 -> 01-a/phase-1']);
+  });
+  it('兩個環共用節點:每個環各一行,走回頭路時路徑要還原(A→B→D→A 與 A→C→D→A)', () => {
+    const a = run({
+      '01-a': { rows: [[1, 'todo']], next: NEEDS(1, '02 phase-1 `done`、03 phase-1 `done`') },
+      '02-b': { rows: [[1, 'todo']], next: NEEDS(1, '04 phase-1 `done`') },
+      '03-c': { rows: [[1, 'todo']], next: NEEDS(1, '04 phase-1 `done`') },
+      '04-d': { rows: [[1, 'todo']], next: NEEDS(1, '01 phase-1 `done`') },
+    });
+    expect(ofKind(a, 'PROBLEM')).toEqual([
+      'PROBLEM cycle 01-a/phase-1 -> 02-b/phase-1 -> 04-d/phase-1 -> 01-a/phase-1',
+      'PROBLEM cycle 01-a/phase-1 -> 03-c/phase-1 -> 04-d/phase-1 -> 01-a/phase-1',
+    ]);
+  });
+  it('環裡沒有節點被重複走:A↔B 與 B↔C 兩個環各報一次', () => {
+    const a = run({
+      '01-a': { rows: [[1, 'todo']], next: NEEDS(1, '02 phase-1 `done`') },
+      '02-b': { rows: [[1, 'todo']], next: NEEDS(1, '01 phase-1 `done`、03 phase-1 `done`') },
+      '03-c': { rows: [[1, 'todo']], next: NEEDS(1, '02 phase-1 `done`') },
+    });
+    expect(ofKind(a, 'PROBLEM')).toEqual([
+      'PROBLEM cycle 01-a/phase-1 -> 02-b/phase-1 -> 01-a/phase-1',
+      'PROBLEM cycle 02-b/phase-1 -> 03-c/phase-1 -> 02-b/phase-1',
+    ]);
+  });
+  it('只依賴「沒有自己宣告」的 phase(葉子)也不會報環', () => {
+    const a = run({ [A]: { rows: [[1, 'todo'], [2, 'todo']], next: NEEDS(2, 'phase-1 `done`') } });
+    expect(a.lines.filter((l) => l.includes('cycle'))).toEqual([]);
+  });
+});
+
+describe('scripts/dag.ts 當指令跑:補測', () => {
+  const stderrOf = (args: string[]) => runDag(args).stderr;
+  it('用法錯誤的 stderr 只有那一行 Usage(不接別的訊息)', () => {
+    expect(stderrOf([])).toBe('Usage: npx tsx scripts/dag.ts --root <tree>\n');
+    expect(stderrOf(['--bogus', copyFixture('dag-usage-a')])).toBe('Usage: npx tsx scripts/dag.ts --root <tree>\n');
+  });
+  it('參數個數與旗標名字都要對:--root 之外的旗標(帶值)、--root 帶空字串、多餘的參數 → 用法錯誤 2', () => {
+    const tree = copyFixture('dag-args');
+    for (const args of [['--bogus', tree], ['--root', ''], ['--root', tree, '--extra'], [tree, '--root'], ['--roots', tree]]) {
+      const r = runDag(args);
+      expect(r.status, args.join(' ')).toBe(2);
+      expect(r.stderr, args.join(' ')).toBe('Usage: npx tsx scripts/dag.ts --root <tree>\n');
+      expect(r.stdout, args.join(' ')).toBe('');
+    }
+  }, 120_000);
+  it('錯誤訊息逐字:不存在的根、根是檔案、沒有 features 目錄', () => {
+    const file = join(mkTmp('dag-notdir'), 'a-file.txt');
+    writeFileSync(file, 'x');
+    expect(runDag(['--root', '/nonexistent-dag-root-xyz']).stderr).toBe('root not found: /nonexistent-dag-root-xyz\n');
+    expect(runDag(['--root', file]).stderr).toBe(`root is not a directory: ${file}\n`);
+    const empty = mkTmp('dag-nofeat');
+    expect(runDag(['--root', empty]).stderr).toBe(`no features directory: ${join(empty, 'features')}\n`);
+    for (const args of [['--root', file], ['--root', empty], ['--root', '/nonexistent-dag-root-xyz']]) expect(runDag(args).status, args.join(' ')).toBe(2);
+  }, 120_000);
+  it('features 是檔案不是目錄:no features directory', () => {
+    const root = mkTmp('dag-featfile');
+    writeFileSync(join(root, 'features'), 'not a directory');
+    const r = runDag(['--root', root]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toBe(`no features directory: ${join(root, 'features')}\n`);
+  });
+  it('FEATURE.md 或 NEXT.md 是目錄:not a file,退出碼 2', () => {
+    for (const name of ['FEATURE.md', 'NEXT.md']) {
+      const root = mkTmp('dag-notfile');
+      mkdirSync(join(root, 'features/05-x', name), { recursive: true });
+      const r = runDag(['--root', root]);
+      expect(r.status, name).toBe(2);
+      expect(r.stderr, name).toBe(`not a file: ${join(root, 'features/05-x', name)}\n`);
+    }
+  });
+  it('features 底下只有 NN- 開頭的資料夾算功能:別的名字、檔案、前面多一個字的都略過,不報 PROBLEM', () => {
+    const root = mkTmp('dag-names');
+    writeTree(root, { [A]: { rows: [[1, 'todo']], next: NO_GATE(1) } });
+    for (const dir of ['steps', 'support', '_template', 'a01-x', '1-x', 'x-01-y']) mkdirSync(join(root, 'features', dir), { recursive: true });
+    writeFileSync(join(root, 'features/07-notes.md'), '# 這是檔案,名字像功能資料夾');
+    writeFileSync(join(root, 'features/README.md'), '# features');
+    const r = runDag(['--root', root]);
+    expect(r.status).toBe(0);
+    expect(r.stdout.split('\n').filter((l) => l.startsWith('PROBLEM'))).toEqual([]);
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe('gate=dag result=OK ready=1 blocked=0 human=0 problems=0');
+  }, 60_000);
+  it('壞掉的符號連結(名字像功能資料夾)略過,不崩潰', () => {
+    const root = mkTmp('dag-dangling');
+    writeTree(root, { [A]: { rows: [[1, 'todo']], next: NO_GATE(1) } });
+    symlinkSync('/nonexistent-dag-target', join(root, 'features/06-dangling'));
+    const r = runDag(['--root', root]);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe('gate=dag result=OK ready=1 blocked=0 human=0 problems=0');
+  }, 60_000);
+  it('讀不了 features 目錄(沒有權限):不是用法錯誤,印 dag failed 並退出碼 2', () => {
+    const root = mkTmp('dag-eacces');
+    writeTree(root, { [A]: { rows: [[1, 'todo']], next: NO_GATE(1) } });
+    chmodSync(join(root, 'features'), 0o000);
+    try {
+      if (process.getuid?.() === 0) return; // root 讀得了任何目錄,這條沒有意義
+      const r = runDag(['--root', root]);
+      expect(r.status).toBe(2);
+      expect(r.stderr).toMatch(/^dag failed: /);
+      expect(r.stdout).toBe('');
+    } finally {
+      chmodSync(join(root, 'features'), 0o755);
+    }
+  }, 60_000);
+  it('資料夾裡沒有 NEXT.md:todo 的 phase 報 gate-not-declared,不崩潰', () => {
+    const root = mkTmp('dag-nonext');
+    writeTree(root, { [A]: { rows: [[1, 'todo']] } });
+    const r = runDag(['--root', root]);
+    expect(r.status).toBe(0);
+    expect(r.stdout.split('\n')).toContain(`PROBLEM gate-not-declared ${A}/phase-1`);
+  }, 60_000);
+  it('git tag 的輸出每行去頭尾空白、略過空行:tag 名字對得上才解鎖,空 tag 清單照跑', () => {
+    const spec: Record<string, Spec> = { [A]: { rows: [[1, 'done'], [2, 'todo']], next: NEEDS(2, 'phase-1 `done`、**I4 通過**') } };
+    const noTags = mkTmp('dag-notags');
+    writeTree(noTags, spec);
+    gitInit(noTags, []);
+    const r = runDag(['--root', noTags]);
+    expect(r.status).toBe(0);
+    expect(r.stdout.split('\n')).toContain(`BLOCKED ${A}/phase-2 by I4`);
+    const some = mkTmp('dag-sometags');
+    writeTree(some, spec);
+    gitInit(some, ['v1', 'I4', 'I5']);
+    expect(runDag(['--root', some]).stdout.split('\n')).toContain(`READY ${A}/phase-2 (table says todo)`);
+  }, 60_000);
+  it('tag 在根的上層 repo 裡(根是 repo 的子資料夾):讀的是那個 repo 的 tag', () => {
+    const repo = mkTmp('dag-subroot');
+    gitInit(repo, ['I4']);
+    const sub = join(repo, 'sub');
+    mkdirSync(sub);
+    writeTree(sub, { [A]: { rows: [[1, 'done'], [2, 'todo']], next: NEEDS(2, 'phase-1 `done`、**I4 通過**') } });
+    expect(runDag(['--root', sub]).stdout.split('\n')).toContain(`READY ${A}/phase-2 (table says todo)`);
+  }, 60_000);
 });
 
 // ═══════════════════════════════════════════════════════════════════ 靜態:原始碼與登記
