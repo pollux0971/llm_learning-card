@@ -13,6 +13,7 @@ import { openDay, snapshotAfterReview, summarizeDay } from './engine.js';
 import { findCardFile, listCardIds, loadReviews, loadSettings } from './io.js';
 import { presentNextCard } from './present.js';
 import { ERROR_MESSAGES, classifyRequestLine, type ErrorKind } from './protocol.js';
+import { createTeachRuntime } from './teach.js';
 import type { Session } from './types.js';
 
 /** routerFactory 用這個告訴 handler 是哪一種啟動失敗。其他例外一律是 internal。 */
@@ -297,13 +298,24 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
     return ok(id, { paused: diskPaused(), today: day() });
   }
 
+  const teach = createTeachRuntime({
+    learningDir,
+    today: () => day(),
+    examSession: () => session,
+  });
+
+  function teachLine(id: number, outcome: ReturnType<typeof teach.open>): string {
+    if (!outcome.ok) return fail(id, outcome.kind);
+    return ok(id, outcome.view);
+  }
+
   return async (line: string): Promise<string> => {
     const classified = classifyRequestLine(line);
     if (!classified.ok) return fail(classified.id, classified.kind);
     const request = classified.request as {
       id: number;
-      method: 'start' | 'next' | 'submit' | 'summary' | 'status';
-      params: { fill?: string[]; apply?: string };
+      method: 'start' | 'next' | 'submit' | 'summary' | 'status' | 'teach.open' | 'teach.next' | 'teach.switch' | 'teach.prereq';
+      params: { fill?: string[]; apply?: string; category?: string; index?: number };
     };
     try {
       switch (request.method) {
@@ -317,6 +329,14 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
           return await handleSummary(request.id);
         case 'status':
           return handleStatus(request.id);
+        case 'teach.open':
+          return teachLine(request.id, teach.open(request.params.category));
+        case 'teach.next':
+          return teachLine(request.id, teach.next());
+        case 'teach.switch':
+          return teachLine(request.id, teach.switchTo(request.params.category ?? ''));
+        case 'teach.prereq':
+          return teachLine(request.id, teach.prereq(request.params.index ?? -1));
         default:
           return fail(request.id, 'unknown-method');
       }
