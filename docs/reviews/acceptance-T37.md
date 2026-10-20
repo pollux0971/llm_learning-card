@@ -169,6 +169,49 @@
 | 前 | 64 | c2e4dd6d71de3976 | 108 |
 | 後 | 64 | c2e4dd6d71de3976 | 108 |
 
+## 第三輪:再補測後的窄重驗(`t37-fixes2` tip 9c15170)
+
+- 被驗:`t37-fixes2` **9c15170**(基底 `t37-fixes` a68acfa,一個 commit、3 檔 +47:`packages/core/src/teach/deck.test.ts` +6〔G-e〕、`features/support/t37-gaps.test.ts` +26〔G-c prereq 無目前卡 2 條〕、`stryker.t37-teach.json`〔新進 repo,內容與我的 066ad9d 版逐位元相同,`diff` 無差異,glob 含 t37-gaps 與 deck.test〕);實作檔 0。tree sha(開跑與跑完同):**f344cfdf4cb50e71c02b2bc452509d92498e1ffa**;簽出乾淨,`ls .env` 無。
+- 範圍依顧問裁決:只重跑 (a) G-e 與 G-c prereq 兩處 mutant、(b) boundaries、(c) 整 vitest、(d) tsc。**沿用第二輪**(沒有重跑):整體 86.44%(295 個 mutant 的全量變異)、cucumber 與 cargo(實作與第一輪 efd95bf 相同)、no-node-static 的改壞(本輪測試檔的那個檔沒動)。重跑了的:下面全部。
+- 機器:load 偏高(10–11,期間我清掉一個自己留下的孤兒 vitest 行程群組,見最後一節)。
+
+### 重跑結果
+
+| 項目 | 結果 |
+|---|---|
+| tsc `--noEmit` | 乾淨 |
+| `npm run boundaries` | PASS(350) |
+| 整個 vitest | 6056 passed、171 skipped、**1 條紅**:`t31-static.test.ts` 的「整份例外清單條數不變」= N1(基底沒有 T38)。丟棄式把常數改成 23:14 條全過 |
+| 新增根目錄 `stryker.t37-teach.json` 的相關守門 | 整套 vitest 裡除 N1 外全綠;我另外單跑 `scripts/mutate.test.ts` 與 `scripts/zero-input-guard.test.ts`:2 files、960 passed、171 skipped、0 失敗。repo 裡沒有測試字面提到 `inPlace`,這條守門沒有獨立的檔可單跑,以整套綠為準 |
+
+### 兩處 mutant(`npm run mutate -- stryker.t37-teach.json --mutate "packages/core/src/schema/graph.ts:84-84,packages/core/src/session/teach.ts:223-223"`,其餘旗標沿用設定檔;注意 `--mutate` 多個範圍要用逗號接成一個參數,空白隔開會被 Stryker CLI 當成多餘參數)
+
+| 範圍 | 結果 |
+|---|---|
+| 總計 | 15 個 mutant、13 killed、2 survived,86.67% |
+| `teach.ts` 第 223 行(G-c prereq) | **殺掉**:`category === undefined && cardId === undefined` 與 `category === undefined || false` 兩個(第二輪存活的)都不再存活。存活 1 個:`false || cardId === undefined`——**等價**(沒有類別時一定沒有目前卡,條件結果相同) |
+| `graph.ts` 第 84 行(G-e) | 存活 1 個:`if (false) return { kind: 'missing' }`——**等價**:拿掉那個 `return` 時,路徑是用 `parsed.data` 組的,驗證失敗時它是 `undefined`,檔名變成 `order-undefined.json`,照樣不存在、回 `missing`。真正的「不驗證」改壞是連路徑一起改成用 `category` 組 |
+
+所以我另外手工做了那個真的改壞(丟棄式、已還原):把第 84–85 行改成直接用 `category` 組路徑。`deck.test.ts` 紅 2 條:`expected { kind: 'ok', ids: [ 'evil-0001' ] } to deeply equal { kind: 'missing' }`(「不合法的分類 id 不當路徑去讀(G-e)」)與 `expected { kind: 'ok', ids: [ 'zz' ] } to deeply equal { kind: 'missing' }`(「路徑防護(G-e):'a/../../x' …」);還原後 21 條全綠。G-e 與 G-c prereq 都確認被殺。
+報告檔:`reports/mutation/9c15170-t37-teach-two-lines.json`。
+
+### 過關條件對照
+
+- G-e、G-c prereq 兩處被殺:**是**(上面)。
+- boundaries、tsc 綠;整 vitest 只剩 N1(基底落後,合 main 消失):**是**。
+- 清單外新存活者:0。第二輪剩下的 G-f 的 `title` 型別(第 93 行)仍是低缺口,沒有改變。
+
+### 自己的清理
+
+我之前手工改壞時跑 vitest 逾時,留下一個孤兒行程群組(在已刪的驗收工作樹裡跑了約 1 小時 47 分)。協調者發現後我先對 `/proc/*/cwd` 確認那 4 個行程都不是本輪在用的,再整組收掉,收完沒有剩。之後我的手工改壞跑完要掃一遍殘留。
+
+## 使用者資料前後(第三輪,只記數字)
+
+| | 檔案數 | 雜湊 | 帳本行數 |
+|---|---|---|---|
+| 前(第二輪結尾) | 64 | c2e4dd6d71de3976 | 108 |
+| 後 | 64 | c2e4dd6d71de3976 | 108 |
+
 ## 結論
 
-通過(第二輪;三處低缺口 G-e、G-c 的 prereq 無目前卡、G-f 的 title 型別未殺,交顧問判是否要補)
+通過(第三輪;G-e、G-c prereq 已殺;剩 G-f 的 title 型別一處低缺口,不擋)
