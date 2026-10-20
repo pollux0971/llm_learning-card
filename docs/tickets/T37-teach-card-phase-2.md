@@ -1,7 +1,7 @@
 ---
 id: T37
 deps: []
-touches: [packages/core/src/teach/, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, apps/desktop/src/webview/review-client.ts, apps/teach-card/src/, apps/teach-card/vite.config.ts, apps/teach-card/dev/]
+touches: [packages/core/src/teach/, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, apps/desktop/src/webview/review-client.ts, apps/teach-card/src/, apps/teach-card/vite.config.ts, apps/teach-card/dev/, packages/core/src/session/teach.ts, packages/core/src/schema/graph.ts]
 cpu: heavy
 budget_usd: 6
 status: todo
@@ -73,6 +73,7 @@ must_catch:
    - 沒有 order 檔:照 id 排,記一筆 `warning`(§10,建議重跑 ingest)。order 檔裡有、磁碟上沒有的卡略過;磁碟上有、order 檔沒有的,排在 order 檔的卡後面、照 id 排。
 
 3. **教學卡的 deck 邏輯搬進 core**(`packages/core/src/teach/`,純函式為主:給 reviews、order、卡片 frontmatter,算出「下一張」「剩幾張」「未學先備」)。
+   **落點修正(顧問 2026-10-21,B-lite)**:`packages/core/src/teach/`(歸 07)只放純函式(下一張、剩幾張、未學先備、order 跟磁碟不一致時的排法),輸入就是參數,不 import `session/`、schema 的 io、fs,只准 import contracts 的型別。會碰檔案的那段(四個 `teach.*` 動作的處理、重讀→寫入、基準規則、learned 與 warning 事件)放新檔 `packages/core/src/session/teach.ts`(歸 11),它 import `teach/`(11→07,單向新例外)、`session/io`、04 的 `applyLearnedTransition`、01 的 `listCardIds`。讀 order 檔的函式放 `packages/core/src/schema/graph.ts`(01),跟 `readCategoryGraph` 放一起(ADR-038 第 1 點:沒有檔要回明確的狀態)。不開 07→11。
    `apps/teach-card/src/lib/deck.ts` 留給單獨執行與 phase-1 的步驟用到它為止(FEATURE.md 的「Wave 0 的重複」本來就寫 phase-2 再看是否搬進 core)。
 
 4. **視窗**(`apps/teach-card/`):桌面版(`isTauri()`)用 `createReviewClient()` 的教學卡動作 + `createLearningFs()`;單獨執行(`npm run dev -w apps/teach-card`)照 06 的做法,dev server 在 `contracts/fixtures/learning-minimal` 的暫存複本上跑同一支側車(ADR-022、ADR-075 的 Consequences)。
