@@ -6,7 +6,7 @@
 |---|---|
 | 已完成 | phase-4(2026-10-17:子卡生成時看得到同分類其他卡 `already_covered`、`--overlap-siblings`、非資安泛化 golden 輸入;工單 T18,-ed 驗收無阻擋項,真 cucumber @phase-4 5/5,Stryker 93.04%,golden 第 1 輪六個輸入技術顧問評 5/5,證據見 docs/reviews/acceptance-T18.md 與 T18-2026-10-17.md)。phase-1(2026-09-03)、phase-2(2026-09-03) |
 | 進行中 | 無 |
-| 下一個 | phase-3(卡在 I4,見 Gate) |
+| 下一個 | phase-3(屬 I4 那批;gate 已滿足,還沒排) |
 
 ## Gate
 
