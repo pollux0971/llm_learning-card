@@ -4,16 +4,16 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | 無 |
+| 已完成 | phase-1(2026-10-21:`scripts/dag.ts`;工單 T33,-0e 兩輪驗收無阻擋項,Stryker dag.ts 第二輪 89.58%,補測後 dag.test.ts 207 條) |
 | 進行中 | 無 |
-| 下一個 | phase-1 |
+| 下一個 | phase-2(gate 已滿足,還沒排) |
 
 ## Gate
 
 **phase-1**:無 gate。只依賴 `contracts/`(實際上什麼都不 import),吃自己資料夾底下的假樹 fixture。
 
 **phase-2** 需要:
-- [ ] 自身:phase-1 `done`
+- [x] 自身:phase-1 `done`
 - [ ] 整合:無
 - [x] 決策:無(已定案,理由見下)
 

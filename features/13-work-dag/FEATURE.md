@@ -36,7 +36,7 @@ npx tsx scripts/dag.ts --root features/13-work-dag/fixtures/basic
 預期輸出:每行一筆記錄(形狀見「輸出形狀」),最後一行 `gate=dag result=OK ready=<n> blocked=<n> human=<n> problems=<n>`,
 退出碼 0。
 
-**`phase-1.feature` 目前刻意沒有 `@standalone` tag**:`check:dry-run` 的驗收集合是 `@standalone and not @manual`,
+**(歷史說明,T33 已補上 `@standalone` 與 `standalone.json`,2026-10-21)`phase-1.feature` 當時刻意沒有 `@standalone` tag**:`check:dry-run` 的驗收集合是 `@standalone and not @manual`,
 集合裡有 undefined 步驟就紅(實測:加上 tag 時 34 個場景、175 個步驟 undefined,gate FAIL;不加時基準 PASS,158 個場景)。
 phase-1 的實作者在**加步驟定義的同一個變更**裡把 `@standalone` 補回檔頭 tag 行。
 
@@ -77,7 +77,7 @@ fixture 目錄混進與契約無關的東西。所以 fixture 放在自己的資
 
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
-| 1 | 從 FEATURE.md、NEXT.md、`I<N>` tag 算出 ready、卡在誰、待人判、mermaid | Wave 0 | ready | |
+| 1 | 從 FEATURE.md、NEXT.md、`I<N>` tag 算出 ready、卡在誰、待人判、mermaid | Wave 0 | done | 2026-10-21 |
 | 2 | 工單進圖、平行規則 R1–R5、`--orca`、`dag:check` 接進 `check:all` | 不綁整合點 | todo | |
 
 ## 輸出形狀(phase-1 與 phase-2 的步驟定義都照這個斷言)
