@@ -21,6 +21,10 @@ export interface ReviewClient {
   submit(answer: { fill: string[] } | { apply: string }): Promise<Record<string, unknown>>;
   summary(): Promise<Record<string, unknown>>;
   status(): Promise<Record<string, unknown>>;
+  teachOpen(category?: string): Promise<Record<string, unknown>>;
+  teachNext(): Promise<Record<string, unknown>>;
+  teachSwitch(category: string): Promise<Record<string, unknown>>;
+  teachPrereq(index: number): Promise<Record<string, unknown>>;
 }
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -39,7 +43,10 @@ export function createReviewClient(opts?: { invoke?: InvokeFn; handler?: (line: 
   const handler = opts?.handler;
   let nextId = 1;
 
-  async function call(method: 'start' | 'next' | 'submit' | 'summary' | 'status', params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async function call(
+    method: 'start' | 'next' | 'submit' | 'summary' | 'status' | 'teach.open' | 'teach.next' | 'teach.switch' | 'teach.prereq',
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     const id = nextId;
     nextId += 1;
     const request = { v: PROTOCOL_VERSION, id, method, params };
@@ -80,5 +87,9 @@ export function createReviewClient(opts?: { invoke?: InvokeFn; handler?: (line: 
     submit: (answer) => call('submit', answer),
     summary: () => call('summary', {}),
     status: () => call('status', {}),
+    teachOpen: (category?: string) => call('teach.open', category === undefined ? {} : { category }),
+    teachNext: () => call('teach.next', {}),
+    teachSwitch: (category: string) => call('teach.switch', { category }),
+    teachPrereq: (index: number) => call('teach.prereq', { index }),
   };
 }

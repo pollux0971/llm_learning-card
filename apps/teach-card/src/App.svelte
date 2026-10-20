@@ -1,70 +1,99 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { renderMarkdown } from '@learning/ui-shared';
   import '@learning/ui-shared/hud/hud.css';
   import HudButton from '@learning/ui-shared/hud/HudButton.svelte';
   import HudPanel from '@learning/ui-shared/hud/HudPanel.svelte';
   import { createWindowControls } from '@learning/ui-shared/hud/window-controls';
-  import { CATEGORY, ORDER, cardPath, createFixtureFs } from './stubs/fixture-data.js';
   import { parseCard, type CardFrontmatter } from './lib/card.js';
-  import { createDeck, currentCardId, pressNext, isFinished, type DeckState } from './lib/deck.js';
+  import { createTeachSession, type TeachSessionDeps, type TeachView } from './teach-session.js';
 
-  const fs = createFixtureFs();
-  const deck = $state<DeckState>(createDeck(ORDER));
-  const finished = $derived(isFinished(deck));
+  let { deps }: { deps: TeachSessionDeps } = $props();
+
+  const session = createTeachSession(deps);
   const controls = createWindowControls();
+  let view = $state<TeachView>(session.view());
 
-  let frontmatter = $state<CardFrontmatter | null>(null);
-  let bodyHtml = $state('');
-  let loadError = $state<string | null>(null);
+  function pull(): void {
+    view = session.view();
+  }
 
-  async function loadCurrent(): Promise<void> {
-    const id = currentCardId(deck);
-    if (id === null) {
-      frontmatter = null;
-      bodyHtml = '';
-      return;
-    }
+  function parsed(): { frontmatter: CardFrontmatter; html: string } | null {
+    if (!view.cardText) return null;
     try {
-      const raw = await fs.read(cardPath(id));
-      const parsed = parseCard(raw);
-      frontmatter = parsed.frontmatter;
-      bodyHtml = renderMarkdown(parsed.bodyMarkdown);
-      loadError = null;
-    } catch (err) {
-      loadError = err instanceof Error ? err.message : String(err);
+      const card = parseCard(view.cardText);
+      return { frontmatter: card.frontmatter, html: renderMarkdown(card.bodyMarkdown) };
+    } catch {
+      return null;
     }
   }
+
+  const shown = $derived(parsed());
+  const finished = $derived(view.state !== 'card' || !view.canNext || view.controlsDisabled);
 
   function handleNext(): void {
-    pressNext(deck);
-    void loadCurrent();
+    if (finished) return;
+    void act(() => session.next());
   }
 
-  onMount(() => {
-    void loadCurrent();
-  });
+  async function act(run: () => Promise<void>): Promise<void> {
+    await run();
+    pull();
+  }
+
+  void act(() => session.open());
 </script>
 
 <HudPanel title="教學卡" {controls} fill>
-  {#if loadError}
-    <p class="error">讀取失敗:{loadError}</p>
-  {:else if finished}
-    <p class="finished">這個類別已經學完了。可以考慮補充更多素材。</p>
-  {:else if frontmatter}
+  {#if view.busyNotice}
+    <p class="notice">{view.busyNotice}</p>
+  {/if}
+
+  {#if view.state === 'loading'}
+    <p>載入中…</p>
+  {:else if view.state === 'error'}
+    <p class="error">{view.message}</p>
+    {#if view.canRetry}
+      <HudButton onclick={() => void act(() => session.retry())} disabled={view.controlsDisabled}>再試一次</HudButton>
+    {/if}
+  {:else if view.state === 'categories'}
+    <div class="list">
+      {#each view.categories as row (row.id)}
+        <HudButton onclick={() => void act(() => session.chooseCategory(row.id))} disabled={view.controlsDisabled}>
+          {row.label}
+        </HudButton>
+      {/each}
+      <HudButton onclick={() => { session.cancelCategories(); pull(); }} disabled={view.controlsDisabled}>取消</HudButton>
+    </div>
+  {:else if view.state === 'finished'}
+    <p class="finished">{view.message}</p>
+    <div class="controls">
+      <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
+    </div>
+  {:else if view.state === 'card' && shown}
     <header class="markers">
-      <span class="category">{frontmatter.category}</span>
-      <span class="source">{frontmatter.source === 'raw' ? '原始' : '生成'}</span>
-      <span class="level">Level {frontmatter.level}</span>
-      {#if frontmatter.provisional}
+      <span class="category">{shown.frontmatter.category}</span>
+      <span class="source">{shown.frontmatter.source === 'raw' ? '原始' : '生成'}</span>
+      <span class="level">Level {shown.frontmatter.level}</span>
+      {#if shown.frontmatter.provisional}
         <span class="badge">待審核</span>
       {/if}
     </header>
-    <h2>{frontmatter.title}</h2>
+    {#if view.prereqs.length > 0}
+      <p class="prereqs">
+        先備還沒學:
+        {#each view.prereqs as item, index (item.id)}
+          <HudButton onclick={() => void act(() => session.followPrereq(index))} disabled={view.controlsDisabled}>
+            {item.title}
+          </HudButton>
+        {/each}
+      </p>
+    {/if}
+    <h2>{shown.frontmatter.title}</h2>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    <div class="body">{@html bodyHtml}</div>
+    <div class="body">{@html shown.html}</div>
     <div class="controls">
       <HudButton onclick={handleNext} disabled={finished}>下一個</HudButton>
+      <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
     </div>
   {/if}
 </HudPanel>
@@ -90,8 +119,21 @@
   .body {
     overflow-wrap: anywhere;
   }
-  .controls {
+  .controls,
+  .list,
+  .prereqs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
     margin-top: 0.75rem;
+  }
+  .prereqs {
+    margin: 0.4rem 0 0;
+  }
+  .notice,
+  .finished,
+  .error {
+    margin: 0.4rem 0;
   }
   :global(.lc-example) {
     background: var(--hud-solid);

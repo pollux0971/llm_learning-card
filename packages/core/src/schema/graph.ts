@@ -15,11 +15,12 @@
  * detectCycle(graph: Graph): CycleResult
  * topologicalSort(graph: Graph): CardId[]
  * writeCategoryOrder(learningDir: string, category: CategoryId, order: CardId[]): void
+ * readOrderFile(learningDir: string, category: string): { kind: 'missing' } | { kind: 'ok'; ids: string[] }
  * computeAndSaveCategoryOrder(learningDir: string, category: CategoryId): CardId[]
  * checkPrereqConsistency(cards: CardPrereqs[], graph: Graph): ValidationResult
  */
 
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { CardIdSchema, CategoryIdSchema, type CardId, type CategoryId } from '@contracts/index.js';
@@ -71,6 +72,23 @@ function orderFilePath(learningDir: string, category: CategoryId): string {
     throw new Error(`無效的分類 id "${category}":${parsed.error.issues.map((i) => i.message).join('; ')}`);
   }
   return join(learningDir, 'graph', `order-${parsed.data}.json`);
+}
+
+/**
+ * 讀 `graph/order-<category>.json`。沒有檔是 `{ kind: 'missing' }`,不是空陣列
+ * (ADR-038 第 1 點:「沒有圖」是明確狀態)。空陣列的檔是檔在、只是沒列卡。
+ * 不合法的分類 id 不當成路徑去讀,回 missing。
+ */
+export function readOrderFile(learningDir: string, category: string): { kind: 'missing' } | { kind: 'ok'; ids: string[] } {
+  const parsed = CategoryIdSchema.safeParse(category);
+  if (!parsed.success) return { kind: 'missing' };
+  const path = join(learningDir, 'graph', `order-${parsed.data}.json`);
+  if (!existsSync(path)) return { kind: 'missing' };
+  const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  if (!Array.isArray(raw) || raw.some((id) => typeof id !== 'string')) {
+    throw new Error('order 檔不是 id 陣列');
+  }
+  return { kind: 'ok', ids: raw };
 }
 
 /** 從 learningDir/graph/deps.json(Record<CategoryId, Graph>)篩出單一分類。 */

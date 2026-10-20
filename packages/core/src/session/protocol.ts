@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_LINE_BYTES = 262144;
-export const REQUEST_METHODS = ['start', 'next', 'submit', 'summary', 'status'] as const;
+export const REQUEST_METHODS = ['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq'] as const;
 export type RequestMethod = (typeof REQUEST_METHODS)[number];
 
 export const ERROR_KINDS = [
@@ -21,6 +21,7 @@ export const ERROR_KINDS = [
   'no-session',
   'no-question',
   'review-record-changed',
+  'teach-record-changed',
   'internal',
   'credential-unavailable',
   'not-configured',
@@ -49,6 +50,7 @@ export const ERROR_MESSAGES: Record<ErrorKind, string> = {
   'no-session': '還沒開始今天的複習。',
   'no-question': '現在沒有可以送出的題目。',
   'review-record-changed': '複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。',
+  'teach-record-changed': '學習紀錄剛被別的地方改過,這一張還沒記成學過。請再按一次。',
   internal: '內部發生問題,請稍後再試。',
   'credential-unavailable': '批改要用的金鑰不能用。請在專案根目錄的 .env 檢查。',
   'not-configured': '學習目錄還沒設定好。',
@@ -66,6 +68,9 @@ const SubmitParams = z.union([
   z.strictObject({ fill: z.array(z.string()) }),
   z.strictObject({ apply: z.string() }),
 ]);
+const TeachOpenParams = z.strictObject({ category: z.string().optional() });
+const TeachSwitchParams = z.strictObject({ category: z.string() });
+const TeachPrereqParams = z.strictObject({ index: z.number().int().nonnegative() });
 
 export const RequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('start'), params: EmptyParams }),
@@ -73,6 +78,10 @@ export const RequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('summary'), params: EmptyParams }),
   z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('status'), params: EmptyParams }),
   z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('submit'), params: SubmitParams }),
+  z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('teach.open'), params: TeachOpenParams }),
+  z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('teach.next'), params: EmptyParams }),
+  z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('teach.switch'), params: TeachSwitchParams }),
+  z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('teach.prereq'), params: TeachPrereqParams }),
 ]);
 
 const ResultObject = z.record(z.string(), z.unknown());
@@ -129,7 +138,7 @@ function fail(kind: ClassifyFailureKind, id: number | null): ClassifiedRequest {
 }
 
 /**
- * 判斷順序:大小 → JSON → 一行裡有 CR → v 存在但不是 1 → method 是字串但不在五個裡 → 其餘信封或 params。
+ * 判斷順序:大小 → JSON → 一行裡有 CR → v 存在但不是 1 → method 是字串但不在九個裡 → 其餘信封或 params。
  * 太大的那一列不嘗試讀 id。不丟錯。
  */
 export function classifyRequestLine(line: string): ClassifiedRequest {

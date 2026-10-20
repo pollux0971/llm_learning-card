@@ -101,7 +101,7 @@ Then('the helper keeps running', { timeout: 180_000 }, async function (this: Lea
 
 Then('no action the window can send carries a path or a card id', { timeout: 180_000 }, async function (this: LearningWorld) {
   const b = bag(this);
-  // 五個動作的參數都是封閉的:帶 path / card / file 之類的欄位一律被拒絕,側車照常活著
+  // 九個動作(T37 加四個)的參數都是封閉的:帶 path / card / file 之類的欄位一律被拒絕,側車照常活著
   const attempts: [string, Record<string, unknown>][] = [
     ['start', { path: '/etc/passwd' }],
     ['start', { dir: '/tmp' }],
@@ -110,6 +110,11 @@ Then('no action the window can send carries a path or a card id', { timeout: 180
     ['submit', { apply: 'x', path: 'cards/security/sec-0001.md' }],
     ['summary', { card: 'sec-0001' }],
     ['status', { path: '../x' }],
+    // T37(ADR-077):四個教學卡動作的參數也是封閉的,只收類別 id 與先備序號,不收路徑、不收卡 id
+    ['teach.open', { path: 'cards/security/sec-0001.md' }],
+    ['teach.next', { card: 'sec-0001' }],
+    ['teach.switch', { category: 'language', path: 'cards/language' }],
+    ['teach.prereq', { index: 0, card: 'sec-0001' }],
   ];
   let id = 2000;
   for (const [method, params] of attempts) {
@@ -120,8 +125,8 @@ Then('no action the window can send carries a path or a card id', { timeout: 180
   assert.ok(b.proc!.isAlive());
   // 視窗端的 ReviewClient 本身也沒有任何能帶 path 或 card 的方法
   const client = createReviewClient({ handler: async () => '' }) as unknown as Record<string, { length: number }>;
-  assert.deepEqual(Object.keys(client).sort(), ['next', 'start', 'status', 'submit', 'summary']);
-  for (const name of ['start', 'next', 'summary', 'status']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
+  assert.deepEqual(Object.keys(client).sort(), ['next', 'start', 'status', 'submit', 'summary', 'teachNext', 'teachOpen', 'teachPrereq', 'teachSwitch']);
+  for (const name of ['start', 'next', 'summary', 'status', 'teachNext']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
 });
 
 // ---------------------------------------------------------------- 場景:兩邊的訊息形狀一樣

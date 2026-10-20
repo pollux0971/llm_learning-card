@@ -45,6 +45,10 @@
       "11-review-cli"
     ],
     [
+      "packages/core/src/teach/",
+      "07-teach-card"
+    ],
+    [
       "packages/core/src/prompt-quality/",
       "12-prompt-quality"
     ],
