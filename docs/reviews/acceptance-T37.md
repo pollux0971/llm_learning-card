@@ -113,6 +113,62 @@
 | 前 | 64 | c2e4dd6d71de3976 | 108 |
 | 後 | 64 | c2e4dd6d71de3976 | 108 |
 
+第一輪(efd95bf)的結論是「有阻擋項」(B1、B2),已在 -5c 的補丁(a68acfa)修掉,見下。
+
+## 第二輪:測試端補丁後重驗(`t37-fixes` tip a68acfa)
+
+- 被驗:`t37-fixes` **a68acfa**(基底 t37-impl efd95bf,只多 -5c 一個 commit:`features/support/t37-conflict.test.ts`、`features/support/t37-gaps.test.ts`(新)、`packages/core/src/teach/deck.test.ts`、`packages/core/src/teach/no-node-static.test.ts`,4 個測試檔,實作檔 0 個)。tree sha(開跑與跑完同):**e52df5848e7fcf8a76aad129fff5af73ade44a1b**;簽出乾淨,`ls .env` 無。實作沒變,所以 cucumber 與 cargo 沒有重跑(第一輪在 efd95bf 的結果仍成立)。
+- 機器:load 開跑約 3.7,變異時約 4.4。
+
+### 重跑結果
+
+| 項目 | 結果 |
+|---|---|
+| `npx tsc --noEmit` | 乾淨 |
+| `npm run boundaries` | **PASS**(scanned 350,無違規)——B1 已解:`no-node-static.test.ts` 的自測片段改成 `./deck.js` 樣本,不再被掃成 07 → 04 |
+| 整個 vitest | 6053 passed、171 skipped、**1 條紅**:`t31-static.test.ts` 的「整份例外清單條數不變」(N1,不是 T37:基底沒有 T38)。我丟棄式把常數改成 23:t31-static 14 條全過 |
+| no-node-static 自己重做 | `teach/deck.ts` 加 `import { readFileSync } from "node:fs"`:紅;加 `import { join } from "path"`:也紅。訊息同:`teach/ 是純函式(ADR-077 B-lite);碰檔案的在 session/teach.ts,讀 order 檔的在 schema/graph.ts: expected [ Array(1) ] to deeply equal []`。還原後綠 |
+
+### 變異(`npm run mutate -- stryker.t37-teach.json`,範圍與旗標同第一輪)
+
+**一個必須講清楚的差別**:第一輪的測試只有 3 個檔(`t37-handler`、`t37-conflict`、`deck.test`)。-5c 的補測放在**新檔** `t37-gaps.test.ts`,不在那組裡,所以照原樣重跑會量不到它。我先照原樣跑一次,再把 `t37-gaps.test.ts` 加進同一個 `MUTATE_TEST_GLOB`(其他旗標不變:`--bail=1`、concurrency 2、timeoutMS 120000、coverageAnalysis off、門檻 90/80)再跑一次。縮小測試是為了加速,glob 本來就該蓋住被變異檔的**所有**測試。
+
+| 跑法 | 分數 | killed / survived | graph.ts(readOrderFile)/ teach.ts / deck.ts |
+|---|---|---|---|
+| 原 glob(漏掉新檔) | 79.32% | 234 / 61 | 89.29% / 74.56% / 100% |
+| **glob 加上 t37-gaps.test.ts(正確的量法)** | **86.44%** | **255 / 40** | 89.29% / 83.77% / 100% |
+
+兩份報告都在 `reports/mutation/`:`a68acfa-t37-teach.json`(86.44)與 `a68acfa-t37-teach-oldglob.json`(79.32)。設定檔 `stryker.t37-teach.json` 已更新(glob 多了 t37-gaps)。**原始分數 ≥ 80% 成立**,前提是用上一段的 glob;用舊 glob 是 79.32%,差 0.68 個百分點,原因就是漏掉新檔。
+
+### G-a 到 G-g 逐一對照(第二輪存活清單)
+
+| 缺口 | 第一輪的 mutant | 第二輪 |
+|---|---|---|
+| G-a 寫入遇到非 reviews-changed 的錯誤被吞 | teach.ts 第 183、184 行 | **殺掉**(第 183/184 行不在存活清單) |
+| G-b order 檔內容壞掉 | graph.ts 第 88 行的判斷 4 個 mutant | **殺掉**;只剩第 89 行錯誤訊息字樣被換成空字串(低) |
+| G-c 動作在 open 之前 | teach.ts 第 208 行(next)、第 223 行(prereq) | `next` 殺掉;`prereq` 的整個 `if (false)` 殺掉;**存活 3 個**:第 223 行的 `&&`(`category === undefined && cardId === undefined`)與 `|| false`:代表「類別已經學完、沒有目前卡」時呼叫 `teach.prereq`,沒有測試(實作會走到讀 undefined 卡,而不是回 bad-request);`false || cardId === undefined` 等價(類別沒有時一定沒有卡) |
+| G-d warning 只記一次 | 第 123/124 行 | **殺掉** |
+| G-e `readOrderFile` 不合法分類 id 不去讀路徑 | graph.ts 第 84 行 | **仍存活**(1 個 `if (false)`)。我寫丟棄式測試證明這是真的測試缺口,不是等價:讓 `learning/x.json` 存在、呼叫 `readOrderFile(<root>, 'a/../../x')`:有防護回 `{ kind: 'missing' }`;拿掉防護回 `{ kind: 'ok', ids: ['zz'] }`(讀到 graph 目錄外的 json)。API 層因為類別一定要在 categories.yaml 裡,先擋掉了,所以實際上到不了;一條單元測試就能殺它 |
+| G-f frontmatter title / prereqs 型別 | 第 93、94 行 6 個 | 第 94 行的 3 個(`filter` 拿掉、`filter` 恆真、退路換成別的陣列)**確認等價**——-5c 說得對:非字串項目拿到「磁碟上有沒有這張卡」那一步就被擋掉(`unlearnedPrereqs` 只留磁碟上有的 id),輸出一樣。第 93 行 `title` 的 `true && length > 0` 存活 1 個(低:卡片 frontmatter 在 schema 層一定有 title) |
+| G-g categories.yaml 沒有分類時 open | 第 202 行 | **殺掉** |
+
+### 其他存活者(清單外?)
+
+剩下 40 個存活:graph.ts 3 個(第 84 行 = G-e、第 87 行編碼、第 89 行訊息字樣);teach.ts 37 個,全部在我第一輪列的等價/低清單內:第 63 行型別防護、第 80/83/85 行(分類目錄不存在與 `.short.md` 濾除,`listCardIds` 已先濾)、第 91 行編碼、第 100 行反斜線、第 140 行 `cats[0]?.id` 的退路、第 165/170/182 行回傳字串(呼叫處只比 'conflict')、第 203 行(`requested !== undefined` 恆真:等價)、第 227/229 行(index 邊界與死碼防護,zod 在協定層已擋)、第 93/94 行(G-f)、第 223 行(G-c 剩的那 3 個)。**沒有清單外的新存活者。**
+
+### 過關條件對照(協調者轉述顧問)
+
+1. 原始分數 ≥ 80%:**達成**(86.44%,用涵蓋新測試檔的 glob;原 glob 79.32%,見上)。
+2. G-a 到 G-g 對應 mutant 逐一被殺:**G-a、G-b、G-c(open 之前)、G-d、G-g 殺掉;G-f 的第 94 行三個確認等價;未殺的有三處**:G-e(第 84 行,單元層缺口,API 層到不了)、G-c 的 prereq「沒有目前卡」(第 223 行 `&&`/`|| false`)、G-f 的第 93 行 `title` 型別。三處都低,建議之後順手補一條單元測試(G-e 一條就夠:上面的 `a/../../x`)。
+3. 其餘存活者都在等價/低清單內:**是**。
+
+## 使用者資料前後(第二輪,只記數字)
+
+| | 檔案數 | 雜湊 | 帳本行數 |
+|---|---|---|---|
+| 前 | 64 | c2e4dd6d71de3976 | 108 |
+| 後 | 64 | c2e4dd6d71de3976 | 108 |
+
 ## 結論
 
-有阻擋項(B1:`npm run boundaries` 紅,測試檔 `no-node-static.test.ts` 的一行自測片段被掃成 07 → 04 的 import,連帶 3 條 vitest 紅;B2:變異 75.25% 低於 80%,真缺口 G-a 到 G-g,交顧問判是否擋;T37 的實作與 cucumber、cargo 全綠)
+通過(第二輪;三處低缺口 G-e、G-c 的 prereq 無目前卡、G-f 的 title 型別未殺,交顧問判是否要補)
