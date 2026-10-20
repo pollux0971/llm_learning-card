@@ -460,7 +460,15 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  * 跑一次互動式的 review.ts。stdin 不能一次全灌進去:readline 在兩題之間(await 磁碟寫入的空檔)
  * 收到的行會被丟掉,所以看到提示字才送下一題;應用題的兩行之間也要隔一小段時間。
  */
-async function runInteractiveReview(world: LearningWorld, plan: AnswerLines[], eofWhenExhausted: boolean): Promise<RunResult> {
+/** runInteractiveReview 的計時器(毫秒)。步驟的上限(150 秒)要比它長,裡面的逾時才輪得到用自己的訊息報出來(T36)。 */
+const INTERACTIVE_LIMIT_MS = 120_000;
+
+function tailOf(text: string, n = 12): string {
+  const lines = text.split('\n').filter((l) => l !== '');
+  return lines.length === 0 ? '(沒有輸出)' : lines.slice(-n).join('\n');
+}
+
+async function runInteractiveReview(world: LearningWorld, plan: AnswerLines[], eofWhenExhausted: boolean, limitMs = INTERACTIVE_LIMIT_MS): Promise<RunResult & { timedOut: boolean }> {
   const child = spawn('npx', [...REVIEW_CMD, '--dir', dirOf(world), '--today', world.today], {
     cwd: ROOT,
     env: childEnv(world),
@@ -507,21 +515,32 @@ async function runInteractiveReview(world: LearningWorld, plan: AnswerLines[], e
     stderr += chunk.toString('utf8');
   });
 
+  let timedOut = false;
   const status = await new Promise<number | null>((resolveStatus) => {
+    let giveUp: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill('SIGKILL');
-      resolveStatus(null);
-    }, 120_000);
+      // 等 close:行程真的收掉了才往下(逾時之後不留行程)。5 秒內沒等到就不等了。
+      giveUp = setTimeout(() => resolveStatus(null), 5_000);
+    }, limitMs);
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolveStatus(code);
+      if (giveUp !== undefined) clearTimeout(giveUp);
+      resolveStatus(timedOut ? null : code);
     });
     child.stdin.on('error', () => {
       /* 子程序先結束了,寫入失敗不是這裡要報的 */
     });
   });
   void asked;
-  const result: RunResult = { status, stdout, stderr, output: stdout + stderr };
+  if (timedOut) {
+    throw new Error(
+      `runInteractiveReview ${limitMs / 1000} 秒逾時被 SIGKILL(不是斷言錯:子行程沒有在時限內結束,通常是機器負載太高)\n` +
+        `--- stdout 最後幾行 ---\n${tailOf(stdout)}\n--- stderr 最後幾行 ---\n${tailOf(stderr)}`,
+    );
+  }
+  const result: RunResult & { timedOut: boolean } = { status, stdout, stderr, output: stdout + stderr, timedOut };
   world.lastRun = result;
   st(world).runs.push(result);
   return result;
@@ -957,7 +976,8 @@ export async function assertI2GradingFailedReported(world: LearningWorld): Promi
 
 // ---------------------------------------------------------------- S11:中斷後續做
 
-Given('{int} cards are due and the person answered {int}', async function (this: LearningWorld, due: number, answered: number) {
+// 150 秒:要比 runInteractiveReview 自己的 120 秒計時器長(T36),cucumber 預設的 5 秒不夠(單跑就要 4.7 秒)
+Given('{int} cards are due and the person answered {int}', { timeout: 150_000 }, async function (this: LearningWorld, due: number, answered: number) {
   seedI2CardsDue(this, due);
   const s = st(this);
   s.script = Array.from({ length: answered }, () => 'correct' as const);

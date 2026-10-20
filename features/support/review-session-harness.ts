@@ -313,6 +313,8 @@ export interface RunOut {
   stdout: string;
   stderr: string;
   output: string;
+  /** 計時器到了、子行程被 SIGKILL(只有 `allowTimeout: true` 才拿得到 true;預設逾時就丟錯,見 `runReview`) */
+  timedOut: boolean;
   /** 依出現順序,每個「(i/n) [卡片 id] 題幹」行 */
   asked: Asked[];
   /** stdout 每一塊到達的時間(ms),用來比先後 */
@@ -335,8 +337,13 @@ export interface RunOpts {
   env?: Record<string, string | undefined>;
   /** `--import` 的假網路層模組(絕對路徑);預設 `_fake-review-cloud.mjs`。T30:換成回 401 的那一個 */
   fakeCloud?: string;
-  /** 不帶 --dir(給 rawArgs 以外的情況用不到,保留) */
+  /** 計時器的毫秒數;預設 90 秒。到了就 SIGKILL 子行程 */
   timeoutMs?: number;
+  /**
+   * 逾時不丟錯,照樣回傳 `{ timedOut: true, status: null }`。預設 false:逾時一律丟「runReview N 秒逾時被 SIGKILL」,
+   * 不讓呼叫處拿一個被殺掉的、不完整的結果去比 asked / stdout(負載高時那會看起來像斷言錯,T36)。只有測逾時本身的測試才開。
+   */
+  allowTimeout?: boolean;
   /**
    * 送出第 index 題(0 起算)的答案之前先跑這個(T26:在 session 建立之後、送出之前改寫磁碟上的 reviews.json)。
    * 跑完才送答案;沒給就跟以前一樣。
@@ -458,19 +465,37 @@ export async function runReview(vault: Vault, opts: RunOpts = {}): Promise<RunOu
     /* 子程序先結束了,寫入失敗不是這裡要報的 */
   });
 
+  const limitMs = opts.timeoutMs ?? 90_000;
+  let timedOut = false;
   const status = await new Promise<number | null>((resolveStatus) => {
+    let giveUp: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
+      timedOut = true;
       child.kill('SIGKILL');
-      resolveStatus(null);
-    }, opts.timeoutMs ?? 90_000);
+      // 等 close:行程真的收掉了才回傳(逾時之後不留行程)。5 秒內沒等到就不等了。
+      giveUp = setTimeout(() => resolveStatus(null), 5_000);
+    }, limitMs);
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolveStatus(code);
+      if (giveUp !== undefined) clearTimeout(giveUp);
+      resolveStatus(timedOut ? null : code);
     });
     // 沒有要互動的執行(暫停、dry-run……)不會有提示;關掉 stdin,免得程式意外讀 stdin 時卡住
     if (opts.rawArgs !== undefined || (opts.args ?? []).some((a) => ['--dry-run', '--pause'].includes(a))) closeStdin();
   });
-  return { status, stdout, stderr, output: stdout + stderr, asked: parseAsked(stdout), chunks };
+  if (timedOut && !opts.allowTimeout) {
+    throw new Error(
+      `runReview ${limitMs / 1000} 秒逾時被 SIGKILL(不是斷言錯:子行程沒有在時限內結束,通常是機器負載太高)\n` +
+        `--- stdout 最後幾行 ---\n${tailLines(stdout)}\n--- stderr 最後幾行 ---\n${tailLines(stderr)}`,
+    );
+  }
+  return { status, timedOut, stdout, stderr, output: stdout + stderr, asked: parseAsked(stdout), chunks };
+}
+
+/** 最後 n 行(逾時的錯誤訊息用,方便看卡在哪)。沒有輸出寫「(沒有輸出)」。 */
+function tailLines(text: string, n = 12): string {
+  const lines = text.split('\n').filter((l) => l !== '');
+  return lines.length === 0 ? '(沒有輸出)' : lines.slice(-n).join('\n');
 }
 
 /** 全部答完才結束的執行。 */

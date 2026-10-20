@@ -168,6 +168,8 @@ describe('當日快取:位置與格式(驗收 1)', () => {
         'utf8',
       );
       const first = await runReview(v, { answers: 1 });
+      // 先看第一輪有沒有正常結束:被殺(逾時)的話,後面的 asked / 快取斷言會看起來像「續答從錯的地方開始」(T36)
+      expect(first.status, `第一輪沒有正常結束:\n${first.output}`).toBe(0);
       expect(first.stdout).toMatch(/2\s*張延後/);
       const cache = readCache(v) as unknown as CacheShape;
       expect(cache.reteach).toEqual(['sec-0001']);
@@ -850,6 +852,77 @@ describe('結束時 snapshot(驗收 4,ADR-042)', () => {
       expect(afterSummary).toMatch(/cli\.ts init/);
       expect(afterSummary).toMatch(/版本控制/);
       expect(existsSync(join(v.dir, '.git'))).toBe(false);
+    },
+    TEST_TIMEOUT_MS,
+  );
+});
+
+// ---------------------------------------------------------------- T36:逾時要說自己是逾時
+
+/** 命令列裡帶著這個目錄的行程(子行程收得掉的證據) */
+function processesFor(dir: string): number[] {
+  const out: number[] = [];
+  for (const name of readdirSync('/proc')) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      if (readFileSync(`/proc/${name}/cmdline`, 'utf8').includes(dir)) out.push(Number(name));
+    } catch {
+      /* 行程已經消失 */
+    }
+  }
+  return out;
+}
+
+describe('runReview 的逾時(T36)', () => {
+  it(
+    '計時器到了:預設丟錯,訊息寫明「逾時被 SIGKILL」與秒數,接 stdout 與 stderr 的最後幾行;子行程收得掉',
+    async () => {
+      const v = dueVault(3);
+      const err = await runToEnd(v, { timeoutMs: 1 }).then(
+        () => undefined,
+        (e: unknown) => e as Error,
+      );
+      expect(err, '逾時應該丟錯,不是回傳一個 status 為 null 的結果').toBeInstanceOf(Error);
+      expect(err!.message).toMatch(/runReview 0\.001 秒逾時被 SIGKILL/);
+      expect(err!.message).toContain('stdout 最後幾行');
+      expect(err!.message).toContain('stderr 最後幾行');
+      expect(processesFor(v.dir), '逾時之後不留行程').toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'allowTimeout: true:不丟錯,回 { timedOut: true, status: null };子行程一樣收得掉',
+    async () => {
+      const v = dueVault(3);
+      const out = await runToEnd(v, { timeoutMs: 1, allowTimeout: true });
+      expect(out.timedOut).toBe(true);
+      expect(out.status).toBeNull();
+      expect(processesFor(v.dir), '逾時之後不留行程').toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    '沒逾時:timedOut 是 false,status 是真的退出碼(allowTimeout 開不開都一樣)',
+    async () => {
+      const v = dueVault(3);
+      const a = await runReview(v, { args: ['--dry-run'] });
+      expect(a.timedOut).toBe(false);
+      expect(a.status).toBe(0);
+      const b = await runReview(v, { args: ['--dry-run'], allowTimeout: true });
+      expect(b.timedOut).toBe(false);
+      expect(b.status).toBe(0);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'runToEnd、runAndQuit 跟著 runReview:逾時一樣丟錯',
+    async () => {
+      const v = dueVault(3);
+      await expect(runToEnd(v, { timeoutMs: 1 })).rejects.toThrow(/逾時被 SIGKILL/);
+      await expect(runAndQuit(v, { timeoutMs: 1 })).rejects.toThrow(/逾時被 SIGKILL/);
     },
     TEST_TIMEOUT_MS,
   );
