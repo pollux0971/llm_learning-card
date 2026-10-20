@@ -211,3 +211,29 @@ describe('G-g:categories.yaml 沒有任何類別', () => {
     expect(kind(res)).toBe('bad-request');
   });
 });
+
+describe('G-c(prereq):類別已學完、沒有目前卡時 teach.prereq → bad-request,不去讀不存在的卡', () => {
+  it('network 三張都學過:open 後 card 是 null;teach.prereq 任何 index 都是 bad-request;reviews.json 與 log.jsonl 不動', async () => {
+    const r = await rig({ learned: ['net-0001', 'net-0002', 'net-0003'] });
+    const view = await r.teach('teach.open', { category: 'network' });
+    expect(view.card).toBeNull();
+    const reviews = reviewsText(r.v);
+    const log = logText(r.v);
+    for (const index of [0, 1]) {
+      const res = await r.send('teach.prereq', { index });
+      expect(res.ok, JSON.stringify(res)).toBe(false);
+      expect(kind(res)).toBe('bad-request');
+    }
+    expect(reviewsText(r.v)).toBe(reviews);
+    expect(logText(r.v)).toBe(log);
+  });
+
+  it('按 next 把最後一張學完之後(沒有目前卡):teach.prereq 一樣 bad-request', async () => {
+    const r = await rig({ learned: ['net-0001', 'net-0002'] });
+    await r.teach('teach.open', { category: 'network' });
+    const done = await r.teach('teach.next');
+    expect(done.card).toBeNull();
+    const res = await r.send('teach.prereq', { index: 0 });
+    expect(kind(res)).toBe('bad-request');
+  });
+});

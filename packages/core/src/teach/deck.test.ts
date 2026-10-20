@@ -200,4 +200,10 @@ describe('readOrderFile:沒有檔是明確的狀態', () => {
     expect(d.readOrderFile(r, '')).toEqual({ kind: 'missing' });
     expect(d.readOrderFile(r, 'language')).toEqual({ kind: 'ok', ids: ['lang-0001'] });
   });
+  it('路徑防護(G-e):\'a/../../x\' 會逃出 graph/ 落在 learning 根的 x.json 上,但不合法的 id 不讀路徑 → missing', async () => {
+    const d = await graph();
+    const r = root();
+    writeFileSync(join(r, 'x.json'), JSON.stringify(['zz']), 'utf8');
+    expect(d.readOrderFile(r, 'a/../../x')).toEqual({ kind: 'missing' });
+  });
 });
