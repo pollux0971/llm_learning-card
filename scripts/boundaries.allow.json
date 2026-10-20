@@ -103,5 +103,10 @@
     "from": "06-test-card",
     "to": "10-desktop-shell",
     "reason": "ADR-075:考試卡用桌面殼的 ReviewClient 與 LearningFs。側車的判斷留在 core,視窗只顯示與收輸入。"
+  },
+  {
+    "from": "07-teach-card",
+    "to": "10-desktop-shell",
+    "reason": "ADR-077(refines ADR-075):教學卡的判斷與寫入也跑在側車,視窗用桌面殼的 ReviewClient 與 LearningFs,跟 06 → 10 同一條理由。只開這一條單向 import(沒有 10 → 07)。"
   }
 ]
