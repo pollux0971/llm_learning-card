@@ -15,8 +15,13 @@ must_catch:
   - 先備沒學就擋住下一個、或按下一個不標學過:An unlearned prerequisite does not block 必須紅
   - 跟著先備提示走時,把原本那張標成學過:跟提示走的那條自動測試必須紅
   - 已經在 reviews.json 的卡再被標一次學過時,它的 stage、next_due、history 被重設:必須紅
-  - 寫 reviews.json 繞過 core 的原子寫入或樂觀檢查(終端機剛改過還照寫):必須紅
+  - 寫 reviews.json 不經 core 的 saveReviewsIfUnchanged(§11b 四步):必須紅
+  - 教學卡用 teach.open 時讀到的舊內容去寫(蓋掉別人在中間的改動):必須紅
+  - 教學卡寫完無條件把考試卡的基準設成新雜湊(吞掉終端機的改動,T26 抓不到):必須紅
   - 考試卡複習進行中,教學卡標一張學過之後,考試卡下一次送出出現「複習紀錄剛被別的地方改過」:必須紅
+  - 考試卡在同一個側車送出之後,教學卡下一次 teach.next 回錯:必須紅
+  - 教學卡的今天跟 session 不是同一個來源(LC_REVIEW_TODAY 釘住時 learned_at 不是那一天):必須紅
+  - 側車一直回 busy 時無限重試(超過 Rust 的請求逾時 180 秒還在轉):必須紅
   - learned 事件沒寫進 log.jsonl、或寫的不是契約 §10 的形狀:必須紅
   - 側車照 webview 給的路徑或任意卡 id 讀寫(例如換到設定檔裡沒有的分類、先備的序號超出範圍):必須紅,而且這種請求不讀不寫
   - 桌面版教學卡還在讀編進去的 fixture,不是真的 learning 目錄:必須紅
@@ -26,7 +31,7 @@ must_catch:
 
 # 工單 T37:07-teach-card phase-2——換類別、依賴順序、先備提示、接上真檔案
 
-> 狀態:草稿,交技術顧問審(2026-10-21)。有五個決定要顧問判(見「要顧問判的」),判完要一條 ADR(refine ADR-075)。
+> 狀態:顧問審過 2026-10-21(D1、D3、D4 同意;D2 照顧問改寫的三條規則;D5 加上限)。決定記在 ADR-077(refine ADR-075,同一批)。
 > 作者:UI/Tauri 負責人。編號:T37(協調者配)。派工:協調者。**I4 的關鍵路徑**,優先於 T36、T35。
 > 實作:worker(opencode + grok-4.7);紅測試、協定向量、步驟定義:測試 agent;驗收:驗收 agent;觀感(`@manual`):前端,技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
@@ -41,7 +46,7 @@ must_catch:
   卡沒被標成學過,就不會進排程,考試卡永遠沒有題目。I2、I3 要真資料的人工確認都在等這一步(ADR-073)。
 - phase-2 的場景:換類別(列出每個類別剩幾張)、換類別也算學過、記住上次的類別、照 order 檔排、沒有 order 檔退回 id 順序並記 warning、先備提示(只點名沒學的、點了跳過去且原卡不算學過、不擋下一個)、需要素材的類別有標記。
 
-## 形狀(提案,要顧問判)
+## 形狀(ADR-077)
 
 照 ADR-075 的分工,**教學卡的判斷與寫入也放在 Node 側車**,視窗只顯示與收輸入:
 
@@ -58,10 +63,13 @@ must_catch:
    - **不收路徑、不收任意卡 id**(ADR-075 第 3 點):`category` 必須是設定檔 `config/categories.yaml` 裡的 id,`index` 必須在目前那張的未學先備清單範圍內;不是就回 `bad-request`,不讀不寫。
    - 「目前顯示的那張」由側車記著,不由視窗告訴它。
 
-2. **寫入照 ADR-075 第 7 點的表,只多一種寫入者的情況**:
-   - `reviews.json`:core 的 `saveReviewsIfUnchanged`(§11b 四步 + T26 樂觀檢查)。新卡的初始狀態用 04-scheduler 的 `applyLearnedTransition`(stage 1、`learned_at` 今天、`next_due` 明天)。
-   - `log.jsonl`:`{ type: 'learned', card }`(§10),core 現有的事件寫法。
-   - **同一個側車裡,教學卡寫完要更新考試卡 session 的基準雜湊**(`session.reviewsHash`)。不然考試卡下一次送出會以為「別的地方改過」。終端機同時改的情況照 T26 不變。
+2. **寫入照 ADR-075 第 7 點的表,多一種寫入情況,照下面三條規則(顧問 2026-10-21)**:
+   - `reviews.json` 一律經 core 的 `saveReviewsIfUnchanged`(§11b 四步)。新卡的初始狀態用 04-scheduler 的 `applyLearnedTransition`(stage 1、`learned_at` 今天、`next_due` 明天)。
+   - **a. 教學卡不留長期基準。** 每次 `teach.next` / `teach.switch`,在同一個請求裡重讀 `reviews.json`、加上那一筆、用 `saveReviewsIfUnchanged(剛讀到的雜湊)` 寫。
+     剛好有人在那幾毫秒內寫入、檢查沒過,就重讀再試一次;還是不過才回錯(新的錯誤種類 `teach-record-changed`,見 ADR-077)。新學一張卡只是加一筆,跟別人的改動合併是安全的。卡已經在 `reviews.json` 裡就不寫。
+   - **b. 考試卡的基準只在「寫入前磁碟上的雜湊 == `session.reviewsHash`」時才前進成新雜湊。** 不相等表示外面有人改過(例如終端機),基準不動,考試卡下一次送出照 T26 報錯。沒有開著的 session 就不用管。
+   - **c. 日期跟 session 同一個來源**(`LC_REVIEW_TODAY` / handler 的 `deps.today`,ADR-076 第 5 點);測試釘住。
+   - `log.jsonl`:`{ type: 'learned', card }`(§10),core 現有的事件寫法;`reviews.json` 寫成功之後才寫這一行。
    - 沒有 order 檔:照 id 排,記一筆 `warning`(§10,建議重跑 ingest)。order 檔裡有、磁碟上沒有的卡略過;磁碟上有、order 檔沒有的,排在 order 檔的卡後面、照 id 排。
 
 3. **教學卡的 deck 邏輯搬進 core**(`packages/core/src/teach/`,純函式為主:給 reviews、order、卡片 frontmatter,算出「下一張」「剩幾張」「未學先備」)。
@@ -70,17 +78,19 @@ must_catch:
 4. **視窗**(`apps/teach-card/`):桌面版(`isTauri()`)用 `createReviewClient()` 的教學卡動作 + `createLearningFs()`;單獨執行(`npm run dev -w apps/teach-card`)照 06 的做法,dev server 在 `contracts/fixtures/learning-minimal` 的暫存複本上跑同一支側車(ADR-022、ADR-075 的 Consequences)。
    07 → 10 的 import 例外由協調者加進 `scripts/boundaries.allow.json`(跟 06 → 10 同一條理由:用桌面殼的 ReviewClient 與 LearningFs)。
 
-### 要顧問判的
+### 顧問的裁決(2026-10-21,記在 ADR-077)
 
-| | 問題 | 我的建議 | 另一個選項與為什麼不選 |
+| | 問題 | 定案 | 沒選的與為什麼 |
 |---|---|---|---|
 | D1 | 教學卡的寫入放哪 | **側車**(上面的形狀) | 視窗用 `LearningFs.write` 整份覆寫 `reviews.json`:讀改寫之間側車剛寫了一題就會被蓋掉(幾個月的記憶資料,硬規則 5);`log.jsonl` 也沒辦法用整份覆寫來追加一行;還要在視窗再寫一份初始狀態(ADR-060 的漂移) |
-| D2 | 同一個側車裡,教學卡寫入後考試卡 session 的基準 | **更新基準**(上面第 2 點) | 不更新:在教學卡學一張,考試卡下一題就叫使用者「重新開始今天的複習」。新學的卡明天才到期,今天的名單不受影響,沒有理由擋 |
-| D3 | 「記住上次的類別」存哪 | **視窗的 `localStorage`**(鍵 `lc-teach-last-category`),`teach.open` 帶過去,側車驗它在設定檔裡 | 存檔(例如 ADR-074 的快取目錄多一個檔):多一個檔案格式;這是畫面偏好,丟了只是回到第一個類別 |
-| D4 | 學過要不要更新 `state/weekly.json` | **這張不碰**;`learned` 事件已進 `log.jsonl` | 08 phase-2(I5)才做週目標的顯示與計數;現在改等於替 08 決定計數時機 |
-| D5 | 側車忙(考試卡在批改,可能幾十秒)時教學卡的動作 | **視窗收到 `busy` 就每 300 ms 重試**,超過 1 秒顯示「考試卡正在批改,稍等一下。」,按鈕停用到成功為止;Rust 不改 | Rust 排隊:改 T22 的「忙就回 busy」與它的測試,Rust 多做事;教學卡的動作都很快,重試就夠 |
+| D2 | 教學卡寫入與考試卡 session 的基準 | **上面第 2 點的 a、b、c 三條**:教學卡每次重讀、用剛讀到的雜湊寫(衝突重試一次);考試卡的基準只在寫入前的磁碟雜湊等於它的基準時才前進;日期同一個來源 | 草稿的「教學卡寫完就更新考試卡基準」只寫一半:教學卡若留著自己的長期基準,考試卡送出後它就過期,下一次 `teach.next` 誤報;無條件把考試卡基準設成新雜湊,會把終端機的改動一起吞掉,T26 就抓不到 |
+| D3 | 「記住上次的類別」存哪 | **視窗的 `localStorage`**(鍵 `lc-teach-last-category`),`teach.open` 帶過去,側車驗它在 `categories.yaml` 裡。B4 量過兩張卡同一個來源、重開還在 | 存檔(例如 ADR-074 的快取目錄多一個檔):多一個檔案格式;這是畫面偏好,丟了只是回到第一個類別 |
+| D4 | 學過要不要更新 `state/weekly.json` | **這張不碰**;`learned` 事件照寫 `log.jsonl` | 08 phase-2(I5)才做週目標的顯示與計數;現在改等於替 08 決定計數時機 |
+| D5 | 側車忙時教學卡的動作 | **視窗收到 `busy` 就每 300 ms 重試**,超過 1 秒顯示「考試卡正在批改,稍等一下。」,按鈕停用;**一直 `busy` 到 Rust 的請求逾時(`review_sidecar.rs` 的 `REQUEST_TIMEOUT`,180 秒)就停止重試**,改顯示 06 的出錯畫面(`timeout` 的固定字樣「等候回覆的時間過了。」加「再試一次」)。Rust 不改 | Rust 排隊:改 T22 的「忙就回 busy」與它的測試。Rust 的 `call` 整個請求都握著鎖(`try_lock` 拿不到就回 `busy`),批改的 LLM 呼叫期間教學卡一定拿到 `busy`,所以重試是對的;但不能無限轉 |
 
-判完照 D1–D5 記一條 ADR(refine ADR-075:側車多收教學卡的動作、同一行程的基準雜湊)。協定的形狀照舊只有一份:`packages/core/src/session/protocol.ts` 的 zod schema 加 `protocol.vectors.json`,TS 與 Rust 的測試讀同一份。
+- D5 的已知限制:側車的第一個請求還要等 `hello`(最多 20 秒),所以極端情況下考試卡那邊還沒逾時,教學卡就先顯示出錯;按「再試一次」即可。
+- 180 秒在視窗那一側是常數,要跟 Rust 的 `REQUEST_TIMEOUT` 一樣:測試讀 Rust 原始檔比對(跟 T15 讀 `hud.css` 的做法一樣),不一樣就紅。
+協定的形狀照舊只有一份:`packages/core/src/session/protocol.ts` 的 zod schema 加 `protocol.vectors.json`,TS 與 Rust 的測試讀同一份。
 
 ## 畫面(前端定,`@manual` 照這個量)
 
@@ -115,11 +125,13 @@ must_catch:
 - core 的 deck 純函式:下一張、剩幾張、未學先備、order 檔與磁碟不一致的三種情況(上面第 2 點最後一句)。
 - `teach.prereq`:回的是那個先備;**原本那張不在 `reviews.json`**。之後 `teach.next` 標的是先備那張。
 - 已學過的卡:`teach.next` / `teach.switch` 對已經在 `reviews.json` 的卡,不改它的任何欄位(雜湊前後相同)。
-- 同一個側車:考試卡 `start` 之後,教學卡 `teach.next`,考試卡 `submit` 成功;磁碟上兩筆都在(D2)。
-- 終端機同時改:教學卡讀進來之後,另一個行程改了 `reviews.json`,`teach.next` 回錯誤、不寫(T26 的同一條)。
+- 同一個側車,兩個方向(D2):考試卡 `start` → 教學卡 `teach.next` → 考試卡 `submit` 成功,磁碟上兩筆都在;考試卡 `submit` → 教學卡 `teach.next` 成功(教學卡沒有過期的基準)。
+- 寫入那幾毫秒的衝突(D2 a):用注入的 io 讓第一次寫入前磁碟雜湊不符 → 教學卡重讀再寫一次、成功;連續兩次都不符 → 回 `teach-record-changed`,`reviews.json` 與 `log.jsonl` 都沒動。
+- 日期(D2 c):`LC_REVIEW_TODAY` 釘一個不是今天的日期,`learned_at` 是那一天、`next_due` 是隔天。
+- 終端機同時改(D2 a、b):考試卡 `start` 之後、教學卡 `teach.open` 與 `teach.next` 之間,另一個行程改了 `reviews.json` → `teach.next` 成功,那個行程的改動還在(沒被蓋掉)、新卡也在;**考試卡下一次 `submit` 照 T26 報錯**(基準沒有前進)。
 - 拒絕:`teach.switch` 給設定檔裡沒有的分類、`teach.prereq` 的 `index` 超出範圍、參數多出欄位 → `bad-request`,`reviews.json` 與 `log.jsonl` 雜湊前後相同。
 - 協定向量:四個新動作的合法與不合法請求各至少一列,TS 與 Rust 的測試都讀(`protocol.vectors.json`)。
-- 視窗:桌面版不 import `stubs/fixture-data`(建出來的 `apps/desktop/dist/teach/` 裡沒有 fixture 卡的內容);`busy` 時重試、超過 1 秒出現等候字樣(D5)。
+- 視窗:桌面版不 import `stubs/fixture-data`(建出來的 `apps/desktop/dist/teach/` 裡沒有 fixture 卡的內容);`busy` 時重試、超過 1 秒出現等候字樣;一直 `busy` 到 180 秒(假時鐘)停止重試、出現「等候回覆的時間過了。」與「再試一次」,按了重送同一個動作(D5)。
 - 單獨執行:`standalone.json` 的 teach-card 指令照樣起得來。
 
 ### 2. 改壞證明(測試 agent 的丟棄式證明)
