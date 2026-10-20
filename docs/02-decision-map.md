@@ -1525,6 +1525,7 @@ graph TD
   - Rust 會多一個模組管行程;它的測試只測信封與生命週期,不測批改。
 - **Related**: ADR-022、ADR-034、ADR-042、ADR-050、ADR-060、ADR-062、ADR-069(refined)、ADR-074、`contracts/types.md` §7、§11b、§13、`features/06-test-card/FEATURE.md`、`docs/tickets/T22-review-sidecar.md`、`docs/tickets/T24-test-card-phase-2.md`、T26(core session 寫 `reviews.json` 前的樂觀檢查)
 - **refined by ADR-076(2026-10-17)**:第 5 點的「固定的訊息」加上缺金鑰的兩句樣板;第 6 點「假 router 只能由啟動時的環境變數開」補上「`LC_REVIEW_` 開頭的鍵不從 `.env` 設」(原本側車先載入 `.env` 才讀這兩個變數,`.env` 裡寫就會開);側車每次 `start` 重算今天。
+- **refined by ADR-077(2026-10-21)**:第 3 點的高階動作多四個教學卡的(`teach.open` / `teach.next` / `teach.switch` / `teach.prereq`);第 7 點的表多一種寫入情況(教學卡標學過),寫入規則見 ADR-077 第 3 點。
 
 ## ADR-076 · 側車每次 start / submit 重讀 `.env`、每次 start 重算今天;缺金鑰時 start 就說清楚(`credential-unavailable`)
 
@@ -1550,3 +1551,38 @@ graph TD
   - `protocol.ts` 的 `ERROR_KINDS` 是 core 的軟約定,加一個種類不動 `contracts/`。
   - 要讓 `.env` 開假 router 的人(測試)改成在啟動環境設變數。
 - **Related**: ADR-034(refined)、ADR-075(refined)、T30(`docs/tickets/T30-missing-credential-and-daily-start.md`)、T24 `@manual` O1(`docs/reviews/T24-manual-2026-10-17.md`)、T31(submit 的非憑證失敗,待起草)
+
+## ADR-077 · 教學卡的判斷與寫入也跑在側車:多四個教學卡動作;教學卡不留長期基準,考試卡的基準只在沒有外人改過時才前進
+
+- **Status**: accepted · 2026-10-21(技術顧問裁決 T37 的 D1–D5;D2 由顧問改寫;前端起草;refine ADR-075,不推翻)
+- **Context**:
+  1. 07 phase-2 要把卡標成學過,寫進 `state/reviews.json`(§4,`learned_at`、stage 1)與 `state/log.jsonl`(§10 `learned`)。沒有這一步,卡不會進排程,I2、I3 要真資料的人工確認都在等它(ADR-073)。
+  2. 桌面版教學卡現在讀的是編進頁面的 fixture(`apps/teach-card/src/App.svelte` 的 `createFixtureFs`),learned 只在記憶體。
+  3. ADR-075:`reviews.json` 的寫入者是側車與 CLI(core 的 `saveReviewsIfUnchanged`,§11b 四步 + T26 樂觀檢查);webview 的 `LearningFs.write` 06 不呼叫;`log.jsonl` 是 append-only。
+  4. 考試卡的 session 在 `start` 時記下 `reviewsHash`,只在自己寫完時前進。同一個側車裡別人寫了 `reviews.json`,考試卡下一次送出就會報「複習紀錄剛被別的地方改過」。
+  5. Rust 的 `SidecarHost::call` 整個請求都握著鎖,拿不到就回 `busy`;請求逾時 `REQUEST_TIMEOUT` 180 秒。批改的 LLM 呼叫期間,另一個視窗的請求一定拿到 `busy`。
+- **Decision**:
+  1. **教學卡的判斷與寫入放在同一支側車**(D1):多四個動作 `teach.open { category? }`、`teach.next {}`、`teach.switch { category }`、`teach.prereq { index }`。
+     不收路徑、不收任意卡 id(ADR-075 第 3 點):`category` 必須是 `config/categories.yaml` 裡的 id,`index` 必須在目前那張的未學先備清單範圍內,不是就回 `bad-request`、不讀不寫。
+     「目前顯示的那張」由側車記著;回應只給卡片在 `learning/` 裡的相對路徑與標示,不送內容,視窗用 `LearningFs.read` 讀(跟 reteach 卡同一個做法)。Rust 只看信封,不用改。
+  2. **deck 邏輯搬進 core**(`packages/core/src/teach/`):下一張、剩幾張、未學先備、order 檔與磁碟不一致時的排法。未學 = 不在 `reviews.json`。沒有 order 檔照 id 排並記 `warning`(ADR-038 第 1 點:「沒有圖」是明確狀態,不當成空陣列)。
+  3. **寫入規則**(D2,顧問改寫):
+     - a. 教學卡**不留長期基準**。每次 `teach.next` / `teach.switch` 在同一個請求裡重讀 `reviews.json`、加上那一筆(`applyLearnedTransition`)、用 `saveReviewsIfUnchanged(剛讀到的雜湊)` 寫;那幾毫秒內有人寫入、檢查沒過,就重讀再試一次;還是不過才回新的錯誤種類 `teach-record-changed`(固定字樣「學習紀錄剛被別的地方改過,這一張還沒記成學過。請再按一次。」)。卡已經在 `reviews.json` 就不寫。新學一張只是加一筆,跟別人的改動合併是安全的。
+     - b. 考試卡的基準只在「**寫入前磁碟上的雜湊 == `session.reviewsHash`**」時才前進成新雜湊;不相等表示外面有人改過,基準不動,考試卡下一次送出照 T26 報錯。
+     - c. 日期跟 session 同一個來源(`LC_REVIEW_TODAY` / handler 的 `deps.today`,ADR-076 第 5 點)。
+     - `log.jsonl` 的 `learned` 在 `reviews.json` 寫成功之後才寫。
+  4. **上次的類別存在視窗的 `localStorage`**(D3,鍵 `lc-teach-last-category`),`teach.open` 帶過去,側車驗它在設定檔裡;不在就從第一個類別開始。不新增檔案格式。
+  5. **這次不碰 `state/weekly.json`**(D4):週目標的計數與顯示是 08 phase-2(I5)。
+  6. **側車忙**(D5):視窗收到 `busy` 每 300 ms 重試,超過 1 秒顯示「考試卡正在批改,稍等一下。」、按鈕停用;一直 `busy` 到 180 秒(跟 Rust 的 `REQUEST_TIMEOUT` 相同,測試比對兩邊)就停止重試,顯示 `timeout` 的固定字樣與「再試一次」。Rust 不排隊。
+- **Alternatives**:
+  - **視窗用 `LearningFs.write` 整份覆寫 `reviews.json`** —— 不採用。讀改寫之間側車剛寫的一題會被蓋掉(硬規則 5 的精神);`log.jsonl` 不能用整份覆寫追加;視窗要再寫一份初始狀態(ADR-060 的漂移)。
+  - **另起一支教學卡側車** —— 不採用。同一台機器多一個 `reviews.json` 寫入者,兩支互相觸發 T26,教學卡與考試卡會輪流叫對方重來。
+  - **教學卡寫完就把考試卡的基準設成新雜湊**(草稿)—— 不採用。教學卡自己若留長期基準,考試卡送出後它就過期、下一次誤報;無條件前進會把終端機的改動一起吞掉,T26 抓不到。
+  - **上次的類別存檔** —— 不採用。多一個檔案格式,只為一個丟了也無妨的畫面偏好。
+  - **Rust 排隊取代 `busy`** —— 不採用。要改 T22 的行為與測試;教學卡的動作很快,重試加上限就夠。
+- **Consequences**:
+  - 兩張卡共用一個側車、一份 core、一套寫入規則;教學卡標學過不會打斷進行中的複習,終端機的改動照樣被 T26 抓到。
+  - `protocol.ts` 的 `RequestSchema` 多四個動作、`ERROR_KINDS` 多 `teach-record-changed`(core 的軟約定,不動 `contracts/`);`protocol.vectors.json` 同一批更新,TS 與 Rust 的測試讀同一份。協定版本 `v` 不變(只加動作,不改既有訊息的形狀)。
+  - 07 → 10 多一條 import 例外(跟 06 → 10 同理由)。
+  - 已知限制:側車的第一個請求還要等 `hello`(最多 20 秒),極端情況下教學卡會比考試卡先顯示逾時;按「再試一次」即可。
+- **Related**: ADR-038、ADR-060、ADR-071、ADR-073、ADR-074、ADR-075(refined)、ADR-076、T26、T37(`docs/tickets/T37-teach-card-phase-2.md`)、`features/07-teach-card/phase-2.feature`
