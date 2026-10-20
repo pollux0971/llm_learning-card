@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LearningWorld } from './_world.js';
 import { seedApplyQuestion } from './review-cli.steps.js';
+import { phase2Active, phase2Load } from './teach-card-phase2.steps.js';
 import {
   answerCurrent,
   createRig,
@@ -178,7 +179,12 @@ When('the person submits an answer', async function (this: LearningWorld) {
   }
 });
 
-When('the interface loads', function (this: LearningWorld) {
+When('the interface loads', { timeout: 180_000 }, async function (this: LearningWorld) {
+  // 07-teach-card phase-2 的 Background 把 world 標成 phase-2 之後,改派到 teach-card-phase2.steps.ts(真的側車)
+  if (phase2Active(this)) {
+    await phase2Load(this);
+    return;
+  }
   state(this).session.getView();
 });
 

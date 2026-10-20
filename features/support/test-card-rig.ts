@@ -131,7 +131,9 @@ export interface RecordedCall {
 /** 包一層 client,記下每次呼叫(方法與參數) */
 export function spyClient(inner: ReviewClient): { client: ReviewClient; calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
+  // `...inner`:ReviewClient 在 T37 多了教學卡的四個方法,考試卡用不到,原樣帶過去(這樣 ReviewClient 再加方法也不用回頭改這裡)
   const client: ReviewClient = {
+    ...inner,
     start: () => (calls.push({ method: 'start' }), inner.start()),
     next: () => (calls.push({ method: 'next' }), inner.next()),
     submit: (answer) => (calls.push({ method: 'submit', arg: answer }), inner.submit(answer)),

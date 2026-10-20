@@ -65,21 +65,24 @@ async function protocol(): Promise<Protocol> {
 const SIDECAR_KINDS = [
   'bad-request', 'unsupported-version', 'unknown-method', 'too-large', 'root-mismatch', 'router-unavailable', 'no-cards',
   'paused', 'no-session', 'no-question', 'review-record-changed', 'internal', 'credential-unavailable',
+  'teach-record-changed',
 ];
 const RUST_KINDS = ['not-configured', 'sidecar-unavailable', 'sidecar-exited', 'timeout', 'busy', 'bad-envelope', 'bad-response'];
+/** ADR-077 定的全文(T37:教學卡標學過時,寫入檢查連續兩次沒過) */
+const TEACH_RECORD_CHANGED_MESSAGE = '學習紀錄剛被別的地方改過,這一張還沒記成學過。請再按一次。';
 /** T26 定的全文 */
 const REVIEW_RECORD_CHANGED_MESSAGE = '複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。';
 
 describe('常數與固定清單(驗收 3)', () => {
-  it('版本 1、一行最多 262144 位元組、五個 method', async () => {
+  it('版本 1、一行最多 262144 位元組、九個 method(T37 加四個教學卡動作)', async () => {
     const p = await protocol();
     expect(p.PROTOCOL_VERSION).toBe(1);
     expect(p.MAX_LINE_BYTES).toBe(262144);
     expect(vectors.maxLineBytes).toBe(262144);
-    expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status']);
+    expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq']);
   });
 
-  it('錯誤 kind 的固定清單:側車 13 個(T30 加 credential-unavailable)+ Rust 7 個,不多不少', async () => {
+  it('錯誤 kind 的固定清單:側車 14 個(T30 加 credential-unavailable、T37 加 teach-record-changed)+ Rust 7 個,不多不少', async () => {
     const p = await protocol();
     expect([...p.ERROR_KINDS].sort()).toEqual([...SIDECAR_KINDS, ...RUST_KINDS].sort());
   });
@@ -94,6 +97,11 @@ describe('常數與固定清單(驗收 3)', () => {
       expect(m, m).not.toMatch(/Error|undefined|\bat \S+:\d+|node_modules|\/home\/|\/tmp\/|sk-/);
     }
     expect(new Set(messages).size, '每個 kind 一句,不共用').toBe(messages.length);
+  });
+
+  it('teach-record-changed 的句子是 ADR-077 定的全文', async () => {
+    const p = await protocol();
+    expect(p.ERROR_MESSAGES['teach-record-changed']).toBe(TEACH_RECORD_CHANGED_MESSAGE);
   });
 
   it('review-record-changed 的句子是 T26 定的全文', async () => {
