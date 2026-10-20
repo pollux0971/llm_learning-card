@@ -918,6 +918,42 @@ describe('runReview 的逾時(T36)', () => {
   );
 
   it(
+    '卡住的子行程(beforeAnswer 睡得比 timeoutMs 久):丟「逾時被 SIGKILL」的錯,而且那個子行程真的不在了(不是殭屍、不是還在等 stdin)',
+    async () => {
+      const v = dueVault(3);
+      // 子行程每個畫面都在等 stdin;beforeAnswer 睡 6 秒,比 timeoutMs 1.5 秒久,所以它一定是被計時器殺掉的
+      const pids = new Set<number>();
+      let polling = true;
+      const poll = (async () => {
+        while (polling) {
+          for (const pid of processesFor(v.dir)) pids.add(pid);
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      })();
+      const err = await runToEnd(v, { timeoutMs: 1500, beforeAnswer: () => new Promise((r) => setTimeout(r, 6000)) }).then(
+        () => undefined,
+        (e: unknown) => e as Error,
+      );
+      polling = false;
+      await poll;
+      expect(err, '逾時應該丟錯').toBeInstanceOf(Error);
+      expect(err!.message).toMatch(/runReview 1\.5 秒逾時被 SIGKILL/);
+      expect(pids.size, '量尺:執行期間應該抓到子行程').toBeGreaterThan(0);
+      // 丟錯的那一刻,子行程就要已經收掉:`kill(pid, 0)` 對殭屍也會成功,所以這裡連殭屍都算「還在」
+      const alive = [...pids].filter((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(alive, '逾時錯誤丟出時,子行程還在').toEqual([]);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
     'runToEnd、runAndQuit 跟著 runReview:逾時一樣丟錯',
     async () => {
       const v = dueVault(3);
