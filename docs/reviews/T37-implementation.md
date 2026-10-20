@@ -61,9 +61,18 @@ ls: cannot access '.env': No such file or directory
 
 07 → 10 是更早的 `4c5aa62`,也已經在 origin。實作 commit `96fe397` 沒有碰 `scripts/boundaries.allow.json`。
 
-## 待協調
+## 待協調 → 已解決
 
-受保護的 `packages/core/src/teach/deck.test.ts` 從 `deck.ts` 匯入 `readOrderFile`,而且要真的讀檔。B-lite 說 `teach/` 不 import fs,生產路徑的讀檔在 `schema/graph.ts`。為了讓那支測試綠,`deck.ts` 仍匯出同名函式並 import `node:fs`(邊界把 `node:` 當外部,`npm run boundaries` 仍過)。若要拿掉這份,請測試 agent 把那組斷言改指 `schema/graph.ts`。
+`-5c` 的 `t37-red-b-lite`(`32f7fdc`)把 `readOrderFile` 的斷言改量 `schema/graph.ts`,並加 `no-node-static.test.ts`。已 `git merge --no-ff`。`packages/core/src/teach/deck.ts` 已拿掉 `node:fs`、`node:path` 與 `readOrderFile`,只留純函式。生產路徑仍是 `schema/graph.ts` 的 `readOrderFile`。
+
+合進來之後 `npm run boundaries` 紅一條,我沒改測試、也沒改 `scripts/boundaries.allow.json`。違規原文:
+
+```text
+✗ 1 個違規 import:
+  packages/core/src/teach/no-node-static.test.ts:75  import '../scheduler/transitions.js'  (07-teach-card → 04-scheduler)
+```
+
+那一行是測試裡的字串常數(`"import { applyLearnedTransition } from '../scheduler/transitions.js';"`),用來證明掃描器不會把一般套件當成 `node:`。`check-boundaries.ts` 去掉註解之後仍把字串裡的 `from '…'` 當成 import。不是 `deck.ts` 的 import。
 
 ## 指令與輸出原文
 
@@ -151,6 +160,31 @@ cargo(cucumber 結束後才跑):
 
 ```text
 test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+```
+
+B-lite 補測試合進來之後(單檔 vitest,`VITEST_MAX_WORKERS=1`):
+
+```text
+ Test Files  2 passed (2)
+      Tests  21 passed (21)
+```
+
+(`packages/core/src/teach/deck.test.ts`、`no-node-static.test.ts`)
+
+`./node_modules/.bin/tsc --noEmit --pretty false --incremental false`:無輸出,`TSC_EXIT:0`。
+
+`npm run boundaries`(合進來之後):
+
+```text
+boundaries: 掃描 350 個檔案,允許例外 23 條
+涵蓋:納管 406 / 掃描 406 檔(100.0%),未納管目錄:
+  (無)
+
+✗ 1 個違規 import:
+  packages/core/src/teach/no-node-static.test.ts:75  import '../scheduler/transitions.js'  (07-teach-card → 04-scheduler)
+
+Wave 0 只能 import contracts/ 與自己的目錄。整合後要跨功能,把邊加進 scripts/boundaries.allow.json 並附理由。
+gate=boundaries result=FAIL scanned=350
 ```
 
 learning/ 沒有量、也沒有碰。

@@ -1,11 +1,8 @@
 /**
  * 教學卡 deck 的純函式(ADR-077 第 2 點,顧問 B-lite)。
- * 輸入就是參數。不 import session/、schema、fs。
- * 讀 order 檔的函式在 schema/graph.ts(生產路徑);這裡的 readOrderFile 只因
- * 受保護的 deck.test.ts 從這個檔匯入,實作與 graph.ts 同一規則。
+ * 輸入就是參數。不 import session/、schema、node:。
+ * 讀 order 檔在 schema/graph.ts 的 readOrderFile。
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 /** order 檔的卡照 order 檔排(磁碟上沒有的略過);其餘排在後面、照 id。沒有 order 檔(undefined)全部照 id。 */
 export function orderDeck(order: readonly string[] | undefined, onDisk: readonly string[]): string[] {
@@ -53,21 +50,4 @@ export function unlearnedPrereqs(
     out.push(id);
   }
   return out;
-}
-
-/**
- * 讀 graph/order-<category>.json。沒有檔是 { kind: 'missing' },不是空陣列(ADR-038)。
- * 生產路徑用 schema/graph.ts 的同名函式;這個匯出是受保護測試要的。
- */
-export function readOrderFile(
-  learningDir: string,
-  category: string,
-): { kind: 'missing' } | { kind: 'ok'; ids: string[] } {
-  const path = join(learningDir, 'graph', `order-${category}.json`);
-  if (!existsSync(path)) return { kind: 'missing' };
-  const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
-  if (!Array.isArray(raw) || raw.some((id) => typeof id !== 'string')) {
-    throw new Error('order 檔不是 id 陣列');
-  }
-  return { kind: 'ok', ids: raw };
 }
