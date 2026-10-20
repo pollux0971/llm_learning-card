@@ -15,9 +15,9 @@
 **phase-2** 需要:
 - [ ] 自身:phase-1 `done`
 - [ ] 整合:無
-- [x] 決策:已定案(2026-10-15,技術顧問;R1–R5 的規格寫在 phase-1 的 FEATURE.md 之內)
+- [x] 決策:無(已定案,理由見下)
 
-理由:ADR-065 accepted;R1–R5 與七條解讀已逐條確認,見 `FEATURE.md`。
+理由:2026-10-15 技術顧問已定案(ADR-065 accepted);R1–R5 與七條解讀已逐條確認,見 `FEATURE.md`。
 
 ## Gate 未滿足時
 

@@ -5,7 +5,7 @@
 | 欄位 | 值 |
 |---|---|
 | 已完成 | phase-1(2026-09-02)、phase-2(2026-09-03) |
-| 進行中 | phase-4(閘道本機 adapter + 預算備援,2026-09-04 開工) |
+| 進行中 | 無 |
 | 下一個 | phase-3(provisional 佇列)——gate 已由 ADR-039 解除,可以開工 |
 
 ## Gate
@@ -30,6 +30,8 @@
 ## Gate 未滿足時
 
 **目前沒有未滿足的 gate。** phase-3 與 phase-4 的契約 gate 都已由 ADR-039 解除。
+
+**phase-4 標 blocked(2026-10-20)**:實作與驗收都做完了(審核驗收 PASS、tag `03-phase-4-gateway` 與 `03-phase-4-debug` 在),只差 `phase-4.feature` 裡閘道真連線那一條 `@manual`。要等使用者把閘道起起來,再跑 `npx tsx scripts/llm.ts --probe` 和那條 `@manual`,過了才 `done`。這不是我們這邊的工作,所以不標 `in-progress`、不佔 WIP。
 
 留下的不是 gate,是一個**已知的暫時狀態**:閘道機器還沒起來(`localhost:8787` 無回應、
 `GATEWAY_API_KEY` 還沒進 `.env`)。這不擋開工——phase-4 的自動場景全部用假的
