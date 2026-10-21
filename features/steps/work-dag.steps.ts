@@ -50,7 +50,7 @@ After(function (this: LearningWorld) {
 });
 
 // ───────────────────────────────────────────────────────────────────── 小工具
-function treeRoot(world: LearningWorld): string {
+export function treeRoot(world: LearningWorld): string {
   const s = scratch(world);
   if (!s.root) {
     s.root = mkdtempSync(join(tmpdir(), 'lc-dag-'));
@@ -59,8 +59,8 @@ function treeRoot(world: LearningWorld): string {
   return s.root;
 }
 
-function runDag(world: LearningWorld, args: string[]): void {
-  const env = { ...process.env };
+export function runDag(world: LearningWorld, args: string[], envExtra: Record<string, string> = {}): void {
+  const env = { ...process.env, ...envExtra };
   delete env.NODE_OPTIONS;
   const r = spawnSync(process.execPath, [TSX_CLI, DAG_TS, ...args], { cwd: ROOT, encoding: 'utf8', env, timeout: 90_000 });
   const stdout = r.stdout ?? '';
@@ -68,7 +68,7 @@ function runDag(world: LearningWorld, args: string[]): void {
   world.lastRun = { status: r.error ? null : r.status, stdout, stderr, output: stdout + stderr };
 }
 
-const lines = (world: LearningWorld): string[] => (world.lastRun?.stdout ?? '').split('\n');
+export const lines = (world: LearningWorld): string[] => (world.lastRun?.stdout ?? '').split('\n');
 
 function mermaidBlock(world: LearningWorld): string[] | null {
   const all = lines(world);
