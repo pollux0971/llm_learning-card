@@ -2016,6 +2016,48 @@ describe('phase-2:檔頭驗證(must_catch:沒有檔頭、欄位缺漏或不合�
     expect(hasLine(r, 'LANDING T9 docs')).toBe(true);
   }, 60_000);
 
+  it('逐行清單項目以反引號開頭、或項目中含反引號(含逗號、冒號):照樣有效,當純文字;不報 invalid、--check 不紅(真樹實例:T32 的 must_catch)', () => {
+    const root = p2Tree([]);
+    P2.writeRaw(
+      root,
+      'docs/tickets/T9-example.md',
+      [
+        '---',
+        'id: T9',
+        'deps: []',
+        'touches: [docs/a/]',
+        'cpu: light',
+        'budget_usd: 1',
+        'status: todo',
+        'owner: worker-grok',
+        'must_catch:',
+        '  - `.progress` 照舊在 stdout 以外的地方,不能只看第一行',
+        '  - 把 `a, b` 拆成兩項:逗號在反引號裡,冒號 `key: value` 也不是新欄位',
+        '  - 一般項目裡有 `反引號` 在中間',
+        '---',
+        '',
+        '內文',
+        '',
+      ].join('\n'),
+    );
+    const r = checkOf(root);
+    expect(r.status, r.stdout).toBe(0);
+    expect(linesStarting(r, 'PROBLEM')).toEqual([]);
+    expect(hasLine(r, 'LANDING T9 docs')).toBe(true);
+  }, 60_000);
+
+  it('逐行寫的 deps / touches 也一樣:項目以反引號開頭的清單行不會讓檔頭變 invalid', () => {
+    const root = p2Tree([T('T1', 'merged', 'docs/z/')]);
+    P2.writeRaw(
+      root,
+      'docs/tickets/T9-example.md',
+      ['---', 'id: T9', 'deps:', '  - T1', 'touches:', '  - docs/a/', '  - scripts/dag.ts', 'cpu: light', 'budget_usd: 1', 'status: todo', 'owner: worker-grok', 'must_catch:', '  - `第一項`', '---', ''].join('\n'),
+    );
+    const r = checkOf(root);
+    expect(r.status, r.stdout).toBe(0);
+    expect(hasLine(r, 'READY T9')).toBe(true);
+  }, 60_000);
+
   it('一行清單裡的註解不吃掉後面的項目,也不被當成項目:touches: [docs/a/] # [scripts/x.ts] 只有 docs/a/', () => {
     const root = p2Tree([]);
     P2.writeRaw(root, 'docs/tickets/T9-example.md', P2.headerFile({ ...P2.DEFAULT_HEADER, touches: '[docs/a/]   # [nowhere/x/]' }));

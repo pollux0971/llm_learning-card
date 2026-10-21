@@ -13,7 +13,7 @@
  */
 import { Given, Then, When, type DataTable } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import {
   addLandingRow,
@@ -49,7 +49,10 @@ function state(world: LearningWorld): P2State {
 // ───────────────────────────────────────────────────────────────────── Given
 Given('the fake tree has this landing table:', function (this: LearningWorld, table: DataTable) {
   const rows = table.hashes().map((r) => [r.prefix!, r.landing!] as [string, string]);
-  writeLanding(treeRoot(this), rows);
+  const root = treeRoot(this);
+  // phase-1 的規矩:根底下沒有 features/ 是用法錯誤(退出碼 2)。只有工單的假樹也要有一個空的 features/
+  mkdirSync(join(root, 'features'), { recursive: true });
+  writeLanding(root, rows);
 });
 
 Given('the landing table also has the row {string} to {string}', function (this: LearningWorld, prefix: string, landing: string) {
@@ -193,7 +196,7 @@ Then('the lines for {string}, {string} and {string} appear in that order', funct
 Then('the stub program was never called', function (this: LearningWorld) {
   const stub = state(this).stub;
   assert.ok(stub, '這個場景沒有放假的 orca');
-  assert.equal(stubWasCalled(stub.log), false, `工具只印不執行,但假的 orca 被叫到了:\n${readFileSync(stub.log, 'utf8')}`);
+  assert.equal(stubWasCalled(stub.log), false, `工具只印不執行,但假的 orca 被叫到了:\n${stubWasCalled(stub.log) ? readFileSync(stub.log, 'utf8') : ''}`);
 });
 
 Then(/^the output has exactly (\d+) lines? that creates a task$/, function (this: LearningWorld, count: string) {
