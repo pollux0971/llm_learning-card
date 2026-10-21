@@ -15,6 +15,7 @@ must_catch:
   - dropped 的工單被當成滿足:依賴它的工單必須印 BLOCKED by <id> (dropped),不得 READY
   - R4 / R5 違反讓 dag:check 變紅(顧問裁決只印 WARN):WARN 場景必須紅;R5 深度把已 done/merged/有 tag 的節點算進去也必須紅
   - 已 merged / dropped 的工單,touches 對不到落點:不得出 PROBLEM no-landing、不得讓 dag:check 紅(解讀 8);todo / dispatched / review 的工單對不到落點必須仍然紅
+  - 檔頭清單項目以反引號開頭或含反引號被當成不合法:真樹 T32 那種項目(must_catch 的 `.progress` 開頭項)必須仍然有效,dag:check 不得紅;反引號一律當純文字(我們自己解析受限子集,不照真 YAML 的『純量不准反引號開頭』)
   - 沒有檔頭的工單檔、欄位缺漏或值不合法(cpu: medium、status: wip、owner 不在清單、budget_usd 不是非負數、deps 不是清單、budget_usd 0 配 todo)沒被抓成 PROBLEM / 紅燈
   - touches 對不到落點表時猜一個落點:必須 PROBLEM no-landing 並讓 dag:check 紅
   - START 的選法用字串排序(T10 排在 T2 前面)或把順序當成優先權:自然排序場景必須紅
@@ -80,6 +81,7 @@ phase-1 的 `scripts/dag.ts` 只算 phase 之間的 ready / 卡住 / 待人判�
   接進 chain 後 `scanned=` 會變成 21:逐處判斷那句話在新行為下還成立嗎,不成立的在報告列給協調者(不要自己改 `docs/reviews/` 底下的歷史證據)。
 - 真 repo:`npx tsx scripts/dag.ts --root .` 印得出 `gate=dag result=OK`;`npm run dag:check` 在真 repo 綠;報告貼 `READY` / `START` / `HELD` / `WARN` 的真輸出,由顧問核對「與你看 NEXT.md 的直覺一致嗎」。
 - 變異:標準 80%,範圍如上;附完整指令(`npm run mutate -- <設定檔>` 與範圍、旗標)。
+- **-8d 確認真樹 `npm run dag:check` 綠,而且 T32 沒有被報 invalid**(docs/tickets/ 有 16 張工單的檔頭含反引號,必須全部有效)。
 - 前後各量一次 `learning/`(唯一量法),三個數字必須相同。
 
 ## 不在範圍
