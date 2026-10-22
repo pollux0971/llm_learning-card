@@ -82,7 +82,8 @@ CLI 仍只認 `--root <tree>`、`--check`、`--orca`。用法錯誤的 stderr �
 | docs/tickets/T2c-2-desktop-shell-learning-root.md | id: T2c-2 | id: T2c_2 | 同上,只改檔頭 |
 | docs/tickets/T2c-2-desktop-shell-learning-root.md | deps: [T5, T2c-1] | deps: [T5, T2c_1] | 顧問另准:全 repo 只有這張的 deps 引用 T2c-1 |
 | docs/tickets/T2c-2-desktop-shell-learning-root.md | status: todo | status: merged | `4df31b8` Merge T2c-2 (batch L) |
-| docs/tickets/T29-mutate-lock-test-fsync-stall.md | owner: -e5 | owner: 測試 | 顧問 2026-10-22 另准。**status 仍是 todo**(見待協調) |
+| docs/tickets/T29-mutate-lock-test-fsync-stall.md | owner: -e5 | owner: 測試 | 顧問 2026-10-22 另准 |
+| docs/tickets/T29-mutate-lock-test-fsync-stall.md | status: todo | status: merged | `bef9c8b` 第 2 件;`9af3c3b` 量測報告。沒有單獨的整張驗收合併,見待協調 |
 
 ## R5 在真樹上的深度
 
@@ -236,14 +237,32 @@ chain 長度:
 - `docs/reviews/date-dependent-lock-tests.md` 的 `scanned=20` 是 `npm run lint:docs` 的輸出,不是 chain 長度。這次 `check-doc-links` 是 `scanned=127`,那句歷史話也不描述現在的 doc-links,同樣沒改。
 - 沒有測試把 chain 長度寫死成 20。`scripts/dag-check.test.ts` 只要求 chain 裡有且只有一個 `dag:check`,而且每一項都是 npm script。
 
+## cucumber
+
+只用 `--tags`,沒給 feature 檔名。兩段都全過。
+
+```
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 NODE_OPTIONS=--import=tsx ./node_modules/.bin/cucumber-js --tags "@work-dag and @phase-2"
+76 scenarios (76 passed)
+396 steps (396 passed)
+0m10.967s (executing steps: 0m10.129s)
+```
+
+```
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 NODE_OPTIONS=--import=tsx ./node_modules/.bin/cucumber-js --tags "@work-dag and @phase-1"
+34 scenarios (34 passed)
+181 steps (181 passed)
+0m05.547s (executing steps: 0m04.767s)
+```
+
 ## 待協調
 
-- **T29 status 仍是 todo。** git 上只有 `bef9c8b`(「第 2 件」:fd 測試 200→20)和 `9af3c3b`(量測報告)。沒有整張驗收合併。顧問只另准改 owner,所以 owner 改成 `測試`,status 沒改。若整張其實已經做完,請協調者改 `merged`。
+- **T29 檔頭 status 是 merged**,依據是 `bef9c8b`(第 2 件)與 `9af3c3b`(量測報告),沒有單獨的整張驗收合併。owner 改 `測試` 是顧問另准。若這不算整張完成,請協調者把 status 改回 `todo`。
 - **T35 status 仍是 todo。** 只看到工單合併 `5b48d19`,沒有實作驗收合併。沒改 status。
 - **T20 status 仍是 todo。** 沒有 Merge T20。T19 改成 merged 之後,T20 變成 READY,再被 T3 以 R2 擋住。
 - **T3 仍是 todo**,檔頭註解寫階段 B 未派。T5 合併之後它 READY 且 heavy,這輪 START 是它。若階段 B 不該被當成可開工,那是 deps / 狀態的產品決定,這裡不准改 deps。
 - **T21 標了 merged**,依據是 `891f228`(含驗收證據)。稍早的 `6e39a01` 寫 phase-6 維持 in-progress,`18672ad` 的觀感當時寫「待顧問判」。若顧問認為這張還沒完,把 status 改回去。
-- cucumber(`@work-dag and @phase-2`,以及 `@phase-1` 不退步)按派工要先要位子,這份報告交件時還沒跑。
+- cucumber 已跑,見上一節。phase-2 與 phase-1 都全過。
 - `npm run check:test-ledger` 會跑整套 vitest。這裡啟動後被終止(退出碼 143),沒有重跑整套。單檔 `scripts/dag.test.ts`(279)與 `scripts/dag-check.test.ts`(16)已綠。
 
 ## 跑過的指令與輸出
@@ -279,6 +298,20 @@ npm run dag:check
 ```
 
 三次紅的原始輸出見上一節。
+
+位子給了之後的 cucumber(Scenarios / Steps 原文):
+
+```
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 NODE_OPTIONS=--import=tsx ./node_modules/.bin/cucumber-js --tags "@work-dag and @phase-2"
+76 scenarios (76 passed)
+396 steps (396 passed)
+0m10.967s (executing steps: 0m10.129s)
+
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 NODE_OPTIONS=--import=tsx ./node_modules/.bin/cucumber-js --tags "@work-dag and @phase-1"
+34 scenarios (34 passed)
+181 steps (181 passed)
+0m05.547s (executing steps: 0m04.767s)
+```
 
 ## learning/ 量測
 
