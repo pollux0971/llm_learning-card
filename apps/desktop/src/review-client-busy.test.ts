@@ -366,3 +366,350 @@ describe('reviewErrorText(T40 修法 3)', () => {
     }
   });
 });
+
+/* ───────────── 補測2·(T40 第二輪:-5a 的存活變異;只加測試) ───────────── */
+
+const START = 1_700_000_000_000;
+
+/** 補測2 用的劇本機:時鐘可以從任意數開始(正式環境的 Date.now 不是從 0 起);回應由函式決定,可以回任何形狀 */
+async function rigAt(
+  start: number,
+  respond: (n: number, id: number) => { cost?: number; throws?: unknown; value?: unknown },
+): Promise<Rig> {
+  const m = await mod();
+  const seen: Seen[] = [];
+  const sleeps: number[] = [];
+  const clock = { t: start };
+  const waits: { at: number; waiting: boolean }[] = [];
+  let n = 0;
+  const client = m.createReviewClient({
+    invoke: async (_cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
+      const request = (args as { request: Seen['request'] }).request;
+      seen.push({ at: clock.t, request });
+      n += 1;
+      const out = respond(n, request.id);
+      clock.t += out.cost ?? 0;
+      if ('throws' in out) throw out.throws;
+      return out.value;
+    },
+    sleep: async (ms: number) => {
+      sleeps.push(ms);
+      clock.t += ms;
+      if (sleeps.length > 5000) throw new Error('重試超過 5000 次還沒停(沒有上限)');
+    },
+    now: () => clock.t,
+  });
+  client.onWait((waiting) => waits.push({ at: clock.t, waiting }));
+  return { client, seen, sleeps, clock, waits };
+}
+
+const BUSY = { throws: { kind: 'busy' } };
+const okOf = (id: number, result: unknown = { fine: true }, cost = 0) => ({ cost, value: { v: 1, id, ok: true, result } });
+
+describe('補測2·G1 放棄邊界(兩處檢查:送之前、busy 之後睡之前)', () => {
+  it('每趟 0 ms 全 busy:invoke 剛好 600 次、睡剛好 600 次、放棄時時鐘剛好 180000', async () => {
+    const r = await rigAt(0, () => BUSY);
+    const err = await caught(r.client.next());
+    expect(err.kind).toBe('timeout');
+    expect(r.seen).toHaveLength(600);
+    expect(r.sleeps).toHaveLength(600);
+    expect(r.clock.t).toBe(180_000);
+    expect(r.seen.at(-1)!.at).toBe(179_700);
+  });
+
+  it('busy 回來時剛好 180000:不睡、不再送;丟 timeout、unsent、固定字樣(放棄在「睡之前」那一處)', async () => {
+    const p = await protocol();
+    const r = await rigAt(0, () => ({ ...BUSY, cost: 180_000 }));
+    const err = await caught(r.client.next());
+    expect(r.seen).toHaveLength(1);
+    expect(r.sleeps).toEqual([]);
+    expect(r.clock.t).toBe(180_000);
+    expect(err.kind).toBe('timeout');
+    expect(err.unsent).toBe(true);
+    expect(err.message).toBe(p.ERROR_MESSAGES.timeout);
+    expect(err.message).toBe('等候回覆的時間過了。');
+  });
+
+  it('busy 回來時是 179999:還睡一次(300 ms)再看;睡完到 180299,不再送,丟 timeout', async () => {
+    const r = await rigAt(0, () => ({ ...BUSY, cost: 179_999 }));
+    const err = await caught(r.client.next());
+    expect(r.seen).toHaveLength(1);
+    expect(r.sleeps).toEqual([300]);
+    expect(r.clock.t).toBe(180_299);
+    expect(err.kind).toBe('timeout');
+    expect(err.unsent).toBe(true);
+  });
+
+  it('睡完剛好 180000:不再送(送之前那一處檢查,邊界是「大於等於」)', async () => {
+    const r = await rigAt(0, () => ({ ...BUSY, cost: 179_700 }));
+    const err = await caught(r.client.next());
+    expect(r.seen).toHaveLength(1);
+    expect(r.sleeps).toEqual([300]);
+    expect(r.clock.t).toBe(180_000);
+    expect(err.kind).toBe('timeout');
+    expect(err.unsent).toBe(true);
+  });
+
+  it('睡完是 179999:還送(差 1 ms 不放棄);第二次再 busy,第二趟再睡後放棄', async () => {
+    const r = await rigAt(0, (n) => (n === 1 ? { ...BUSY, cost: 179_699 } : BUSY));
+    const err = await caught(r.client.next());
+    expect(r.seen.map((s) => s.at)).toEqual([0, 179_999]);
+    expect(r.sleeps).toEqual([300, 300]);
+    expect(err.kind).toBe('timeout');
+  });
+
+  it('剛好 180000 之前最後一趟成功:179999 送出的那次成功了就回結果,不丟 timeout', async () => {
+    const r = await rigAt(0, (n, id) => (n === 1 ? { ...BUSY, cost: 179_699 } : okOf(id, { late: true })));
+    await expect(r.client.next()).resolves.toEqual({ late: true });
+    expect(r.seen).toHaveLength(2);
+  });
+
+  it('放棄後下一個動作用新的起點:不被上一個動作的 180 秒影響', async () => {
+    const r = await rigAt(0, () => BUSY);
+    await caught(r.client.next());
+    const before = r.seen.length;
+    const t0 = r.clock.t;
+    await caught(r.client.next());
+    expect(r.seen.length - before).toBe(600);
+    expect(r.clock.t - t0).toBe(180_000);
+  });
+});
+
+describe('補測2·G4 假時鐘不從 0 起(正式環境是很大的毫秒數)', () => {
+  it('起點 1.7e12:忙三次(900 ms)再成功,不通知;第一次嘗試也不通知', async () => {
+    const r = await rigAt(START, (n, id) => (n <= 3 ? BUSY : okOf(id)));
+    await r.client.start();
+    expect(r.waits).toEqual([]);
+    expect(r.seen).toHaveLength(4);
+  });
+
+  it('起點 1.7e12:超過 1 秒才通知 true(從開始算 1500 ms),成功後通知 false', async () => {
+    const r = await rigAt(START, (n, id) => (n <= 4 ? { ...BUSY, cost: 200 } : okOf(id)));
+    await r.client.start();
+    expect(r.waits.map((w) => w.waiting)).toEqual([true, false]);
+    expect(r.waits[0]!.at - START).toBe(1500);
+  });
+
+  it('起點 1.7e12:放棄一樣是從開始算 180 秒(不是一開始就放棄)', async () => {
+    const r = await rigAt(START, () => BUSY);
+    const err = await caught(r.client.next());
+    expect(err.kind).toBe('timeout');
+    expect(r.seen).toHaveLength(600);
+    expect(r.clock.t - START).toBe(180_000);
+  });
+});
+
+describe('補測2·G3 不給時鐘與 sleep:走正式環境的預設(真的 setTimeout 與 Date.now)', () => {
+  it('先 busy 再成功:不推進時間第二次不會送;推進 299 ms 還不會;推進到 300 ms 才送、整體成功', async () => {
+    vi.useFakeTimers();
+    try {
+      const m = await mod();
+      const ids: number[] = [];
+      const client = m.createReviewClient({
+        invoke: async (_cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
+          const request = (args as { request: { id: number } }).request;
+          ids.push(request.id);
+          if (ids.length === 1) throw { kind: 'busy' };
+          return { v: 1, id: request.id, ok: true, result: { done: true } };
+        },
+      });
+      let result: unknown;
+      const p = client.status().then((v) => (result = v));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ids, '第一次送出').toEqual([1]);
+      await vi.advanceTimersByTimeAsync(299);
+      expect(ids, '299 ms:還在睡').toEqual([1]);
+      expect(result).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ids, '300 ms:第二次(新 id)').toEqual([1, 2]);
+      await p;
+      expect(result).toEqual({ done: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('預設時鐘算時間:一直 busy,推進 1.2 秒通知 true、推進到 180 秒丟 timeout(unsent)、通知 false', async () => {
+    vi.useFakeTimers();
+    try {
+      const m = await mod();
+      let sent = 0;
+      const client = m.createReviewClient({
+        invoke: async (): Promise<unknown> => {
+          sent += 1;
+          throw { kind: 'busy' };
+        },
+      });
+      const waits: boolean[] = [];
+      client.onWait((w) => waits.push(w));
+      let outcome: Rejection | undefined;
+      const p = client.next().catch((e: unknown) => {
+        outcome = e as Rejection;
+      });
+      await vi.advanceTimersByTimeAsync(900);
+      expect(waits, '900 ms 還不通知').toEqual([]);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(waits, '1500 ms 通知').toEqual([true]);
+      expect(outcome).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(180_000);
+      await p;
+      expect(outcome!.kind).toBe('timeout');
+      expect(outcome!.unsent).toBe(true);
+      expect(waits).toEqual([true, false]);
+      const stopped = sent;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(sent, '放棄後不再送').toBe(stopped);
+      expect(sent, '約 600 次').toBeGreaterThanOrEqual(600);
+      expect(sent).toBeLessThanOrEqual(602);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('補測2·G5 拒絕值的 kind 不合格:一律 sidecar-unavailable、不重試', () => {
+  it('kind 是空字串、數字、陣列、有 length 的物件、undefined、null', async () => {
+    const p = await protocol();
+    for (const kind of ['', 5, ['x'], ['busy'], { length: 3 }, undefined, null]) {
+      const r = await rig([{ t: 'reject', value: { kind } }]);
+      const err = await caught(r.client.status());
+      const label = JSON.stringify(kind) ?? 'undefined';
+      expect(err.kind, label).toBe('sidecar-unavailable');
+      expect(err.message, label).toBe(p.ERROR_MESSAGES['sidecar-unavailable']);
+      expect(r.seen, label).toHaveLength(1);
+      expect(r.sleeps, label).toEqual([]);
+      expect(err.unsent, label).toBe(false);
+    }
+  });
+
+  it('拒絕值是陣列、數字、undefined:一樣 sidecar-unavailable', async () => {
+    for (const value of [[], ['busy'], 7, undefined, true]) {
+      const r = await rig([{ t: 'reject', value }]);
+      const err = await caught(r.client.status());
+      expect(err.kind, String(value)).toBe('sidecar-unavailable');
+      expect(r.seen).toHaveLength(1);
+    }
+  });
+});
+
+describe('補測2·G6 取消訂閱', () => {
+  async function fire(r: Rig): Promise<void> {
+    const rr = r;
+    await rr.client.start();
+  }
+
+  it('三個訂閱者取消第一個:只剩另兩個收到通知(第一個一則也沒有)', async () => {
+    const r = await rigAt(0, (n, id) => (n <= 5 ? { ...BUSY, cost: 300 } : okOf(id)));
+    const a: boolean[] = [];
+    const b: boolean[] = [];
+    const c: boolean[] = [];
+    const stopA = r.client.onWait((w) => a.push(w));
+    r.client.onWait((w) => b.push(w));
+    r.client.onWait((w) => c.push(w));
+    stopA();
+    await fire(r);
+    expect(a).toEqual([]);
+    expect(b).toEqual([true, false]);
+    expect(c).toEqual([true, false]);
+  });
+
+  it('同一個取消函式呼叫兩次:別的訂閱者仍收得到(不會多拿掉最後一個)', async () => {
+    const r = await rigAt(0, (n, id) => (n <= 5 ? { ...BUSY, cost: 300 } : okOf(id)));
+    const a: boolean[] = [];
+    const b: boolean[] = [];
+    const c: boolean[] = [];
+    const stopA = r.client.onWait((w) => a.push(w));
+    r.client.onWait((w) => b.push(w));
+    r.client.onWait((w) => c.push(w));
+    stopA();
+    stopA();
+    await fire(r);
+    expect(a).toEqual([]);
+    expect(b).toEqual([true, false]);
+    expect(c).toEqual([true, false]);
+  });
+
+  it('通知的當下有人取消自己:後面的訂閱者照樣收到(通知走的是複本)', async () => {
+    const r = await rigAt(0, (n, id) => (n <= 5 ? { ...BUSY, cost: 300 } : okOf(id)));
+    const a: boolean[] = [];
+    const b: boolean[] = [];
+    const stopA = r.client.onWait((w) => {
+      a.push(w);
+      stopA();
+    });
+    r.client.onWait((w) => b.push(w));
+    await fire(r);
+    expect(a, '自己取消後只收到第一則').toEqual([true]);
+    expect(b).toEqual([true, false]);
+  });
+});
+
+describe('補測2·回應驗證(attempt)與 ReviewError 小項', () => {
+  it('ReviewError 的 name 是 "ReviewError"', async () => {
+    const m = await mod();
+    expect(new m.ReviewError('internal', 'x').name).toBe('ReviewError');
+  });
+
+  it('格式錯的回應:kind 是 bad-response、message 是它的固定句子(有定義、不是空)', async () => {
+    const p = await protocol();
+    const bads: [string, (id: number) => unknown][] = [
+      ['ok 不是 true', (id) => ({ v: 1, id, ok: 'yes', result: {} })],
+      ['result 是字串', (id) => ({ v: 1, id, ok: true, result: 'abc' })],
+      ['result 是數字', (id) => ({ v: 1, id, ok: true, result: 3 })],
+      ['result 是陣列', (id) => ({ v: 1, id, ok: true, result: [] })],
+      ['result 是 null', (id) => ({ v: 1, id, ok: true, result: null })],
+      ['id 對不上', (id) => ({ v: 1, id: id + 100, ok: true, result: {} })],
+      ['回的是字串', () => 'not json'],
+      ['回的是數字', () => 5],
+      ['回的是陣列', () => []],
+      ['回的是 null', () => null],
+    ];
+    for (const [label, make] of bads) {
+      const r = await rigAt(0, (_n, id) => ({ value: make(id) }));
+      const err = await caught(r.client.status());
+      expect(err.kind, label).toBe('bad-response');
+      expect(err.message, label).toBe(p.ERROR_MESSAGES['bad-response']);
+      expect(err.message, label).toBeTruthy();
+      expect(r.seen, label).toHaveLength(1);
+      expect(r.sleeps, label).toEqual([]);
+    }
+  });
+
+  it('invoke 回的是 JSON 字串(不是物件):照樣解析、成功', async () => {
+    const r = await rigAt(0, (_n, id) => ({ value: JSON.stringify({ v: 1, id, ok: true, result: { s: 1 } }) }));
+    await expect(r.client.status()).resolves.toEqual({ s: 1 });
+  });
+
+  it('側車回 ok:false:kind 與 message 原樣;kind 是空字串(協定允許)→ internal、message 原樣', async () => {
+    const cases: [string, string, string, string][] = [
+      ['原樣', 'no-session', '句子', 'no-session'],
+      ['kind 空字串', '', 'm', 'internal'],
+    ];
+    for (const [label, kind, message, wantKind] of cases) {
+      const r = await rigAt(0, (_n, id) => ({ value: { v: 1, id, ok: false, error: { kind, message } } }));
+      const err = await caught(r.client.status());
+      expect(err.kind, label).toBe(wantKind);
+      expect(err.message, label).toBe(message);
+      expect(err.unsent, label).toBe(false);
+      expect(r.seen, label).toHaveLength(1);
+    }
+  });
+
+  it('側車回 ok:false 但 error 缺 kind、缺 message、不是物件:協定不收,算 bad-response', async () => {
+    const p = await protocol();
+    for (const error of [{ message: 'm' }, { kind: 'x' }, { kind: 5, message: 'm' }, 'oops', undefined]) {
+      const r = await rigAt(0, (_n, id) => ({ value: { v: 1, id, ok: false, error } }));
+      const err = await caught(r.client.status());
+      expect(err.kind, JSON.stringify(error)).toBe('bad-response');
+      expect(err.message).toBe(p.ERROR_MESSAGES['bad-response']);
+    }
+  });
+
+  it('側車的業務錯誤 kind 就算叫 busy 也只送一次(重試只認 Rust 的拒絕)', async () => {
+    const r = await rigAt(0, (_n, id) => ({ value: { v: 1, id, ok: false, error: { kind: 'busy', message: 'm' } } }));
+    const err = await caught(r.client.status());
+    expect(err.kind).toBe('busy');
+    expect(r.seen).toHaveLength(1);
+    expect(r.sleeps).toEqual([]);
+  });
+});

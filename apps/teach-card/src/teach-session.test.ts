@@ -541,3 +541,38 @@ describe('其他錯誤:固定字樣、可以重試、不卡住', () => {
     expect(r.store.get('lc-teach-last-category')).toBe('security');
   });
 });
+
+describe('補測2·G2 按鈕停用:等候通知結束不等於請求結束', () => {
+  it('請求還沒回來時 onWait(false):按鈕仍停用;請求完成後才放開', async () => {
+    let release: (() => void) | undefined;
+    const r = await rig();
+    r.script(server());
+    await r.session.open();
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    r.script(async () => {
+      await gate;
+      return server({ card: CARD3 });
+    });
+    const pending = r.session.next();
+    await Promise.resolve();
+    expect(r.session.view().controlsDisabled, '請求中').toBe(true);
+    r.emitWait(true);
+    r.emitWait(false);
+    const v = r.session.view();
+    expect(v.waiting).toBe(false);
+    expect(v.busyNotice).toBeUndefined();
+    expect(v.controlsDisabled, '等候字樣收起了,請求還在跑:按鈕仍停用').toBe(true);
+    release!();
+    await pending;
+    expect(r.session.view().controlsDisabled, '請求完成才放開').toBe(false);
+  });
+
+  it('請求不在跑時收到 onWait(false):按鈕不是停用', async () => {
+    const r = await rig();
+    await r.session.open();
+    r.emitWait(false);
+    expect(r.session.view().controlsDisabled).toBe(false);
+  });
+});
