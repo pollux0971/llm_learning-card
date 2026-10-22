@@ -2766,3 +2766,541 @@ describe('補測·存活者(第二批):前綴要在開頭、重活只擋重活�
     expect(linesStarting(todo, 'BLOCKED')).toEqual(['BLOCKED T1 by I4x']);
   }, 120_000);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// phase-2 第二輪補測(T39 重測後仍存活的變異,docs/reviews/acceptance-T39-round2-survivors.md)。
+// 只新增、不動上面任何一條斷言。全部走 CLI。每個 describe 以「補測2·」開頭,標了它對應清單的哪一類。
+// ═══════════════════════════════════════════════════════════════════════════════════════
+const RAW_OK = ['id: T1', 'deps: []', 'touches: [docs/a/]', 'cpu: light', 'budget_usd: 1', 'status: todo', 'owner: worker-grok', 'must_catch: []'];
+const rawTicket = (root: string, file: string, text: string): void => P2.writeRaw(root, `docs/tickets/${file}`, text);
+const problemsOf = (r: { stdout: string }): string[] => linesStarting(r, 'PROBLEM');
+const features01 = (rows: [number, string][], next: string): { folder: string; rows: [number, string][]; next: string }[] => [{ folder: '01-alpha', rows, next }];
+
+describe('補測2·檔頭開頭與收尾的 ---(parseHeaderText:首行、收尾、沒收尾)', () => {
+  it('首行 --- 前後帶空白或 tab 仍算有檔頭(不出 missing-header)', () => {
+    for (const open of ['--- ', '  ---', '\t---\t']) {
+      const root = p2Tree([]);
+      rawTicket(root, 'T1-x.md', `${open}\n${RAW_OK.join('\n')}\n---\n\n內文\n`);
+      const r = checkOf(root);
+      expect(r.status, `${JSON.stringify(open)}: ${r.stdout}`).toBe(0);
+      expect(problemsOf(r)).toEqual([]);
+      expect(hasLine(r, 'READY T1')).toBe(true);
+    }
+  }, 120_000);
+
+  it('檔頭開了沒有收尾的 ---:一路讀到檔尾,欄位都算;不丟例外(退出碼 0,不是 2)', () => {
+    for (const text of [`---\n${RAW_OK.join('\n')}\n`, `---\n${RAW_OK.join('\n')}`]) {
+      const root = p2Tree([]);
+      rawTicket(root, 'T1-x.md', text);
+      const r = checkOf(root);
+      expect(r.status, `${r.stderr}${r.stdout}`).toBe(0);
+      expect(r.stderr).toBe('');
+      expect(hasLine(r, 'READY T1')).toBe(true);
+    }
+  }, 120_000);
+
+  it('收尾的 --- 後面帶空白也算收尾:底下內文裡長得像欄位的行(status: merged、id: T77)不併進檔頭', () => {
+    for (const close of ['---   ', '  ---', '\t---']) {
+      const root = p2Tree([]);
+      rawTicket(root, 'T1-x.md', `---\n${RAW_OK.join('\n')}\n${close}\nstatus: merged\nid: T77\n`);
+      const r = checkOf(root);
+      expect(problemsOf(r), JSON.stringify(close)).toEqual([]);
+      expect(hasLine(r, 'READY T1'), JSON.stringify(close)).toBe(true);
+    }
+  }, 120_000);
+
+  it('檔頭中間的空行不是收尾:空行之後的欄位照樣算', () => {
+    const root = p2Tree([]);
+    const lines = [...RAW_OK.slice(0, 3), '', '   ', ...RAW_OK.slice(3)];
+    rawTicket(root, 'T1-x.md', `---\n${lines.join('\n')}\n---\n`);
+    const r = checkOf(root);
+    expect(problemsOf(r)).toEqual([]);
+    expect(hasLine(r, 'READY T1')).toBe(true);
+  }, 60_000);
+});
+
+describe('補測2·檔頭的 block 清單與行內雜訊(parseHeaderText:空白行、孤兒 - 項、縮排、自由文字)', () => {
+  const blockDeps = (between: string[]): string[] => ['id: T1', 'deps:', '  - T2', ...between, '  - T3', ...RAW_OK.slice(2)];
+
+  it('block 清單的兩個項目中間夾空白行或 # 註解行:清單不中斷,兩個項目都算', () => {
+    for (const between of [['   '], ['\t'], ['# 備註'], ['   # 縮排的備註'], ['', '   ', '# x']]) {
+      const root = p2Tree([T('T2', 'todo', 'docs/b/'), T('T3', 'todo', 'docs/c/')]);
+      rawTicket(root, 'T1-x.md', `---\n${blockDeps(between).join('\n')}\n---\n`);
+      const r = checkOf(root);
+      expect(problemsOf(r), JSON.stringify(between)).toEqual([]);
+      expect(linesStarting(r, 'BLOCKED T1'), JSON.stringify(between)).toEqual(['BLOCKED T1 by T2,T3']);
+    }
+  }, 300_000);
+
+  it('不在清單裡的「- X」行(欄位 scalar 之後、檔頭一開始)被略過,不當成清單項、不丟例外', () => {
+    for (const at of [1, 4, 6]) {
+      const root = p2Tree([]);
+      const lines = [...RAW_OK];
+      lines.splice(at, 0, '- stray', '  - [ ] 孤兒項');
+      rawTicket(root, 'T1-x.md', `---\n${lines.join('\n')}\n---\n`);
+      const r = checkOf(root);
+      expect(r.status, `${at}: ${r.stderr}${r.stdout}`).toBe(0);
+      expect(hasLine(r, 'READY T1'), String(at)).toBe(true);
+    }
+  }, 180_000);
+
+  it('清單項只屬於它上面那個 key:下一個 key 開始後,再出現的「- X」不併進前一個清單', () => {
+    const root = p2Tree([T('T2', 'todo', 'docs/b/')]);
+    const lines = ['id: T1', 'deps:', '  - T2', 'touches: [docs/a/]', '  - T9', ...RAW_OK.slice(3)];
+    rawTicket(root, 'T1-x.md', `---\n${lines.join('\n')}\n---\n`);
+    const r = checkOf(root);
+    expect(problemsOf(r)).toEqual([]);
+    expect(linesStarting(r, 'LANDING T1')).toEqual(['LANDING T1 docs']);
+    expect(linesStarting(r, 'BLOCKED T1')).toEqual(['BLOCKED T1 by T2']);
+  }, 60_000);
+
+  it('縮排的 key 行照常解析(空白或 tab 開頭)', () => {
+    for (const indent of ['  ', '\t', '    ']) {
+      const root = p2Tree([]);
+      rawTicket(root, 'T1-x.md', `---\n${RAW_OK.map((l) => `${indent}${l}`).join('\n')}\n---\n`);
+      const r = checkOf(root);
+      expect(problemsOf(r), JSON.stringify(indent)).toEqual([]);
+      expect(hasLine(r, 'READY T1'), JSON.stringify(indent)).toBe(true);
+    }
+  }, 120_000);
+
+  it('冒號後面不留空格也行(id:T1、cpu:light);key 後面接的不是冒號的行(自由文字、id-note: x)被略過,不蓋掉真的欄位', () => {
+    const root = p2Tree([]);
+    const lines = ['id:T1', 'deps:[]', 'touches:[docs/a/]', 'cpu:light', 'budget_usd:1', 'status:todo', 'owner:worker-grok', 'must_catch:[]'];
+    lines.push('note about id: T7', 'id-note: T8', 'status.old: merged', 'see cpu: heavy');
+    rawTicket(root, 'T1-x.md', `---\n${lines.join('\n')}\n---\n`);
+    const r = checkOf(root);
+    expect(problemsOf(r)).toEqual([]);
+    expect(hasLine(r, 'READY T1')).toBe(true);
+    expect(linesStarting(r, 'READY')).toEqual(['READY T1']);
+  }, 60_000);
+
+  it('budget_usd 的寫法:0.25、1.5、10 合法;1abc、.5、1.、1.2.3、-1、1e3 不合法(invalid budget_usd)', () => {
+    for (const v of ['0.25', '1.5', '10', '0.5', '12.75']) {
+      const root = p2Tree([]);
+      putTicket(root, 'T1-x.md', { id: 'T1', budget_usd: v });
+      expect(problemsOf(checkOf(root)), v).toEqual([]);
+    }
+    for (const v of ['1abc', '.5', '1.', '1.2.3', '-1', '1e3', 'abc']) {
+      const root = p2Tree([]);
+      putTicket(root, 'T1-x.md', { id: 'T1', budget_usd: v });
+      expect(problemsOf(checkOf(root)), v).toEqual(['PROBLEM bad-header T1 invalid budget_usd']);
+    }
+  }, 300_000);
+
+  it('PROBLEM 行的名字:id 缺漏、不合法時是檔名;兩個檔 id 重複(都合法)只出一行 duplicate-id', () => {
+    const root = p2Tree([]);
+    rawTicket(root, 'noid.md', `---\n${RAW_OK.filter((l) => !l.startsWith('id:')).join('\n')}\n---\n`);
+    putTicket(root, 'bad-id.md', { id: '1bad' });
+    putTicket(root, 'dup-a.md', { id: 'T3' });
+    putTicket(root, 'dup-b.md', { id: 'T3' });
+    const r = checkOf(root);
+    expect(problemsOf(r)).toEqual(['PROBLEM bad-header bad-id.md invalid id', 'PROBLEM bad-header noid.md missing id', 'PROBLEM duplicate-id T3']);
+  }, 60_000);
+});
+
+describe('補測2·落點檔載入:壞檔與缺檔回空表,不能多出假的一列(touch 用大寫 S 開頭)', () => {
+  const touch = 'Src/a.ts';
+  const okRun = (root: string): { status: number | null; stdout: string; stderr: string } => checkOf(root);
+  const expectEmptyTable = (r: { status: number | null; stdout: string; stderr: string }, label: string): void => {
+    expect(r.status, `${label}: ${r.stderr}`).toBe(1);
+    expect(problemsOf(r), label).toEqual([`PROBLEM no-landing T1 ${touch}`]);
+    expect(linesStarting(r, 'LANDING'), label).toEqual([]);
+  };
+
+  it('缺檔、是目錄、JSON 壞掉、owners 不是陣列:都當空表,大寫 S 開頭的 touch 沒有落點', () => {
+    const cases: [string, (root: string) => void][] = [
+      ['缺檔', () => undefined],
+      ['目錄', (root) => mkdirSync(join(root, 'scripts/boundaries.owners.json'), { recursive: true })],
+      ['壞 JSON', (root) => P2.writeRaw(root, 'scripts/boundaries.owners.json', '{ "owners": [ ["Src/", "x"], ')],
+      ['owners 是物件', (root) => P2.writeRaw(root, 'scripts/boundaries.owners.json', '{ "owners": { "Src/": "x" } }')],
+      ['owners 是字串', (root) => P2.writeRaw(root, 'scripts/boundaries.owners.json', '{ "owners": "Src/" }')],
+      ['沒有 owners 鍵', (root) => P2.writeRaw(root, 'scripts/boundaries.owners.json', '{}')],
+      ['空檔', (root) => P2.writeRaw(root, 'scripts/boundaries.owners.json', '')],
+    ];
+    for (const [label, write] of cases) {
+      const root = p2Tree([T('T1', 'todo', touch)], { landing: null });
+      write(root);
+      expectEmptyTable(okRun(root), label);
+    }
+  }, 600_000);
+
+  it('正常載入:只有檔裡的列(沒有多出的假列);沒有前綴對得上的 touch 照樣 no-landing', () => {
+    const root = p2Tree([T('T1', 'todo', `a/b.ts, ${touch}`)], { landing: [['a/', 'x']] });
+    const r = okRun(root);
+    expect(linesStarting(r, 'LANDING')).toEqual(['LANDING T1 x']);
+    expect(problemsOf(r)).toEqual([`PROBLEM no-landing T1 ${touch}`]);
+  }, 60_000);
+
+  it('同長度的前綴(同一個前綴寫了兩列):先寫的贏', () => {
+    for (const [rows, want] of [
+      [[['docs/a/', 'first'], ['docs/a/', 'second']], 'first'],
+      [[['docs/a/', 'second'], ['docs/a/', 'first']], 'second'],
+    ] as [[string, string][], string][]) {
+      const root = p2Tree([T('T1', 'todo', 'docs/a/x.md')], { landing: rows });
+      expect(linesStarting(checkOf(root), 'LANDING'), want).toEqual([`LANDING T1 ${want}`]);
+    }
+  }, 120_000);
+});
+
+describe('補測2·infra 重疊:b 不是目錄時,a 以 b 開頭不算共用(infraShared 兩個方向)', () => {
+  const pair = (a: string, b: string): string[] => problemsOf(checkOf(p2Tree([T('T1', 'dispatched', a), T('T2', 'dispatched', b)])));
+
+  it('scripts/a.ts.bak 對 scripts/a.ts(兩個順序):不重疊;對真的目錄 scripts/ 才重疊', () => {
+    expect(pair('scripts/a.ts.bak', 'scripts/a.ts')).toEqual([]);
+    expect(pair('scripts/a.ts', 'scripts/a.ts.bak')).toEqual([]);
+    expect(pair('scripts/a.ts.bak', 'scripts/')).toEqual(['PROBLEM r2-overlap T1 T2 on infra:scripts/']);
+    expect(pair('scripts/', 'scripts/a.ts.bak')).toEqual(['PROBLEM r2-overlap T1 T2 on infra:scripts/']);
+  }, 120_000);
+});
+
+describe('補測2·phase 形式的依賴(classifyDep / wireDeps):解析、滿足、解不開', () => {
+  const FEATS = features01([[1, 'done'], [2, 'todo'], [3, 'in-progress'], [4, 'blocked']], `${NO_GATE(1)}${NO_GATE(2)}${NO_GATE(3)}${NO_GATE(4)}`);
+  const withDep = (dep: string, extra: Row[] = []): ReturnType<typeof report> => report(p2Tree([T('T1', 'todo', 'docs/a/', { deps: dep }), ...extra], { features: FEATS }));
+
+  it('資料夾/phase 寫法與「01 phase-1」寫法:phase 已 done → READY,邊畫出來', () => {
+    for (const dep of ['01-alpha/phase-1', '01 phase-1', '01-alpha phase-1']) {
+      const r = withDep(dep);
+      expect(hasLine(r, 'READY T1'), dep).toBe(true);
+      expect(linesStarting(r, 'BLOCKED T1'), dep).toEqual([]);
+      expect(problemsOf(r).filter((l) => l.includes('unresolved-ref')), dep).toEqual([]);
+      expect(edgeLines(r), dep).toContain('    "01-alpha/phase-1" --> "T1"');
+    }
+  }, 180_000);
+
+  it('phase 的狀態不是 done(todo、in-progress、blocked)都不算滿足:BLOCKED,不 READY', () => {
+    for (const n of [2, 3, 4]) {
+      const r = withDep(`01-alpha/phase-${n}`);
+      expect(linesStarting(r, 'BLOCKED T1'), String(n)).toEqual([`BLOCKED T1 by 01-alpha/phase-${n}`]);
+      expect(linesStarting(r, 'READY T1'), String(n)).toEqual([]);
+      expect(linesStarting(r, 'START T1'), String(n)).toEqual([]);
+    }
+  }, 180_000);
+
+  it('資料夾不存在、phase 不存在:PROBLEM unresolved-ref,而且不出 BLOCKED / READY', () => {
+    for (const dep of ['99-nope/phase-1', '01-alpha/phase-9', '99 phase-1']) {
+      const r = withDep(dep);
+      expect(problemsOf(r), dep).toEqual([`PROBLEM unresolved-ref T1 ${dep}`]);
+      expect(linesStarting(r, 'BLOCKED T1'), dep).toEqual([]);
+      expect(linesStarting(r, 'READY T1'), dep).toEqual([]);
+    }
+  }, 180_000);
+
+  it('不是 phase 形式的字串(單獨 phase-1、ADR-040、一般句子、句子裡夾一個 phase 參照)一律 unresolved-ref', () => {
+    for (const dep of ['phase-1', 'ADR-040', 'nonsense', 'after 01-alpha/phase-1', '01-alpha/phase-1 done']) {
+      const r = withDep(dep);
+      expect(problemsOf(r), dep).toEqual([`PROBLEM unresolved-ref T1 ${dep}`]);
+      expect(linesStarting(r, 'READY T1'), dep).toEqual([]);
+    }
+  }, 180_000);
+
+  it('單獨 phase-1 沒有資料夾,即使有個資料夾叫 null-x 也不能對上', () => {
+    const root = p2Tree([T('T1', 'todo', 'docs/a/', { deps: 'phase-1' })], { features: [{ folder: 'null-x', rows: [[1, 'done']], next: NO_GATE(1) }] });
+    const r = report(root);
+    expect(problemsOf(r)).toEqual(['PROBLEM unresolved-ref T1 phase-1']);
+    expect(linesStarting(r, 'READY T1')).toEqual([]);
+  }, 60_000);
+
+  it('同一個 phase 在表裡出現兩次:先出現的那列為準(第一列 done → 滿足;第一列 todo → 不滿足)', () => {
+    const doneFirst = report(p2Tree([T('T1', 'todo', 'docs/a/', { deps: '01-alpha/phase-1' })], { features: features01([[1, 'done'], [1, 'todo']], NO_GATE(1)) }));
+    expect(hasLine(doneFirst, 'READY T1')).toBe(true);
+    const todoFirst = report(p2Tree([T('T1', 'todo', 'docs/a/', { deps: '01-alpha/phase-1' })], { features: features01([[1, 'todo'], [1, 'done']], NO_GATE(1)) }));
+    expect(linesStarting(todoFirst, 'BLOCKED T1')).toEqual(['BLOCKED T1 by 01-alpha/phase-1']);
+  }, 120_000);
+});
+
+describe('補測2·docs/tickets 底下的雜物(loadTicketNodes:不是目錄、非 .md、名叫 x.md 的目錄)', () => {
+  it('docs/tickets 是一般檔案:當作沒有工單,不丟例外(退出碼 0)', () => {
+    const root = p2Tree([]);
+    P2.writeRaw(root, 'docs/tickets', 'not a directory\n');
+    const r = checkOf(root);
+    expect(r.status, `${r.stderr}${r.stdout}`).toBe(0);
+    expect(linesStarting(r, 'READY')).toEqual([]);
+    expect(problemsOf(r)).toEqual([]);
+  }, 60_000);
+
+  it('非 .md 的檔(notes.txt、.gitkeep、T1.md.bak)被忽略,不出 missing-header', () => {
+    const root = p2Tree([T('T1', 'todo', 'docs/a/')]);
+    for (const f of ['notes.txt', '.gitkeep', 'T1-example.md.bak', 'README']) rawTicket(root, f, '隨手記,沒有檔頭\n');
+    const r = checkOf(root);
+    expect(problemsOf(r)).toEqual([]);
+    expect(linesStarting(r, 'READY')).toEqual(['READY T1']);
+  }, 60_000);
+
+  it('名叫 x.md 的目錄被略過,不丟例外', () => {
+    const root = p2Tree([T('T1', 'todo', 'docs/a/')]);
+    mkdirSync(join(root, 'docs/tickets/dir.md'), { recursive: true });
+    P2.writeRaw(root, 'docs/tickets/dir.md/inner.md', '---\nid: T5\n---\n');
+    const r = checkOf(root);
+    expect(r.status, `${r.stderr}${r.stdout}`).toBe(0);
+    expect(problemsOf(r)).toEqual([]);
+    expect(linesStarting(r, 'READY')).toEqual(['READY T1']);
+  }, 60_000);
+});
+
+describe('補測2·整合點閘門與名字像閘門的工單(wireDeps / augment 的 satisfied)', () => {
+  it('名叫 XI4 的工單 merged:依賴它的工單不被擋(不被當成沒 tag 的整合點)', () => {
+    const r = report(p2Tree([T('XI4', 'merged', 'docs/b/'), T('T1', 'todo', 'docs/a/', { deps: 'XI4' })]));
+    expect(hasLine(r, 'READY T1')).toBe(true);
+    expect(linesStarting(r, 'BLOCKED T1')).toEqual([]);
+  }, 60_000);
+
+  it('整合點 I10:有 tag I10 → 滿足;只有 tag I1 → 不滿足(BLOCKED T1 by I10)', () => {
+    const has = p2Tree([T('T1', 'todo', 'docs/a/', { deps: 'I10' })]);
+    gitInit(has, ['I10']);
+    expect(hasLine(report(has), 'READY T1')).toBe(true);
+    const lacks = p2Tree([T('T1', 'todo', 'docs/a/', { deps: 'I10' })]);
+    gitInit(lacks, ['I1']);
+    expect(linesStarting(report(lacks), 'BLOCKED T1')).toEqual(['BLOCKED T1 by I10']);
+  }, 120_000);
+
+  const chain5 = (last: string): Row[] => [1, 2, 3, 4].map((n) => T(`A${n}`, 'todo', 'docs/a/', { deps: `A${n + 1}` })).concat(T('A5', 'todo', 'docs/a/', { deps: last }));
+
+  it('R5 深度:鏈尾依賴 merged 的 XI4 → XI4 算 0,A1 深度 5(只印 A1)', () => {
+    const r = report(p2Tree([...chain5('XI4'), T('XI4', 'merged', 'docs/b/')]));
+    expect(linesStarting(r, 'WARN r5-depth')).toEqual(['WARN r5-depth A1 5']);
+  }, 60_000);
+
+  it('R5 深度:鏈尾依賴有 tag 的 I10 → I10 算 0,A1 深度 5(只印 A1);沒有 tag 時 A1 是 6、A2 是 5', () => {
+    const tagged = p2Tree(chain5('I10'));
+    gitInit(tagged, ['I10']);
+    expect(linesStarting(report(tagged), 'WARN r5-depth')).toEqual(['WARN r5-depth A1 5']);
+    const untagged = p2Tree(chain5('I10'));
+    gitInit(untagged, []);
+    expect(linesStarting(report(untagged), 'WARN r5-depth')).toEqual(['WARN r5-depth A1 6', 'WARN r5-depth A2 5']);
+  }, 120_000);
+
+  it('R5 深度:沒做完的 phase 要算進去(phase-1、phase-2 都 todo,鏈尾工單依賴 phase-2 → A1 深度 6、A2 深度 5)', () => {
+    const features = features01([[1, 'todo'], [2, 'todo']], `${NO_GATE(1)}${NEEDS(2, 'phase-1 `done`')}`);
+    const rows = [1, 2, 3].map((n) => T(`A${n}`, 'todo', 'docs/a/', { deps: `A${n + 1}` })).concat(T('A4', 'todo', 'docs/a/', { deps: '01-alpha/phase-2' }));
+    const r = report(p2Tree(rows, { features }));
+    expect(linesStarting(r, 'WARN r5-depth')).toEqual(['WARN r5-depth A1 6', 'WARN r5-depth A2 5']);
+  }, 60_000);
+
+  it('R5 深度沿 phase 邊走:同一個資料夾 phase-1 ← phase-2 ← … ← phase-6 都沒做完 → phase-5 深度 5、phase-6 深度 6;方向不可反', () => {
+    const next = `${NO_GATE(1)}${[2, 3, 4, 5, 6].map((n) => NEEDS(n, `phase-${n - 1} \`done\``)).join('')}`;
+    const r = report(p2Tree([], { features: features01([[1, 'todo'], [2, 'todo'], [3, 'todo'], [4, 'todo'], [5, 'todo'], [6, 'todo']], next) }));
+    expect(linesStarting(r, 'WARN r5-depth')).toEqual(['WARN r5-depth 01-alpha/phase-5 5', 'WARN r5-depth 01-alpha/phase-6 6']);
+  }, 60_000);
+
+  it('R5 深度沿 phase 邊走(其二):phase 鏈上已 done 的前半不算;in-progress 的算', () => {
+    const next = `${NO_GATE(1)}${[2, 3, 4, 5, 6].map((n) => NEEDS(n, `phase-${n - 1} \`done\``)).join('')}`;
+    const r = report(p2Tree([], { features: features01([[1, 'done'], [2, 'done'], [3, 'in-progress'], [4, 'todo'], [5, 'todo'], [6, 'todo']], next) }));
+    expect(linesStarting(r, 'WARN r5-depth')).toEqual([]);
+    const r2 = report(p2Tree([], { features: features01([[1, 'done'], [2, 'in-progress'], [3, 'todo'], [4, 'todo'], [5, 'todo'], [6, 'todo']], next) }));
+    expect(linesStarting(r2, 'WARN r5-depth')).toEqual(['WARN r5-depth 01-alpha/phase-6 5']);
+  }, 120_000);
+});
+
+describe('補測2·環(findCycles 之後的接線:環上的工單不 READY、不 START)', () => {
+  it('兩張互相依賴,一張已 merged、一張 todo(todo 沒有 unmet):環上的 todo 不 READY、不 START、不 BLOCKED;兩個方向都測', () => {
+    for (const [first, second] of [['merged', 'todo'], ['todo', 'merged']]) {
+      const root = p2Tree([T('T1', first!, 'docs/a/', { deps: 'T2' }), T('T2', second!, 'docs/b/', { deps: 'T1' })]);
+      const r = checkOf(root);
+      expect(problemsOf(r), `${first}/${second}`).toEqual(['PROBLEM cycle T1 -> T2 -> T1']);
+      expect(linesStarting(r, 'READY'), `${first}/${second}`).toEqual([]);
+      expect(linesStarting(r, 'START'), `${first}/${second}`).toEqual([]);
+      expect(linesStarting(r, 'BLOCKED'), `${first}/${second}`).toEqual([]);
+    }
+  }, 120_000);
+
+  it('三張的環,環上有兩張 todo、其中一張的依賴都滿足:滿足的那張(不論在環上第幾個)不 READY', () => {
+    const root = p2Tree([T('T1', 'todo', 'docs/a/', { deps: 'T3' }), T('T2', 'merged', 'docs/b/', { deps: 'T1' }), T('T3', 'todo', 'docs/c/', { deps: 'T2' })]);
+    const r = checkOf(root);
+    expect(problemsOf(r)).toEqual(['PROBLEM cycle T1 -> T3 -> T2 -> T1']);
+    expect(linesStarting(r, 'READY')).toEqual([]);
+    expect(linesStarting(r, 'START')).toEqual([]);
+  }, 60_000);
+
+  it('環上還有一個依賴(phase):todo 工單依賴「別張工單加一個 phase」,與別張成環,環照樣被偵測', () => {
+    const features = features01([[1, 'todo']], NO_GATE(1));
+    const root = p2Tree([T('T1', 'todo', 'docs/a/', { deps: 'T2, 01-alpha/phase-1' }), T('T2', 'todo', 'docs/b/', { deps: 'T1' })], { features });
+    const r = checkOf(root);
+    expect(r.status, `${r.stderr}${r.stdout}`).toBe(1);
+    expect(problemsOf(r)).toEqual(['PROBLEM cycle T1 -> T2 -> T1']);
+    expect(linesStarting(r, 'READY T')).toEqual([]);
+  }, 60_000);
+});
+
+describe('補測2·只有一條規則擋住時仍是 HELD、不 START(R2、R3、R4 各自單獨)', () => {
+  it('只有 R3(兩張重活,落點不相交):HELD by R3,沒有 R2 / R4 行,也沒有 START', () => {
+    const r = report(p2Tree([T('T1', 'dispatched', 'apps/desktop/', { cpu: 'heavy' }), T('T2', 'todo', 'docs/a/', { cpu: 'heavy' })]));
+    expect(linesStarting(r, 'HELD')).toEqual(['HELD T2 by R3 with T1']);
+    expect(linesStarting(r, 'START')).toEqual([]);
+  }, 60_000);
+
+  it('只有 R2(落點相交,都是輕活):HELD by R2,沒有 START', () => {
+    const r = report(p2Tree([T('T1', 'dispatched', 'docs/a/'), T('T2', 'todo', 'docs/a/')]));
+    expect(linesStarting(r, 'HELD')).toEqual(['HELD T2 by R2 with T1']);
+    expect(linesStarting(r, 'START')).toEqual([]);
+  }, 60_000);
+
+  it('只有 R4(已經 3 張 dispatched、落點都不相交,輕活):HELD by R4,沒有 START', () => {
+    const r = report(p2Tree([T('T1', 'dispatched', 'docs/a/'), T('T2', 'dispatched', 'apps/desktop/'), T('T3', 'dispatched', 'packages/core/src/scheduler/'), T('T4', 'todo', 'packages/x/')]));
+    expect(linesStarting(r, 'HELD')).toEqual(['HELD T4 by R4 with T1,T2,T3']);
+    expect(linesStarting(r, 'START')).toEqual([]);
+  }, 60_000);
+});
+
+describe('補測2·phase 的 START / HELD 只對 READY 的 phase 發', () => {
+  const MIX = [
+    { folder: '01-alpha', rows: [[1, 'todo'], [2, 'todo']] as [number, string][], next: `${NO_GATE(1)}${NEEDS(2, 'phase-1 `done`')}` },
+    { folder: '02-beta', rows: [[1, 'done'], [2, 'blocked']] as [number, string][], next: `${NO_GATE(1)}${NEEDS(2, 'phase-1 `done`')}` },
+    { folder: '03-gamma', rows: [[1, 'done'], [2, 'todo']] as [number, string][], next: `${NO_GATE(1)}${NEEDS(2, 'phase-1 `done`、ADR-040 已決定')}` },
+  ];
+
+  it('READY 的 phase 才有 START;BLOCKED、blocked、done、HUMAN 的 phase 都不發 START', () => {
+    const r = report(p2Tree([], { features: MIX }));
+    expect(linesStarting(r, 'READY')).toEqual(['READY 01-alpha/phase-1']);
+    expect(linesStarting(r, 'BLOCKED').map((l) => l.split(' ')[1])).toEqual(['01-alpha/phase-2', '02-beta/phase-2']);
+    expect(linesStarting(r, 'HUMAN').map((l) => l.split(' ')[1])).toEqual(['03-gamma/phase-2']);
+    expect(linesStarting(r, 'START')).toEqual(['START 01-alpha/phase-1']);
+    expect(linesStarting(r, 'HELD')).toEqual([]);
+  }, 60_000);
+
+  it('已有兩個 phase 在跑(in-progress):只有 READY 的 phase 發 HELD by R4,其餘不發', () => {
+    const feats = [
+      ...MIX,
+      { folder: '04-delta', rows: [[1, 'in-progress'], [2, 'in-progress']] as [number, string][], next: `${NO_GATE(1)}${NO_GATE(2)}` },
+    ];
+    const r = report(p2Tree([], { features: feats }));
+    expect(linesStarting(r, 'HELD')).toEqual(['HELD 01-alpha/phase-1 by R4 with 04-delta/phase-1,04-delta/phase-2']);
+    expect(linesStarting(r, 'START')).toEqual([]);
+  }, 60_000);
+
+  it('摘要行的 human= 是 HUMAN 行的條數', () => {
+    const r = report(p2Tree([], { features: MIX }));
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe('gate=dag result=OK ready=1 blocked=2 human=1 problems=0');
+  }, 60_000);
+});
+
+describe('補測2·PROBLEM 行排序:同一張工單的欄位照欄位表順序,missing 在 invalid 前(compareRecord)', () => {
+  it('同一張工單 cpu 與 budget_usd 同時不合法:cpu 在前(欄位表順序,不是字母序)', () => {
+    const root = p2Tree([]);
+    putTicket(root, 'T1-x.md', { id: 'T1', cpu: 'medium', budget_usd: 'abc' });
+    expect(problemsOf(checkOf(root))).toEqual(['PROBLEM bad-header T1 invalid cpu', 'PROBLEM bad-header T1 invalid budget_usd']);
+  }, 60_000);
+
+  it('八個欄位都有問題:輸出順序就是欄位表 id、deps、touches、cpu、budget_usd、status、owner、must_catch', () => {
+    const root = p2Tree([]);
+    putTicket(root, 'T1-x.md', { id: '1bad', deps: 'x', touches: '[a, "b"]', cpu: 'medium', budget_usd: 'abc', status: 'maybe', owner: 'nobody', must_catch: '{x}' });
+    expect(problemsOf(checkOf(root))).toEqual(['id', 'deps', 'touches', 'cpu', 'budget_usd', 'status', 'owner', 'must_catch'].map((f) => `PROBLEM bad-header 1bad-x.md invalid ${f}`).map((l) => l.replace('1bad-x.md', 'T1-x.md')));
+  }, 60_000);
+
+  it('兩個檔共用同一個名字(T5):缺 cpu 的在前、cpu 不合法的在後,不管檔案順序;T5 在 T10 之前', () => {
+    const root = p2Tree([]);
+    // T5:invalid 的檔排在前面;T6:missing 的檔排在前面 —— 兩種輸入順序都要得到 missing 在前
+    putTicket(root, 'a1-t5-invalid.md', { id: 'T5', cpu: 'medium' });
+    putTicket(root, 'a2-t5-missing.md', { id: 'T5', cpu: undefined });
+    putTicket(root, 'a3-t6-missing.md', { id: 'T6', cpu: undefined });
+    putTicket(root, 'a4-t6-invalid.md', { id: 'T6', cpu: 'medium' });
+    putTicket(root, 'a0-t10.md', { id: 'T10', cpu: 'medium', status: undefined });
+    const r = checkOf(root);
+    expect(problemsOf(r)).toEqual([
+      'PROBLEM bad-header T5 missing cpu',
+      'PROBLEM bad-header T5 invalid cpu',
+      'PROBLEM bad-header T6 missing cpu',
+      'PROBLEM bad-header T6 invalid cpu',
+      'PROBLEM bad-header T10 invalid cpu',
+      'PROBLEM bad-header T10 missing status',
+    ]);
+  }, 60_000);
+
+  it('檔名帶空白(id 缺漏時名字就是檔名):不被當成「名字 missing 欄位」拆開,照一般字串自然排序', () => {
+    const root = p2Tree([]);
+    const noId = RAW_OK.filter((l) => !l.startsWith('id:'));
+    rawTicket(root, 'a missing x.md', `---\n${noId.join('\n')}\n---\n`);
+    rawTicket(root, 'a invalid x.md', `---\n${noId.join('\n')}\n---\n`);
+    expect(problemsOf(checkOf(root))).toEqual(['PROBLEM bad-header a invalid x.md missing id', 'PROBLEM bad-header a missing x.md missing id']);
+  }, 60_000);
+});
+
+describe('補測2·READY / BLOCKED / START / HELD 同類行依 id 自然排序(T2 在 T10 前),PROBLEM 之外的類別不走 compareRecord', () => {
+  it('檔名順序與 id 順序相反:每一類都是 T2 在 T10 前', () => {
+    const root = p2Tree([]);
+    putTicket(root, 'a-T10.md', { id: 'T10', touches: '[docs/j/]' });
+    putTicket(root, 'b-T2.md', { id: 'T2', touches: '[apps/desktop/]' });
+    putTicket(root, 'c-T11.md', { id: 'T11', deps: '[T10, T12]', touches: '[docs/k/]' });
+    putTicket(root, 'd-T3.md', { id: 'T3', deps: '[T10, T12]', touches: '[docs/l/]' });
+    putTicket(root, 'e-T12.md', { id: 'T12', status: 'dispatched', touches: '[packages/c/]' });
+    const r = report(root);
+    expect(linesStarting(r, 'READY')).toEqual(['READY T2', 'READY T10']);
+    expect(linesStarting(r, 'BLOCKED')).toEqual(['BLOCKED T3 by T10,T12', 'BLOCKED T11 by T10,T12']);
+    expect(linesStarting(r, 'START')).toEqual(['START T2', 'START T10']);
+  }, 60_000);
+});
+
+describe('補測2·--orca 的鏈順序(Kahn 分層:id 小的可以依賴 id 大的)', () => {
+  const orcaIds = (tickets: Row[]): string[] => P2.runDagCli(['--root', p2Tree(tickets), '--orca']).stdout.split('\n').filter(P2.isTaskLine).map((l) => l.split('=')[0]!);
+  const orcaText = (tickets: Row[]): string => P2.runDagCli(['--root', p2Tree(tickets), '--orca']).stdout;
+  const file = (id: string): string => P2.ticketFileName(id);
+
+  it('T2 依賴 T10:T10 先建,T2 的 --deps 是 $T10', () => {
+    const text = orcaText([T('T2', 'todo', 'docs/a/', { deps: 'T10' }), T('T10', 'todo', 'docs/b/')]);
+    expect(text).toBe(`${P2.orcaLine('T10', file('T10'), [])}\n${P2.orcaLine('T2', file('T2'), ['T10'])}\n`);
+  }, 60_000);
+
+  it('菱形:兩個依賴都建好才輪到它(T3 依賴 T1 與 T2,T2 依賴 T10);同層自然排序', () => {
+    const ids = orcaIds([
+      T('T3', 'todo', 'docs/c/', { deps: 'T1, T2' }),
+      T('T2', 'todo', 'docs/b/', { deps: 'T10' }),
+      T('T1', 'todo', 'docs/a/'),
+      T('T10', 'todo', 'docs/d/'),
+    ]);
+    expect(ids).toEqual(['T1', 'T10', 'T2', 'T3']);
+    const text = orcaText([T('T3', 'todo', 'docs/c/', { deps: 'T1, T2' }), T('T2', 'todo', 'docs/b/', { deps: 'T10' }), T('T1', 'todo', 'docs/a/'), T('T10', 'todo', 'docs/d/')]);
+    expect(text.split('\n')).toContain(P2.orcaLine('T3', file('T3'), ['T1', 'T2']));
+    expect(text.split('\n')).toContain(P2.orcaLine('T2', file('T2'), ['T10']));
+  }, 120_000);
+
+  it('一張被好幾張依賴、也依賴好幾張:每一張只建一次、整串合乎拓樸序', () => {
+    const rows = [
+      T('T7', 'todo', 'docs/a/', { deps: 'T20, T9' }),
+      T('T9', 'todo', 'docs/b/', { deps: 'T20' }),
+      T('T20', 'todo', 'docs/c/'),
+      T('T4', 'todo', 'docs/d/', { deps: 'T7, T9' }),
+    ];
+    const ids = orcaIds(rows);
+    expect(ids).toEqual(['T20', 'T9', 'T7', 'T4']);
+    expect(new Set(ids).size).toBe(ids.length);
+  }, 60_000);
+
+  it('自己依賴自己的工單:--deps 是 [](自環已是 PROBLEM cycle,但 --orca 不把自己列進自己的依賴)', () => {
+    const text = orcaText([T('T1', 'todo', 'docs/a/', { deps: 'T1' })]);
+    expect(text).toBe(`${P2.orcaLine('T1', file('T1'), [])}\n`);
+  }, 60_000);
+
+  it('環上的工單接在最後依自然排序;沒有 todo 時輸出空字串(不是一個換行)', () => {
+    const ids = orcaIds([T('T8', 'todo', 'docs/a/', { deps: 'T7' }), T('T7', 'todo', 'docs/b/', { deps: 'T8' }), T('T9', 'todo', 'docs/c/'), T('T10', 'todo', 'docs/d/', { deps: 'T9' })]);
+    expect(ids).toEqual(['T9', 'T10', 'T7', 'T8']);
+    expect(orcaText([T('T1', 'merged', 'docs/a/')])).toBe('');
+    expect(orcaText([])).toBe('');
+  }, 120_000);
+
+  it('真的交給 bash 跑:T2 依賴 T10 → 先建 T10;T2 的 --deps 是 T10 建出來的 task id', () => {
+    const jq = spawnSync('jq', ['--version'], { encoding: 'utf8' });
+    expect(jq.status, '這台沒有 jq,--orca 的腳本跑不了').toBe(0);
+    const root = p2Tree([T('T2', 'todo', 'docs/a/', { deps: 'T10' }), T('T10', 'todo', 'docs/b/')]);
+    const script = P2.runDagCli(['--root', root, '--orca']).stdout;
+    const base = mkTmp('dag-p2-orca-run2');
+    const bin = join(base, 'bin');
+    const depsLog = join(base, 'deps.log');
+    const counter = join(base, 'count');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, 'orca'),
+      [
+        '#!/bin/sh',
+        `n=$(cat '${counter}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '${counter}'`,
+        `while [ $# -gt 0 ]; do if [ "$1" = "--deps" ]; then printf '%s\\n' "$2" >> '${depsLog}'; fi; shift; done`,
+        `printf '{"result":{"task":{"id":"task-%s"}}}\\n' "$n"`,
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    chmodSync(join(bin, 'orca'), 0o755);
+    const run = spawnSync('bash', ['-c', script], { cwd: root, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` } });
+    expect(run.status, run.stderr).toBe(0);
+    expect(readFileSync(depsLog, 'utf8').trim().split('\n')).toEqual(['[]', '["task-1"]']);
+  }, 60_000);
+});
