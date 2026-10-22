@@ -1526,6 +1526,7 @@ graph TD
 - **Related**: ADR-022、ADR-034、ADR-042、ADR-050、ADR-060、ADR-062、ADR-069(refined)、ADR-074、`contracts/types.md` §7、§11b、§13、`features/06-test-card/FEATURE.md`、`docs/tickets/T22-review-sidecar.md`、`docs/tickets/T24-test-card-phase-2.md`、T26(core session 寫 `reviews.json` 前的樂觀檢查)
 - **refined by ADR-076(2026-10-17)**:第 5 點的「固定的訊息」加上缺金鑰的兩句樣板;第 6 點「假 router 只能由啟動時的環境變數開」補上「`LC_REVIEW_` 開頭的鍵不從 `.env` 設」(原本側車先載入 `.env` 才讀這兩個變數,`.env` 裡寫就會開);側車每次 `start` 重算今天。
 - **refined by ADR-077(2026-10-21)**:第 3 點的高階動作多四個教學卡的(`teach.open` / `teach.next` / `teach.switch` / `teach.prereq`);第 7 點的表多一種寫入情況(教學卡標學過),寫入規則見 ADR-077 第 3 點。
+- **refined by ADR-078(2026-10-22)**:兩個視窗共用同一個 `SidecarHost` 之後,請求 id 改由 Rust 編(T22 工單第 223 行「webview 的 id 要比上一個大」那條拒絕拿掉,「id 是正整數」的信封檢查留著);`busy` 的重試統一放在共用的 webview client,考試卡也走。Rust 仍然不排隊。
 
 ## ADR-076 · 側車每次 start / submit 重讀 `.env`、每次 start 重算今天;缺金鑰時 start 就說清楚(`credential-unavailable`)
 
@@ -1586,3 +1587,26 @@ graph TD
   - 07 → 10 多一條 import 例外(跟 06 → 10 同理由)。
   - 已知限制:側車的第一個請求還要等 `hello`(最多 20 秒),極端情況下教學卡會比考試卡先顯示逾時;按「再試一次」即可。
 - **Related**: ADR-038、ADR-060、ADR-071、ADR-073、ADR-074、ADR-075(refined)、ADR-076、T26、T37(`docs/tickets/T37-teach-card-phase-2.md`)、`features/07-teach-card/phase-2.feature`
+- **refined by ADR-078(2026-10-22)**:第 6 點(D5)的重試從教學卡自己的迴圈搬到共用的 webview client(`apps/desktop/src/webview/review-client.ts`),常數不變(300 ms、1 秒、180 秒),考試卡也走同一條;教學卡出錯只顯示依 kind 查到的固定字樣。
+
+## ADR-078 · 兩個視窗共用一個側車:請求 id 由 Rust 編、`busy` 重試只在共用 client、錯誤只顯示固定字樣
+
+- **Status**: accepted · 2026-10-22(技術顧問依 T37 `@manual` 的 F1/F2/F3 裁決;前端起草;refine ADR-075、ADR-077 與 T22 工單第 223 行的 id 規則,不推翻)
+- **Context**:
+  1. T37 之後,考試卡與教學卡兩個視窗各有一個 `ReviewClient`(`apps/test-card/src/main.ts`、`apps/teach-card/src/main.ts`),各自從 1 編號(`apps/desktop/src/webview/review-client.ts` 的 `nextId = 1`),經同一個 Rust `SidecarHost` 打同一支側車。T37 之前只有考試卡一個 client。
+  2. Rust 有兩條照「只有一個 client」設計的規則:一次只收一個請求,拿不到鎖回 `busy`(`review_sidecar.rs` 的 `call` 用 `try_lock`);請求 id 要比上一個送出的大,否則回 `bad-envelope`、不送(`review_sidecar.rs` 的 `last_id`,來自 T22 工單第 223 行)。app 一開,第一個請求起側車並在鎖裡等 `hello`(量到 1.24–1.35 秒)。
+  3. T37 `@manual`(`docs/reviews/T37-manual-2026-10-22.md`)量到三個問題:F1 教學卡先拿到鎖時,考試卡的 `start` 拿到 `busy`,考試卡沒處理 `busy`,顯示「複習程式停了。」(16 次中 1 次);F2 教學卡在等 `hello` 那段每 300 ms 重試,用掉 id 1–6,之後考試卡的 `submit` 與每次「重新開始」都被回 `bad-envelope`,要按 4–5 次(12 次中 12 次);F3 反過來,教學卡的「下一個」被回 `bad-envelope`,畫面只寫英文 `bad-envelope`(12 次中 12 次)。T37 前 9 次中 0 次。
+- **Decision**:
+  1. **請求 id 由 Rust 編**(F2、F3):`SidecarHost` 留一個只增不減的計數器(app 開著就不歸零,側車重起也不歸零)。每個請求通過信封檢查後,送進側車前把 `id` 換成計數器的下一個值;等到同一個線上 id 的回應,把回應的 `id` 換回 webview 原本的 id 再回給 webview。識別碼不同的舊回應照舊丟掉(比的是線上 id)。拿掉「webview 的 id 要比上一個大」的拒絕;「id 是 ≥ 1 的整數」的信封檢查留著。
+  2. **`busy` 重試只有一條路,在共用的 webview client**(F1):`review-client.ts` 收到 Rust 的 `busy` 就每 300 ms 重送同一個動作;等超過 1 秒通知視窗顯示等候字樣;一直 `busy` 到 180 秒(跟 Rust 的 `REQUEST_TIMEOUT` 相同)就停,丟出 `timeout`,並標明這個請求沒有送進側車。考試卡與教學卡都用它;教學卡自己的重試迴圈拿掉。
+  3. **錯誤只顯示固定字樣**(F3):webview 拿到的錯誤,依 `kind` 查 `protocol.ts` 的 `ERROR_MESSAGES`;不認得的 `kind` 用 `internal` 那一句。畫面永不顯示英文的 kind。
+- **Alternatives**:
+  - **每個視窗各記自己的 `last_id`** —— 不採用。視窗重新載入時 client 從 1 數,會被自己上一次的 `last_id` 擋住,同一個問題換個地方出現。
+  - **Rust 等鎖(排隊)取代 `busy`** —— 不採用(同 ADR-077)。要改 T22 的行為與測試;等候字樣與 180 秒上限在 webview 一側就做得到。
+  - **app 起來先等 `hello` 再讓兩個視窗送第一個請求** —— 不採用。只解 F1 的開機那一段;批改中的 `busy` 照樣會打到考試卡。
+  - **每個視窗用不同的 id 區段(例如考試卡奇數、教學卡偶數)** —— 不採用。重新載入照樣從頭數;Rust 還是要信任 webview 給的 id。
+- **Consequences**:
+  - id 的唯一與遞增只在 Rust 與側車之間成立,webview 的 id 只用來對回應。側車與 core 不用改(它們只要求 id 是正整數)。`protocol.vectors.json` 沒有「id 沒遞增要拒絕」的列(每列各自獨立),不用改;協定版本 `v` 不變。
+  - T22 的 Rust 測試「id 要遞增、被拒的不送」改成「線上 id 一直變大、回應 id 換回原本的、兩個 client 交錯與重新從 1 數都成功」。
+  - ADR-077 D5 的常數與字樣不變,位置搬到共用 client;考試卡多一句等候字樣(見 T40)。
+- **Related**: ADR-075(refined)、ADR-077(refined)、T22(`docs/tickets/T22-review-sidecar.md` 第 223 行)、T37、T40(`docs/tickets/T40-shared-sidecar-ids-busy-errors.md`)、`docs/reviews/T37-manual-2026-10-22.md`
