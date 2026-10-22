@@ -78,7 +78,7 @@ fixture 目錄混進與契約無關的東西。所以 fixture 放在自己的資
 | Phase | 標題 | 階段 | 狀態 | 完成日 |
 |---|---|---|---|---|
 | 1 | 從 FEATURE.md、NEXT.md、`I<N>` tag 算出 ready、卡在誰、待人判、mermaid | Wave 0 | done | 2026-10-21 |
-| 2 | 工單進圖、平行規則 R1–R5、`--orca`、`dag:check` 接進 `check:all` | 不綁整合點 | todo | |
+| 2 | 工單進圖、平行規則 R1–R5、`--orca`、`dag:check` 接進 `check:all` | 不綁整合點 | done | 2026-10-22 |
 
 ## 輸出形狀(phase-1 與 phase-2 的步驟定義都照這個斷言)
 

@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-1(2026-10-21:`scripts/dag.ts`;工單 T33,-0e 兩輪驗收無阻擋項,Stryker dag.ts 第二輪 89.58%,補測後 dag.test.ts 207 條) |
+| 已完成 | phase-2(2026-10-22:工單 T39,合併 a92a51c;-5a 三輪驗收,Stryker `scripts/dag.ts` 663–1258 累計 97.95%、必補 0;32 張工單檔頭補齊;`dag:check` 進 `check:all`)、phase-1(2026-10-21:`scripts/dag.ts`;工單 T33,-0e 兩輪驗收無阻擋項,Stryker dag.ts 第二輪 89.58%,補測後 dag.test.ts 207 條) |
 | 進行中 | 無 |
-| 下一個 | phase-2(gate 已滿足,還沒排) |
+| 下一個 | 無(本資料夾的 phase 都做完了;接下來的事見「完成後」) |
 
 ## Gate
 
