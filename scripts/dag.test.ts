@@ -2738,3 +2738,26 @@ describe('補測·--orca 真的接得起來(把印出來的腳本交給 bash 跑
     expect(readFileSync(depsLog, 'utf8').trim().split('\n')).toEqual(['[]', '["task-1"]']);
   }, 60_000);
 });
+
+describe('補測·存活者(第二批):前綴要在開頭、重活只擋重活、名字像整合點的工單', () => {
+  it('touches 要從開頭對上前綴:vendor/docs/x.md 含有 docs/ 但不是 docs/ 底下 → no-landing', () => {
+    const r = checkOf(p2Tree([T('T1', 'todo', 'vendor/docs/x.md')]));
+    expect(r.status).toBe(1);
+    expect(linesStarting(r, 'PROBLEM')).toEqual(['PROBLEM no-landing T1 vendor/docs/x.md']);
+    expect(linesStarting(r, 'LANDING')).toEqual([]);
+  }, 60_000);
+
+  it('輕活不被重活擋:重活 dispatched 佔著,落點不同的輕活 todo → START,沒有 HELD', () => {
+    const r = report(p2Tree([T('T1', 'dispatched', 'apps/desktop/', { cpu: 'heavy' }), T('T2', 'todo', 'docs/a/', { cpu: 'light' })]));
+    expect(linesStarting(r, 'START')).toEqual(['START T2']);
+    expect(linesStarting(r, 'HELD')).toEqual([]);
+  }, 60_000);
+
+  it('工單的 id 長得像整合點(I4x)時,它是工單:merged 就算滿足依賴它的工單(不去查 git tag)', () => {
+    const r = report(p2Tree([T('I4x', 'merged', 'docs/a/'), T('T1', 'todo', 'apps/desktop/', { deps: 'I4x' })]));
+    expect(hasLine(r, 'READY T1'), r.stdout).toBe(true);
+    expect(linesStarting(r, 'BLOCKED')).toEqual([]);
+    const todo = report(p2Tree([T('I4x', 'todo', 'docs/a/'), T('T1', 'todo', 'apps/desktop/', { deps: 'I4x' })]));
+    expect(linesStarting(todo, 'BLOCKED')).toEqual(['BLOCKED T1 by I4x']);
+  }, 120_000);
+});
