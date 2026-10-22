@@ -1,53 +1,50 @@
-# T39 實作報告(13-work-dag phase-2)
+# T39 實作報告(worker-grok / opencode grok-4.7)
 
-環境檢查(開工第一步):
+## 環境檢查(開工第一步)
 
-```
+```text
+$ echo "${OPENAI_API_KEY:-UNSET}"; echo "${ANTHROPIC_API_KEY:-UNSET}"; ls .env
 UNSET
 UNSET
 ls: cannot access '.env': No such file or directory
 ```
 
-`--orca` 的 jq 路徑照協調者 2026-10-21 量好的寫,沒有自己建 task:`.result.task.id`。印出的行是
-
-`T1=$(orca orchestration task-create --spec "$(cat docs/tickets/T1-….md)" --deps "[]" --json | jq -r '.result.task.id')`。
+沒有建立或讀取 `.env`,沒有用任何 provider 金鑰。
 
 ## 做了什麼
 
-`dag:check` 沒有另開 `scripts/dag-check.ts`。測試釘死 npm script 必須跑 `scripts/dag.ts` 並帶 `--check`,所以入口是同一支工具的旗標。沒有這個檔,零輸入名冊也不該多一筆(名冊指到不存在的檔會紅;`.test.ts` 不能當名冊鍵,完整性檢查把測試檔排除在「磁碟上的入口」之外)。
+phase-2 併進既有的 `scripts/dag.ts`(沒有另建 `scripts/dag-check.ts`)。`npm run dag:check` 是 `tsx scripts/dag.ts --root . --check`。測試釘的是這條,不是另一個入口。
 
-- `scripts/dag.ts`:`--check`、`--orca`,讀 `docs/tickets/*.md` 檔頭(受限 YAML,自己解析,不 import 套件),工單進圖,R1–R5,`START` / `HELD` / `LANDING` / `WARN` / `PROBLEM`。沒有 `--check` 時有 PROBLEM 也是退出碼 0;`--check` 才變 1。`--orca` 只印 bash,不執行。沒有寫檔 API。
-- `package.json`:`"dag:check": "tsx scripts/dag.ts --root . --check"`。
-- `scripts/gates.config.json` 的 `chain` 末尾加 `dag:check`(接上之前先證明會紅,見下)。chain 20 → 21。
-- `scripts/boundaries.owners.json`:設定檔與 `docs/`、14 個 `features/<NN-name>/`、`scripts/dag-check.ts`、`scripts/dag-check.test.ts`。`features/support/dag-p2-harness`(比 `features/support/` 長)→ `13-work-dag`,讓受保護測試的 import 落在同一落點,不必加 `boundaries.allow.json`(那份條數被 `features/support/t31-static.test.ts` 釘成 23,測試檔不准改)。`features/support/` 其餘仍是 `steps`。`check-boundaries.ts` 接受落點名 `docs`,沒有改用 `infra`。
-- 舊工單檔頭:只改檔頭,見下表。沒有缺檔頭的檔。T39 自己的檔頭沒動。沒改 `FEATURE.md` / `NEXT.md` / `.feature` / 測試檔 / `contracts/` / `standalone.json`。
+CLI 仍只認 `--root <tree>`、`--check`、`--orca`。用法錯誤的 stderr 維持 `Usage: npx tsx scripts/dag.ts --root <tree>`,退出碼 2。沒有 `--check` 時有 PROBLEM 也是退出碼 0;`--check` 才讓 PROBLEM 變退出碼 1。`--orca` 只印 bash,不執行,jq 路徑是協調者量好的 `.result.task.id`。
 
-phase 的 R4 只數表上 `in-progress`,不把這輪已選的 ready phase 算進去。單元測試「只有一個 in-progress 不擋」在另一張 ready(表上是 todo)也被選上時,仍要求第三張 `START`。工單的 R4(dispatched ≤ 3)則把這輪已選的算進去,兩條不一樣,照各自的測試寫。
+工單檔頭自己解析(不 import YAML)。落點用 `scripts/boundaries.owners.json` 的 `owners`,取**最長**前綴,不看表的順序。目錄(以 `/` 結尾)再把表裡落在該目錄下的列都算進來。
 
-## must_catch → 程式
+## must_catch 對到哪段程式
 
-| must_catch | 落點 |
+| must_catch | 程式 |
 |---|---|
-| 最長前綴改成第一個符合的前綴必須紅 | `resolveTouch`:同長度才退讓,否則取最長前綴;目錄(`以 / 結尾`)再併入底下每一列 |
-| R3 改成只數 dispatched,review 場景必須紅 | `augment`:heavy 的 `dispatched` 與 `review` 都進 `r3-heavy`;HELD 的 R3 也含 review |
-| contracts 互斥拿掉必須紅 | `overlapReasons`:任一方落點含 `contracts` 就 `on contracts` |
-| infra 改回落點比對,不同檔被誤判相交必須紅;逐字相同或目錄前綴仍相交 | `infraShared`:逐字相同,或一方以 `/` 結尾且是另一方的前綴;較短的那個寫進 `infra:` |
-| review 不佔落點必須紅;兩張都是 review 不算紅 | R2 紅燈要求這一對裡至少一張 `dispatched`;HELD 仍把 review 當佔位 |
-| dropped 被當成滿足必須紅 | `wireDeps` + `blockerText`:`BLOCKED … by <id> (dropped)`,不算滿足 |
-| WARN 被當成紅燈、或 R5 把 done/merged/有 tag 算進去必須紅 | `makeDepth` / `satisfied`:done、merged、有 tag 深度 0;R4/R5 只 `WARN`,不進 `problems`、不改退出碼 |
-| merged/dropped 對不到落點不得 no-landing;todo/dispatched/review 仍紅 | `augment`:只有這三種 status 才查 `no-landing`、才印 `LANDING` |
-| 反引號開頭的清單項被當成不合法必須紅 | `parseHeaderText` 對 `- 項目` 走 `dashItemText`,不剝反引號、不把行內 `#` 當註解 |
-| 缺檔頭、缺欄、值不合法沒被抓必須紅 | `parseHeaderText`:`missing-header` / `bad-header … missing\|invalid`;`budget_usd: 0` 只准 merged/dropped;owner 含「測試」 |
-| 對不到落點卻猜一個必須紅 | 沒有最長前綴、也沒有目錄涵蓋 → `PROBLEM no-landing`,不猜 |
-| START 用字串排序必須紅 | `uniqueSorted` / `compareNatural`(`T2` 在 `T10` 前);同層 `--orca` 先吐完這一層再解下一層 |
-| 工具寫檔必須紅 | `dag.ts` 只有讀取;沒有 write/mkdir/rename |
-| dag:check 沒接 chain、或弄壞輸入不紅 | 見「先證明會紅」;chain 與 npm script 都有 |
-| 新檔沒登記 owners / roster 必須紅 | `scripts/dag-check.test.ts` → `13-work-dag`。沒有 `dag-check.ts`,名冊不加 |
-| 改了 .feature / contracts / check-next-gates.ts 必須紅 | 這三處都沒改 |
+| 最長前綴,不是第一個符合的 | `resolveTouch`:在所有 `touch.startsWith(prefix)` 裡留最長的 |
+| R3 要數 review,不只 dispatched | `augment` 的 `occupying` 含 `dispatched` 與 `review`;`heavyOcc` 從這裡取;HELD 的 R3 也看這兩個狀態加上這輪已選的 |
+| contracts 和任何工作互斥 | `overlapReasons`:任一方落點含 `contracts` 就列入 `contracts` |
+| infra 用檔案層級,不是落點層級 | `infraShared`:逐字相同,或一方以 `/` 結尾且是另一方的目錄前綴;PROBLEM 寫 `on infra:<較短的那個>` |
+| review 佔落點;兩張都是 review 不讓 dag:check 紅 | R2 的 PROBLEM 只在這一對裡至少一張是 `dispatched` 時印;HELD 仍把 review 算進佔位 |
+| dropped 不算滿足 | `wireDeps`:不是 `merged` 就 unmet;dropped 另記,`blockerText` 印 `BLOCKED … by <id> (dropped)` |
+| R4 / R5 只 WARN;已 done/merged/有 tag 不算深度 | `makeDepth` 對已滿足節點直接回 0;超過才 `WARN r5-depth` / `WARN r4-dispatched`;不進 PROBLEM、不改退出碼 |
+| merged / dropped 對不到落點不出 no-landing | `augment` 只對 `todo` / `dispatched` / `review` 查 `noLanding` |
+| 反引號當純文字 | 檔頭清單走 `dashItemText`(不把行首反引號當語法);註解只認空白後的 `#` |
+| 缺檔頭、缺欄位、值不合法 | `parseHeaderText` → `PROBLEM missing-header` / `PROBLEM bad-header <名> missing\|invalid <欄位>`;`budget_usd: 0` 只准 merged / dropped |
+| 不猜落點 | 對不到就 `PROBLEM no-landing`,不補一個最近的 |
+| START 用自然排序,不是字串排序、也不是優先權 | 既有 `compareNatural`;READY 工單依 id 自然排序逐張選 |
+| 工具不寫檔 | `dag.ts` 沒有 fs 寫入 API;phase-2 測試的前後樹雜湊比對已綠 |
+| dag:check 接進 chain 之前先證明會紅 | 見下方三次紅、一次綠。接上之後 `scripts/gates.config.json` 的 chain 末項是 `dag:check` |
+| 新檔要登記 | `scripts/dag-check.test.ts` → `13-work-dag`。沒有新增 `scripts/dag-check.ts`,所以 `zero-input-roster.ts` 沒加條目(名冊不收 `*.test.ts`;測試寫「若 dag-check.ts 存在才查名冊」) |
+| 不改 .feature / contracts / check-next-gates | 沒改 |
 
-## 第 4 步檔頭
+## 第 4 步檔頭修改
 
-沒有缺檔頭的工單。下列都只改檔頭,內文不動。status 的依據是這條歷史裡的合併 commit(實作與驗收已進 `8be4ac9` 的祖先)。
+只動檔頭。沒改工單內文。T39 的檔頭沒動(`id: T39`、`status: todo`、`owner: worker-grok`)。沒有缺檔頭的檔,所以沒有補檔頭。
+
+`status: todo` → `merged`,依據是該張的驗收合併 commit(在這條歷史裡):
 
 | 檔 | 舊值 | 新值 | 依據 |
 |---|---|---|---|
@@ -65,47 +62,49 @@ phase 的 R4 只數表上 `in-progress`,不把這輪已選的 ready phase 算進
 | docs/tickets/T17-review-cli-phase-2.md | status: todo | status: merged | `4fdf666` Merge T17 |
 | docs/tickets/T18-children-sees-sibling-cards.md | status: todo | status: merged | `0f248ae` Merge T18 |
 | docs/tickets/T19-regenerate-without-lines.md | status: todo | status: merged | `699e74b` Merge T19 |
-| docs/tickets/T21-solid-window-without-compositor.md | status: todo | status: merged | `891f228` Merge T21 第 3 輪 |
+| docs/tickets/T21-solid-window-without-compositor.md | status: todo | status: merged | `891f228` Merge T21 第 3 輪(含 -ed 驗收證據) |
 | docs/tickets/T22-review-sidecar.md | status: todo | status: merged | `9773f49` Merge T22 |
 | docs/tickets/T23-test-card-phase-3.md | status: todo | status: merged | `389b2fd` Merge T23 |
-| docs/tickets/T24-test-card-phase-2.md | status: ready | status: merged | `341b663` Merge T24;`ready` 不是合法 status |
+| docs/tickets/T24-test-card-phase-2.md | status: ready | status: merged | `341b663` Merge T24;`ready` 不是合法值 |
 | docs/tickets/T25-reteach-missing-short-card.md | status: todo | status: merged | `0ca1c25` Merge T25 |
 | docs/tickets/T26-reviews-optimistic-check.md | status: todo | status: merged | `bb82d60` Merge T26 |
 | docs/tickets/T28-sidecar-stderr-prefix-once.md | status: todo | status: merged | `95281b0` Merge T28 |
-| docs/tickets/T29-mutate-lock-test-fsync-stall.md | status: todo | status: merged | `bef9c8b` Merge t29-fd20(第 2 件,量測報告在 `9af3c3b`) |
-| 同上 | owner: -e5 | owner: 測試 | 顧問 2026-10-22 另准;不是合併證據 |
-| docs/tickets/T2c-1-desktop-shell-phase-2-wiring.md | id: T2c-1 | id: T2c_1 | 顧問 2026-10-22 另准(檔名與內文不動) |
-| 同上 | status: todo | status: merged | `7a3b534` Merge T2c-1 (batch J) |
-| docs/tickets/T2c-2-desktop-shell-learning-root.md | id: T2c-2 | id: T2c_2 | 顧問 2026-10-22 另准 |
-| 同上 | deps: [T5, T2c-1] | deps: [T5, T2c_1] | 同上,只改檔頭 deps |
-| 同上 | status: todo | status: merged | `4df31b8` Merge T2c-2 (batch L) |
 | docs/tickets/T30-missing-credential-and-daily-start.md | status: todo | status: merged | `e78acc7` Merge T30 |
 | docs/tickets/T31-llm-failure-ungraded-not-internal.md | status: todo | status: merged | `a2e5c3c` Merge T31 |
 | docs/tickets/T32-test-card-header-one-line.md | status: todo | status: merged | `a3178c6` Merge T32 |
 | docs/tickets/T33-work-dag-phase-1.md | status: todo | status: merged | `535806e` Merge t33-accept-tests |
 | docs/tickets/T34-i3-integration-steps-and-wayland-note.md | status: todo | status: merged | `db558ee` Merge t34-accept-tests |
 | docs/tickets/T36-review-harness-timeouts.md | status: todo | status: merged | `88fc3df` Merge t36-accept-tests |
-| 同上 | owner: test-agent | owner: 測試 | 顧問 2026-10-22 另准 |
-| docs/tickets/T37-teach-card-phase-2.md | status: todo | status: merged | `d3be8cc` Merge t37-fixes2(驗收通過);證據合併 `b123049` |
+| docs/tickets/T36-review-harness-timeouts.md | owner: test-agent | owner: 測試 | 顧問 2026-10-22,工單第 4 步另准(`712c331`) |
+| docs/tickets/T37-teach-card-phase-2.md | status: todo | status: merged | `d3be8cc` Merge t37-fixes2(驗收通過);證據收尾 `b123049` |
+| docs/tickets/T2c-1-desktop-shell-phase-2-wiring.md | id: T2c-1 | id: T2c_1 | 顧問 2026-10-22 另准;檔名與內文沒動 |
+| docs/tickets/T2c-1-desktop-shell-phase-2-wiring.md | status: todo | status: merged | `7a3b534` Merge T2c-1 (batch J) |
+| docs/tickets/T2c-2-desktop-shell-learning-root.md | id: T2c-2 | id: T2c_2 | 同上,只改檔頭 |
+| docs/tickets/T2c-2-desktop-shell-learning-root.md | deps: [T5, T2c-1] | deps: [T5, T2c_1] | 顧問另准:全 repo 只有這張的 deps 引用 T2c-1 |
+| docs/tickets/T2c-2-desktop-shell-learning-root.md | status: todo | status: merged | `4df31b8` Merge T2c-2 (batch L) |
+| docs/tickets/T29-mutate-lock-test-fsync-stall.md | owner: -e5 | owner: 測試 | 顧問 2026-10-22 另准。**status 仍是 todo**(見待協調) |
 
-沒改:T0 / T2 / T2b / T4 / T4b(本來就是 merged 或 dropped)、T3、T20、T35、T39。
+## R5 在真樹上的深度
 
-## R5 真樹深度
+接進 chain 之前量過(只印深度、不寫檔;量完拿掉偵錯輸出)。未滿足節點的深度,最深是 **4**:
 
-未滿足節點的深度(含自己;done / merged / 有 tag 的是 0,不列入)。最大是 4,沒有 `WARN`。接進 chain 不會因為 R5 變紅。
+- `10-desktop-shell/phase-5` = 4
+- `06-test-card/phase-4`、`09-lint/phase-2`、`10-desktop-shell/phase-4` = 3
+- 其餘未滿足的 phase / 工單是 1 或 2
 
-| 深度 | 節點 |
-|---|---|
-| 1 | 02-ingest-pipeline/phase-3、03-llm-router/phase-3、03-llm-router/phase-4、07-teach-card/phase-2、07-teach-card/phase-4、13-work-dag/phase-2、T2(dropped,不算滿足)、T20、T3、T35、T39 |
-| 2 | 05-grading/phase-3、07-teach-card/phase-3、08-weekly-goal/phase-2、10-desktop-shell/phase-3 |
-| 3 | 06-test-card/phase-4、09-lint/phase-2、10-desktop-shell/phase-4 |
-| 4 | 10-desktop-shell/phase-5 |
+規則是 ≤ 4 才不 WARN。真樹剛好貼著上限,沒有 `WARN r5-depth`,也沒有 `WARN r4-dispatched`(dispatched 數是 0)。接進 `check:all` 不會因為 R4/R5 一接就紅。深度 4 已經頂到規則,後續若再疊未滿足的 phase,會開始 WARN。這是量到的事實,不在這裡改規則。
 
-沒有深度 > 4。沒有 `WARN r4-dispatched`(dispatched 0 張)。
+## 真樹輸出(顧問可對 NEXT.md)
 
-## 真樹 `npm run dag:check`(還原後,退出碼 0)
+`npx tsx scripts/dag.ts --root .` 與 `npm run dag:check` 都是退出碼 0,最後一行:
 
+```text
+gate=dag result=OK ready=10 blocked=9 human=0 problems=0
 ```
+
+沒有 PROBLEM、沒有 WARN。記錄行:
+
+```text
 READY 02-ingest-pipeline/phase-3 (table says todo)
 READY 03-llm-router/phase-3 (table says todo)
 READY 07-teach-card/phase-2 (table says todo)
@@ -113,8 +112,18 @@ READY 07-teach-card/phase-4 (table says todo)
 READY 13-work-dag/phase-2 (table says todo)
 READY T3
 READY T20
+READY T29
 READY T35
 READY T39
+BLOCKED 03-llm-router/phase-4 by status:blocked
+BLOCKED 05-grading/phase-3 by 03-llm-router/phase-3,I5
+BLOCKED 06-test-card/phase-4 by 05-grading/phase-3,I4
+BLOCKED 07-teach-card/phase-3 by 07-teach-card/phase-2
+BLOCKED 08-weekly-goal/phase-2 by 07-teach-card/phase-2,I4
+BLOCKED 09-lint/phase-2 by 03-llm-router/phase-3,05-grading/phase-3,I5
+BLOCKED 10-desktop-shell/phase-3 by I4
+BLOCKED 10-desktop-shell/phase-4 by 10-desktop-shell/phase-3,I6
+BLOCKED 10-desktop-shell/phase-5 by 10-desktop-shell/phase-4,I7
 START 02-ingest-pipeline/phase-3
 START 03-llm-router/phase-3
 START 07-teach-card/phase-2
@@ -122,88 +131,92 @@ START 07-teach-card/phase-4
 START 13-work-dag/phase-2
 START T3
 HELD T20 by R2 with T3
+HELD T29 by R2 with T3
 HELD T35 by R3 with T3
 HELD T39 by R2 with T3
 HELD T39 by R3 with T3
-gate=dag result=OK ready=9 blocked=9 human=0 problems=0
 ```
 
-沒有 `PROBLEM`、沒有 `WARN`。表上沒有 `in-progress`,所以五個 ready phase 都 `START`(見上,phase R4 不數這輪已選的)。T3 先被選上,T20 / T39 被它的落點擋住,T35 / T39 被它的 heavy 擋住。
+T3 仍是 todo(檔頭自己寫階段 B 未派)。T5 已合併之後它變 READY,而且是 heavy,自然排序又在 T20/T29/T35/T39 前面,所以這輪 START 是 T3,另外四張被 HELD。這是規則算出來的,不是優先權。
 
-## 先證明會紅,才接 chain
+## 先證明會紅,才接進 chain
 
-接進 `scripts/gates.config.json` 之前,在真 repo 用暫時工單弄壞再刪掉。三次都是 `npm run dag:check`(退出碼記在 `EXIT:`)。
+三次都是 `npm run dag:check`(`tsx scripts/dag.ts --root . --check`),弄壞之後還原,再改下一次。還原後、接進 chain 之前真樹已是 problems=0。chain 是在這三次之後才加的。
 
-缺檔頭(`docs/tickets/T99-missing-header-probe.md`,跑完已刪):
+### 紅 1:缺檔頭
 
-```
+把 `docs/tickets/T35-wayland-note-reserve-space.md` 第一行改成不是 `---`。退出碼 1。stderr 空。
+
+```text
 > dag:check
 > tsx scripts/dag.ts --root . --check
-PROBLEM missing-header T99-missing-header-probe.md
-gate=dag result=OK ready=9 blocked=9 human=0 problems=1
-EXIT:1
+
+PROBLEM missing-header T35-wayland-note-reserve-space.md
+gate=dag result=OK ready=8 blocked=9 human=0 problems=1
 ```
 
-有環(T97 ↔ T98,跑完已刪):
+EXIT:1。已還原。
 
-```
+### 紅 2:有環
+
+暫時把 T29 的 deps 改成 `[T35]`、T35 的 deps 改成 `[T29]`。退出碼 1。
+
+```text
 > dag:check
 > tsx scripts/dag.ts --root . --check
-PROBLEM cycle T97 -> T98 -> T97
-gate=dag result=OK ready=9 blocked=11 human=0 problems=1
-EXIT:1
+
+PROBLEM cycle T29 -> T35 -> T29
+gate=dag result=OK ready=8 blocked=9 human=0 problems=1
 ```
 
-dispatched 違反 R2(T95 `apps/desktop/src-tauri/`、T96 `apps/desktop/src/`,跑完已刪):
+EXIT:1。已還原(T29 的 owner 維持顧問准的 `測試`,status 維持 todo)。
 
-```
+### 紅 3:dispatched 違反 R2
+
+暫時把 T3 與 T39 的 status 改成 `dispatched`(兩張落點相交,而且都是 heavy)。退出碼 1。
+
+```text
 > dag:check
 > tsx scripts/dag.ts --root . --check
-PROBLEM r2-overlap T95 T96 on 10-desktop-shell
-gate=dag result=OK ready=9 blocked=9 human=0 problems=1
-EXIT:1
+
+PROBLEM r2-overlap T3 T39 on 13-work-dag
+PROBLEM r2-overlap T3 T39 on infra:scripts/
+PROBLEM r3-heavy T3 T39
+gate=dag result=OK ready=7 blocked=9 human=0 problems=3
 ```
 
-還原後再跑(接 chain 之前的那一次綠;接上之後又跑一次,同樣退出碼 0、`problems=0`,見上一節):
+EXIT:1。已還原。T39 檔頭回復 `status: todo`。
 
-```
+### 綠(接進 chain 之後)
+
+`scripts/gates.config.json` 的 chain 末項加上 `dag:check`(20 → 21)。`package.json` 的 script 是 `tsx scripts/dag.ts --root . --check`。
+
+```text
 > dag:check
 > tsx scripts/dag.ts --root . --check
-gate=dag result=OK ready=9 blocked=9 human=0 problems=0
-EXIT:0
+
+gate=dag result=OK ready=10 blocked=9 human=0 problems=0
 ```
 
-## 釘住 chain / owners 的測試與文件
+EXIT:0。沒有 PROBLEM、沒有 WARN。
 
-- `git grep scanned=20`:`docs/phase-status-cost-baseline.md` 第 77 行是當時 `check:all` 的歷史輸出(`gate=all result=FAIL scanned=20`)。chain 現在 21,新跑一輪會印 `scanned=21`。那句話是當時的紀錄,仍然描述那一次;沒改 `docs/reviews/` 與那份基線。請協調者決定要不要另記一筆,不要改歷史證據。
-- `docs/reviews/date-dependent-lock-tests.md` 的 `scanned=20` 是 `lint:docs`,不是 chain 長度,這次不影響。
-- `docs/reviews/template-141-adoption-handoff.md` 寫 chain 14 步,是升模板當時的紀錄,不是現況的斷言。
-- owners 條數沒有測試釘死絕對數字。`coverageBaseline` 仍是 253/253。這次 `npm run boundaries` 是 `涵蓋:納管 407 / 掃描 407 檔(100.0%)`,比例沒下降,棘輪過,沒有把基準改高。`scripts/check-boundaries.test.ts` 的棘輪測試用自己的假 owners,不讀真檔的 253。
+## 落點登記
 
-## 待協調
+`scripts/boundaries.owners.json` 追加(放在既有列之後,避免 `ownerOf` 的第一個符合蓋掉既有檔):
 
-- T3 檔頭註解寫階段 A 已合併、階段 B 未派,status 仍是合法的 `todo`。沒有「階段 B 已合併」的 commit,所以沒改。結果是 `START T3`,並且 `HELD T39 by R2 with T3`、`HELD T39 by R3 with T3`(T3 的 touches 蓋到多個落點,cpu 是 heavy)。若協調者認為階段 B 不該被當成可開工,要另裁 status,不是這張能猜的。
-- T20 沒有實作合併(只在起草 T19 的 `482ae5d` 被提到)。留 `todo`。被 T3 以 R2 擋住。
-- T35 只有工單合併 `5b48d19`,沒有實作合併。留 `todo`。被 T3 以 R3 擋住。
-- phase R4 不數這輪已選的 ready phase(測試要求)。真樹上 0 個 in-progress 時,五個 ready phase 一起 `START`。這比工單 R4 的「這輪已選的也算」鬆。若顧問要 phase 也數這輪已選的,要改測試,實作才能跟著改。
-- `check:test-ledger` 沒跑完:一啟動就在等 `stryker.lock`,持鎖者是這個 worktree 裡另一個 `scripts/run-tests.ts --`(pid 2761565,當時已跑約 1 分半)。沒有等滿 90 分鐘,也沒有殺那個行程。
-- cucumber(`@work-dag and @phase-2`,以及 `@phase-1`)還沒跑。feature 級要先向協調者要位子。
+- `package.json`、`standalone.json`、`scripts/gates.config.json`、`scripts/boundaries.owners.json`、`scripts/boundaries.allow.json` → `infra`
+- `docs/` → `docs`(`check-boundaries.ts` 沒有落點名白名單,`npm run boundaries` 認)
+- `features/01-data-layer/` … `features/14-hud-skin/`(14 個)→ 同名落點。沒有加 blanket `features/`,所以 `features/steps/`、`features/support/` 仍歸 `steps`
+- `scripts/dag-check.test.ts`、`scripts/dag-check.ts` → `13-work-dag`(後者檔案不存在;T39 的 touches 有這條路徑,落點表要對得到,否則 no-landing)
+- `features/support/dag-p2-harness` → `13-work-dag`,插在 `features/support/` 前面
 
-## 跑過的指令與輸出
+最後這一列是因為 boundaries 的 `ownerOf` 取**第一個**符合的前綴,不是最長。`scripts/dag.test.ts` 與 `scripts/dag-check.test.ts` 被測試釘成 `13-work-dag`,又 import 假樹工具。不改測試、也不開 allow 的話,那一條 import 會被看成跨落點。把 harness 檔的前綴放在 `features/support/` 前面,boundaries 把這個檔算成 `13-work-dag`,import 變成同落點。dag 自己對落點用最長前綴,不受這條順序影響。`features/support/` 其餘檔仍歸 `steps`。
 
-開工環境檢查見文首。
-
-`npx tsc --noEmit`(`./node_modules/.bin/tsc --noEmit`):無輸出,退出碼 0。
-
-`scripts/dag.test.ts` phase-2 區 72 條綠;整檔 279 條在 phase R4 改回「只數 in-progress」之後,phase-2 篩選再跑 72 條綠。中間有一次整檔紅 1 條(把這輪已選的 phase 算進 WIP),已改回。
-
-`scripts/dag-check.test.ts` 16 條綠。
-
-`scripts/zero-input-guard.test.ts`:775 passed,171 skipped。
+沒有加 blanket `scripts/`。boundaries 的第一個符合若先撞上 `scripts/`,既有腳本的落點會整批變成 infra。
 
 `npm run boundaries`:
 
-```
+```text
 boundaries: 掃描 351 個檔案,允許例外 23 條
 涵蓋:納管 407 / 掃描 407 檔(100.0%),未納管目錄:
   (無)
@@ -211,12 +224,68 @@ boundaries: 掃描 351 個檔案,允許例外 23 條
 gate=boundaries result=PASS scanned=351
 ```
 
-`npx tsx scripts/check-doc-links.ts`:
+`coverageBaseline` 仍是 253/253。這次是 407/407,比例沒降,棘輪沒有要求改基準,所以沒改。
 
-```
+## 釘住設定的測試與文件(沒改它們)
+
+`git grep` 釘 `boundaries.owners.json` 的測試:內容是自己的 fixture,或只檢查特定檔的落點(`scripts/dag.test.ts` 檢查 `scripts/dag.ts` / `scripts/dag.test.ts`;`scripts/dag-check.test.ts` 檢查新檔與 T39 touches 的前綴)。沒有測試把 owners 的條數或 `coverageBaseline: 253` 寫死成斷言。`scripts/check-boundaries.local.test.ts` 會把真檔複製進暫存目錄再跑,所以它跟的是檔的內容,不是一個寫死的條數。
+
+chain 長度:
+
+- `docs/phase-status-cost-baseline.md` 有 `gate=all result=FAIL scanned=20`。那是當時 check:all 的歷史輸出。接進 chain 之後 `scanned` 會變成 21,那句話不再描述現在的 chain。**沒改這份歷史證據**,請協調者決定要不要在別處加一句「T39 之後 chain 是 21」。
+- `docs/reviews/date-dependent-lock-tests.md` 的 `scanned=20` 是 `npm run lint:docs` 的輸出,不是 chain 長度。這次 `check-doc-links` 是 `scanned=127`,那句歷史話也不描述現在的 doc-links,同樣沒改。
+- 沒有測試把 chain 長度寫死成 20。`scripts/dag-check.test.ts` 只要求 chain 裡有且只有一個 `dag:check`,而且每一項都是 npm script。
+
+## 待協調
+
+- **T29 status 仍是 todo。** git 上只有 `bef9c8b`(「第 2 件」:fd 測試 200→20)和 `9af3c3b`(量測報告)。沒有整張驗收合併。顧問只另准改 owner,所以 owner 改成 `測試`,status 沒改。若整張其實已經做完,請協調者改 `merged`。
+- **T35 status 仍是 todo。** 只看到工單合併 `5b48d19`,沒有實作驗收合併。沒改 status。
+- **T20 status 仍是 todo。** 沒有 Merge T20。T19 改成 merged 之後,T20 變成 READY,再被 T3 以 R2 擋住。
+- **T3 仍是 todo**,檔頭註解寫階段 B 未派。T5 合併之後它 READY 且 heavy,這輪 START 是它。若階段 B 不該被當成可開工,那是 deps / 狀態的產品決定,這裡不准改 deps。
+- **T21 標了 merged**,依據是 `891f228`(含驗收證據)。稍早的 `6e39a01` 寫 phase-6 維持 in-progress,`18672ad` 的觀感當時寫「待顧問判」。若顧問認為這張還沒完,把 status 改回去。
+- cucumber(`@work-dag and @phase-2`,以及 `@phase-1` 不退步)按派工要先要位子,這份報告交件時還沒跑。
+- `npm run check:test-ledger` 會跑整套 vitest。這裡啟動後被終止(退出碼 143),沒有重跑整套。單檔 `scripts/dag.test.ts`(279)與 `scripts/dag-check.test.ts`(16)已綠。
+
+## 跑過的指令與輸出
+
+開工環境檢查見報告開頭。
+
+```text
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 npx vitest run scripts/dag.test.ts --maxWorkers=1
+ Test Files  1 passed (1)
+      Tests  279 passed (279)
+
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 npx vitest run scripts/dag-check.test.ts --maxWorkers=1
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 npx tsc --noEmit
+(無輸出,退出碼 0)
+
+npm run boundaries
+gate=boundaries result=PASS scanned=351
+
+npx tsx scripts/check-doc-links.ts
 doc-links: 掃描 218 個 markdown 檔,127 條相對連結
 ✓ 無壞掉的連結
 gate=doc-links result=PASS scanned=127
+
+npx tsx scripts/dag.ts --root .
+gate=dag result=OK ready=10 blocked=9 human=0 problems=0
+(退出碼 0)
+
+npm run dag:check
+(同上,退出碼 0)
 ```
 
-真樹 `npm run dag:check` 與三次紅一次綠見上。沒跑 `npm run mutate`,沒跑整條 `check:all`。
+三次紅的原始輸出見上一節。
+
+## learning/ 量測
+
+量的是主簽出 `/data/python/llm_learning-cards/learning`,唯一量法(不含 `.git`、`LC_ALL=C`)。這張 worktree 的實作沒有讀、寫、刪那裡的檔。收工量一次:
+
+| sha256 前 16 | 檔數 | state/log.jsonl 行數 |
+|---|---|---|
+| c2e4dd6d71de3976 | 64 | 108 |
+
+與 T33 報告記下的數字相同。沒有列出任何 learning/ 或 raw/ 的檔名。
