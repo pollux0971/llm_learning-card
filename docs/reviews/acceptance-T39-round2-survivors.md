@@ -120,3 +120,7 @@
 | 1290:9 | 1240 | invokedAsCli | ConditionalExpression | false | 可低 | CLI 殼:判斷是不是被直接執行;被當模組 import 與 CLI 行為都有測試,剩下的是 argv 切片的邊角 |
 | 1290:9 | 1240 | invokedAsCli | LogicalOperator | !arg && arg.startsWith('-') | 可低 | CLI 殼:判斷是不是被直接執行;被當模組 import 與 CLI 行為都有測試,剩下的是 argv 切片的邊角 |
 | 1290:17 | 1240 | invokedAsCli | MethodExpression | arg.endsWith('-') | 可低 | CLI 殼:判斷是不是被直接執行;被當模組 import 與 CLI 行為都有測試,剩下的是 argv 切片的邊角 |
+
+## 補充:手工改壞時發現的缺口(不在 Stryker 存活清單內)
+
+- 行內清單(deps: [a, b] 這種寫法)的項目含反引號時必須仍然有效(工單 must_catch:反引號一律當純文字)。我把 parseInlineList 的拒絕字元加上反引號(實作 dag.ts 的 parseInlineList 那條 regex 多一個反引號),dag.test.ts 與 dag-check.test.ts 348 條全綠,沒有任何測試看這件事;逐行清單(block)的反引號已被釘住。請在第二輪補一條:行內清單 [`a`, b] 的欄位有效、項目照原樣進清單。這一隻不在 Stryker 範圍內(該 regex 的這個變異是我手工做的,Stryker 的 Regex 變異沒有產生它),所以重測分數不會反映,要靠新測試本身紅轉綠證明。
