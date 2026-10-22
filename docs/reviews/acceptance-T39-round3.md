@@ -6,7 +6,9 @@
 
 ## 結論
 
-**必補區剩 1 隻(1090 行 35 欄),其餘清完;分數遠高於標準級。** 這 1 隻不是「為殺而殺」,是真行為(環上有已 merged 成員的 todo 工單,工單 id 是多字元時不可 READY),測試用多字元 id(T1、T2)就殺得掉,請 -1d 補一條;補完我只重測那一行。其餘 21 隻存活者:等價 14(逐隻理由見下)、可低 7。等價註解由協調者加、我再核 diff 只有註解,在那之前分數照未扣等價算。
+**必補區已清完(0 隻)。** 第二輪的 83 隻必補 + 1093:85,67 隻被殺,其餘 17 隻我逐隻判為等價(另有可低);分數遠高於標準級,完整套件加 check:test-ledger 乾淨 PASS,must_catch 全殺。22 隻存活者:等價 15、可低 7(逐隻理由見下)。等價註解由協調者加、我再核 diff 只有註解;在那之前分數照未扣新判等價的算也過。
+
+更正:我一開始把 1090 行 35 欄當成「split 字元」的變異判為必補,重看欄位後它其實是 slice 裡那個 'PROBLEM cycle ' 字串(split 的 ' -> ' 在 66 欄,已被殺),拿掉它的效果與 1090:24 相同,等價。測試用的 id(T1、T2)是多字元,我先前猜「用單字元 id」是錯的。
 
 ## 範圍與測試作者
 
@@ -33,9 +35,9 @@
 | 第二輪(重測一)新殺 | 91 |
 | 本輪新殺 | 67 + 1(原可低、同行被殺:compareRecord 一隻)= 68 |
 | 目前殺 | 1004 |
-| 等價:已加註解 71 + 1093:85 + 本輪新判 13 | 85 |
-| **分數** 1004/(1111−85) | **1004/1026 = 97.86%** |
-| 若本輪新判等價 13 隻註解未成立(分母只扣 72) | 1004/1039 = 96.63% |
+| 等價:已加註解 71 + 1093:85 + 本輪新判 14 | 86 |
+| **分數** 1004/(1111−86) | **1004/1025 = 97.95%** |
+| 若本輪新判等價 14 隻註解未成立(分母只扣 72) | 1004/1039 = 96.63% |
 
 兩種算法都遠高於 80%。
 
@@ -62,17 +64,17 @@
 | 1089:22 | augment | MethodExpression | 可低 | 拿掉 extra.filter:改成掃所有已累積的行,把 slice(14) 後的片段當環節點;要影響結果得有工單 id 恰好等於某行第 15 字元起的片段,為殺而殺 | 可低(同) |
 | 1089:55 | augment | StringLiteral | 可低 | startsWith('') 恆真,同上 | 可低(同) |
 | 1090:24 | augment | MethodExpression | 等價 | 拿掉 slice:第一段變成「PROBLEM cycle A」不是 id,但 findCycles 的輸出格式是「A -> B -> A」(起點在尾端重複),A 仍在最後一段被收進去 | 等價(同) |
-| **1090:35** | augment | StringLiteral | **必補** | split(' -> ') 改 split(''):逐字元切,多字元 id(T1)進不了 cycleNodes,環上已 merged 成員旁的 todo 工單會被當成 READY。現有測試的環大概用單字元 id,所以殺不掉;用 T1、T2 這種 id 的環加一個 merged 成員就會紅。這是真行為 | 等價(**不同意**) |
+| 1090:35 | augment | StringLiteral | 等價 | 這是 slice('PROBLEM cycle '.length) 裡的字串(split 的 ' -> ' 是 66 欄,已殺)。字串改成空字串 → 長度 0 → 不 slice,效果同 1090:24:第一段帶著「PROBLEM cycle」前綴不是 id,但環的起點在尾端重複,仍被收進去。測試的環用 T1、T2 這種多字元 id 並帶 merged 成員,沒有問題 | 等價(同) |
 | 1134:85 | augment | ConditionalExpression | 等價 | against 只由 occupying(dispatched/review)與 selected 組成,括號內三個條件對 against 的每個元素恆為真,改 true 沒有差別(同 1093:85 的判斷) | (未列) |
 | 1177:16 | augment | ConditionalExpression | 等價 | kind===PROBLEM 改 true:所有種類都用 compareRecord;compareRecord 對非 bad-header 的行直接退回 compareNatural(lineKey),與非 PROBLEM 種類原用的比較器相同,而非 PROBLEM 的行本來就沒有 bad-header 行 | 等價(同) |
 | 1184:9 | augment | ConditionalExpression | 等價 | 去重判斷改 false:phase 邊在 analyzeTree 的 addEdge 已去重,工單邊每張工單的 resolved 是 uniqueSorted、起點與終點組合不重複,而且工單 id 不會等於 phase 節點名,兩邊來源互不相交,所以重複從不發生 | 等價(同) |
 | 1185:5 | augment | CallExpression | 等價 | 同上,edgeKeys.add 拿掉也不會有重複可擋 | 等價(同) |
 
-合計:等價 14(762:16、763:24、940:48、941:16、942:9、944:9、944:28、1036:9、1084:32、1090:24、1134:85、1177:16、1184:9、1185:5)、可低 7(725:16、967:22、1030 ×2、1031、1089 ×2)、必補 1(1090:35)。-1d 說的等價 15 隻,我同意 12 隻 +2 隻他沒列的(944:9、1134:85);不同意 3 隻(1030/1031 的去 ^ 兩隻,我歸可低;1090:35,我歸必補)。為殺而殺的可低共 5 隻(1030 ×2、1031、1089 ×2),低於顧問的 10 隻上限。
+合計:等價 15(762:16、763:24、940:48、941:16、942:9、944:9、944:28、1036:9、1084:32、1090:24、1090:35、1134:85、1177:16、1184:9、1185:5)、可低 7(725:16、967:22、1030 ×2、1031、1089 ×2)、必補 0。-1d 說的等價 15 隻,我同意 13 隻,另外 +2 隻他沒列的(944:9、1134:85);不同意 2 隻(1030/1031 的去 ^ 兩隻,我歸可低)。為殺而殺的可低共 5 隻(1030 ×2、1031、1089 ×2),低於顧問的 10 隻上限。
 
-### 加註解建議(等價 14 隻)
+### 加註解建議(等價 15 隻,其中 1134:85 與 1093:85 是同一隻在不同版本的位置,原清單已計入 72 隻)
 
-每隻都能用 disable next-line 加指定 mutator 名,不需用 all:行 762 ConditionalExpression、763 ConditionalExpression、940 ConditionalExpression、941 ConditionalExpression、942 ConditionalExpression、944 同行有 ConditionalExpression 與 OptionalChaining 兩隻、1036 ConditionalExpression、1084 MethodExpression、1090 只對 MethodExpression(同行的 StringLiteral 是必補,不可蓋)、1134 ConditionalExpression(此行同 mutator 在第 16 欄的那隻已被殺,蓋掉不影響存活統計,但會把已殺的也略過,可接受)、1177 ConditionalExpression、1184 ConditionalExpression、1185 CallExpression。1030、1031 的 Regex 不加(可低)。行號是這一版;加註解後會位移,請以行內容對位。
+每隻都能用 disable next-line 加指定 mutator 名,不需用 all:行 762 ConditionalExpression、763 ConditionalExpression、940 ConditionalExpression、941 ConditionalExpression、942 ConditionalExpression、944 同行有 ConditionalExpression 與 OptionalChaining 兩隻、1036 ConditionalExpression、1084 MethodExpression、1090 同行有 MethodExpression(24 欄)與 StringLiteral(35 欄)兩隻等價,但同行另有第 66 欄的 StringLiteral 已被殺,指定 mutator 名會一起略過那隻已殺的,可接受、1134 ConditionalExpression(此行同 mutator 在第 16 欄的那隻已被殺,蓋掉不影響存活統計,但會把已殺的也略過,可接受)、1177 ConditionalExpression、1184 ConditionalExpression、1185 CallExpression。1030、1031 的 Regex 不加(可低)。行號是這一版;加註解後會位移,請以行內容對位。
 
 ## 必補反引號 must_catch(協調者要我確認的 3 條)
 
