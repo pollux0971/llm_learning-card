@@ -33,7 +33,7 @@ interface Client {
   status(): Promise<Obj>;
 }
 interface ClientModule {
-  createReviewClient(opts?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>; handler?: (line: string) => Promise<string> }): Client;
+  createReviewClient(opts?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>; handler?: (line: string) => Promise<string>; sleep?: (ms: number) => Promise<void>; now?: () => number }): Client;
   ReviewError: new (...args: never[]) => Error & { kind: string };
 }
 async function mod(): Promise<ClientModule> {
@@ -107,7 +107,8 @@ describe('invoke 模式(預設走 Tauri 的 invoke)', () => {
 
   it('Rust 自己的錯誤(invoke 被拒絕,值是 { kind })→ 丟 ReviewError,kind 原樣', async () => {
     const { createReviewClient, ReviewError } = await mod();
-    for (const kind of ['busy', 'timeout', 'sidecar-exited', 'sidecar-unavailable', 'not-configured', 'bad-envelope', 'bad-response']) {
+    // T40:busy 不在這裡 —— client 會重試它(見 review-client-busy.test.ts);沒有 message 的拒絕,message 是 ERROR_MESSAGES 的句子
+    for (const kind of ['timeout', 'sidecar-exited', 'sidecar-unavailable', 'not-configured', 'bad-envelope', 'bad-response']) {
       invokeMock.mockReset();
       invokeMock.mockRejectedValue({ kind });
       const err = await createReviewClient().status().then(
@@ -118,6 +119,8 @@ describe('invoke 模式(預設走 Tauri 的 invoke)', () => {
       );
       expect(err, kind).toBeInstanceOf(ReviewError);
       expect((err as { kind: string }).kind, kind).toBe(kind);
+      expect((err as Error).message, `${kind} 的 message 不能是 kind 本身`).not.toBe(kind);
+      expect((err as Error).message, kind).toMatch(/[^\x00-\x7f]/);
     }
   });
 
@@ -163,7 +166,7 @@ describe('invoke 模式(預設走 Tauri 的 invoke)', () => {
 
   it('id 每次呼叫加一,失敗的呼叫也算(不重用同一個 id)', async () => {
     const { createReviewClient } = await mod();
-    invokeMock.mockRejectedValueOnce({ kind: 'busy' });
+    invokeMock.mockRejectedValueOnce({ kind: 'timeout' });
     invokeMock.mockImplementation(async (_cmd: string, args: { request: { id: number } }) => okResponse(args.request.id));
     const c = createReviewClient();
     await expect(c.status()).rejects.toBeDefined();

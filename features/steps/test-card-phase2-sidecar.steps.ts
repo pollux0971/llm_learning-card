@@ -123,9 +123,9 @@ Then('no action the window can send carries a path or a card id', { timeout: 180
     assert.equal((r.error as { kind?: string }).kind, 'bad-request', `${method}:${JSON.stringify(r)}`);
   }
   assert.ok(b.proc!.isAlive());
-  // 視窗端的 ReviewClient 本身也沒有任何能帶 path 或 card 的方法
+  // 視窗端的 ReviewClient 本身也沒有任何能帶 path 或 card 的方法(T40:多了 onWait,它收一個聽眾函式,不是 path 或 card)
   const client = createReviewClient({ handler: async () => '' }) as unknown as Record<string, { length: number }>;
-  assert.deepEqual(Object.keys(client).sort(), ['next', 'start', 'status', 'submit', 'summary', 'teachNext', 'teachOpen', 'teachPrereq', 'teachSwitch']);
+  assert.deepEqual(Object.keys(client).sort(), ['next', 'onWait', 'start', 'status', 'submit', 'summary', 'teachNext', 'teachOpen', 'teachPrereq', 'teachSwitch']);
   for (const name of ['start', 'next', 'summary', 'status', 'teachNext']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
 });
 
