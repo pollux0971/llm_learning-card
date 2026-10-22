@@ -3323,7 +3323,7 @@ describe('補測2·PROBLEM 排序(續):輸入順序反過來、名字帶欄位�
 
   it('檔名裡有 missing / invalid 字樣(id 缺漏時名字就是檔名):跟名字叫 a 的正常工單混排時,照字串自然排序,不被拆成「名字 種類 欄位」', () => {
     const noId = RAW_OK.filter((l) => !l.startsWith('id:'));
-    for (const [first, second] of [['a-normal.md', 'a missing x.md'], ['a missing x.md', 'z-normal.md'], ['a invalid x.md', 'z-normal.md'], ['a-normal.md', 'a invalid x.md']]) {
+    for (const [first, second] of [['a-normal.md', 'a missing x.md'], ['a missing x.md', 'z-normal.md'], ['a invalid x.md', 'z-normal.md'], ['a-normal.md', 'a invalid x.md'], ['a-normal.md', 'z missing x.md'], ['a-normal.md', 'z invalid x.md']]) {
       const root = p2Tree([]);
       for (const f of [first!, second!]) {
         if (f.includes(' ')) rawTicket(root, f, `---\n${noId.join('\n')}\n---\n`);
