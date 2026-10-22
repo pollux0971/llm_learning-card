@@ -1931,7 +1931,7 @@ describe('phase-2:檔頭驗證(must_catch:沒有檔頭、欄位缺漏或不合�
     }
   }, 600_000);
 
-  it('合法值全部放行:cpu 兩種、status 五種、owner 六種(含 worker-codex 歷史值)、budget_usd 小數與整數', () => {
+  it('合法值全部放行:cpu 兩種、status 五種、owner 七種(含 worker-codex 歷史值與「測試」)、budget_usd 小數與整數', () => {
     const accepted: [string, string][] = [
       ['cpu', 'heavy'],
       ['cpu', 'light'],
@@ -1946,6 +1946,7 @@ describe('phase-2:檔頭驗證(must_catch:沒有檔頭、欄位缺漏或不合�
       ['owner', '統籌'],
       ['owner', '前端'],
       ['owner', '驗收'],
+      ['owner', '測試'], // 顧問 2026-10-22:測試 agent 是常設角色,owner 清單加「測試」
       ['budget_usd', '0.5'],
       ['budget_usd', '12'],
     ];
