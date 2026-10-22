@@ -4,7 +4,7 @@
 - 被驗分支:`t39-impl`,sha `b91bd0354b751f942b71477c606c8df5d3498adf`(worker 分支同 sha)
 - 驗收樹(開跑與跑完相同):tree `9ae31c36d3b1330b0aaf7b1fdd6dbeb8f00989e0`
 - 驗收者:驗收線 -5a,日期 2026-10-22
-- 機器:開跑時 load 約 20(別的 session 在跑),完整 vitest 第一次跑時 load 28,變異跑時 load 3–4;main 之外沒有別的重活與我同時用位子
+- 機器:開跑時 load 約 20(別的 session 在跑),完整 vitest 第一次跑時 load 28,變異跑時 load 3–4;重活位子在我手上期間由協調者保留
 - 沒有 `.env`(`ls .env` 失敗)
 
 ## 結論
@@ -33,7 +33,7 @@
 | `npm run check:test-ledger`(內含再跑一次完整套件) | 229 檔 6150 過、0 紅;帳本行數相同 108;`gate=ledger-pollution result=PASS` |
 | `dag.ts --root .` | `gate=dag result=OK ready=9 blocked=9 human=0 problems=0` |
 | `npm run dag:check`(真樹) | 綠,0 個 PROBLEM、0 個 WARN |
-| T32(檔頭含反引號) | 沒有被報 invalid;docs/tickets 底下 40 張檔頭含反引號的全部有效 |
+| T32(檔頭含反引號) | 沒有被報 invalid,真樹 0 個 PROBLEM(我另外數到 docs/tickets 有 40 張檔含反引號字元,不確定哪些在檔頭,所以只憑 0 PROBLEM 判定) |
 | `standalone.json`、`@standalone` | 沒動,符合工單 |
 
 第一次那兩條逾時是機器忙(load 28)造成,第二次完整套件(load 約 5)同兩條都過。這類 5000ms 預設逾時在 load 高時會紅,不是 T39 引入。
@@ -132,4 +132,4 @@ augment 61/312(80% 殺)、parseHeaderText 60/256(77%)、compareRecord 30/33(9%)�
 ## 7 資料前後與花費
 
 - `learning/`(唯一量法):檔數、雜湊前 16、帳本行數 前 = 後 = **64 / `c2e4dd6d71de3976` / 108**,三項前後相同。
-- 花費:worker grok-4.7,記錄 $24.33,工單預算 6,**比值 4.05(> 2 倍)**,只記錄(使用者:GROK 不需要限額)。主要超在:worker 從 07 到 13 的檔頭 32 張修補與三次「先證明會紅」的重跑;我這邊沒有量 worker 的分項。驗收我用的是 CPU:變異 228 分鐘、cucumber 約 3 分鐘、完整套件兩次約 36 分鐘。
+- 花費:worker grok-4.7,記錄 $24.33,工單預算 6,**比值 4.05(> 2 倍)**,只記錄(使用者:GROK 不需要限額)。超在哪:不知道(我沒有量 worker 的分項)。驗收我用的是 CPU:變異 228 分鐘、cucumber 約 3 分鐘、完整套件兩次約 36 分鐘。
