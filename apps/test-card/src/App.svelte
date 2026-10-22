@@ -30,6 +30,12 @@
     view = session.getView();
   }
 
+  $effect(() => {
+    return deps.client.onWait(() => {
+      pull();
+    });
+  });
+
   function resetInputs(): void {
     const current = view.current;
     if (current?.type === 'fill') {
@@ -114,6 +120,9 @@
   {#if view.testModeNotice}
     <p class="test-mode">{view.testModeNotice}</p>
   {/if}
+  {#if view.waitNotice}
+    <p class="wait-notice">{view.waitNotice}</p>
+  {/if}
 
   {#if view.state === 'loading'}
     <p>載入中…</p>
@@ -125,16 +134,16 @@
   {:else if view.state === 'paused' || view.state === 'empty' || view.state === 'error'}
     <p class={view.state}>{view.message}</p>
     {#if view.canRestart}
-      <HudButton onclick={restart}>重新開始</HudButton>
+      <HudButton onclick={restart} disabled={view.waiting}>重新開始</HudButton>
     {/if}
     {#if view.canRetry}
-      <HudButton onclick={restart}>再試一次</HudButton>
+      <HudButton onclick={restart} disabled={view.waiting}>再試一次</HudButton>
     {/if}
   {:else if view.state === 'reteach' && view.reteach}
     {#if view.reteach.notice}
       <p class="notice">{view.reteach.notice}</p>
     {/if}
-    <HudButton onclick={next}>繼續</HudButton>
+    <HudButton onclick={next} disabled={view.waiting}>繼續</HudButton>
     <pre class="reteach">{view.reteach.text}</pre>
   {:else if view.state === 'question' && view.current}
     <header class="progress">
@@ -157,29 +166,29 @@
                 bind:value={fillInputs[i]}
                 bind:this={firstInputEl}
                 onkeydown={handleFillKeydown}
-                disabled={view.submitting}
+                disabled={view.submitting || view.waiting}
               />
             </HudField>
           {:else}
             <HudField>
-              <input type="text" bind:value={fillInputs[i]} onkeydown={handleFillKeydown} disabled={view.submitting} />
+              <input type="text" bind:value={fillInputs[i]} onkeydown={handleFillKeydown} disabled={view.submitting || view.waiting} />
             </HudField>
           {/if}
         {/each}
       </div>
       {#if !(view.result && !view.gradingError)}
         <div class="submit">
-          <HudButton onclick={submitFill} disabled={view.submitting}>送出</HudButton>
+          <HudButton onclick={submitFill} disabled={view.submitting || view.waiting}>送出</HudButton>
         </div>
       {/if}
     {:else if view.current.type === 'apply'}
       <p class="prompt">{view.current.prompt}</p>
       <HudField>
-        <textarea rows="6" bind:value={applyInput} onkeydown={handleApplyKeydown} disabled={view.submitting}></textarea>
+        <textarea rows="6" bind:value={applyInput} onkeydown={handleApplyKeydown} disabled={view.submitting || view.waiting}></textarea>
       </HudField>
       {#if !(view.result && !view.gradingError)}
         <div class="submit">
-          <HudButton onclick={submitApply} disabled={view.submitting}>送出</HudButton>
+          <HudButton onclick={submitApply} disabled={view.submitting || view.waiting}>送出</HudButton>
         </div>
       {/if}
     {/if}
@@ -198,7 +207,7 @@
       {#if view.result.correctAnswers}
         <p class="correct">正確答案:{view.result.correctAnswers.join('、')}</p>
       {/if}
-      <HudButton onclick={next}>下一題</HudButton>
+      <HudButton onclick={next} disabled={view.waiting}>下一題</HudButton>
     {/if}
   {/if}
 </HudPanel>
@@ -236,6 +245,9 @@
   .test-mode,
   .notice {
     margin: 0.2rem 0;
+  }
+  .wait-notice {
+    margin: 0.4rem 0;
   }
   .reteach {
     white-space: pre-wrap;

@@ -32,6 +32,14 @@
  * `decideKeydown(key, mods)`(照 phase-1)。
  *
  * session.ts 是 T24 要改的檔:用算出來的 file URL 動態 import,基底上是「欄位 / 方法還沒有」而紅,不是 tsc 錯。
+ *
+ * T40(ADR-078)加的:ReviewClient 多 `onWait(listener)`;TestSession 訂閱它,
+ *   waiting        等候中(client 通知 true 到通知 false 之間)true,其他時候 false;等候時「送出」「下一題」等按鈕要停用(App.svelte 讀它)
+ *   waitNotice     waiting 時是 '複習程式還在準備,稍等一下。',否則 undefined(畫面最上面、測試模式那行下面的一行)
+ *   client 放棄(ReviewError kind 'timeout' 且 unsent 為 true)→ error 畫面:message 是 '等候回覆的時間過了。'、canRetry 為 true、
+ *   canRestart 為 false(按了「再試一次」就是再 init(),從 start 重來,續答照快取);**不是**「複習程式停了。」
+ *   Rust 自己的 timeout(unsent 為 false,請求進了側車)照舊是「複習程式停了。」加「重新開始」。
+ *   busy 不會再到 TestSession 手上(client 重試)。
  */
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -56,6 +64,8 @@ interface View {
   summaryLines: string[];
   current: { card: string; type: 'fill' | 'apply'; stage: number; prompt: string; blanks: number; stuck: boolean; overdueDays: number } | undefined;
   submitting: boolean;
+  waiting: boolean;
+  waitNotice: string | undefined;
   gradingError: string | undefined;
   result: { status: string; pass: boolean | null; feedback: string; cardDone: boolean; correctAnswers?: string[] } | undefined;
   reteach: { card: string; text: string; notice: string | undefined } | undefined;
@@ -76,6 +86,7 @@ interface Client {
   submit(answer: { fill: string[] } | { apply: string }): Promise<Obj>;
   summary(): Promise<Obj>;
   status(): Promise<Obj>;
+  onWait(listener: (waiting: boolean) => void): () => void;
 }
 interface Fs {
   read(relPath: string): Promise<string>;
@@ -98,10 +109,13 @@ interface Fake {
   client: Client;
   calls: Call[];
   count(method: string): number;
+  /** 對 TestSession 訂閱的所有聽眾通知(模擬 client.onWait) */
+  emitWait(waiting: boolean): void;
 }
 /** script:每個方法一串結果(依序用);用完還被呼叫就丟錯,不靜默回東西。 */
 function fakeClient(script: Partial<Record<'start' | 'next' | 'submit' | 'summary' | 'status', Step[]>>): Fake {
   const calls: Call[] = [];
+  const listeners: ((waiting: boolean) => void)[] = [];
   const queues = new Map<string, Step[]>(Object.entries(script).map(([k, v]) => [k, [...(v ?? [])]]));
   const run = (method: string, arg?: unknown): Promise<Obj> => {
     calls.push(arg === undefined ? { method } : { method, arg });
@@ -117,8 +131,15 @@ function fakeClient(script: Partial<Record<'start' | 'next' | 'submit' | 'summar
     submit: (answer) => run('submit', answer),
     summary: () => run('summary'),
     status: () => run('status'),
+    onWait: (listener) => {
+      listeners.push(listener);
+      return () => {
+        const at = listeners.indexOf(listener);
+        if (at >= 0) listeners.splice(at, 1);
+      };
+    },
   };
-  return { client, calls, count: (m) => calls.filter((c) => c.method === m).length };
+  return { client, calls, count: (m) => calls.filter((c) => c.method === m).length, emitWait: (w) => listeners.slice().forEach((l) => l(w)) };
 }
 
 function fakeFs(files: Record<string, string> = {}): Fs & { reads: string[] } {
@@ -713,7 +734,7 @@ describe('側車錯誤:畫面不卡住(驗收 4)', () => {
     expect(v.message).not.toContain('複習程式停了');
   });
 
-  it.each(['paused', 'sidecar-exited', 'timeout', 'sidecar-unavailable', 'internal', 'busy', 'no-session', 'bad-response', 'review-record-changed'])(
+  it.each(['paused', 'sidecar-exited', 'timeout', 'sidecar-unavailable', 'internal', 'no-session', 'bad-response', 'review-record-changed'])(
     '%s:不是啟動錯誤,沒有「再試一次」',
     async (kind) => {
       const { s } = await ready({ start: [start()], next: [fillQ()], submit: [new ReviewError(kind, 'x')] });
@@ -723,7 +744,7 @@ describe('側車錯誤:畫面不卡住(驗收 4)', () => {
     },
   );
 
-  it.each(['sidecar-exited', 'timeout', 'sidecar-unavailable', 'internal', 'busy', 'no-session', 'bad-response', 'no-question', 'totally-unknown-kind'])(
+  it.each(['sidecar-exited', 'timeout', 'sidecar-unavailable', 'internal', 'no-session', 'bad-response', 'no-question', 'totally-unknown-kind'])(
     '%s:「複習程式停了。」加「重新開始」,不露出 message 原文',
     async (kind) => {
       const { s } = await ready({ start: [start()], next: [fillQ()], submit: [new ReviewError(kind, 'RAW-STACK /home/someone/secret.ts:12')] });
@@ -1754,5 +1775,129 @@ describe('T30 驗收 4:submit 回 credential-unavailable → 題目與輸入留�
     expect(v.message).toContain('複習程式停了');
     expect(v.canRestart).toBe(true);
     expect(v.current).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------- T40(ADR-078):等候字樣與放棄
+
+describe('T40:等候字樣由 client.onWait 驅動;client 放棄不是「複習程式停了」', () => {
+  const WAIT = '複習程式還在準備,稍等一下。';
+  const GAVE_UP = '等候回覆的時間過了。';
+  const unsentTimeout = (): Error => new (ReviewError as unknown as new (kind: string, message: string, unsent?: boolean) => Error)('timeout', GAVE_UP, true);
+
+  it('一開始沒有等候字樣、waiting 是 false', async () => {
+    const { s } = await ready({});
+    expect(s.getView().waiting).toBe(false);
+    expect(s.getView().waitNotice).toBeUndefined();
+  });
+
+  it('start 進行中收到 true:waiting 與等候字樣;收到 false 收起;題目出來之後都沒有', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { s, f } = await ready({
+      start: [
+        async () => {
+          await gate;
+          return start();
+        },
+      ],
+      next: [fillQ()],
+    });
+    const pending = s.init();
+    await Promise.resolve();
+    f.emitWait(true);
+    expect(s.getView().waiting).toBe(true);
+    expect(s.getView().waitNotice).toBe(WAIT);
+    expect(s.getView().state).toBe('loading');
+    f.emitWait(false);
+    expect(s.getView().waiting).toBe(false);
+    expect(s.getView().waitNotice).toBeUndefined();
+    release?.();
+    await pending;
+    const v = s.getView();
+    expect(v.state).toBe('question');
+    expect(v.message === undefined || !v.message.includes('複習程式停了')).toBe(true);
+    expect(v.waiting, '動作結束之後不留著等候').toBe(false);
+    expect(v.waitNotice).toBeUndefined();
+  });
+
+  it('submit 進行中也有等候字樣(送出的按鈕要靠 waiting 停用)', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { s, f } = await ready({
+      start: [start()],
+      next: [fillQ()],
+      submit: [
+        async () => {
+          await gate;
+          return graded();
+        },
+      ],
+    });
+    await s.init();
+    const pending = s.submitFill(['a', 'b', 'c']);
+    await Promise.resolve();
+    f.emitWait(true);
+    expect(s.getView().waiting).toBe(true);
+    expect(s.getView().waitNotice).toBe(WAIT);
+    f.emitWait(false); // client 保證結束時通知 false
+    release?.();
+    await pending;
+    expect(s.getView().waiting).toBe(false);
+  });
+
+  it('start 被 client 放棄(timeout 且 unsent):「等候回覆的時間過了。」加「再試一次」,不是「複習程式停了」、不是「重新開始」', async () => {
+    const { s } = await ready({ start: [unsentTimeout()] });
+    await s.init();
+    const v = s.getView();
+    expect(v.state).toBe('error');
+    expect(v.message).toContain(GAVE_UP);
+    expect(v.message).not.toContain('複習程式停了');
+    expect(v.canRetry).toBe(true);
+    expect(v.canRestart).toBe(false);
+    expect(v.waiting).toBe(false);
+    expect(v.waitNotice).toBeUndefined();
+  });
+
+  it('按「再試一次」(= 再 init):重新 start,好了就出題', async () => {
+    const { s, f } = await ready({ start: [unsentTimeout(), start()], next: [fillQ()] });
+    await s.init();
+    expect(s.getView().canRetry).toBe(true);
+    await s.init();
+    expect(f.count('start')).toBe(2);
+    expect(s.getView().state).toBe('question');
+    expect(s.getView().canRetry).toBe(false);
+  });
+
+  it('next 與 submit 被放棄也一樣(同一句、同一個按鈕)', async () => {
+    const a = await ready({ start: [start()], next: [unsentTimeout()] });
+    await a.s.init();
+    expect(a.s.getView().state).toBe('error');
+    expect(a.s.getView().message).toContain(GAVE_UP);
+    expect(a.s.getView().canRetry).toBe(true);
+    expect(a.s.getView().canRestart).toBe(false);
+    const b = await ready({ start: [start()], next: [fillQ()], submit: [unsentTimeout()] });
+    await b.s.init();
+    await b.s.submitFill(['a', 'b', 'c']);
+    expect(b.s.getView().state).toBe('error');
+    expect(b.s.getView().message).toContain(GAVE_UP);
+    expect(b.s.getView().message).not.toContain('複習程式停了');
+    expect(b.s.getView().canRetry).toBe(true);
+    expect(b.s.getView().canRestart).toBe(false);
+    expect(b.s.getView().submitting).toBe(false);
+  });
+
+  it('Rust 自己的 timeout(unsent 為 false,請求進了側車)照舊:「複習程式停了。」加「重新開始」', async () => {
+    const { s } = await ready({ start: [start()], next: [fillQ()], submit: [new ReviewError('timeout', GAVE_UP)] });
+    await s.init();
+    await s.submitFill(['a', 'b', 'c']);
+    const v = s.getView();
+    expect(v.message).toContain('複習程式停了');
+    expect(v.canRestart).toBe(true);
+    expect(v.canRetry).toBe(false);
   });
 });

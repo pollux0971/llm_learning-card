@@ -190,8 +190,8 @@ struct Running {
 
 struct Inner {
     running: Option<Running>,
-    /// 上一個真正送出的請求識別碼。0 表示還沒送過。
-    last_id: u64,
+    /// 下一個要寫進側車的識別碼。從 1 起,只增不減;側車逾時、結束、重起都不歸零(ADR-078)。
+    next_wire_id: u64,
 }
 
 /// 側車行程的管理者(Tauri managed state)。第一次 `call` 才起行程;一次只有一個請求。
@@ -209,12 +209,12 @@ impl SidecarHost {
             timeouts,
             inner: Mutex::new(Inner {
                 running: None,
-                last_id: 0,
+                next_wire_id: 1,
             }),
         }
     }
 
-    /// 送一則請求、等識別碼相同的那一行回應,原樣回傳。Rust 自己的錯誤是 `Err`。
+    /// 送一則請求、等線上識別碼相同的那一行回應。回應的 `id` 換回 webview 原本的,其餘原樣。Rust 自己的錯誤是 `Err`。
     pub fn call(&self, request: &serde_json::Value) -> Result<serde_json::Value, ReviewError> {
         let mut guard = match self.inner.try_lock() {
             Ok(guard) => guard,
@@ -249,20 +249,27 @@ impl SidecarHost {
         guard: &mut Inner,
         request: &serde_json::Value,
     ) -> Result<serde_json::Value, ReviewError> {
-        let line = request_line(request).map_err(|_| review_err("bad-envelope"))?;
-        let id = request
+        // 信封沒過:不起側車、不用掉線上 id。
+        request_line(request).map_err(|_| review_err("bad-envelope"))?;
+        let webview_id = request
             .get("id")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| review_err("bad-envelope"))?;
-        if guard.last_id != 0 && id <= guard.last_id {
-            return Err(review_err("bad-envelope"));
-        }
         if guard.running.is_none() {
             match self.spawn() {
                 Ok(running) => guard.running = Some(running),
                 Err(err) => return Err(err),
             }
         }
+        let wire_id = guard.next_wire_id;
+        let mut rewritten = request.clone();
+        let Some(obj) = rewritten.as_object_mut() else {
+            return Err(review_err("bad-envelope"));
+        };
+        obj.insert("id".to_string(), serde_json::Value::from(wire_id));
+        let line = request_line(&rewritten).map_err(|_| review_err("bad-envelope"))?;
+        // 寫進側車失敗也算用掉,不回退。
+        guard.next_wire_id = guard.next_wire_id.saturating_add(1);
         let running = guard
             .running
             .as_mut()
@@ -276,7 +283,6 @@ impl SidecarHost {
             }
             return Err(review_err("sidecar-exited"));
         }
-        guard.last_id = id;
         let timeout = self.timeouts.request;
         loop {
             let running = guard
@@ -285,11 +291,14 @@ impl SidecarHost {
                 .ok_or_else(|| review_err("sidecar-exited"))?;
             match running.lines.recv_timeout(timeout) {
                 Ok(StdoutMsg::Line(text)) => {
-                    if let Ok(value) = parse_response_line(&text) {
-                        if value.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
+                    if let Ok(mut value) = parse_response_line(&text) {
+                        if value.get("id").and_then(serde_json::Value::as_u64) == Some(wire_id) {
+                            if let Some(resp) = value.as_object_mut() {
+                                resp.insert("id".to_string(), serde_json::Value::from(webview_id));
+                            }
                             return Ok(value);
                         }
-                        // 識別碼不同的舊回應丟掉,繼續等。
+                        // 識別碼不同的舊回應丟掉(比的是線上 id,不是 webview 的 id)。
                         continue;
                     }
                     eprintln!("[review-sidecar] dropped non-protocol line");

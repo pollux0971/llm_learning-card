@@ -17,6 +17,12 @@
     view = session.view();
   }
 
+  $effect(() => {
+    return deps.client.onWait(() => {
+      pull();
+    });
+  });
+
   function parsed(): { frontmatter: CardFrontmatter; html: string } | null {
     if (!view.cardText) return null;
     try {
@@ -71,7 +77,7 @@
     </div>
   {:else if view.state === 'card' && shown}
     <header class="markers">
-      <span class="category">{shown.frontmatter.category}</span>
+      <span class="category">{session.categoryNameOf(shown.frontmatter.category)}</span>
       <span class="source">{shown.frontmatter.source === 'raw' ? '原始' : '生成'}</span>
       <span class="level">Level {shown.frontmatter.level}</span>
       {#if shown.frontmatter.provisional}
@@ -80,7 +86,7 @@
     </header>
     {#if view.prereqs.length > 0}
       <p class="prereqs">
-        先備還沒學:
+        <span class="prereq-label">先備還沒學:</span>
         {#each view.prereqs as item, index (item.id)}
           <HudButton onclick={() => void act(() => session.followPrereq(index))} disabled={view.controlsDisabled}>
             {item.title}
@@ -120,15 +126,35 @@
     overflow-wrap: anywhere;
   }
   .controls,
-  .list,
   .prereqs {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 0.5rem;
     margin-top: 0.75rem;
   }
+  .list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  .list :global([data-hud='button']) {
+    width: fit-content;
+    max-width: 100%;
+  }
+  .list :global(.hud-button-label) {
+    justify-content: flex-start;
+    text-align: left;
+  }
   .prereqs {
     margin: 0.4rem 0 0;
+  }
+  .prereq-label {
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
   }
   .notice,
   .finished,

@@ -6,15 +6,14 @@
  * 要實作的匯出(跟 06 的 `apps/test-card/src/session.ts` 同一個做法:注入 client / fs,不碰真的 Tauri、不碰真的 localStorage):
  *
  *   LAST_CATEGORY_KEY = 'lc-teach-last-category'
- *   BUSY_RETRY_MS = 300,BUSY_NOTICE_AFTER_MS = 1000,REQUEST_TIMEOUT_MS = 180_000(要跟 Rust 的 REQUEST_TIMEOUT 一樣,見最後一組)
+ *   (T40/ADR-078:busy 重試與 180 秒上限搬到共用的 ReviewClient,這裡不再有 BUSY_RETRY_MS / BUSY_NOTICE_AFTER_MS / REQUEST_TIMEOUT_MS,
+ *    也不再有自己的 sleep / now。重試的測試在 apps/desktop/src/review-client-busy.test.ts。)
  *   BUSY_MESSAGE = '考試卡正在批改,稍等一下。',FINISHED_MESSAGE = '這個類別已經學完了。可以考慮補充更多素材。'
  *
  *   createTeachSession(deps: {
- *     client: Pick<ReviewClient, 'teachOpen' | 'teachNext' | 'teachSwitch' | 'teachPrereq'>;
+ *     client: Pick<ReviewClient, 'teachOpen' | 'teachNext' | 'teachSwitch' | 'teachPrereq' | 'onWait'>;   // T40:多一個 onWait
  *     fs: Pick<LearningFs, 'read'>;
  *     storage: { getItem(key: string): string | null; setItem(key: string, value: string): void };
- *     sleep?: (ms: number) => Promise<void>;   // 預設真的計時器
- *     now?: () => number;                      // 預設 Date.now
  *   }): TeachSession
  *
  *   TeachSession = {
@@ -26,6 +25,7 @@
  *     chooseCategory(id: string): Promise<void>;// 選目前的那列 = 取消(不呼叫側車、不標學過);選別的 = client.teachSwitch(id)
  *     followPrereq(index: number): Promise<void>;// client.teachPrereq(index)
  *     retry(): Promise<void>;                   // 出錯畫面的「再試一次」:重送上一個動作(同樣的參數)
+ *     categoryNameOf(id: string): string;       // T40 O3:側車回的類別清單裡 id 對應的名稱;查不到回 id 本身(標示列用)
  *   }
  *   TeachView = {
  *     state: 'loading' | 'card' | 'finished' | 'categories' | 'error';
@@ -41,10 +41,12 @@
  *     message: string | undefined;              // finished 時是 FINISHED_MESSAGE;error 時是固定字樣
  *     canRetry: boolean;                        // error 時 true
  *   }
- *   類別清單每一列的 label:「<名稱> · 剩 N 張」;剩 0 張寫「<名稱> · 學完了」;require_raw 的類別在名稱後面加「需要素材」;目前的類別加「(目前)」。
- *   側車回錯誤(ReviewError):不是 busy 就直接進 error,message 是 ReviewError 的 message(側車的固定句子)。
- *   busy:每 300 ms 重試同一個動作;超過 1 秒 waiting;一直 busy 到 180 秒(用注入的 now 量)就停止重試,
- *   進 error,message 是 `timeout` 的固定字樣(protocol 的 ERROR_MESSAGES.timeout),可以 retry。
+ *   類別清單每一列的 label(T40 O1):「<名稱> · 需要素材 · 剩 N 張」(有 require_raw);「<名稱> · 剩 N 張」(沒有);
+ *   剩 0 張把「剩 N 張」換成「學完了」;目前的類別在最後加「 (目前)」(空格加全形括號以外的半形括號,跟原本一樣)。
+ *   側車回錯誤(ReviewError):一律進 error,畫面的字是 `reviewErrorText(err)`(依 kind 查 ERROR_MESSAGES;不認得的 kind 是 internal 那一句),
+ *   **不用 err.message**,畫面永遠不出現英文的 kind。教學卡自己不重試(busy 由 client 處理);
+ *   client 放棄(`kind === 'timeout' && unsent === true`)的畫面是 timeout 的固定字樣加「再試一次」,按了重送同一個動作。
+ *   等候字樣:session 訂 client.onWait;收到 true → waiting / busyNotice(BUSY_MESSAGE)/ controlsDisabled 為 true,收到 false 收起。
  *
  * 模組還沒寫:用算出來的 file URL 動態 import,基底上是「功能還沒有」而紅,不是 tsc 錯。
  */
@@ -96,13 +98,11 @@ interface Session {
   chooseCategory(id: string): Promise<void>;
   followPrereq(index: number): Promise<void>;
   retry(): Promise<void>;
+  categoryNameOf(id: string): string;
 }
 interface SessionModule {
   createTeachSession(deps: Obj): Session;
   LAST_CATEGORY_KEY: string;
-  BUSY_RETRY_MS: number;
-  BUSY_NOTICE_AFTER_MS: number;
-  REQUEST_TIMEOUT_MS: number;
   BUSY_MESSAGE: string;
   FINISHED_MESSAGE: string;
 }
@@ -126,15 +126,16 @@ interface Call {
   method: string;
   args: unknown[];
 }
-type Step = ServerView | Error | (() => ServerView | Error);
+type Step = ServerView | Error | string | (() => ServerView | Error | Promise<ServerView | Error>);
 
 interface Rig {
   session: Session;
   calls: Call[];
   reads: string[];
   store: Map<string, string>;
-  sleeps: number[];
-  clock: { t: number };
+  /** client.onWait 收到的聽眾(session 訂閱後才有);emitWait 對所有現有的聽眾通知 */
+  waitListeners: ((waiting: boolean) => void)[];
+  emitWait(waiting: boolean): void;
   /** 之後的呼叫依序用這些結果;用完就一直用最後一個 */
   script(...steps: Step[]): void;
 }
@@ -145,8 +146,7 @@ async function rig(opts: { stored?: string; onCall?: (n: number, call: Call) => 
   const reads: string[] = [];
   const store = new Map<string, string>();
   if (opts.stored !== undefined) store.set('lc-teach-last-category', opts.stored);
-  const sleeps: number[] = [];
-  const clock = { t: 0 };
+  const waitListeners: ((waiting: boolean) => void)[] = [];
   let steps: Step[] = [server()];
   let n = 0;
   const run = (method: string) => async (...args: unknown[]): Promise<Obj> => {
@@ -158,12 +158,24 @@ async function rig(opts: { stored?: string; onCall?: (n: number, call: Call) => 
     n += 1;
     opts.onCall?.(n, call);
     const raw = steps.length > 1 ? steps.shift()! : steps[0]!;
-    const step = typeof raw === 'function' ? raw() : raw;
-    if (step instanceof Error) throw step;
+    const step = await (typeof raw === 'function' ? raw() : raw);
+    if (step instanceof Error || typeof step === 'string') throw step;
     return step as unknown as Obj;
   };
   const session = m.createTeachSession({
-    client: { teachOpen: run('teachOpen'), teachNext: run('teachNext'), teachSwitch: run('teachSwitch'), teachPrereq: run('teachPrereq') },
+    client: {
+      teachOpen: run('teachOpen'),
+      teachNext: run('teachNext'),
+      teachSwitch: run('teachSwitch'),
+      teachPrereq: run('teachPrereq'),
+      onWait: (listener: (waiting: boolean) => void) => {
+        waitListeners.push(listener);
+        return () => {
+          const at = waitListeners.indexOf(listener);
+          if (at >= 0) waitListeners.splice(at, 1);
+        };
+      },
+    },
     fs: {
       async read(path: string): Promise<string> {
         reads.push(path);
@@ -171,50 +183,37 @@ async function rig(opts: { stored?: string; onCall?: (n: number, call: Call) => 
       },
     },
     storage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) },
-    sleep: async (ms: number) => {
-      sleeps.push(ms);
-      clock.t += ms;
-      // 安全網:重試沒有上限的話,假時鐘會一路跑下去、把事件迴圈佔滿(測試逾時也救不了)。超過 1000 次就丟錯,讓它變成「紅」而不是「卡住」。
-      if (sleeps.length > 1000) throw new Error('重試超過 1000 次還沒停(沒有上限)');
-    },
-    now: () => clock.t,
   });
   return {
     session,
     calls,
     reads,
     store,
-    sleeps,
-    clock,
+    waitListeners,
+    emitWait: (waiting) => {
+      for (const listener of [...waitListeners]) listener(waiting);
+    },
     script: (...s) => {
       steps = s;
     },
   };
 }
 
-const busy = async (): Promise<Error> => new ((await clientMod()).ReviewError)('busy', '已經有一個請求正在處理。');
-
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe('常數與固定字樣', () => {
-  it('鍵名、重試間隔、等候提示的時間、字樣照 ADR-077', async () => {
+  it('鍵名、等候字樣、學完字樣照 ADR-077', async () => {
     const m = await mod();
     expect(m.LAST_CATEGORY_KEY).toBe('lc-teach-last-category');
-    expect(m.BUSY_RETRY_MS).toBe(300);
-    expect(m.BUSY_NOTICE_AFTER_MS).toBe(1000);
-    expect(m.REQUEST_TIMEOUT_MS).toBe(180_000);
     expect(m.BUSY_MESSAGE).toBe('考試卡正在批改,稍等一下。');
     expect(m.FINISHED_MESSAGE).toBe('這個類別已經學完了。可以考慮補充更多素材。');
   });
 
-  it('逾時上限跟 Rust 的 REQUEST_TIMEOUT 一樣(讀 review_sidecar.rs 的原始檔比對,不一樣就紅)', async () => {
-    const m = await mod();
-    const rust = readFileSync(join(ROOT, 'apps/desktop/src-tauri/src/review_sidecar.rs'), 'utf8');
-    const found = /pub const REQUEST_TIMEOUT: Duration = Duration::from_secs\((\d+)\)/.exec(rust);
-    expect(found, 'review_sidecar.rs 找不到 REQUEST_TIMEOUT').not.toBeNull();
-    expect(m.REQUEST_TIMEOUT_MS).toBe(Number(found![1]) * 1000);
+  it('只有一條重試路徑(T40 must_catch):teach-session 不再匯出自己的重試常數', async () => {
+    const m = (await mod()) as unknown as Record<string, unknown>;
+    for (const name of ['BUSY_RETRY_MS', 'BUSY_NOTICE_AFTER_MS', 'REQUEST_TIMEOUT_MS']) expect(m[name], name).toBeUndefined();
   });
 
   it('逾時畫面的字樣就是 protocol 的 timeout 固定句子', async () => {
@@ -302,18 +301,29 @@ describe('next / 換類別 / 先備', () => {
     const [sec, lang, net] = v.categories as [View['categories'][number], View['categories'][number], View['categories'][number]];
     expect(sec.current).toBe(true);
     expect(lang.current).toBe(false);
-    expect(sec.label).toContain('資安');
-    expect(sec.label).toContain('剩 3 張');
-    expect(sec.label).toContain('需要素材');
-    expect(sec.label.indexOf('資安')).toBeLessThan(sec.label.indexOf('需要素材'));
-    expect(sec.label).toContain('(目前)');
-    expect(lang.label).toContain('語言');
-    expect(lang.label).toContain('剩 4 張');
-    expect(lang.label).not.toContain('需要素材');
-    expect(lang.label).not.toContain('(目前)');
-    expect(net.label).toContain('網路');
-    expect(net.label).toContain('學完了');
-    expect(net.label).not.toContain('剩');
+    // T40 O1:名稱 · 需要素材 · 剩 N 張,目前的最後加 (目前)
+    expect(sec.label).toBe('資安 · 需要素材 · 剩 3 張 (目前)');
+    expect(lang.label).toBe('語言 · 剩 4 張');
+    expect(net.label).toBe('網路 · 學完了');
+  });
+
+  it('O1:需要素材的類別學完了是「名稱 · 需要素材 · 學完了」;(目前) 永遠在最後', async () => {
+    const r = await rig();
+    r.script(server({ categories: [{ id: 'security', name: '資安', remaining: 0, requireRaw: true }, ...ROWS.slice(1)], card: null }));
+    await r.session.open();
+    r.session.openCategories();
+    const [sec] = r.session.view().categories;
+    expect(sec!.label).toBe('資安 · 需要素材 · 學完了 (目前)');
+    expect(sec!.label.endsWith(' (目前)')).toBe(true);
+  });
+
+  it('O3:categoryNameOf 用側車回的類別清單查名稱;查不到就回 id 本身', async () => {
+    const r = await rig();
+    await r.session.open();
+    expect(r.session.categoryNameOf('security')).toBe('資安');
+    expect(r.session.categoryNameOf('language')).toBe('語言');
+    expect(r.session.categoryNameOf('network')).toBe('網路');
+    expect(r.session.categoryNameOf('gone-category')).toBe('gone-category');
   });
 
   it('選目前的那一列 = 取消:回到卡片,不呼叫側車、不改記住的類別', async () => {
@@ -364,83 +374,72 @@ describe('next / 換類別 / 先備', () => {
   });
 });
 
-describe('側車忙(busy):每 300 ms 重試,超過 1 秒顯示等候字樣、按鈕停用(D5)', () => {
-  it('忙了幾次又好了:每次睡 300 ms;1 秒之前沒有等候字樣;超過 1 秒有;好了之後都收起來,顯示新的卡', async () => {
-    const snapshots: { t: number; waiting: boolean; notice: string | undefined; disabled: boolean }[] = [];
-    let ref: Rig | undefined;
-    const r = await rig({
-      onCall: (n) => {
-        const v = ref!.session.view();
-        snapshots.push({ t: ref!.clock.t, waiting: v.waiting, notice: v.busyNotice, disabled: v.controlsDisabled });
-        void n;
-      },
-    });
-    ref = r;
-    const err = await busy();
-    r.script(server(), err, err, err, err, err, server({ card: CARD3 }));
-    await r.session.open();
-    await r.session.next();
-    expect(r.sleeps).toEqual([300, 300, 300, 300, 300]);
-    // snapshots[0] 是 open;[1] 是 next 的第一次(t=0);[2..6] 是重試(t=300..1500)
-    const retries = snapshots.slice(2);
-    expect(retries.map((s) => s.t)).toEqual([300, 600, 900, 1200, 1500]);
-    expect(retries.filter((s) => s.t <= 900).every((s) => !s.waiting && s.notice === undefined)).toBe(true);
-    expect(retries.filter((s) => s.t >= 1200).every((s) => s.waiting && s.notice === '考試卡正在批改,稍等一下。')).toBe(true);
-    expect(retries.every((s) => s.disabled)).toBe(true);
-    const done = r.session.view();
-    expect(done.state).toBe('card');
-    expect(done.waiting).toBe(false);
-    expect(done.busyNotice).toBeUndefined();
-    expect(done.controlsDisabled).toBe(false);
-    expect(done.card).toEqual(CARD3);
-    expect(r.calls.filter((c) => c.method === 'teachNext')).toHaveLength(6);
-  });
-
-  it('open 與 switch 遇到 busy 也一樣重試', async () => {
+describe('等候字樣由 client.onWait 驅動(T40;重試本身在 ReviewClient)', () => {
+  it('session 訂閱 client.onWait:建好之後有且只有一個聽眾', async () => {
     const r = await rig();
-    const err = await busy();
-    r.script(err, err, server());
-    await r.session.open();
-    expect(r.calls.map((c) => c.method)).toEqual(['teachOpen', 'teachOpen', 'teachOpen']);
-    expect(r.session.view().state).toBe('card');
-    r.script(err, server({ category: 'language', card: null }));
-    await r.session.chooseCategory('language');
-    expect(r.calls.slice(3).map((c) => c.method)).toEqual(['teachSwitch', 'teachSwitch']);
-    expect(r.calls.at(-1)?.args).toEqual(['language']);
+    expect(r.waitListeners).toHaveLength(1);
   });
 
-  it('一直 busy:到 180 秒(注入的時鐘)就停止重試,出錯畫面是 timeout 的固定字樣加「再試一次」', async () => {
+  it('動作進行中收到 true:waiting、等候字樣、按鈕停用;收到 false 收起;動作結束後都回復', async () => {
+    let release: (() => void) | undefined;
     const r = await rig();
     r.script(server());
     await r.session.open();
-    const err = await busy();
-    r.script(err);
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    r.script(async () => {
+      await gate;
+      return server({ card: CARD3 });
+    });
+    const pending = r.session.next();
+    await Promise.resolve();
+    r.emitWait(true);
+    let v = r.session.view();
+    expect(v.waiting).toBe(true);
+    expect(v.busyNotice).toBe('考試卡正在批改,稍等一下。');
+    expect(v.controlsDisabled).toBe(true);
+    r.emitWait(false);
+    v = r.session.view();
+    expect(v.waiting).toBe(false);
+    expect(v.busyNotice).toBeUndefined();
+    r.emitWait(true);
+    release!();
+    await pending;
+    v = r.session.view();
+    expect(v.state).toBe('card');
+    expect(v.card).toEqual(CARD3);
+    expect(v.waiting, '動作結束之後不留著等候字樣').toBe(false);
+    expect(v.busyNotice).toBeUndefined();
+    expect(v.controlsDisabled).toBe(false);
+  });
+
+  it('只有一層重試:client 若把 busy 丟上來,session 不自己重送(一次呼叫、進 error、字樣是 busy 的固定句子)', async () => {
+    const { ReviewError } = await clientMod();
+    const r = await rig();
+    await r.session.open();
     const before = r.calls.length;
+    r.script(new ReviewError('busy', '已經有一個請求正在處理。'));
     await r.session.next();
-    const sent = r.calls.length - before;
-    expect(sent, '300 ms 一次、180 秒:約 600 次').toBeGreaterThanOrEqual(600);
-    expect(sent).toBeLessThanOrEqual(602);
-    expect(r.sleeps.every((ms) => ms === 300)).toBe(true);
-    expect(r.clock.t).toBeGreaterThanOrEqual(180_000);
-    expect(r.clock.t).toBeLessThanOrEqual(181_000);
+    expect(r.calls.length - before, 'teachNext 剛好一次').toBe(1);
+    expect(r.session.view().state).toBe('error');
+    expect(r.session.view().message).toBe('已經有一個請求正在處理。');
+  });
+
+  it('client 放棄(timeout 且 unsent):出錯畫面是 timeout 的固定字樣加「再試一次」;按了重送同一個動作,好了回到卡片', async () => {
+    const { ReviewError } = await clientMod();
+    const r = await rig();
+    r.script(server());
+    await r.session.open();
+    const err = new (ReviewError as unknown as new (kind: string, message: string, unsent?: boolean) => Error)('timeout', '等候回覆的時間過了。', true);
+    r.script(err);
+    await r.session.next();
     const v = r.session.view();
     expect(v.state).toBe('error');
     expect(v.message).toBe('等候回覆的時間過了。');
     expect(v.canRetry).toBe(true);
     expect(v.waiting).toBe(false);
     expect(v.controlsDisabled).toBe(false);
-    const after = r.calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(r.calls.length, '停止之後不再送').toBe(after);
-  });
-
-  it('逾時之後按「再試一次」:重送同一個動作(teachNext),好了就回到卡片', async () => {
-    const r = await rig();
-    r.script(server());
-    await r.session.open();
-    r.script(await busy());
-    await r.session.next();
-    expect(r.session.view().state).toBe('error');
     r.script(server({ card: CARD3 }));
     await r.session.retry();
     expect(r.calls.at(-1)).toEqual({ method: 'teachNext', args: [] });
@@ -451,6 +450,31 @@ describe('側車忙(busy):每 300 ms 重試,超過 1 秒顯示等候字樣、按
 });
 
 describe('其他錯誤:固定字樣、可以重試、不卡住', () => {
+  it('T40 F3:Rust 的拒絕沒有 message(client 把 kind 當 message 的舊行為):畫面是 ERROR_MESSAGES 的句子,不是英文 kind', async () => {
+    const { ReviewError } = await clientMod();
+    const r = await rig();
+    await r.session.open();
+    r.script(new ReviewError('bad-envelope', 'bad-envelope'));
+    await r.session.next();
+    const v = r.session.view();
+    expect(v.state).toBe('error');
+    expect(v.message).toBe('請求的信封不合規定。');
+    expect(v.message).not.toMatch(/^[a-z-]+$/);
+  });
+
+  it('T40 F3:不認得的 kind、一般 Error、非 Error:一律是 internal 那一句,原文不露出', async () => {
+    const { ReviewError } = await clientMod();
+    for (const err of [new ReviewError('totally-new-kind', 'RAW-INTERNAL /home/x/secret'), new Error('RAW-STACK'), 'just a string']) {
+      const r = await rig();
+      await r.session.open();
+      r.script(err);
+      await r.session.next();
+      const v = r.session.view();
+      expect(v.state, String(err)).toBe('error');
+      expect(v.message, String(err)).toBe('內部發生問題,請稍後再試。');
+    }
+  });
+
   it('next 遇到 teach-record-changed:出錯畫面顯示側車的固定句子;再試一次重送 teachNext', async () => {
     const { ReviewError } = await clientMod();
     const r = await rig();
@@ -462,7 +486,7 @@ describe('其他錯誤:固定字樣、可以重試、不卡住', () => {
     expect(v.state).toBe('error');
     expect(v.message).toBe(text);
     expect(v.canRetry).toBe(true);
-    expect(r.sleeps, '不是 busy:不睡、不自己重試').toEqual([]);
+    expect(r.calls.filter((c) => c.method === 'teachNext'), '不自己重試').toHaveLength(1);
     r.script(server({ card: CARD3 }));
     await r.session.retry();
     expect(r.calls.filter((c) => c.method === 'teachNext')).toHaveLength(2);
@@ -515,5 +539,40 @@ describe('其他錯誤:固定字樣、可以重試、不卡住', () => {
     r.script(new ReviewError('internal', '內部發生問題,請稍後再試。'));
     await r.session.chooseCategory('language');
     expect(r.store.get('lc-teach-last-category')).toBe('security');
+  });
+});
+
+describe('補測2·G2 按鈕停用:等候通知結束不等於請求結束', () => {
+  it('請求還沒回來時 onWait(false):按鈕仍停用;請求完成後才放開', async () => {
+    let release: (() => void) | undefined;
+    const r = await rig();
+    r.script(server());
+    await r.session.open();
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    r.script(async () => {
+      await gate;
+      return server({ card: CARD3 });
+    });
+    const pending = r.session.next();
+    await Promise.resolve();
+    expect(r.session.view().controlsDisabled, '請求中').toBe(true);
+    r.emitWait(true);
+    r.emitWait(false);
+    const v = r.session.view();
+    expect(v.waiting).toBe(false);
+    expect(v.busyNotice).toBeUndefined();
+    expect(v.controlsDisabled, '等候字樣收起了,請求還在跑:按鈕仍停用').toBe(true);
+    release!();
+    await pending;
+    expect(r.session.view().controlsDisabled, '請求完成才放開').toBe(false);
+  });
+
+  it('請求不在跑時收到 onWait(false):按鈕不是停用', async () => {
+    const r = await rig();
+    await r.session.open();
+    r.emitWait(false);
+    expect(r.session.view().controlsDisabled).toBe(false);
   });
 });
