@@ -1,0 +1,15 @@
+{
+  "score": 76.7,
+  "killed": 156,
+  "timeout": 2,
+  "survived": 48,
+  "noCoverage": 0,
+  "ignored": 0,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.t40-client.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.t40-client.json",
+  "commit": "ef6d318"
+}
