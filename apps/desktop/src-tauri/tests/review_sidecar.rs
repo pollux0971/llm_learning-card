@@ -274,6 +274,7 @@ const HELLO: &str = r#"{"v":1,"kind":"hello","fakeCloud":false,"today":"2026-09-
 /// 假側車。MODE:
 ///   echo           每則請求回 RESP(__ID__ 換成請求的 id)
 ///   stale          先回一個 id 999 的舊回應,再回對的
+///   stale2         先印 STALE(環境變數給的一整行舊回應,id 由測試決定),再回對的(T40:舊回應的 id 剛好等於 webview 的 id)
 ///   noise          先印兩行非協定行(一行文字、一個 JSON 陣列),再回對的
 ///   big            回一行 300000 個字元(超過上限)
 ///   silent         收到請求不回(sleep 30)
@@ -293,6 +294,7 @@ while IFS= read -r line; do
   case "$MODE" in
     echo) printf '%s\n' "$resp" ;;
     stale) printf '%s\n' "$(printf '%s' "$RESP" | sed 's/__ID__/999/')"; printf '%s\n' "$resp" ;;
+    stale2) printf '%s\n' "$STALE"; printf '%s\n' "$resp" ;;
     noise) printf '%s\n' 'hello world not json'; printf '%s\n' '[1,2,3]'; printf '%s\n' "$resp" ;;
     big) head -c 300000 /dev/zero | tr '\0' 'a'; printf '\n' ;;
     silent) sleep 30 ;;
@@ -365,6 +367,11 @@ fn req(id: u64) -> Value {
     json!({"v": 1, "id": id, "method": "status", "params": {}})
 }
 
+/// received.log 每一行的 id(側車那一側看到的線上 id)
+fn wire_ids(fx: &Fixture) -> Vec<u64> {
+    fx.log_lines().iter().map(|l| serde_json::from_str::<Value>(l).expect("log 的每一行是 JSON")["id"].as_u64().expect("id 是正整數")).collect()
+}
+
 fn kind(e: ReviewError) -> String {
     e.kind
 }
@@ -406,7 +413,9 @@ fn the_request_is_written_as_request_line_says_and_the_response_comes_back_untou
     assert_eq!(got["result"]["text"], json!("中文 😀"));
     let sent = fx.log_lines();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0], request_line(&request).unwrap(), "寫進側車的就是 request_line 的輸出");
+    // T40/ADR-078:寫進側車的是「換過線上 id」的請求(第一個請求的線上 id 是 1),其餘欄位原樣;回應的 id 換回 webview 的 7
+    let on_the_wire = json!({"v": 1, "id": 1, "method": "submit", "params": {"fill": ["a,b", "c"]}});
+    assert_eq!(sent[0], request_line(&on_the_wire).unwrap(), "寫進側車的就是 request_line 對(換了線上 id 的)請求的輸出");
     host.shutdown();
 }
 
@@ -465,17 +474,155 @@ fn an_invalid_envelope_is_refused_before_anything_starts() {
     assert!(fx.log_lines().is_empty());
 }
 
+// ───────────────────────────── T40/ADR-078:id 由 Rust 編(線上 id 只增不減;webview 的 id 原樣換回去)
+//
+// 舊規則(「id 沒有比上一個大就 bad-envelope」)把兩個視窗共用側車時各自從 1 數的 client 擋掉了(T37 @manual 的 F2、F3)。
+// 舊測試 request_ids_must_increase_and_a_refused_one_is_not_sent 把那條規則釘住,這裡換成下面這幾條:
+//   - 兩個 client 交錯、各自從 1 數:全部成功,線上 id 一路變大,回應的 id 是 webview 送的那個;
+//   - 同一個 client 從 1 重新數(視窗重新載入)成功;
+//   - 線上 id 跨側車重起不歸零;信封檢查沒過的請求不用掉線上 id;
+//   - 舊回應(id 跟線上 id 不同)丟掉 —— 就算它的 id 等於 webview 的 id。
+
 #[test]
-fn request_ids_must_increase_and_a_refused_one_is_not_sent() {
-    let fx = Fixture::new("ids");
+fn two_clients_that_both_count_from_one_can_interleave_and_the_wire_ids_keep_growing() {
+    let fx = Fixture::new("interleave");
+    let host = host_with(fx.spec("echo", OK_RESP), timeouts(3000, 5000, 1000));
+    // 考試卡與教學卡各自從 1 數:1、1、2、2、3
+    for webview_id in [1u64, 1, 2, 2, 3] {
+        let got = host.call(&req(webview_id)).unwrap_or_else(|e| panic!("webview id {webview_id} 不該被拒絕:{e:?}"));
+        assert_eq!(got["id"], json!(webview_id), "回應的 id 要換回 webview 送的那個");
+        assert_eq!(got["ok"], json!(true));
+    }
+    assert_eq!(wire_ids(&fx), [1, 2, 3, 4, 5], "側車收到的 id:從 1 起、一個都不重複、一直變大");
+    host.shutdown();
+}
+
+#[test]
+fn a_client_that_starts_counting_from_one_again_after_larger_ids_still_succeeds() {
+    let fx = Fixture::new("renumber");
     let host = host_with(fx.spec("echo", OK_RESP), timeouts(3000, 5000, 1000));
     host.call(&req(5)).unwrap();
-    assert_eq!(kind(host.call(&req(5)).unwrap_err()), "bad-envelope", "重複的 id");
-    assert_eq!(kind(host.call(&req(3)).unwrap_err()), "bad-envelope", "變小的 id");
-    assert_eq!(fx.log_lines().len(), 1, "被拒絕的沒有送進側車");
     host.call(&req(6)).unwrap();
-    assert_eq!(fx.log_lines().len(), 2);
+    let again = host.call(&req(1)).expect("視窗重新載入、從 1 重新數:不能被拒絕");
+    assert_eq!(again["id"], json!(1));
+    assert_eq!(wire_ids(&fx), [1, 2, 3], "線上 id 照樣變大(不是跟著 webview id 走)");
     host.shutdown();
+}
+
+#[test]
+fn the_same_webview_id_twice_in_a_row_is_fine_each_gets_its_own_wire_id() {
+    let fx = Fixture::new("dup-webview");
+    let host = host_with(fx.spec("echo", OK_RESP), timeouts(3000, 5000, 1000));
+    host.call(&req(7)).unwrap();
+    host.call(&req(7)).unwrap();
+    assert_eq!(wire_ids(&fx), [1, 2]);
+    host.shutdown();
+}
+
+#[test]
+fn the_response_id_is_the_one_the_webview_sent_larger_and_smaller_than_the_wire_id() {
+    let fx = Fixture::new("restore");
+    let host = host_with(fx.spec("echo", OK_RESP), timeouts(3000, 5000, 1000));
+    let big = 9_007_199_254_740_991u64; // 2^53 - 1:JavaScript 能精確表示的最大整數
+    let a = host.call(&req(big)).unwrap();
+    assert_eq!(a["id"], json!(big), "webview id 比線上 id 大:要換回原值");
+    let b = host.call(&req(1)).unwrap();
+    assert_eq!(b["id"], json!(1), "webview id 比線上 id(現在是 2)小:要換回原值");
+    let c = host.call(&req(2)).unwrap();
+    assert_eq!(c["id"], json!(2), "webview id 跟線上 id(3)不同:換回原值");
+    assert_eq!(wire_ids(&fx), [1, 2, 3]);
+    // 其餘欄位原樣
+    assert_eq!(a["ok"], json!(true));
+    assert_eq!(a["result"], json!({"echoed": true}));
+    host.shutdown();
+}
+
+#[test]
+fn a_business_error_response_also_gets_the_webview_id_back() {
+    let fx = Fixture::new("restore-biz");
+    let resp = r#"{"v":1,"id":__ID__,"ok":false,"error":{"kind":"no-session","message":"x"}}"#;
+    let host = host_with(fx.spec("echo", resp), timeouts(3000, 5000, 1000));
+    host.call(&req(10)).unwrap();
+    let got = host.call(&req(3)).unwrap();
+    assert_eq!(got["id"], json!(3));
+    assert_eq!(got["error"]["kind"], json!("no-session"));
+    host.shutdown();
+}
+
+#[test]
+fn the_wire_id_does_not_reset_when_the_sidecar_is_restarted_after_a_timeout() {
+    let fx = Fixture::new("restart-timeout");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&calls);
+    let (silent, echo) = (fx.spec("silent", OK_RESP), fx.spec("echo", OK_RESP));
+    let host = SidecarHost::new(
+        Box::new(move || Ok(if counter.fetch_add(1, Ordering::SeqCst) == 0 { silent.clone() } else { echo.clone() })),
+        timeouts(3000, 500, 1000),
+    );
+    assert_eq!(kind(host.call(&req(1)).unwrap_err()), "timeout");
+    let got = host.call(&req(1)).expect("下一個請求重起側車,webview 的 id 一樣是 1 也可以");
+    assert_eq!(got["id"], json!(1));
+    assert_eq!(wire_ids(&fx), [1, 2], "新側車收到的線上 id 接著數(2),不是歸 1;log 檔兩個側車共用");
+    host.shutdown();
+}
+
+#[test]
+fn the_wire_id_does_not_reset_when_the_sidecar_exited() {
+    let fx = Fixture::new("restart-exit");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&calls);
+    let (dying, echo) = (fx.spec("exit", OK_RESP), fx.spec("echo", OK_RESP));
+    let host = SidecarHost::new(
+        Box::new(move || Ok(if counter.fetch_add(1, Ordering::SeqCst) == 0 { dying.clone() } else { echo.clone() })),
+        timeouts(3000, 5000, 1000),
+    );
+    assert_eq!(kind(host.call(&req(4)).unwrap_err()), "sidecar-exited");
+    host.call(&req(2)).unwrap();
+    host.call(&req(3)).unwrap();
+    assert_eq!(wire_ids(&fx), [1, 2, 3]);
+    host.shutdown();
+}
+
+#[test]
+fn a_request_refused_by_the_envelope_check_does_not_use_up_a_wire_id() {
+    let fx = Fixture::new("refused-no-id");
+    let host = host_with(fx.spec("echo", OK_RESP), timeouts(3000, 5000, 1000));
+    assert_eq!(kind(host.call(&json!({"v": 1, "id": 0, "method": "status", "params": {}})).unwrap_err()), "bad-envelope");
+    host.call(&req(8)).unwrap();
+    assert_eq!(wire_ids(&fx), [1], "被信封檢查擋下的請求沒有送進側車,也沒有用掉線上 id");
+    host.shutdown();
+}
+
+#[test]
+fn a_stale_response_is_matched_on_the_wire_id_even_when_it_carries_the_webview_id() {
+    let fx = Fixture::new("stale-webview-id");
+    let mut spec = fx.spec("stale2", OK_RESP);
+    // 舊回應的 id 是 999,內容和對的那個不同;webview 送的 id 剛好也是 999(線上 id 是 1)
+    spec.env.push(("STALE".to_string(), r#"{"v":1,"id":999,"ok":true,"result":{"stale":true}}"#.to_string()));
+    let host = host_with(spec, timeouts(3000, 5000, 1000));
+    let got = host.call(&req(999)).unwrap();
+    assert_eq!(got["id"], json!(999));
+    assert_eq!(got["result"], json!({"echoed": true}), "id 跟 webview id 一樣的舊回應不是答案(比對的是線上 id)");
+    host.shutdown();
+}
+
+#[test]
+fn the_envelope_check_still_requires_a_positive_integer_id_and_refuses_before_anything_starts() {
+    let fx = Fixture::new("badenv-ids");
+    let host = host_with(fx.spec("echo", OK_RESP), timeouts(3000, 5000, 1000));
+    for bad in [
+        json!({"v": 1, "id": 0, "method": "status", "params": {}}),
+        json!({"v": 1, "id": -1, "method": "status", "params": {}}),
+        json!({"v": 1, "id": 1.5, "method": "status", "params": {}}),
+        json!({"v": 1, "id": "7", "method": "status", "params": {}}),
+        json!({"v": 1, "id": null, "method": "status", "params": {}}),
+        json!({"v": 1, "id": true, "method": "status", "params": {}}),
+        json!({"v": 1, "method": "status", "params": {}}),
+    ] {
+        assert_eq!(kind(host.call(&bad).unwrap_err()), "bad-envelope", "{bad}");
+    }
+    assert_eq!(host.child_pid(), None, "信封不合就不該起側車");
+    assert!(fx.log_lines().is_empty());
 }
 
 #[test]

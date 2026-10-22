@@ -8,7 +8,7 @@
  *   teachNext()                    → method 'teach.next',params `{}`
  *   teachSwitch(category: string)  → method 'teach.switch',params `{ category }`
  *   teachPrereq(index: number)     → method 'teach.prereq',params `{ index }`
- * 其餘(回應驗證、busy / timeout 等 kind 原樣變成 ReviewError.kind)跟既有動作一樣。
+ * 其餘(回應驗證、timeout 等 kind 原樣變成 ReviewError.kind)跟既有動作一樣;busy 由 client 自己重試(T40,見 review-client-busy.test.ts)。
  *
  * 模組已經存在,四個方法還沒有:動態 import 後呼叫,基底上是「不是函式」而紅,不是 tsc 錯。
  */
@@ -30,7 +30,7 @@ interface Client {
   start(): Promise<Obj>;
 }
 interface ClientModule {
-  createReviewClient(opts?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>; handler?: (line: string) => Promise<string> }): Client;
+  createReviewClient(opts?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>; handler?: (line: string) => Promise<string>; sleep?: (ms: number) => Promise<void>; now?: () => number }): Client;
   ReviewError: new (...args: never[]) => Error & { kind: string };
 }
 async function mod(): Promise<ClientModule> {
@@ -102,17 +102,17 @@ describe('invoke 模式:四個教學卡動作', () => {
     expect((err as Error).message).toBe('學習紀錄剛被別的地方改過,這一張還沒記成學過。請再按一次。');
   });
 
-  it('Rust 的 busy 拒絕({ kind: "busy" })變成 kind 為 busy 的 ReviewError(視窗靠它重試)', async () => {
-    const { createReviewClient, ReviewError } = await mod();
-    invokeMock.mockRejectedValue({ kind: 'busy', message: '已經有一個請求正在處理。' });
-    const err = await createReviewClient()
-      .teachSwitch('language')
-      .then(
-        () => undefined,
-        (e: unknown) => e,
-      );
-    expect(err).toBeInstanceOf(ReviewError);
-    expect((err as { kind: string }).kind).toBe('busy');
+  it('Rust 的 busy 拒絕不再原樣丟給視窗(T40/ADR-078):client 自己重試,所以 busy 不會變成 ReviewError 到呼叫端', async () => {
+    const { createReviewClient } = await mod();
+    let n = 0;
+    invokeMock.mockImplementation(async (_cmd: string, args: { request: { id: number } }) => {
+      n += 1;
+      if (n === 1) throw { kind: 'busy', message: '已經有一個請求正在處理。' };
+      return okResponse(args.request.id, VIEW);
+    });
+    const client = createReviewClient({ sleep: async () => undefined });
+    await expect(client.teachSwitch('language')).resolves.toBeDefined();
+    expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 
   it('回應的 id 對不上:bad-response', async () => {
