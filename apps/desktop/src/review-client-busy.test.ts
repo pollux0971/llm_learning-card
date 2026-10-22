@@ -713,3 +713,71 @@ describe('補測2·回應驗證(attempt)與 ReviewError 小項', () => {
     expect(r.sleeps).toEqual([]);
   });
 });
+
+describe('補測2·G6b 取消「第一個」訂閱者(client 上只有這幾個,沒有別人排在前面)', () => {
+  async function bare() {
+    const m = await mod();
+    const clock = { t: 0 };
+    let n = 0;
+    const client = m.createReviewClient({
+      invoke: async (_c: string, args?: Record<string, unknown>) => {
+        const id = (args as { request: { id: number } }).request.id;
+        n += 1;
+        clock.t += 300;
+        if (n <= 5) throw { kind: 'busy' };
+        return { v: 1, id, ok: true, result: {} };
+      },
+      sleep: async (ms: number) => {
+        clock.t += ms;
+      },
+      now: () => clock.t,
+    });
+    return client;
+  }
+
+  it('取消第一個:它收不到、後面兩個照收', async () => {
+    const client = await bare();
+    const a: boolean[] = [];
+    const b: boolean[] = [];
+    const c: boolean[] = [];
+    const stopA = client.onWait((w) => a.push(w));
+    client.onWait((w) => b.push(w));
+    client.onWait((w) => c.push(w));
+    stopA();
+    await client.start();
+    expect(a).toEqual([]);
+    expect(b).toEqual([true, false]);
+    expect(c).toEqual([true, false]);
+  });
+
+  it('第一個的取消函式呼叫兩次:後面兩個仍都收到', async () => {
+    const client = await bare();
+    const a: boolean[] = [];
+    const b: boolean[] = [];
+    const c: boolean[] = [];
+    const stopA = client.onWait((w) => a.push(w));
+    client.onWait((w) => b.push(w));
+    client.onWait((w) => c.push(w));
+    stopA();
+    stopA();
+    await client.start();
+    expect(a).toEqual([]);
+    expect(b).toEqual([true, false]);
+    expect(c).toEqual([true, false]);
+  });
+});
+
+describe('補測2·程序內 handler 路徑的回應驗證', () => {
+  it('handler 回壞掉的一行:bad-response、固定句子;回好的一行:成功', async () => {
+    const m = await mod();
+    const p = await protocol();
+    const bad = m.createReviewClient({ handler: async () => 'garbage' });
+    const err = await caught(bad.status());
+    expect(err.kind).toBe('bad-response');
+    expect(err.message).toBe(p.ERROR_MESSAGES['bad-response']);
+    const good = m.createReviewClient({
+      handler: async (line: string) => JSON.stringify({ v: 1, id: (JSON.parse(line) as { id: number }).id, ok: true, result: { h: 1 } }),
+    });
+    await expect(good.status()).resolves.toEqual({ h: 1 });
+  });
+});
