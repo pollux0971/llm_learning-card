@@ -1,0 +1,67 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='{scripts/dag.test.ts,scripts/dag-check.test.ts}' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": [
+    "clear-text",
+    "progress-append-only",
+    "json"
+  ],
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "coverageAnalysis": "off",
+  "concurrency": 2,
+  "timeoutMS": 120000,
+  "mutate": [
+    "scripts/dag.ts:695-695",
+    "scripts/dag.ts:700-701",
+    "scripts/dag.ts:712-712",
+    "scripts/dag.ts:714-714",
+    "scripts/dag.ts:719-719",
+    "scripts/dag.ts:725-725",
+    "scripts/dag.ts:762-763",
+    "scripts/dag.ts:799-799",
+    "scripts/dag.ts:839-839",
+    "scripts/dag.ts:849-849",
+    "scripts/dag.ts:853-854",
+    "scripts/dag.ts:860-860",
+    "scripts/dag.ts:869-869",
+    "scripts/dag.ts:886-886",
+    "scripts/dag.ts:916-916",
+    "scripts/dag.ts:940-942",
+    "scripts/dag.ts:944-944",
+    "scripts/dag.ts:965-965",
+    "scripts/dag.ts:967-967",
+    "scripts/dag.ts:975-975",
+    "scripts/dag.ts:1003-1003",
+    "scripts/dag.ts:1006-1006",
+    "scripts/dag.ts:1030-1031",
+    "scripts/dag.ts:1035-1036",
+    "scripts/dag.ts:1065-1065",
+    "scripts/dag.ts:1068-1068",
+    "scripts/dag.ts:1084-1084",
+    "scripts/dag.ts:1089-1090",
+    "scripts/dag.ts:1134-1134",
+    "scripts/dag.ts:1136-1136",
+    "scripts/dag.ts:1147-1147",
+    "scripts/dag.ts:1154-1154",
+    "scripts/dag.ts:1177-1177",
+    "scripts/dag.ts:1184-1185",
+    "scripts/dag.ts:1196-1196",
+    "scripts/dag.ts:1223-1226"
+  ],
+  "thresholds": {
+    "high": 90,
+    "low": 80,
+    "break": 0
+  },
+  "ignorePatterns": [
+    "reports",
+    "dist",
+    "target",
+    "apps/desktop/src-tauri"
+  ]
+}

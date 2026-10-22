@@ -1,0 +1,15 @@
+{
+  "score": 73.87,
+  "killed": 294,
+  "timeout": 0,
+  "survived": 104,
+  "noCoverage": 0,
+  "ignored": 19,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.t39-dag-rerun.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.t39-dag-rerun.json",
+  "commit": "4baf683"
+}
