@@ -4,7 +4,7 @@ deps: []
 touches: [scripts/dag.ts, scripts/boundaries.owners.json, scripts/zero-input-roster.ts, standalone.json]
 cpu: heavy
 budget_usd: 5
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 工具寫入任何檔(輸出存檔、改 FEATURE.md / NEXT.md、建暫存檔在樹裡):「執行前後樹的每個位元組相同、沒有檔案增減」的場景必須紅

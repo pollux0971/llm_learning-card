@@ -4,7 +4,7 @@ deps: []
 touches: [apps/desktop/src-tauri/src/main.rs, apps/desktop/src-tauri/src/window_mode.rs, apps/desktop/src-tauri/src/window_mode.js, apps/desktop/src-tauri/src/wayland_note.js]
 cpu: heavy
 budget_usd: 3
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 側車在 submit 回應之後才寫 reviews.json(例如改成 summary 或結束時才寫):整合層「Answers are written immediately」必須紅(要在 submit 回應之後把側車行程 SIGKILL,磁碟上照樣有那一題)

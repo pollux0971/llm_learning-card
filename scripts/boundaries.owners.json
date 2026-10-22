@@ -237,6 +237,14 @@
       "13-work-dag"
     ],
     [
+      "scripts/dag-check.ts",
+      "13-work-dag"
+    ],
+    [
+      "scripts/dag-check.test.ts",
+      "13-work-dag"
+    ],
+    [
       "scripts/check-doc-rot.ts",
       "infra"
     ],
@@ -421,8 +429,92 @@
       "steps"
     ],
     [
+      "features/support/dag-p2-harness",
+      "13-work-dag"
+    ],
+    [
       "features/support/",
       "steps"
+    ],
+    [
+      "package.json",
+      "infra"
+    ],
+    [
+      "standalone.json",
+      "infra"
+    ],
+    [
+      "scripts/gates.config.json",
+      "infra"
+    ],
+    [
+      "scripts/boundaries.owners.json",
+      "infra"
+    ],
+    [
+      "scripts/boundaries.allow.json",
+      "infra"
+    ],
+    [
+      "docs/",
+      "docs"
+    ],
+    [
+      "features/01-data-layer/",
+      "01-data-layer"
+    ],
+    [
+      "features/02-ingest-pipeline/",
+      "02-ingest-pipeline"
+    ],
+    [
+      "features/03-llm-router/",
+      "03-llm-router"
+    ],
+    [
+      "features/04-scheduler/",
+      "04-scheduler"
+    ],
+    [
+      "features/05-grading/",
+      "05-grading"
+    ],
+    [
+      "features/06-test-card/",
+      "06-test-card"
+    ],
+    [
+      "features/07-teach-card/",
+      "07-teach-card"
+    ],
+    [
+      "features/08-weekly-goal/",
+      "08-weekly-goal"
+    ],
+    [
+      "features/09-lint/",
+      "09-lint"
+    ],
+    [
+      "features/10-desktop-shell/",
+      "10-desktop-shell"
+    ],
+    [
+      "features/11-review-cli/",
+      "11-review-cli"
+    ],
+    [
+      "features/12-prompt-quality/",
+      "12-prompt-quality"
+    ],
+    [
+      "features/13-work-dag/",
+      "13-work-dag"
+    ],
+    [
+      "features/14-hud-skin/",
+      "14-hud-skin"
     ]
   ],
   "glue": [

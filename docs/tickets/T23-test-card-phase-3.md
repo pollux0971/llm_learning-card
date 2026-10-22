@@ -4,7 +4,7 @@ deps: [T24]
 touches: [apps/test-card/src/App.svelte, apps/test-card/src/session.ts, apps/test-card/src/types.ts, packages/core/src/session/handler.ts, scripts/degraded-report.ts]
 cpu: heavy
 budget_usd: 5
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - start 的結果缺 overdue(或不是有限數字)時照常出題、沒走 bad-response 的「複習程式停了」:結果收窄的測試必須紅

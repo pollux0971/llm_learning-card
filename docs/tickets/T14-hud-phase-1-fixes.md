@@ -4,7 +4,7 @@ deps: []
 touches: [packages/ui-shared/src/hud/hud.css, packages/ui-shared/src/hud/HudPanel.svelte, packages/ui-shared/src/hud/HudButton.svelte, packages/ui-shared/src/hud/gallery/Gallery.svelte]
 cpu: light
 budget_usd: 3
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 黑線層又整片墊回面板底下(面板變成不透明的灰):「面板半透明」的像素檢查必須紅

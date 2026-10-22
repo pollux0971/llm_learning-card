@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/teach/, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, apps/desktop/src/webview/review-client.ts, apps/teach-card/src/, apps/teach-card/vite.config.ts, apps/teach-card/dev/, packages/core/src/session/teach.ts, packages/core/src/schema/graph.ts]
 cpu: heavy
 budget_usd: 6
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 按「下一個」只改記憶體、不寫 reviews.json:Switching 與 next 的「recorded as learned」必須紅(看磁碟,不看畫面)

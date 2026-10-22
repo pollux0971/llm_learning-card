@@ -1,10 +1,10 @@
 ---
-id: T2c-1
+id: T2c_1
 deps: [T2b, T7]
 touches: [apps/desktop/]
 cpu: heavy
 budget_usd: 20
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - command 繞過 guard:任一個 `#[tauri::command]`(read、write、list、exists)改成不經 check_rel_path 直接碰 fs,直接呼叫 command 的拒絕測試必須紅

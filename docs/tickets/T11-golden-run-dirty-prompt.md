@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/prompt-quality/golden-run.ts, packages/core/src/prompt-quality/cli.ts, packages/core/src/prompt-quality/types.ts]
 cpu: light
 budget_usd: 2
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - prompt 檔已追蹤、工作區有修改,meta 的 promptFileGitCommit 卻是乾淨的 sha

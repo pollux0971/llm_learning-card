@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/schema/, packages/core/src/ingest/state.ts, packages/core/src/lint/atomic-write.ts, packages/core/src/lint/index.ts, scripts/lint.ts, scripts/degraded-report.ts, scripts/boundaries.allow.json]
 cpu: light
 budget_usd: 4
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 拿掉 fsync(目錄):writeFileAtomic 不再對目標所在目錄 fsync,§11b 測試的「fsync(目錄) 在 rename 之後」必須紅

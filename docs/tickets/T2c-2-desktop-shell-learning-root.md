@@ -1,10 +1,10 @@
 ---
-id: T2c-2
-deps: [T5, T2c-1]
+id: T2c_2
+deps: [T5, T2c_1]
 touches: [apps/desktop/]
 cpu: heavy
 budget_usd: 12
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 根目錄有第二個來源:加回 LC_LEARNING_ROOT 環境變數的退路,「沒有指標檔、但有環境變數」的測試必須紅

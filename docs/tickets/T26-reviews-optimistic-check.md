@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/session/io.ts, packages/core/src/session/answer.ts, packages/core/src/session/build.ts, packages/core/src/session/types.ts, scripts/review.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 載入 `reviews.json` 之後、寫回之前,別的地方改過它(內容的雜湊變了),`submitAnswer` 仍然寫入並蓋掉別人的改動(現況)

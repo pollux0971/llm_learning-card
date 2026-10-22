@@ -4,7 +4,7 @@ deps: []
 touches: [apps/teach-card/src/App.svelte, apps/teach-card/src/main.ts, apps/test-card/src/App.svelte, apps/test-card/src/main.ts, packages/ui-shared/src/hud/HudField.svelte, packages/ui-shared/src/hud/HudPanel.svelte, packages/ui-shared/src/hud/hud.css, packages/ui-shared/src/hud/gallery/Gallery.svelte]
 cpu: light
 budget_usd: 5
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 教學卡的「下一個」改回原生 <button>:「教學卡用 HUD 元件」的靜態掃描必須紅

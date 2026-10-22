@@ -4,7 +4,7 @@ deps: [T22, T26]
 touches: [apps/test-card/src/App.svelte, apps/test-card/src/session.ts, apps/test-card/src/types.ts, apps/test-card/src/main.ts, apps/test-card/src/stubs/fixtures.ts, apps/test-card/src/stubs/grader.ts, apps/test-card/src/stubs/loader.ts, apps/test-card/src/stubs/memory-fs.ts, apps/test-card/src/stubs/scheduler.ts, apps/test-card/src/stubs/.gitkeep, apps/test-card/vite.config.ts, apps/test-card/package.json, apps/test-card/dev/standalone.ts, apps/test-card/dev/fake-cloud.mjs, apps/test-card/dev/reviews.seed.json, scripts/boundaries.allow.json, scripts/degraded-report.ts]
 cpu: heavy
 budget_usd: 5
-status: ready
+status: merged
 owner: worker-grok
 must_catch:
   - apps/test-card/src 底下還有 stubs/、或任何檔 import StubScheduler / StubGrader / MemoryFs / loader:「Wave 0 的重複已移除」的靜態檢查必須紅
