@@ -58,9 +58,9 @@
 | 673:7 | parseInlineList | ConditionalExpression | false | 等價 | 空或全空白的清單走原路也是 []:''.split(',') 得 [''],trim 與 filter 後是 [];提早回 [] 是重複 |
 | 673:7 | parseInlineList | MethodExpression | inner | 等價 | 空或全空白的清單走原路也是 []:''.split(',') 得 [''],trim 與 filter 後是 [];提早回 [] 是重複 |
 | 673:24 | parseInlineList | StringLiteral | "Stryker was here!" | 等價 | 空或全空白的清單走原路也是 []:''.split(',') 得 [''],trim 與 filter 後是 [];提早回 [] 是重複 |
-| 674:10 | parseInlineList | MethodExpression | inner.split(',').map(s => s.trim()) | 必補 | 補:「[a,,b]」「[ a , b ]」要得到 [a,b](去空白、濾空字串) |
-| 674:62 | parseInlineList | ConditionalExpression | true | 必補 | 補:「[a,,b]」「[ a , b ]」要得到 [a,b](去空白、濾空字串) |
-| 674:68 | parseInlineList | StringLiteral | "Stryker was here!" | 必補 | 補:「[a,,b]」「[ a , b ]」要得到 [a,b](去空白、濾空字串) |
+| 674:10 | parseInlineList | MethodExpression | inner.split(',').map(s => s.trim()) | 必補 | 補:「[a,,b]」「[ a , b ]」要得到清單 a 與 b(去空白、濾空字串) |
+| 674:62 | parseInlineList | ConditionalExpression | true | 必補 | 補:「[a,,b]」「[ a , b ]」要得到清單 a 與 b(去空白、濾空字串) |
+| 674:68 | parseInlineList | StringLiteral | "Stryker was here!" | 必補 | 補:「[a,,b]」「[ a , b ]」要得到清單 a 與 b(去空白、濾空字串) |
 | 677:52 | scalarUnsupported | BlockStatement | {} | 等價 | 純量欄位(id、cpu、status、owner、budget_usd)各有自己的值檢查,含引號、括號、¦、開頭 > 或空字串的值同樣一定被那些檢查判 invalid;scalarUnsupported 只是提早標記,issues 與 name 都不變 |
 | 678:10 | scalarUnsupported | ConditionalExpression | false | 等價 | 純量欄位(id、cpu、status、owner、budget_usd)各有自己的值檢查,含引號、括號、¦、開頭 > 或空字串的值同樣一定被那些檢查判 invalid;scalarUnsupported 只是提早標記,issues 與 name 都不變 |
 | 678:10 | scalarUnsupported | LogicalOperator | /['"{}\[\]¦]/.test(value) && value.startsWith('>') | 等價 | 純量欄位(id、cpu、status、owner、budget_usd)各有自己的值檢查,含引號、括號、¦、開頭 > 或空字串的值同樣一定被那些檢查判 invalid;scalarUnsupported 只是提早標記,issues 與 name 都不變 |
