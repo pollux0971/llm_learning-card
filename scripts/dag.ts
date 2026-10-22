@@ -759,7 +759,9 @@ function parseHeaderText(text: string, filename: string): {
   }
 
   const idRaw = scalars.get('id');
+  // Stryker disable next-line ConditionalExpression: idRaw!==undefined 改 true:id 缺漏時下一行 name 的條件仍會退回檔名,且缺漏已進 issues、回 node:null,idOk 別處沒用到
   const idOk = idRaw !== undefined && !bad.has('id') && TICKET_ID_RE.test(idRaw);
+  // Stryker disable next-line ConditionalExpression: idOk 為真蘊含 idRaw 已定義,第二項恆為真
   const name = idOk && idRaw !== undefined ? idRaw : filename;
   const issues: { field: string; kind: 'missing' | 'invalid' }[] = [];
   for (const field of HEADER_FIELDS) {
@@ -937,10 +939,14 @@ function phaseTables(input: TreeInput): Map<string, Map<number, string>> {
 function classifyDep(raw: string, ticketIds: Set<string>, tables: Map<string, Map<number, string>>): { node: string } | { unresolved: string } {
   if (/^I\d+$/.test(raw)) return { node: raw };
   if (ticketIds.has(raw)) return { node: raw };
+  // Stryker disable next-line ConditionalExpression: find 條件 r.kind===phase 改 true:下一行立刻再檢查 phase.kind===phase,非 phase 一樣落到 unresolved
   const phase = parseGateRefs(raw).find((r) => r.kind === 'phase' && r.raw === raw);
+  // Stryker disable next-line ConditionalExpression: find 已只回 kind 為 phase 的元素,phase.kind===phase 恆真
   if (phase && phase.kind === 'phase') {
+    // Stryker disable next-line ConditionalExpression: folder 為 null 時 lookupFolder 比對不到任何資料夾,同樣走 unresolved
     if (phase.folder === null) return { unresolved: raw };
     const folder = lookupFolder(phase.folder, [...tables.keys()]);
+    // Stryker disable next-line ConditionalExpression,OptionalChaining: folder!==null 改 true 時 tables.get(null) 為 undefined、條件仍假;folder 非 null 時必為 tables 的鍵,?. 防護走不到
     if (folder !== null && tables.get(folder)?.has(phase.num)) return { node: nodeName(folder, phase.num) };
     return { unresolved: raw };
   }
@@ -1033,6 +1039,7 @@ function compareRecord(a: string, b: string): number {
     const ia = HEADER_FIELDS.indexOf(pa[3] as (typeof HEADER_FIELDS)[number]);
     const ib = HEADER_FIELDS.indexOf(pb[3] as (typeof HEADER_FIELDS)[number]);
     if (ia !== ib) return ia - ib;
+    // Stryker disable next-line ConditionalExpression: 走到這裡名字與欄位相同:kind 相同時兩行逐字相同,kind 不同時結果與原版一致
     if (pa[2] !== pb[2]) return pa[2] === 'missing' ? -1 : 1;
   }
   return compareNatural(lineKey(a), lineKey(b));
@@ -1081,12 +1088,14 @@ function augment(input: TreeInput, phase: Analysis, tickets: Map<string, TicketN
     }
     for (const raw of ticket.unresolved) extra.push(`PROBLEM unresolved-ref ${ticket.id} ${raw}`);
     for (const dep of ticket.resolved) ticketEdges.push([dep, ticket.id]);
+    // Stryker disable next-line MethodExpression: 拿掉 filter(tickets.has) 多出的是 phase 或 I 閘門節點,沒有出邊,環不可能經過它們
     ticketNeeds.set(ticket.id, ticket.resolved.filter((d) => tickets.has(d)));
   }
 
   for (const text of findCycles(ticketNeeds)) extra.push(`PROBLEM cycle ${text}`);
   const cycleNodes = new Set<string>();
   for (const text of extra.filter((l) => l.startsWith('PROBLEM cycle '))) {
+    // Stryker disable next-line MethodExpression,StringLiteral: 拿掉 slice 或前綴長度變 0:第一段帶 PROBLEM cycle 前綴不是 id,但環起點在尾端重複,仍被收進 cycleNodes
     for (const part of text.slice('PROBLEM cycle '.length).split(' -> ')) cycleNodes.add(part);
   }
 
@@ -1131,6 +1140,7 @@ function augment(input: TreeInput, phase: Analysis, tickets: Map<string, TicketN
     const ticket = tickets.get(id)!;
     const against = [...occupying, ...selected];
     const r2 = against.filter((o) => overlapReasons(ticket, o).length > 0);
+    // Stryker disable next-line ConditionalExpression: against 只由 dispatched/review 與 selected 組成,括號內三個條件對每個元素恆真
     const r3 = ticket.cpu === 'heavy' ? against.filter((o) => o.cpu === 'heavy' && (o.status === 'dispatched' || o.status === 'review' || selected.includes(o))) : [];
     const r4full = dispatched.length + selected.length >= 3;
     const held = r2.length > 0 || r3.length > 0 || r4full;
@@ -1174,6 +1184,7 @@ function augment(input: TreeInput, phase: Analysis, tickets: Map<string, TicketN
   for (const kind of LINE_KINDS) {
     // Stryker disable next-line all: LINE_KINDS 的每個 kind 在 buckets 都有鍵,?? [] 走不到
     const items = buckets.get(kind) ?? [];
+    // Stryker disable next-line ConditionalExpression: kind===PROBLEM 改 true:compareRecord 對非 bad-header 行退回 compareNatural(lineKey),與原比較器相同
     items.sort(kind === 'PROBLEM' ? compareRecord : (a, b) => compareNatural(lineKey(a), lineKey(b)));
     lines.push(...items);
   }
@@ -1181,7 +1192,9 @@ function augment(input: TreeInput, phase: Analysis, tickets: Map<string, TicketN
   const edges: [string, string][] = [];
   for (const edge of [...phase.edges, ...ticketEdges]) {
     const key = `${edge[0]}\0${edge[1]}`;
+    // Stryker disable next-line ConditionalExpression: 邊在來源處已去重且 phase 邊與工單邊來源互不相交,重複從不發生
     if (edgeKeys.has(key)) continue;
+    // Stryker disable next-line CallExpression: 同上,edgeKeys.add 拿掉也沒有重複可擋
     edgeKeys.add(key);
     edges.push(edge);
   }
