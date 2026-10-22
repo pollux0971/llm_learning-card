@@ -4,7 +4,7 @@ deps: []
 touches: [scripts/review.ts, packages/core/src/session/build.ts, packages/core/src/session/cache.ts, packages/core/src/session/io.ts, packages/core/src/session/types.ts, packages/core/src/session/summary.ts, packages/core/src/session/index.ts, packages/core/src/session/present.ts]
 cpu: light
 budget_usd: 4
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 同一天再跑一次,題目集合被重建(當天新到期的卡混進來,或順序變了),而不是用第一次建好的那一份

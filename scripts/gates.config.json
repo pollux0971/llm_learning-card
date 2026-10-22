@@ -20,7 +20,8 @@
     "check:gates",
     "check:doc-rot",
     "check:next-gates",
-    "check:phase-status"
+    "check:phase-status",
+    "dag:check"
   ],
   "dryRun": {
     "tags": "@standalone and not @manual"

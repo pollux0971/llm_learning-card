@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/session/present.ts, packages/core/src/session/types.ts, packages/core/src/session/io.ts, scripts/review.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 連錯兩次的卡(`fails_in_row === 2`)沒有 `<id>.short.md` 時,`presentNextCard` 仍然丟「找不到卡片檔案」,終端機 review 整個停掉(現況)

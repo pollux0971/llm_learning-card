@@ -4,7 +4,7 @@ deps: []
 touches: [scripts/review.ts, scripts/grade.ts, packages/core/src/session/build.ts, packages/core/src/session/summary.ts, packages/core/src/grading/index.ts, packages/core/src/grading/fake-llm.ts, packages/contracts/src/witness.ts, scripts/degraded-report.ts, scripts/boundaries.allow.json, features/05-grading/FEATURE.md]
 cpu: light
 budget_usd: 4
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - buildTodaySession 沒給 router 時悄悄退回 fake(或 router 又變成選填、執行期不擋)

@@ -4,7 +4,7 @@ deps: [T8]
 touches: [packages/core/src/llm/spend.ts]
 cpu: light
 budget_usd: 3
-status: todo
+status: merged
 owner: worker-claude    # 預設值;使用者回答 grok 之前不派 grok(顧問 2026-10-15)
 must_catch:
   - 負的 tokens 抵掉花費:5 美元的帳本多一行 tokens_in 為負,算出來變少,而不是「不知道」

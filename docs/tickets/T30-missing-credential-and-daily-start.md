@@ -4,7 +4,7 @@ deps: [T23]
 touches: [scripts/_env.ts, scripts/review-sidecar.ts, scripts/review.ts, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, packages/core/src/llm/credentials.ts, packages/core/src/llm/router.ts, packages/core/src/llm/index.ts, apps/test-card/src/session.ts, apps/test-card/src/App.svelte, scripts/degraded-report.ts]
 cpu: heavy
 budget_usd: 5
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 側車 start 時批改路徑要的金鑰沒有設定,start 卻回 ready(或 internal、router-unavailable):金鑰檢查的測試必須紅

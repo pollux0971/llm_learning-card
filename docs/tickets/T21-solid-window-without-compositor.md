@@ -4,7 +4,7 @@ deps: []
 touches: [apps/desktop/src-tauri/tauri.conf.json, apps/desktop/src-tauri/src/main.rs, apps/desktop/src-tauri/src/window_mode.rs]
 cpu: heavy
 budget_usd: 2
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 沒有合成器時 surface_for 回 transparent true:「沒有合成器時視窗不透明」必須紅

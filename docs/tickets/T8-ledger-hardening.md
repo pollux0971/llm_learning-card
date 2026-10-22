@@ -4,7 +4,7 @@ deps: [T5]
 touches: [packages/core/src/llm/spend.ts, packages/core/src/llm/ledger.ts, packages/core/src/llm/router-gateway.ts, packages/core/src/prompt-quality/golden-run.ts, packages/core/src/schema/atomic-write.ts, packages/contracts/src/witness.ts, scripts/degraded-intended.json, scripts/llm-spend.ts, scripts/vault.ts, scripts/zero-input-roster.ts]
 cpu: light
 budget_usd: 4
-status: todo
+status: merged
 owner: worker-claude    # 預設值;使用者回答 grok 之前不派 grok(顧問 2026-10-15)
 must_catch:
   - 壞行被跳過而不是不知道:readDailySpend 遇到壞行仍回一個數字(低估花費)

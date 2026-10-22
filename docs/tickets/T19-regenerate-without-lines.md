@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/ingest/generate-cards.ts, packages/core/src/ingest/ingest.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - regenerate 回應只有 title 與 body(沒有 examples、沒有 lines)時,generateCards 丟「格式不正確」而不是接受(現況)

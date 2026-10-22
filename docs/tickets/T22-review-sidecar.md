@@ -4,7 +4,7 @@ deps: [T21, T26]
 touches: [packages/core/src/session/engine.ts, packages/core/src/session/protocol.ts, packages/core/src/session/handler.ts, packages/core/src/session/answer.ts, packages/core/src/session/index.ts, scripts/review.ts, scripts/review-sidecar.ts, scripts/review-sidecar-stdio.ts, scripts/boundaries.allow.json, scripts/boundaries.owners.json, apps/desktop/src-tauri/src/review_sidecar.rs, apps/desktop/src-tauri/src/commands.rs, apps/desktop/src-tauri/src/lib.rs, apps/desktop/src-tauri/src/main.rs, apps/desktop/src/webview/review-client.ts]
 cpu: heavy
 budget_usd: 5
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 側車收下 start、next、submit、summary、status 以外的 method(或 method 大小寫不同也照做):「未知 method 拒絕」必須紅

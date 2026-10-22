@@ -4,7 +4,7 @@ deps: [T0]
 touches: [packages/core/src/llm/, packages/core/src/prompt-quality/, scripts/llm.ts, scripts/llm-spend.ts, scripts/vault.ts, scripts/vault.test.ts, scripts/mutate.ts, scripts/run-tests.ts, scripts/check-ledger-pollution.ts]   # scripts/vault.ts 與 vault.test.ts 的落點(03-llm-router)已隨本批登記進 boundaries.owners.json
 cpu: light                             # 驗收階段跑變異是重活:協調者排驗收時照 R3 當 heavy 算(檔頭一個欄位表達不了「某階段才重」)
 budget_usd: 6
-status: todo
+status: merged
 owner: worker-grok                     # 預設值;這張牽涉錢,派工時協調者確認
 must_catch:
   - 拿掉身分比對(標記不符仍放行)

@@ -4,7 +4,7 @@ deps: []
 touches: [apps/desktop/src-tauri/tauri.conf.json, apps/desktop/src-tauri/capabilities/default.json, apps/desktop/src-tauri/src/main.rs, apps/desktop/src-tauri/src/lib.rs, apps/desktop/src-tauri/src/window_mode.rs, apps/desktop/src-tauri/src/window_mode.js, apps/desktop/src-tauri/Cargo.toml, apps/desktop/src-tauri/Cargo.lock, packages/ui-shared/src/hud/hud.css, packages/ui-shared/src/hud/HudTitleBar.svelte, packages/ui-shared/src/hud/gallery/Gallery.svelte]
 cpu: heavy
 budget_usd: 5
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 任一個視窗(teach 或 test)的 decorations 改回 true 或沒寫:「兩個視窗都沒有系統外框」必須紅

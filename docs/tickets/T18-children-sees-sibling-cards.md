@@ -4,7 +4,7 @@ deps: [T12]
 touches: [packages/core/src/ingest/children.ts, packages/core/src/ingest/siblings.ts, packages/core/src/ingest/index.ts, packages/core/prompts/ingest/children.md, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/parent-child-overlap.ts, packages/core/src/prompt-quality/cli.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/index.ts, packages/core/src/prompt-quality/golden-sets/generalization-slices.ts, scripts/boundaries.allow.json]
 cpu: light
 budget_usd: 1
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - children 的 prompt 沒有 already_covered 區塊(同分類有別的卡時),或區塊放在 body 之後、header 的 `---` 之外

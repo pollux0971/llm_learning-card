@@ -4,8 +4,8 @@ deps: []
 touches: [scripts/mutate.test.ts]
 cpu: light
 budget_usd: 1
-status: todo
-owner: -e5
+status: merged
+owner: 測試
 must_catch:
   - 「tryAcquire 不漏 fd」那條的斷言被放寬、刪掉或改成不量值的寫法(為了讓它不逾時):fd 數差必須仍然剛好是 0;丟棄式改壞(讓 `tryAcquire` 不關 fd)時,改成 20 次之後仍然紅
   - 為了過關把全域 `testTimeout` 調大,或把逾時加在跟真 I/O、真行程無關的測試上

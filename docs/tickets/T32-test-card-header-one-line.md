@@ -4,7 +4,7 @@ deps: []
 touches: [apps/test-card/src/App.svelte]
 cpu: light
 budget_usd: 1
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - `.progress` 照舊是一欄的 grid,或改成 `flex-direction: column`:「已答 / 總數」與「逾期 N」還是上下兩行,同一行的測試必須紅

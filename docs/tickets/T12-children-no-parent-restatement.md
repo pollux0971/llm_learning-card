@@ -4,7 +4,7 @@ deps: [T11]
 touches: [packages/core/prompts/ingest/children.md, packages/core/prompts/ingest/regenerate.md, packages/core/src/prompt-quality/parent-child-overlap.ts, packages/core/src/prompt-quality/cli.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/index.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 機器指標的門檻被放寬(PARENT_CHILD_OVERLAP_THRESHOLD 離開 0.3、「>=」改成「>」)

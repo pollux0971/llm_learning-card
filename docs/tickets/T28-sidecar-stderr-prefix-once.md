@@ -4,7 +4,7 @@ deps: [T22]
 touches: [apps/desktop/src-tauri/src/review_sidecar.rs]
 cpu: heavy
 budget_usd: 1
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 側車自己印的 `[review-sidecar] 正在用假 router` 轉到 app stderr 變成 `[review-sidecar] [review-sidecar] 正在用假 router`(現況,T22 @manual 的 O1):純函式與接線測試必須紅

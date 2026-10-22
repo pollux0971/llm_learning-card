@@ -4,7 +4,7 @@ deps: [T30]
 touches: [packages/core/src/llm/failures.ts, packages/core/src/llm/index.ts, packages/core/src/grading/grade-apply.ts, packages/core/src/grading/grade-fill.ts, packages/contracts/src/witness.ts, scripts/boundaries.allow.json, scripts/degraded-report.ts]
 cpu: heavy
 budget_usd: 5
-status: todo
+status: merged
 owner: worker-grok
 must_catch:
   - 應用題批改時 router 丟 LlmTimeoutError、OutputTruncatedError、NoModelError、AbortError,或雲端 SDK 的 APIConnectionError / APIConnectionTimeoutError,或帶 status 429 / ≥ 500 的錯,gradeApply 往外丟(側車變 internal、終端機整個停):模型不能用的測試必須紅(要回 pass null、grader error)

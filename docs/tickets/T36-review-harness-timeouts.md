@@ -4,8 +4,8 @@ deps: []
 touches: [features/support/review-session-harness.ts, scripts/review-session.test.ts, features/steps/i2-review-loop.steps.ts]
 cpu: heavy
 budget_usd: 1
-status: todo
-owner: test-agent
+status: merged
+owner: 測試
 must_catch:
   - runReview 的 90 秒計時器到時 SIGKILL 子行程,呼叫處照樣拿到一個 status 為 null 的結果往下比:必須改成丟出寫明逾時的錯
   - review-session.test.ts 的續答那條,第一輪被殺、還沒答第一題時,錯誤訊息是「asked 不對」而不是「第一輪沒有正常結束」:必須改成先斷言第一輪 status 0
