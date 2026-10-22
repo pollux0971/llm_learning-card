@@ -98,22 +98,28 @@ export function createReviewClient(opts?: {
     if (handler) {
       const line = await handler(JSON.stringify(request));
       const parsed = parseResponseLine(line);
+      // Stryker disable next-line ConditionalExpression: handler 回壞行時 raw 變 undefined,後面一樣丟 bad-response,結果相同
       if (!parsed.ok) throw new ReviewError('bad-response', BAD_RESPONSE);
       raw = parsed.value;
     } else {
       raw = await invoke('review', { request });
     }
+    // Stryker disable next-line ConditionalExpression,StringLiteral: invoke 回字串的分支是死碼:Tauri 的 invoke 回物件
     const line = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    // Stryker disable next-line ConditionalExpression,StringLiteral: invoke 回字串的分支是死碼:Tauri 的 invoke 回物件
     const parsed = typeof raw === 'string' ? parseResponseLine(raw) : parseResponseLine(line);
+    // Stryker disable next-line LogicalOperator: parse 成功就一定是物件(ResponseSchema),`||` 換 `&&` 結果相同
     if (!parsed.ok || !isRecord(parsed.value)) throw new ReviewError('bad-response', BAD_RESPONSE);
     const value = parsed.value;
     if (value.id !== id) throw new ReviewError('bad-response', BAD_RESPONSE);
     if (value.ok === false) {
       const error = isRecord(value.error) ? value.error : {};
       const kind = typeof error.kind === 'string' && error.kind.length > 0 ? error.kind : 'internal';
+      // Stryker disable next-line ConditionalExpression: ResponseSchema 規定 error.message 是字串,此判斷恆真
       const message = typeof error.message === 'string' ? error.message : kind;
       throw new ReviewError(kind, message);
     }
+    // Stryker disable next-line ConditionalExpression,LogicalOperator,StringLiteral: ResponseSchema 規定 ok 只能是 true 或 false、ok:true 的 result 是物件,此行是死碼後備
     if (value.ok !== true || !isRecord(value.result)) throw new ReviewError('bad-response', BAD_RESPONSE);
     return value.result;
   }
@@ -135,6 +141,7 @@ export function createReviewClient(opts?: {
     try {
       for (;;) {
         if (now() - started >= BUSY_GIVE_UP_MS) {
+          // Stryker disable next-line CallExpression: 最外層 catch 也會呼叫 endWait,任何一處拿掉出口仍通知「不等了」一次
           endWait();
           throw new ReviewError('timeout', ERROR_MESSAGES.timeout, true);
         }
@@ -147,22 +154,26 @@ export function createReviewClient(opts?: {
           return result;
         } catch (err) {
           if (err instanceof ReviewError) {
+            // Stryker disable next-line CallExpression: 最外層 catch 也會呼叫 endWait,任何一處拿掉出口仍通知「不等了」一次
             endWait();
             throw err;
           }
           if (rejectionKind(err) === 'busy') {
             if (now() - started >= BUSY_GIVE_UP_MS) {
+              // Stryker disable next-line CallExpression: 最外層 catch 也會呼叫 endWait,任何一處拿掉出口仍通知「不等了」一次
               endWait();
               throw new ReviewError('timeout', ERROR_MESSAGES.timeout, true);
             }
             await sleep(BUSY_RETRY_MS);
             continue;
           }
+          // Stryker disable next-line CallExpression: 最外層 catch 也會呼叫 endWait,任何一處拿掉出口仍通知「不等了」一次
           endWait();
           throw rejectionError(err);
         }
       }
     } catch (err) {
+      // Stryker disable next-line CallExpression: 最外層 catch 也會呼叫 endWait,任何一處拿掉出口仍通知「不等了」一次
       endWait();
       throw err;
     }
