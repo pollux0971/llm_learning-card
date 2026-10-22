@@ -218,6 +218,14 @@ describe('onWait 通知', () => {
     expect(r.waits[0]!.at, 'true 是超過 1 秒之後才通知的').toBeGreaterThan(1000);
   });
 
+  it('剛好滿 1 秒還不通知(門檻是「超過」):每趟 invoke 花 200 ms 加睡 300 ms,第二趟結束剛好 1000 ms 不通知,第三趟 1500 ms 才通知', async () => {
+    const busy = { t: 'busy', cost: 200 } as const;
+    const r = await rig([busy, busy, busy, busy, { t: 'ok' }]);
+    await r.client.start();
+    expect(r.waits.map((w) => w.waiting)).toEqual([true, false]);
+    expect(r.waits[0]!.at).toBe(1500);
+  });
+
   it('等候中遇到別的錯誤:也要通知 false', async () => {
     const r = await rig([{ t: 'busy' }, { t: 'busy' }, { t: 'busy' }, { t: 'busy' }, { t: 'busy' }, { t: 'reject', value: { kind: 'sidecar-exited' } }]);
     await caught(r.client.start());
