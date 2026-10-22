@@ -4,7 +4,7 @@ deps: [T37]
 touches: [apps/desktop/src-tauri/src/review_sidecar.rs, apps/desktop/src-tauri/tests/, apps/desktop/src/, apps/teach-card/src/, apps/test-card/src/]
 cpu: heavy
 budget_usd: 4
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - Rust 照 webview 原本的 id 送(拿掉換號)、留著 id 要比上一個大 的拒絕:兩個 client 都從 1 數、交錯送出的測試必須紅(其中一個拿到 bad-envelope)
