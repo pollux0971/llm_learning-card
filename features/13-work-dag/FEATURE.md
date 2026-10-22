@@ -162,7 +162,7 @@ touches: [apps/desktop/src-tauri/]     # 路徑前綴
 cpu: heavy | light                      # heavy = 跑完整鏈、Stryker、cargo-mutants、計時量測
 budget_usd: 5
 status: todo | dispatched | review | merged | dropped
-owner: worker-grok | worker-claude | worker-codex | 統籌 | 前端 | 驗收   # worker-codex 是歷史值(Codex 已停用)
+owner: worker-grok | worker-claude | worker-codex | 統籌 | 前端 | 驗收 | 測試   # worker-codex 是歷史值(Codex 已停用);「測試」自 2026-10-15 起是常設角色(T36/T38 這類純測試工單會一直有),顧問 2026-10-22 補入
 must_catch: [ … ]                       # 驗收必須證明測試抓得到的突變
 ---
 ```

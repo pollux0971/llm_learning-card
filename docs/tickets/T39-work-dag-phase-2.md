@@ -64,7 +64,8 @@ phase-1 的 `scripts/dag.ts` 只算 phase 之間的 ready / 卡住 / 待人判�
 4. **對照真樹**:`npm run dag:check` 在真 repo 上跑,逐條列出紅的原因,分「工具錯」與「樹真的有毛病」。
    樹真的有毛病的,**只准做兩件事,都限於 `docs/tickets/*.md` 的檔頭**:
    (a)改 `status`(依 git 證據;例如 T37 已合併卻寫 `todo`、T24 的 `status: ready` 不是合法值,也依證據改);(b)替沒有檔頭的檔補檔頭。
-   **不准為了讓它變綠去改 `deps`、`touches`、`cpu`、`owner`**:遇到這種,寫進報告「待協調」。**T39 自己的檔頭不准動。不改工單內文,不改任何別的檔。**
+   **不准為了讓它變綠去改 `deps`、`touches`、`cpu`、`owner`**:遇到這種,寫進報告「待協調」。
+   **顧問 2026-10-22 另准改這三張(每筆照樣列 檔/舊值/新值/依據)**:(i)T29 的 `owner`(舊測試 agent 名字)與 T36 的 `owner`(`test-agent`)→ `測試`(FEATURE.md 的 owner 清單已加「測試」);(ii)T2c-1 檔頭 `id: T2c-1` → `T2c_1`、T2c-2 檔頭 `id: T2c-2` → `T2c_2`,T2c-2 的 `deps` 裡 `T2c-1` → `T2c_1`(id 會當 bash 變數名,規格不放寬;**只改檔頭,檔名與內文不動**;全 repo 只有 T2c-2 的 deps 引用 T2c-1)。T24 的 `status: ready` 照上面 (a) 依 git 證據改。其餘一律「待協調」。**T39 自己的檔頭不准動。不改工單內文,不改任何別的檔。**
    報告每一筆列「檔、舊值、新值、依據(合併 commit 的 sha)」;-84 逐筆對 git 核。
 5. 量 R5 在真樹上的深度,寫進報告(接進 `check:all` 前要知道它不會一接就紅;R4/R5 只印 `WARN`)。
 6. **先證明會紅,才接進 chain**:把 `dag:check` 加進 `scripts/gates.config.json` 的 `chain` 之前,先故意弄壞輸入(缺檔頭的工單、有環、`dispatched` 違反 R2),證明它退出碼非 0;
