@@ -40,7 +40,7 @@ export interface SessionView {
   state: SessionState;
   message: string | undefined;
   canRestart: boolean;
-  /** 只有 no-cards、router-unavailable、root-mismatch、not-configured。與 canRestart 不同時為 true。 */
+  /** no-cards、router-unavailable、root-mismatch、not-configured,以及 client 放棄(timeout 且 unsent)。與 canRestart 不同時為 true。 */
   canRetry: boolean;
   testModeNotice: string | undefined;
   answeredCount: number;
@@ -51,6 +51,10 @@ export interface SessionView {
   summaryLines: string[];
   current: QuestionView | undefined;
   submitting: boolean;
+  /** client 通知正在等側車(busy 重試超過 1 秒)到通知結束之間。 */
+  waiting: boolean;
+  /** waiting 時是「複習程式還在準備,稍等一下。」,否則 undefined。 */
+  waitNotice: string | undefined;
   gradingError: string | undefined;
   result: ResultView | undefined;
   reteach: ReteachView | undefined;

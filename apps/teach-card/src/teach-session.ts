@@ -1,25 +1,18 @@
 /**
- * 教學卡視窗邏輯(ADR-077)。判斷與寫入在側車;這裡只帶參數、收結果、記住類別、忙時重試。
- * 不碰 node:。用桌面殼的 ReviewClient 與 LearningFs,不另寫一份。
+ * 教學卡視窗邏輯(ADR-077、ADR-078)。判斷與寫入在側車;這裡只帶參數、收結果、記住類別。
+ * 重試在共用的 ReviewClient。不碰 node:。用桌面殼的 ReviewClient 與 LearningFs,不另寫一份。
  */
 import type { LearningFs } from '../../desktop/src/webview/learning-fs.js';
-import type { ReviewClient } from '../../desktop/src/webview/review-client.js';
+import { reviewErrorText, type ReviewClient } from '../../desktop/src/webview/review-client.js';
 
 export const LAST_CATEGORY_KEY = 'lc-teach-last-category';
-export const BUSY_RETRY_MS = 300;
-export const BUSY_NOTICE_AFTER_MS = 1000;
-/** 跟 apps/desktop/src-tauri/src/review_sidecar.rs 的 REQUEST_TIMEOUT 一樣(180 秒)。 */
-export const REQUEST_TIMEOUT_MS = 180_000;
 export const BUSY_MESSAGE = '考試卡正在批改,稍等一下。';
 export const FINISHED_MESSAGE = '這個類別已經學完了。可以考慮補充更多素材。';
-const TIMEOUT_MESSAGE = '等候回覆的時間過了。';
 
 export interface TeachSessionDeps {
-  client: Pick<ReviewClient, 'teachOpen' | 'teachNext' | 'teachSwitch' | 'teachPrereq'>;
+  client: Pick<ReviewClient, 'teachOpen' | 'teachNext' | 'teachSwitch' | 'teachPrereq' | 'onWait'>;
   fs: Pick<LearningFs, 'read'>;
   storage: { getItem(key: string): string | null; setItem(key: string, value: string): void };
-  sleep?: (ms: number) => Promise<void>;
-  now?: () => number;
 }
 
 interface ServerCard {
@@ -67,18 +60,9 @@ type Pending =
   | { kind: 'prereq'; index: number };
 
 function categoryLabel(row: ServerRow, current: boolean): string {
-  const name = row.requireRaw ? `${row.name}需要素材` : row.name;
   const count = row.remaining === 0 ? '學完了' : `剩 ${row.remaining} 張`;
-  return `${name} · ${count}${current ? ' (目前)' : ''}`;
-}
-
-function isBusy(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { kind?: unknown }).kind === 'busy';
-}
-
-function errorMessageOf(err: unknown): string {
-  if (err instanceof Error && err.message.length > 0) return err.message;
-  return '內部發生問題,請稍後再試。';
+  const body = row.requireRaw ? `${row.name} · 需要素材 · ${count}` : `${row.name} · ${count}`;
+  return current ? `${body} (目前)` : body;
 }
 
 export function createTeachSession(deps: TeachSessionDeps): {
@@ -90,10 +74,8 @@ export function createTeachSession(deps: TeachSessionDeps): {
   chooseCategory(id: string): Promise<void>;
   followPrereq(index: number): Promise<void>;
   retry(): Promise<void>;
+  categoryNameOf(id: string): string;
 } {
-  const sleep = deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const now = deps.now ?? (() => Date.now());
-
   let mode: Mode = 'loading';
   let beneath: Beneath = 'card';
   let category: string | undefined;
@@ -102,9 +84,15 @@ export function createTeachSession(deps: TeachSessionDeps): {
   let prereqs: { id: string; title: string }[] = [];
   let rows: ServerRow[] = [];
   let waiting = false;
+  let inFlight = false;
   let controlsDisabled = false;
   let message: string | undefined;
   let pending: Pending | undefined;
+
+  deps.client.onWait((isWaiting) => {
+    waiting = isWaiting;
+    controlsDisabled = isWaiting || inFlight;
+  });
 
   function labels(): { id: string; label: string; current: boolean }[] {
     return rows.map((row) => ({
@@ -175,31 +163,27 @@ export function createTeachSession(deps: TeachSessionDeps): {
 
   async function run(action: Pending): Promise<void> {
     pending = action;
-    const started = now();
-    for (;;) {
-      const elapsed = now() - started;
-      if (elapsed >= REQUEST_TIMEOUT_MS) {
-        showError(TIMEOUT_MESSAGE);
-        return;
-      }
-      waiting = elapsed > BUSY_NOTICE_AFTER_MS;
-      controlsDisabled = true;
-      try {
-        await apply(await invoke(action));
-        return;
-      } catch (err) {
-        if (!isBusy(err)) {
-          showError(errorMessageOf(err));
-          return;
-        }
-        await sleep(BUSY_RETRY_MS);
-      }
+    inFlight = true;
+    controlsDisabled = true;
+    try {
+      await apply(await invoke(action));
+    } catch (err) {
+      showError(reviewErrorText(err));
+    } finally {
+      inFlight = false;
+      waiting = false;
+      controlsDisabled = false;
     }
   }
 
   function restoreList(): void {
     mode = beneath;
     message = undefined;
+  }
+
+  function categoryNameOf(id: string): string {
+    const row = rows.find((item) => item.id === id);
+    return row === undefined ? id : row.name;
   }
 
   return {
@@ -224,5 +208,6 @@ export function createTeachSession(deps: TeachSessionDeps): {
     },
     followPrereq: (index: number) => run({ kind: 'prereq', index }),
     retry: () => (pending === undefined ? Promise.resolve() : run(pending)),
+    categoryNameOf,
   };
 }

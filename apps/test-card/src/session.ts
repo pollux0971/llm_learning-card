@@ -28,6 +28,7 @@ const SUBMIT_RETRY_HINT = '改好之後再按「送出」。';
 const GRADING_ERROR = '評分失敗,請再試一次';
 const TEST_MODE_NOTICE = '測試模式:批改是假的';
 const SHORT_NOTICE = '這張卡連續答錯兩次;縮短版還沒有產生,先看原卡。';
+const WAIT_NOTICE = '複習程式還在準備,稍等一下。';
 
 type Obj = Record<string, unknown>;
 
@@ -214,12 +215,13 @@ function summaryLinesOf(summary: SummaryView): string[] {
   return lines;
 }
 
-function reviewOf(err: unknown): { kind: string; message: string } | undefined {
-  if (err instanceof ReviewError) return { kind: err.kind, message: err.message };
+function reviewOf(err: unknown): { kind: string; message: string; unsent: boolean } | undefined {
+  if (err instanceof ReviewError) return { kind: err.kind, message: err.message, unsent: err.unsent };
   if (!(err instanceof Error) || err.name !== 'ReviewError') return undefined;
   const kind = (err as { kind?: unknown }).kind;
   if (typeof kind !== 'string' || kind.length === 0) return undefined;
-  return { kind, message: err.message };
+  const unsent = (err as { unsent?: unknown }).unsent === true;
+  return { kind, message: err.message, unsent };
 }
 
 /** 第一行是 --- 時,去掉到下一個只有 --- 的行(含)為止。內文後來的 --- 留著。 */
@@ -250,11 +252,16 @@ export class TestSession {
   private summaryLines: string[] = [];
   private question: QuestionView | undefined;
   private submitting = false;
+  private waiting = false;
   private gradingError: string | undefined;
   private result: ResultView | undefined;
   private reteach: ReteachView | undefined;
 
-  constructor(private readonly deps: SessionDeps) {}
+  constructor(private readonly deps: SessionDeps) {
+    this.deps.client.onWait((waiting) => {
+      this.waiting = waiting;
+    });
+  }
 
   decideKeydown(key: string, mods: { ctrl?: boolean; meta?: boolean } = {}): KeydownAction {
     if (key !== 'Enter') return 'ignore';
@@ -297,6 +304,8 @@ export class TestSession {
       await this.pullNext();
     } catch (err) {
       this.showError(err);
+    } finally {
+      this.waiting = false;
     }
   }
 
@@ -330,6 +339,8 @@ export class TestSession {
       summaryLines: this.phase === 'done' ? this.summaryLines : [],
       current: onQuestion ? this.question : undefined,
       submitting: this.submitting,
+      waiting: this.waiting,
+      waitNotice: this.waiting ? WAIT_NOTICE : undefined,
       gradingError: this.gradingError,
       result: this.result,
       reteach: this.phase === 'reteach' ? this.reteach : undefined,
@@ -370,6 +381,7 @@ export class TestSession {
       this.showError(err);
     } finally {
       this.submitting = false;
+      this.waiting = false;
     }
   }
 
@@ -434,6 +446,8 @@ export class TestSession {
       };
     } catch (err) {
       this.showError(err);
+    } finally {
+      this.waiting = false;
     }
   }
 
@@ -482,6 +496,10 @@ export class TestSession {
     }
     this.clearCard();
     this.phase = 'error';
+    if (review.kind === 'timeout' && review.unsent) {
+      this.showRetry(review.message);
+      return;
+    }
     if (review.kind === 'credential-unavailable') {
       this.showRetry(review.message);
       return;
