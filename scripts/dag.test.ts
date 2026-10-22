@@ -2757,6 +2757,11 @@ describe('補測·存活者(第二批):前綴要在開頭、重活只擋重活�
     const r = report(p2Tree([T('I4x', 'merged', 'docs/a/'), T('T1', 'todo', 'apps/desktop/', { deps: 'I4x' })]));
     expect(hasLine(r, 'READY T1'), r.stdout).toBe(true);
     expect(linesStarting(r, 'BLOCKED')).toEqual([]);
+    // R5 深度也一樣:merged 的 I4x 算 0,後面的鏈不被墊高(T6 只有深度 5)
+    const chain = report(
+      p2Tree([T('I4x', 'merged', 'docs/a/'), T('T2', 'todo', 'docs/b/', { deps: 'I4x' }), T('T3', 'todo', 'docs/c/', { deps: 'T2' }), T('T4', 'todo', 'docs/d/', { deps: 'T3' }), T('T5', 'todo', 'docs/e/', { deps: 'T4' }), T('T6', 'todo', 'docs/f/', { deps: 'T5' })]),
+    );
+    expect(linesStarting(chain, 'WARN')).toEqual(['WARN r5-depth T6 5']);
     const todo = report(p2Tree([T('I4x', 'todo', 'docs/a/'), T('T1', 'todo', 'apps/desktop/', { deps: 'I4x' })]));
     expect(linesStarting(todo, 'BLOCKED')).toEqual(['BLOCKED T1 by I4x']);
   }, 120_000);
