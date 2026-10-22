@@ -3304,3 +3304,67 @@ describe('補測2·--orca 的鏈順序(Kahn 分層:id 小的可以依賴 id 大�
     expect(readFileSync(depsLog, 'utf8').trim().split('\n')).toEqual(['[]', '["task-1"]']);
   }, 60_000);
 });
+
+describe('補測2·PROBLEM 排序(續):輸入順序反過來、名字帶欄位字樣的檔名', () => {
+  it('同一個名字:輸入順序是 owner 在前、cpu 在後 → 輸出仍照欄位表(cpu 在前、owner 在後)', () => {
+    const root = p2Tree([]);
+    putTicket(root, 'a1.md', { id: 'T1', owner: 'nobody' });
+    putTicket(root, 'a2.md', { id: 'T1', cpu: 'medium' });
+    putTicket(root, 'b1.md', { id: 'T2', status: 'maybe', budget_usd: 'abc' });
+    putTicket(root, 'b2.md', { id: 'T2', deps: undefined });
+    expect(problemsOf(checkOf(root))).toEqual([
+      'PROBLEM bad-header T1 invalid cpu',
+      'PROBLEM bad-header T1 invalid owner',
+      'PROBLEM bad-header T2 missing deps',
+      'PROBLEM bad-header T2 invalid budget_usd',
+      'PROBLEM bad-header T2 invalid status',
+    ]);
+  }, 60_000);
+
+  it('檔名裡有 missing / invalid 字樣(id 缺漏時名字就是檔名):跟名字叫 a 的正常工單混排時,照字串自然排序,不被拆成「名字 種類 欄位」', () => {
+    const noId = RAW_OK.filter((l) => !l.startsWith('id:'));
+    for (const [first, second] of [['a-normal.md', 'a missing x.md'], ['a missing x.md', 'z-normal.md'], ['a invalid x.md', 'z-normal.md'], ['a-normal.md', 'a invalid x.md']]) {
+      const root = p2Tree([]);
+      for (const f of [first!, second!]) {
+        if (f.includes(' ')) rawTicket(root, f, `---\n${noId.join('\n')}\n---\n`);
+        else putTicket(root, f, { id: 'a', cpu: 'medium', status: undefined });
+      }
+      const weird = [first!, second!].find((f) => f.includes(' '))!;
+      const wLine = `PROBLEM bad-header ${weird} missing id`;
+      const got = problemsOf(checkOf(root));
+      const normal = ['PROBLEM bad-header a invalid cpu', 'PROBLEM bad-header a missing status'];
+      const all = [...normal, wLine].sort((x, y) => (x.slice(8) < y.slice(8) ? -1 : 1));
+      // 期望:欄位表順序只在「同一個名字 a」之內排;帶空白的檔名整行當字串比
+      expect(got, `${first} / ${second}`).toEqual(all);
+    }
+  }, 300_000);
+});
+
+describe('補測2·行內清單含反引號(parseInlineList:反引號一律當純文字,不是不合法)', () => {
+  it('must_catch: [`a`, b]、deps: [`T2`]、touches: [`docs/a/`]:檔頭不出 bad-header;反引號留在字面上', () => {
+    const root = p2Tree([T('T2', 'todo', 'docs/b/')]);
+    putTicket(root, 'T1-x.md', { id: 'T1', must_catch: '[`a`, b]', deps: '[`T2`]', touches: '[`docs/a/`, docs/c/]' });
+    const r = checkOf(root);
+    expect(problemsOf(r).filter((l) => l.includes('bad-header'))).toEqual([]);
+    // 反引號是字面的一部分:`T2` 不等於 T2,所以是解不開的參照;`docs/a/` 沒落點
+    expect(problemsOf(r)).toEqual(['PROBLEM no-landing T1 `docs/a/`', 'PROBLEM unresolved-ref T1 `T2`']);
+    expect(linesStarting(r, 'LANDING T1')).toEqual(['LANDING T1 docs']);
+  }, 60_000);
+
+  it('只有 must_catch 含反引號時,整張工單合法、READY', () => {
+    const root = p2Tree([]);
+    putTicket(root, 'T1-x.md', { id: 'T1', must_catch: '[`a`, b, `c d`]' });
+    const r = checkOf(root);
+    expect(r.status, r.stdout).toBe(0);
+    expect(hasLine(r, 'READY T1')).toBe(true);
+  }, 60_000);
+
+  it('block 清單的項目含反引號同樣當純文字', () => {
+    const root = p2Tree([]);
+    const lines = ['id: T1', 'deps: []', 'touches: [docs/a/]', 'cpu: light', 'budget_usd: 1', 'status: todo', 'owner: worker-grok', 'must_catch:', '  - `a`', '  - b'];
+    rawTicket(root, 'T1-x.md', `---\n${lines.join('\n')}\n---\n`);
+    const r = checkOf(root);
+    expect(r.status, r.stdout).toBe(0);
+    expect(hasLine(r, 'READY T1')).toBe(true);
+  }, 60_000);
+});
