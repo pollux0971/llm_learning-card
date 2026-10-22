@@ -166,6 +166,10 @@ import:06、07 → 10(現有例外)、10 → 11 只 import `protocol.ts`(現有�
 1. 考試卡的等候字樣「複習程式還在準備,稍等一下。」:量到的 `busy` 幾乎都在開機等 `hello` 那 1.3 秒,所以用「準備」;教學卡的「考試卡正在批改,稍等一下。」照 D5 不動。
 2. 考試卡 `unsent` 的 `timeout` 按「再試一次」是重新 `start`(續答照快取),不是重送那一次 `submit`:180 秒的極端情況,答案要重打一次,換來只有一條重試路徑。
 
+顧問 2026-10-22 審過,兩點都同意。更正理由:`unsent` 表示那個請求從來沒進側車,重送 `submit` 不會重複批改也不會多花 LLM 錢;選重新 `start` 是為了簡單(只留一條重試路徑),不是為了錢。
+
+已知代價(接受):教學卡等候字樣「考試卡正在批改,稍等一下。」在開機那 1.3 秒、考試卡只是在起動時,超過 1 秒也可能閃一下。照 D5 不改字樣。
+
 ## 不在範圍
 
 - Rust 排隊、改 `REQUEST_TIMEOUT`、改 `HELLO_TIMEOUT`。
@@ -181,8 +185,12 @@ import:06、07 → 10(現有例外)、10 → 11 只 import `protocol.ts`(現有�
 
 - 紅測試、改既有測試、改壞證明:測試 agent。
 - 驗收(含變異,`npm run mutate` 範圍:`review_sidecar.rs` 的 `call_locked` 以 cargo-mutants、`review-client.ts` 的重試與 `reviewErrorText` 以 Stryker):驗收 agent。
+  - Stryker(`review-client.ts` 的重試與 `reviewErrorText`)≥ 80%(T33、T37 先例)。
+  - cargo-mutants(`call_locked`):must_catch 對到的 mutant 全殺;其他存活者逐一列出,歸成等價、低、真缺口三類;真缺口由測試 agent 補完才合併。
 - `@manual`:前端。
 
 ## worktree
 
 一個,從 `/data/python/llm_learning-cards-workers` 開,基底 main `ab98f5f` 或之後。跟 T39(`scripts/`、`docs/tickets/`、`features/13-work-dag/`)不重疊;跟 T35(`wayland_note.js`,10-desktop-shell)同一個落點,不要同時派。
+
+派工順序(顧問 2026-10-22,照 R3):T39 是 `cpu: heavy`,目前 dispatched、之後還有 review,所以 T40 的開發 worker 等 T39 合併(離開 review)才派;測試 agent 的 T40 紅測試可以先寫。T35 排在 T40 後面。
