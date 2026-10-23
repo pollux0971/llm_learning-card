@@ -57,5 +57,29 @@
 - learning/ 前後:64 檔 / c2e4dd6d71de3976 / 108 行,相同。
 - 花費:worker 自述 $1.75,預算 2,比值 0.88,未超過 2 倍。
 
-## 7. 結論
+## 7. 結論(第一輪)
 有阻擋項:完整 vitest 的 card-static 靜態測試因工單第 8 條的分隔線而紅(見第 2 節),修好之前不能合併。T44 本身的驗收條件與必抓改壞點全部成立,變異新增行無實質缺口。
+
+## 8. 第二輪:card-static 窄例外修補(t44-static)
+
+- 受驗:t44-static = 1bc92ca35075acca03ba31b40331b19935980a6c(t44-red 之上 1 個 commit,3 個測試/測試支援檔 +88/−2,作者 -a6;mutants.out 0)。
+- 驗收用合併(只在本地、不推):t44-accept-tests(4fcc0d6)+ t44-static,tree e632461524775e6f23a77ae6dfa49dda15f9f3d1。無 .env。
+
+### 8.1 例外夠窄(我自己挑的 17 個變體,直接餵 styleProblems)
+紅(不放行):border-bottom;2px;考試卡同一條規則;後代 selector(.generating p);longhand 寬度 2px;::before;:hover;!important;border-block-start;border-image;border-top 加 border-radius;.lc-example .generating;border-top-color 改 var(--hud-text);重複 selector(.generating,.generating);deepen-error 的 radial-gradient 背景;考試卡的 linear-gradient 背景。
+綠(放行):.generating,.deepen-error 合寫的 border-top: 1px solid var(--hud-line)。
+真實的教學卡與考試卡 App.svelte:styleProblems 各 0 個問題。-a6 自己在 card-static-self 另有 1 組放行 5 條、紅 17 條。
+
+### 8.2 漸層規則
+新增「background* 含 gradient( 一律紅」只作用在 styleProblems,它只讀兩張卡的 App.svelte。全 repo 含 gradient 的原始檔只有 hud.css 與 gallery 的 Gallery.svelte(都不是卡片原始碼,不被掃),兩張卡的 src 裡 gradient 命中 0,所以不誤殺任何現有 css。方向合理:用背景漸層畫線是繞過字面的做法,顧問已說不收。
+
+### 8.3 合併後整體(VITEST_MAX_WORKERS=1)
+- tsc 乾淨;boundaries PASS 363;doc-links PASS 131。
+- 完整 vitest:245 檔全過,6606 條過、171 跳過(上一輪紅的 card-static 那一檔已綠)。
+- cucumber(--tags,皆 not @manual):@hud-skin and @phase-2 步驟 13 過;@teach-card phase-3 49、phase-2 25、phase-1 41 全過;rc 全 0。
+
+### 8.4 資料
+learning/ 前後 64 檔 / c2e4dd6d71de3976 / 108 行,相同。
+
+### 8.5 結論(第二輪)
+通過。第 2 節的阻擋項已消除;t44-impl 與 t44-static 合併後整體綠。
