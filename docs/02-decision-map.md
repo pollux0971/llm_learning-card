@@ -1646,3 +1646,25 @@ graph TD
   - 合併之後任何一次真的深入之前,先用 `npx tsx scripts/llm-spend.ts --today` 確認「今天已花 + 最壞 US$0.6」不超過 `LLM_DAILY_CAP_USD`;會超過就不跑、問使用者。
   - provisional 的新卡交給之後的複審(03 phase-3、I6),這次不做。
 - **Related**: ADR-004、ADR-006、ADR-032、ADR-039、ADR-050、ADR-075(refined)、ADR-076、ADR-077(refined)、ADR-078、T43(`docs/tickets/T43-teach-card-phase-3.md`)、`features/07-teach-card/phase-3.feature`、`contracts/types.md` §1 §7 §8 §10
+
+## ADR-080 · 教學卡的縮放只縮卡片內容、不縮系統 UI;很長的內容用「按鈕列黏底、內文和例子一起捲」
+
+- **Status**: accepted · 2026-10-24(技術顧問審 T47 的 D1–D4;D1、D3 記在這條,D2、D4 只在工單;前端起草;不推翻既有 ADR)
+- **Context**:
+  1. 07 phase-4(`features/07-teach-card/phase-4.feature` 場景 6–8):教學卡要能縮放、很長的內容不能弄丟按鈕、視窗要有最小大小。
+  2. T45 已量過並守住「系統狀態字樣不推動按鈕」(0 px),留的位置 81.4 px 是在 360 寬、100%、字級 13.6 px 下量的;T35 的 Wayland 提示在 `.hud-body` 加 `padding-bottom`;HUD 的捲動測試認定「捲的是 `.hud-body`」。
+  3. 整個視窗一起縮放(例如 Tauri 的 webview 縮放)時,150% 等於 240 px 寬的版面,最高那句金鑰字樣會多折行,T45 的留位要改用最大一級重量。
+  4. `phase-4.feature` 場景 7 原文是「內文固定在上面、例子區自己捲、按鈕固定在下面」;用 T45 `@manual` 的數字推算(360 × 480,`.hud-body` 看得到 433 px),照原文時例子區只剩約 33–150 px,而且 `.hud-body` 不再是捲的那一個。
+- **Decision**:
+  1. **縮放只縮卡片內容**(D1):標示列、先備提示、標題、內文、例子(含圖)照級距重排;按鈕列、系統狀態字樣、標題列、Wayland 提示不縮放。用字級與寬度重排,不用 `transform: scale`。不開 Tauri 的 `zoomHotkeysEnabled`,程式也不改 webview 的縮放。T45 的留位與 0 px 在每一級都成立,不用重量。
+  2. **長內容:按鈕列與系統狀態字樣那一塊黏在 `.hud-body` 看得到範圍的底部,內文和例子一起在 `.hud-body` 裡捲**(D3=B)。捲的還是 `.hud-body`,所以 T35 的留白、T45 的長卡捲到底、HUD 的捲動區測試照舊。黏住那一塊的高度固定(按鈕列加 T45 留的位置)、有底色、不畫線(畫線要新的 card-static 例外)。
+  3. **`phase-4.feature` 場景 6、7 的措辭**由測試 agent 在紅測試 commit 裡改,是技術顧問裁的規格措辭;場景 7 改成與第 2 點一致。
+- **Alternatives**:
+  - **整個視窗一起縮放** —— 不採用。按鈕與系統字樣跟著變,T45 的留位要用 150% 量,360 寬一行只剩很少字(Context 3)。
+  - **照原文:內文固定、例子區自己捲、按鈕固定** —— 不採用。例子區太矮(Context 4),而且要改 T45、T35、HUD 三處已量過的保證。
+  - **`transform: scale` 縮放** —— 不採用。不重排,會橫向凸出去、蓋到按鈕。
+- **Consequences**:
+  - 內文與例子一起捲,內文很長時要捲過它才看得到例子(代價,顧問接受)。
+  - sticky 遇到 T35 加在 `.hud-body` 的 `padding-bottom`:黏底的按鈕不能被 Wayland 提示蓋住,T47 紅測試 f 守這條。
+  - 縮放級別記在 `deps.storage`,換卡、重新載入、重開 app 都保留。
+- **Related**: ADR-075、ADR-077、ADR-079、T35、T45(`docs/tickets/T45-teach-card-status-layout.md`)、T47(`docs/tickets/T47-teach-card-zoom-layout.md`)、`features/07-teach-card/phase-4.feature`。
