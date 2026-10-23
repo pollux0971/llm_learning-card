@@ -113,5 +113,10 @@
     "from": "11-review-cli",
     "to": "07-teach-card",
     "reason": "組合層(ADR-021 例外,同 11 → 04/05):側車 handler 呼叫 07 的純 deck 函式;ADR-077。只開這一條單向,沒有 07 → 11。"
+  },
+  {
+    "from": "11-review-cli",
+    "to": "02-ingest-pipeline",
+    "reason": "T43(ADR-079):桌面複習側車的「深入這個」要呼叫 02 的卡片生成(deepen/children/questions/generate-cards),11 是組合層,跟 11 → 04/05/07 同理由;不把生成搬進 11,免得 children.ts 與 questions.ts 多一份"
   }
 ]
