@@ -24,9 +24,15 @@ function storage(): TeachSessionDeps['storage'] {
   };
 }
 
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function createDeps(): TeachSessionDeps {
   if (isTauri()) {
-    return { client: createReviewClient(), fs: createLearningFs(), storage: storage() };
+    return { client: createReviewClient(), fs: createLearningFs(), storage: storage(), pause };
   }
   return {
     client: createReviewClient({
@@ -34,6 +40,7 @@ function createDeps(): TeachSessionDeps {
     }),
     fs: browserFs(),
     storage: storage(),
+    pause,
   };
 }
 

@@ -148,6 +148,8 @@ async function main(): Promise<void> {
     noteError(response);
     process.stdout.write(`${response}\n`);
   }
+  handler.shutdown();
+  process.exit(0);
 }
 
 main().catch(() => {

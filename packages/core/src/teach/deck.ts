@@ -36,6 +36,74 @@ export function remainingCount(deck: readonly string[], reviews: Record<string, 
   return n;
 }
 
+/** 主流程只排 level 0、1(ADR-079 D5)。level 2 以上只從深入進去。 */
+export function isMainFlowLevel(level: number): boolean {
+  return level === 0 || level === 1;
+}
+
+/** 契約 §1 的 Level 上限。目前那張是這一層,深入回 deepen-floor,不打模型。 */
+export const DEEPEN_FLOOR_LEVEL = 4;
+
+export function atDeepenFloor(level: number): boolean {
+  return level >= DEEPEN_FLOOR_LEVEL;
+}
+
+/** 同分類裡 parent 是這張的卡,照 id 排。學過的也算。 */
+export function childIdsOf(cards: readonly { id: string; parent?: string }[], parentId: string): string[] {
+  const ids: string[] = [];
+  for (const card of cards) {
+    if (card.parent === parentId) ids.push(card.id);
+  }
+  ids.sort();
+  return ids;
+}
+
+/** 先備提示不列這些 id(麵包屑上的父卡:你剛從它下來)。順序保留。 */
+export function omitIds(ids: readonly string[], omit: readonly string[]): string[] {
+  const skip = new Set(omit);
+  return ids.filter((id) => !skip.has(id));
+}
+
+export interface CrumbState {
+  parentId: string;
+  childIds: readonly string[];
+  index: number;
+}
+
+export interface AdvancePlan {
+  /** 這一步要記學過的卡,順序是目前這張、再往上的父卡。 */
+  record: string[];
+  crumbs: { parentId: string; childIds: string[]; index: number }[];
+  /** undefined:回到主流程,由呼叫端照 phase-2 的下一個挑。 */
+  cardId: string | undefined;
+}
+
+/**
+ * 在一組子卡裡按下一個。最後一張會把父卡也放進 record,並往上一層;
+ * 那一層也是最後一張就再往上,直到有下一張兄弟,或回到主流程。
+ * 不改傳入的 crumbs。
+ */
+export function planAdvance(currentId: string | undefined, crumbs: readonly CrumbState[]): AdvancePlan {
+  const record: string[] = [];
+  if (currentId !== undefined) record.push(currentId);
+  const next = crumbs.map((crumb) => ({
+    parentId: crumb.parentId,
+    childIds: [...crumb.childIds],
+    index: crumb.index,
+  }));
+  while (next.length > 0) {
+    const top = next[next.length - 1]!;
+    if (top.index + 1 < top.childIds.length) {
+      top.index += 1;
+      const cardId = top.childIds[top.index];
+      return { record, crumbs: next, cardId };
+    }
+    record.push(top.parentId);
+    next.pop();
+  }
+  return { record, crumbs: [], cardId: undefined };
+}
+
 /** 照 prereqs 的順序,去掉已學過的與磁碟上沒有的。 */
 export function unlearnedPrereqs(
   prereqs: readonly string[],

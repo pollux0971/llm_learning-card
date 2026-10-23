@@ -13,6 +13,7 @@ import { openDay, snapshotAfterReview, summarizeDay } from './engine.js';
 import { findCardFile, listCardIds, loadReviews, loadSettings } from './io.js';
 import { presentNextCard } from './present.js';
 import { ERROR_MESSAGES, classifyRequestLine, type ErrorKind } from './protocol.js';
+import { createDeepenController } from './teach-deepen.js';
 import { createTeachRuntime } from './teach.js';
 import type { Session } from './types.js';
 
@@ -38,7 +39,10 @@ export interface ReviewHandlerDeps {
   missingKeys?: () => readonly string[];
 }
 
-type Handler = (line: string) => Promise<string>;
+export interface ReviewHandler {
+  (line: string): Promise<string>;
+  shutdown(): void;
+}
 
 function refusingRouter(): LlmRouter {
   const refuse = async (): Promise<never> => {
@@ -64,7 +68,7 @@ function isReviewsChanged(err: unknown): boolean {
   return isRecord(err) && err.code === 'reviews-changed';
 }
 
-export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
+export function createReviewHandler(deps: ReviewHandlerDeps): ReviewHandler {
   const { learningDir, env } = deps;
   let router: LlmRouter | undefined;
   let session: Session | undefined;
@@ -309,12 +313,46 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
     return ok(id, outcome.view);
   }
 
-  return async (line: string): Promise<string> => {
+  function deepenLine(id: number, outcome: { ok: true; view: unknown } | { ok: false; kind: ErrorKind; message?: string }): string {
+    if (!outcome.ok) {
+      const message = outcome.message ?? ERROR_MESSAGES[outcome.kind];
+      return JSON.stringify({ v: 1, id, ok: false, error: { kind: outcome.kind, message } });
+    }
+    return ok(id, outcome.view);
+  }
+
+  const deepen = createDeepenController({
+    learningDir,
+    today: () => day(),
+    env,
+    teach,
+    missingKeys: deps.missingKeys,
+    acquireRouter: async () => {
+      reloadAndMaybeDropRouter();
+      return ensureRouter();
+    },
+    startFailureKind,
+  });
+
+  const handle = async (line: string): Promise<string> => {
     const classified = classifyRequestLine(line);
     if (!classified.ok) return fail(classified.id, classified.kind);
     const request = classified.request as {
       id: number;
-      method: 'start' | 'next' | 'submit' | 'summary' | 'status' | 'teach.open' | 'teach.next' | 'teach.switch' | 'teach.prereq';
+      method:
+        | 'start'
+        | 'next'
+        | 'submit'
+        | 'summary'
+        | 'status'
+        | 'teach.open'
+        | 'teach.next'
+        | 'teach.switch'
+        | 'teach.prereq'
+        | 'teach.deepen'
+        | 'teach.poll'
+        | 'teach.cancel'
+        | 'teach.back';
       params: { fill?: string[]; apply?: string; category?: string; index?: number };
     };
     try {
@@ -330,13 +368,25 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
         case 'status':
           return handleStatus(request.id);
         case 'teach.open':
+          deepen.abandon();
           return teachLine(request.id, teach.open(request.params.category));
         case 'teach.next':
+          if (deepen.running()) return fail(request.id, 'bad-request');
           return teachLine(request.id, teach.next());
         case 'teach.switch':
+          if (deepen.running()) return fail(request.id, 'bad-request');
           return teachLine(request.id, teach.switchTo(request.params.category ?? ''));
         case 'teach.prereq':
+          if (deepen.running()) return fail(request.id, 'bad-request');
           return teachLine(request.id, teach.prereq(request.params.index ?? -1));
+        case 'teach.deepen':
+          return deepenLine(request.id, await deepen.deepen());
+        case 'teach.poll':
+          return deepenLine(request.id, deepen.poll());
+        case 'teach.cancel':
+          return deepenLine(request.id, deepen.cancel());
+        case 'teach.back':
+          return deepenLine(request.id, deepen.back());
         default:
           return fail(request.id, 'unknown-method');
       }
@@ -344,4 +394,9 @@ export function createReviewHandler(deps: ReviewHandlerDeps): Handler {
       return fail(request.id, 'internal');
     }
   };
+  return Object.assign(handle, {
+    shutdown(): void {
+      deepen.shutdown();
+    },
+  });
 }

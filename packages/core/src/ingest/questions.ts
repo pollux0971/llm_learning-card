@@ -123,22 +123,38 @@ function buildQuestionsPrompt(card: Card): string {
  * 就打住,第二次不管成功失敗都往外丟。重試發生時先呼叫 onRetry(reason),讓呼叫端
  * 有機會把它記進 log.jsonl。
  */
+export interface GenerateQuestionsCall {
+  /** 預設 `ingest.questions`。深入傳 `deepen`,離線也能出考題。 */
+  task?: 'ingest.questions' | 'deepen';
+  /**
+   * 第一次呼叫明講的上限。不傳就讓 router 用 task 的表格值(ingest 既有行為:第一次不帶 opts)。
+   * 截斷重試照舊把這個上限加倍。
+   */
+  maxTokens?: number;
+}
+
 async function callQuestionsOnceWithRetry(
   card: Card,
   router: LlmRouter,
   onRetry?: (reason: RetryableQuestionsReason) => void,
+  call?: GenerateQuestionsCall,
 ): Promise<string> {
+  const task = call?.task ?? 'ingest.questions';
   const prompt = buildQuestionsPrompt(card);
+  const firstOpts = call?.maxTokens === undefined ? undefined : { maxTokens: call.maxTokens };
   try {
-    return (await router.call('ingest.questions', prompt)).text;
+    const result = firstOpts === undefined ? await router.call(task, prompt) : await router.call(task, prompt, firstOpts);
+    return result.text;
   } catch (err) {
     const reason = retryReasonOf(err);
     if (!reason) throw err;
     witness('ingest.questions.retry');
     onRetry?.(reason);
     // 截斷加倍預算;逾時與網路抖動原樣重打(預算不是問題,再打一次可能就過了)。
-    const opts = reason === 'output_truncated' ? { maxTokens: RETRY_MAX_TOKENS } : undefined;
-    return (await router.call('ingest.questions', prompt, opts)).text;
+    const doubled = call?.maxTokens === undefined ? RETRY_MAX_TOKENS : call.maxTokens * 2;
+    const opts = reason === 'output_truncated' ? { maxTokens: doubled } : firstOpts;
+    const retried = opts === undefined ? await router.call(task, prompt) : await router.call(task, prompt, opts);
+    return retried.text;
   }
 }
 
@@ -146,8 +162,9 @@ export async function generateQuestions(
   card: Card,
   router: LlmRouter,
   onRetry?: (reason: RetryableQuestionsReason) => void,
+  call?: GenerateQuestionsCall,
 ): Promise<QuestionFile> {
-  const text = await callQuestionsOnceWithRetry(card, router, onRetry);
+  const text = await callQuestionsOnceWithRetry(card, router, onRetry, call);
 
   let parsed: unknown;
   try {

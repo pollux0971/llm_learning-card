@@ -72,6 +72,11 @@ export interface GenerateChildrenOptions {
   outDir: string;
   /** 覆寫「今天」,格式 YYYY-MM-DD。預設用目前系統日期,同 runIngest。 */
   today?: string;
+  /**
+   * 呼叫的 task。預設 `ingest.cards`(ingest 行為不變)。
+   * 深入傳 `deepen`(ADR-079 D3):路由一致,離線也能生、標 provisional。
+   */
+  task?: 'ingest.cards' | 'deepen';
 }
 
 export interface GenerateChildrenResult {
@@ -113,12 +118,16 @@ function parseChildCandidates(text: string): ChildCandidate[] {
   });
 }
 
-function writeCardFile(cardsDir: string, card: Card): void {
-  mkdirSync(cardsDir, { recursive: true });
+/** 卡檔內文。ingest 與深入共用,格式必須一字不差。 */
+export function renderCardFile(card: Card): string {
   const yamlFm = yamlStringify(card.frontmatter).trimEnd();
   const exampleBlocks = card.examples.map((e) => '```example\n' + e.trim() + '\n```').join('\n\n');
-  const content = `---\n${yamlFm}\n---\n\n${card.body.trim()}\n${exampleBlocks ? '\n' + exampleBlocks + '\n' : ''}`;
-  writeFileSync(join(cardsDir, `${card.frontmatter.id}.md`), content, 'utf8');
+  return `---\n${yamlFm}\n---\n\n${card.body.trim()}\n${exampleBlocks ? '\n' + exampleBlocks + '\n' : ''}`;
+}
+
+function writeCardFile(cardsDir: string, card: Card): void {
+  mkdirSync(cardsDir, { recursive: true });
+  writeFileSync(join(cardsDir, `${card.frontmatter.id}.md`), renderCardFile(card), 'utf8');
 }
 
 export async function generateChildren(
@@ -129,7 +138,7 @@ export async function generateChildren(
   // 每次呼叫都重讀磁碟。generateChildrenForCards 寫完一個父卡再處理下一個,
   // 所以第二個父卡看得到第一個剛寫進去的子卡。不要在批次開頭讀一次就重複使用。
   const siblings = listSiblings(loadCategoryCards(opts.outDir, parent.frontmatter.category), parent);
-  const result = await router.call('ingest.cards', buildChildrenPrompt(parent, siblings));
+  const result = await router.call(opts.task ?? 'ingest.cards', buildChildrenPrompt(parent, siblings));
   const candidates = parseChildCandidates(result.text);
 
   const today = opts.today ?? new Date().toISOString().slice(0, 10);

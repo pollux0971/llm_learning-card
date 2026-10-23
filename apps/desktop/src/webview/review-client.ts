@@ -33,11 +33,45 @@ export interface ReviewClient {
   teachNext(): Promise<Record<string, unknown>>;
   teachSwitch(category: string): Promise<Record<string, unknown>>;
   teachPrereq(index: number): Promise<Record<string, unknown>>;
+  teachDeepen(): Promise<Record<string, unknown>>;
+  teachPoll(): Promise<Record<string, unknown>>;
+  teachCancel(): Promise<Record<string, unknown>>;
+  teachBack(): Promise<Record<string, unknown>>;
   onWait(listener: (waiting: boolean) => void): () => void;
 }
 
 type InvokeFn = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-type Method = 'start' | 'next' | 'submit' | 'summary' | 'status' | 'teach.open' | 'teach.next' | 'teach.switch' | 'teach.prereq';
+type Method =
+  | 'start'
+  | 'next'
+  | 'submit'
+  | 'summary'
+  | 'status'
+  | 'teach.open'
+  | 'teach.next'
+  | 'teach.switch'
+  | 'teach.prereq'
+  | 'teach.deepen'
+  | 'teach.poll'
+  | 'teach.cancel'
+  | 'teach.back';
+
+/** Rust 那七種:進出錯畫面。其餘側車錯誤留在卡片上(ADR-079)。判斷放這裡,視窗不出現 busy 字面。 */
+const CLIENT_LAYER_KINDS = ['not-configured', 'sidecar-unavailable', 'sidecar-exited', 'timeout', 'busy', 'bad-envelope', 'bad-response'] as const;
+
+export function isClientLayerError(err: unknown): boolean {
+  if (!(err instanceof ReviewError)) return true;
+  return (CLIENT_LAYER_KINDS as readonly string[]).includes(err.kind);
+}
+
+/**
+ * 深入的錯誤字樣。credential-unavailable 用側車給的那句(深入版樣板);
+ * 其他 kind 查 ERROR_MESSAGES,不用例外原文。
+ */
+export function deepenErrorText(err: unknown): string {
+  if (err instanceof ReviewError && err.kind === 'credential-unavailable') return err.message;
+  return reviewErrorText(err);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -189,6 +223,10 @@ export function createReviewClient(opts?: {
     teachNext: () => call('teach.next', {}),
     teachSwitch: (category: string) => call('teach.switch', { category }),
     teachPrereq: (index: number) => call('teach.prereq', { index }),
+    teachDeepen: () => call('teach.deepen', {}),
+    teachPoll: () => call('teach.poll', {}),
+    teachCancel: () => call('teach.cancel', {}),
+    teachBack: () => call('teach.back', {}),
     onWait,
   };
 }

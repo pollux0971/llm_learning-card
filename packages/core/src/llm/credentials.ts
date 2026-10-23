@@ -118,10 +118,19 @@ function isProblem(value: unknown): value is CredentialProblem {
   return true;
 }
 
+/** 金鑰句子的用途。不傳就是批改(既有兩句不變)。深入用自己的兩句(ADR-079 D7)。 */
+export type CredentialUse = 'grade' | 'deepen';
+
 /** 兩句固定樣板,只換鍵名。不帶值、不帶路徑、不帶例外原文。 */
-export function credentialMessage(problem: unknown): string {
+export function credentialMessage(problem: unknown, use: CredentialUse = 'grade'): string {
   if (!isProblem(problem)) {
     throw new Error('credentialMessage 需要 credentialProblem 認得的問題');
+  }
+  if (use === 'deepen') {
+    if (problem.kind === 'missing') {
+      return `產生新卡要用的金鑰沒有設定:${problem.key}。請在專案根目錄的 .env 加上。`;
+    }
+    return `產生新卡用的金鑰被拒絕:${problem.key}(可能過期或打錯)。請在專案根目錄的 .env 換一個。`;
   }
   if (problem.kind === 'missing') {
     return `批改要用的金鑰沒有設定:${problem.key}。請在專案根目錄的 .env 加上。`;

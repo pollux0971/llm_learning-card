@@ -80,6 +80,9 @@
       <span class="category">{session.categoryNameOf(shown.frontmatter.category)}</span>
       <span class="source">{shown.frontmatter.source === 'raw' ? '原始' : '生成'}</span>
       <span class="level">Level {shown.frontmatter.level}</span>
+      {#if view.from}
+        <span class="from">來自:{view.from.title}</span>
+      {/if}
       {#if shown.frontmatter.provisional}
         <span class="badge">待審核</span>
       {/if}
@@ -97,9 +100,22 @@
     <h2>{shown.frontmatter.title}</h2>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <div class="body">{@html shown.html}</div>
+    {#if view.generatingNotice}
+      <p class="generating">
+        {view.generatingNotice}
+        <HudButton onclick={() => void act(() => session.cancel())}>取消</HudButton>
+      </p>
+    {/if}
+    {#if view.deepenError}
+      <p class="deepen-error">{view.deepenError}</p>
+    {/if}
     <div class="controls">
+      {#if view.canBack}
+        <HudButton onclick={() => void act(() => session.back())} disabled={view.controlsDisabled}>回上一層</HudButton>
+      {/if}
       <HudButton onclick={handleNext} disabled={finished}>下一個</HudButton>
       <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
+      <HudButton onclick={() => void act(() => session.deepen())} disabled={!view.canDeepen}>深入這個</HudButton>
     </div>
   {/if}
 </HudPanel>

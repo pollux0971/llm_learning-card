@@ -1,0 +1,15 @@
+{
+  "score": 80.92,
+  "killed": 140,
+  "timeout": 0,
+  "survived": 33,
+  "noCoverage": 0,
+  "ignored": 0,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.t43-deepen-r2.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.t43-deepen-r2.json",
+  "commit": "2104b65"
+}

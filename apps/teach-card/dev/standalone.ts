@@ -36,6 +36,7 @@ function sidecarEnv(root: string): Record<string, string> {
     OPENAI_API_KEY: 'fake-key',
     ANTHROPIC_API_KEY: 'fake-key',
     GATEWAY_API_KEY: 'fake-key',
+    LC_REVIEW_FAKE_CLOUD: join(DEV, 'fake-cloud.mjs'),
     GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_CONFIG_NOSYSTEM: '1',
   };
