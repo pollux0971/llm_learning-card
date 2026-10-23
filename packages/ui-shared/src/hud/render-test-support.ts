@@ -185,6 +185,8 @@ export interface GalleryPage {
   evaluate<T>(expression: string): Promise<T>;
   rect(selector: string, index?: number): Promise<Rect>;
   screenshot(clip?: Rect): Promise<Image>;
+  /** T35:改視窗大小(CDP 的 Emulation.setDeviceMetricsOverride),不重新載入;reset() 之後仍是改過的大小,量完要改回來 */
+  resize?(width: number, height: number): Promise<void>;
   /** 對第 index 個符合 selector 的元素強制 :hover / :focus 之類的狀態;傳 [] 清掉 */
   forceState(selector: string, index: number, states: string[]): Promise<void>;
   close(): Promise<void>;
@@ -309,6 +311,10 @@ export async function openApp(appDir: string, opts: OpenAppOptions = {}): Promis
       if (clip) params['clip'] = { ...clip, scale: 1 };
       const r = await c.send<{ data: string }>('Page.captureScreenshot', params);
       return decodePng(Buffer.from(r.data, 'base64'));
+    },
+    async resize(width, height) {
+      await c.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      await evaluate('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))');
     },
     async forceState(selector, index, states) {
       const doc = await c.send<{ root: { nodeId: number } }>('DOM.getDocument', { depth: -1 });
