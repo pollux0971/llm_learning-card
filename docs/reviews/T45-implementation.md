@@ -120,4 +120,11 @@ gate=doc-links result=PASS scanned=131
 
 ## 待協調
 
-無。測試沒有改。「取消」沒有另寫 `font-size`:按鈕是瀏覽器預設字級,不繼承 `.generating` 的 0.85rem;t45 的 d 與 t44 的 g 都綠(字級與高度跟「下一個」相同)。若驗收環境的按鈕會繼承外層字級,再明寫對齊即可。
+測試沒有改。「取消」沒有另寫 `font-size`:按鈕是瀏覽器預設字級,不繼承 `.generating` 的 0.85rem;t45 的 d 與 t44 的 g 都綠(字級與高度跟「下一個」相同)。若驗收環境的按鈕會繼承外層字級,再明寫對齊即可。
+
+工單「不動的地方」那條 `git diff --stat e30a353..HEAD -- packages contracts apps/desktop features scripts apps/teach-card/src/teach-session.ts apps/teach-card/src/main.ts` 在這個起點上本來就有輸出,不是 T45 實作帶進來的。`97a4de8..HEAD`(本張)那條沒有輸出。`e30a353..97a4de8` 的輸出是起點已有的兩筆:
+
+- `ad7b7e5` docs: 07-teach-card phase-3 done
+- `bf5e378` test(07p3): 釘住 07-teach-card phase-3
+
+動到的是 `features/07-teach-card/FEATURE.md`、`NEXT.md`、`packages/ui-shared/src/hud/card-design-values-test-support.ts`、`card-regression.test.ts`。本張沒改這些檔。
