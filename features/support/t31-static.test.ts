@@ -21,10 +21,11 @@ const read = (rel: string): string => readFileSync(join(ROOT, rel), 'utf8');
 /**
  * 例外清單的條數。T31 當時是 21 條;之後 ADR-077(T37)依序加了兩條單向例外:
  * 07-teach-card → 10-desktop-shell(4c5aa62,用桌面殼的 ReviewClient 與 LearningFs,跟 06 → 10 同理由)、
- * 11-review-cli → 07-teach-card(3d471e4,B-lite:session/teach.ts 用 teach/ 的純函式)= 23。
+ * 11-review-cli → 07-teach-card(3d471e4,B-lite:session/teach.ts 用 teach/ 的純函式)= 23;
+ * 再加 T43 D8(ADR-079):11-review-cli → 02-ingest-pipeline(f6a9255,深入這個要叫匯入管線)= 24。
  * 這個數字釘的是「T31 自己沒有多加一條」;別的工單加例外時,在這裡補上來源再改數字。
  */
-const BASE_ALLOW_ENTRIES = 23;
+const BASE_ALLOW_ENTRIES = 24;
 
 interface AllowEntry {
   from: string;
