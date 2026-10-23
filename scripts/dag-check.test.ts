@@ -118,22 +118,43 @@ describe('先證明會紅,才接進 chain(must_catch:接了但故意弄壞輸入
 describe('真 repo(工單第 2、4 步的結果;worker 做完前必須紅)', () => {
   const real = (...flags: string[]) => P2.runDagCli(['--root', REPO, ...flags]);
 
-  it('T39 自己的 touches 全部對得到落點:有 LANDING T39 行,沒有 PROBLEM no-landing T39(登記落點那一步沒做完就紅)', () => {
-    const r = real();
+  /** 暫存樹:真的落點表 + T39 檔頭的複本,status 強制 todo(只有沒結束的工單才印 LANDING,解讀 8);跟 T39 現在的 status 無關 */
+  const t39Tree = (touches?: string): string => {
+    const root = mk();
+    const ticket = readFileSync(join(REPO, 'docs/tickets/T39-work-dag-phase-2.md'), 'utf8');
+    const lines = ticket.split('\n');
+    const close = lines.indexOf('---', 1);
+    expect(lines[0], 'T39 工單第一行是 ---').toBe('---');
+    expect(close, 'T39 工單有檔頭結尾').toBeGreaterThan(0);
+    let header = lines.slice(0, close + 1).join('\n');
+    header = header.replace(/^status:.*$/m, 'status: todo');
+    if (touches !== undefined) header = header.replace(/^touches:.*$/m, `touches: ${touches}`);
+    P2.writeRaw(root, 'docs/tickets/T39-work-dag-phase-2.md', `${header}\n`);
+    P2.writeRaw(root, 'scripts/boundaries.owners.json', readFileSync(join(REPO, 'scripts/boundaries.owners.json'), 'utf8'));
+    return root;
+  };
+
+  it('T39 檔頭的 touches 全部對得到真落點表(T39 的 status 強制 todo):有 LANDING T39 行,沒有 PROBLEM no-landing T39', () => {
+    const r = P2.runDagCli(['--root', t39Tree()]);
     expect(r.status, r.stderr).toBe(0);
-    expect(P2.startsWith(r.stdout, 'LANDING T39 ').length, `沒有 LANDING T39 行(工具還沒把工單進圖?)\n${r.stdout.slice(0, 600)}`).toBeGreaterThan(0);
+    expect(P2.startsWith(r.stdout, 'LANDING T39 ').length, `沒有 LANDING T39 行(工具沒把工單進圖?)\n${r.stdout.slice(0, 600)}`).toBeGreaterThan(0);
     expect(P2.startsWith(r.stdout, 'PROBLEM no-landing T39 ')).toEqual([]);
   }, 120_000);
 
-  it('真 repo 沒有任何 PROBLEM no-landing(還沒結束的工單 touches 都登記在落點表)', () => {
+  it('上一條會抓東西:同一棵暫存樹把 touches 換成沒登記的路徑 → 印 PROBLEM no-landing T39', () => {
+    const r = P2.runDagCli(['--root', t39Tree('[zzz-unregistered/file.ts]')]);
+    expect(P2.startsWith(r.stdout, 'PROBLEM no-landing T39 ').length, r.stdout.slice(0, 600)).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('真 repo 沒有任何 PROBLEM no-landing(還沒結束的工單 touches 都登記在落點表;沒有未結束的工單也成立)', () => {
     const r = real();
-    expect(r.stdout.split('\n').some((l) => l.startsWith('LANDING ')), '工具還沒把工單進圖').toBe(true);
+    expect(r.status, r.stderr).toBe(0);
     expect(P2.startsWith(r.stdout, 'PROBLEM no-landing')).toEqual([]);
   }, 120_000);
 
   it('真 repo 每張工單都有合法檔頭:沒有 PROBLEM bad-header / missing-header', () => {
     const r = real();
-    expect(P2.startsWith(r.stdout, 'LANDING ').length, '工具還沒把工單進圖').toBeGreaterThan(0);
+    expect(r.status, r.stderr).toBe(0);
     expect(P2.startsWith(r.stdout, 'PROBLEM bad-header')).toEqual([]);
     expect(P2.startsWith(r.stdout, 'PROBLEM missing-header')).toEqual([]);
   }, 120_000);
