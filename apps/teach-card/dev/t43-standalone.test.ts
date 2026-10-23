@@ -11,7 +11,10 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// 每條都真的起檔案/行程,負載下會慢:逐檔放寬逾時(不動全域設定)
+vi.setConfig({ testTimeout: 30_000 });
 
 const DEV = import.meta.dirname;
 const FAKE = join(DEV, 'fake-cloud.mjs');

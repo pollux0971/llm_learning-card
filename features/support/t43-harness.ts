@@ -311,7 +311,16 @@ export class FakeDeepenRouter {
       reachedResolve = resolve;
     });
     this.gates.push({ match, promise, release, fail: rejectWith, reached: reachedResolve, used: false });
-    return { reached, release, fail: rejectWith };
+    // 呼叫一直沒到達(基底上功能還沒有)就讓測試很快失敗,不要等到整個測試逾時
+    const bounded = new Promise<RouterCall>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('router 的呼叫沒有在 8 秒內到達')), 8000);
+      void reached.then((c) => {
+        clearTimeout(timer);
+        resolve(c);
+      });
+    });
+    bounded.catch(() => undefined);
+    return { reached: bounded, release, fail: rejectWith };
   }
 
   async call(task: string, prompt: string, opts?: Record<string, unknown>): Promise<{ text: string; provider: string; model: string; latency_ms: number; provisional: boolean }> {

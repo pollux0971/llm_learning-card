@@ -9,7 +9,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { seedDue } from './review-session-harness.js';
 import {
   PARENT,
@@ -26,6 +26,9 @@ import {
   resultOf,
   type Obj,
 } from './t43-harness.js';
+
+// 每條都真的起檔案/行程,負載下會慢:逐檔放寬逾時(不動全域設定)
+vi.setConfig({ testTimeout: 30_000 });
 
 afterAll(cleanupRigs);
 

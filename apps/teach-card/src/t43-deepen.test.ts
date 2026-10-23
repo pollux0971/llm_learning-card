@@ -34,6 +34,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
+// 每條都真的起檔案/行程,負載下會慢:逐檔放寬逾時(不動全域設定)
+vi.setConfig({ testTimeout: 30_000 });
+
 const ROOT = join(import.meta.dirname, '../../..');
 const SESSION = pathToFileURL(join(import.meta.dirname, 'teach-session.ts')).href;
 const CLIENT = pathToFileURL(join(ROOT, 'apps/desktop/src/webview/review-client.ts')).href;

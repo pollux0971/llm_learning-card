@@ -60,6 +60,9 @@ vi.mock('../../packages/core/src/session/io.ts', async (importOriginal) => {
   };
 });
 
+// 每條都真的起檔案/行程,負載下會慢:逐檔放寬逾時(不動全域設定)
+vi.setConfig({ testTimeout: 30_000 });
+
 afterAll(cleanupRigs);
 beforeEach(() => {
   control.calls.length = 0;

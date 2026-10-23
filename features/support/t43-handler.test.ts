@@ -9,7 +9,7 @@
  *
  * 本來就綠(基底上已成立,守不退步):沒有(整個動作組都還沒有)。
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { parseCardText } from '../../packages/core/src/schema/parse-card.js';
 import { validateQuestionFile } from '../../packages/core/src/schema/validate-question.js';
 import { NoModelError } from '../../packages/core/src/llm/errors.js';
@@ -38,6 +38,9 @@ import {
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+
+// 每條都真的起檔案/行程,負載下會慢:逐檔放寬逾時(不動全域設定)
+vi.setConfig({ testTimeout: 30_000 });
 
 afterAll(cleanupRigs);
 

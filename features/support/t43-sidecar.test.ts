@@ -11,7 +11,7 @@
  */
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseCardText } from '../../packages/core/src/schema/parse-card.js';
 import { seedDue } from './review-session-harness.js';
 import { spawnSidecar, request, type Sidecar } from './review-sidecar-harness.js';
@@ -46,6 +46,9 @@ interface Run {
   release(kind: string): void;
   until(pred: () => boolean, ms?: number): Promise<void>;
 }
+
+// 每條都真的起檔案/行程,負載下會慢:逐檔放寬逾時(不動全域設定)
+vi.setConfig({ testTimeout: 30_000 });
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
