@@ -41,11 +41,12 @@ describe('doneFeatureProblems 抓得到', () => {
     writeFileSync(join(root, 'features', '06-test-card', 'phase-2.feature'), feat);
     writeFileSync(join(root, 'features', '06-test-card', 'phase-3.feature'), feat);
     writeFileSync(join(root, 'features', '07-teach-card', 'phase-2.feature'), feat);
+    writeFileSync(join(root, 'features', '07-teach-card', 'phase-3.feature'), feat);
     return root;
   }
   const table = (rows: string[]) => ['| # | 內容 | wave | 狀態 | 日期 |', '|---|---|---|---|---|', ...rows].join('\n');
   const pinnedFor = (feat: string) => {
-    const root = fake(table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |']), table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |']), feat);
+    const root = fake(table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |']), table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |']), feat);
     return { root, pinned: DONE_PHASE_FEATURES.map((p) => ({ ...p, sha256: doneFeatureHash(root, p.file) })) };
   };
   const doneFeatureHash = (root: string, file: string) => {
@@ -66,8 +67,8 @@ describe('doneFeatureProblems 抓得到', () => {
 
   it('新出現 done 的 phase 不在清單裡 → 抓到', () => {
     const { root, pinned } = pinnedFor('Feature: x\n');
-    writeFileSync(join(root, 'features/07-teach-card/FEATURE.md'), table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |']));
-    expect(doneFeatureProblems(root, pinned).join('\n')).toMatch(/phase-3 已經是 done/);
+    writeFileSync(join(root, 'features/07-teach-card/FEATURE.md'), table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |', '| 4 | d | W | done | d |']));
+    expect(doneFeatureProblems(root, pinned).join('\n')).toMatch(/phase-4 已經是 done/);
   });
 
   it('PENDING_DONE_PHASES 平常是空的(phase 標 done 之後就清掉)', () => {
@@ -112,7 +113,7 @@ describe('子行程的標籤式涵蓋每一個釘住的 done phase(場景 4)', (
     }
   });
 
-  it('還沒 done 的 phase 不會被拉進來(沒釘住的 .feature,例如之後的 phase-3、phase-4)', () => {
+  it('還沒 done 的 phase 不會被拉進來(沒釘住的 .feature,例如 07 的 phase-4)', () => {
     const pinned = new Set(DONE_PHASE_FEATURES.map((p) => p.file));
     for (const folder of Object.keys(FOLDER_TAG)) {
       const dir = join(REPO_ROOT, 'features', folder);
