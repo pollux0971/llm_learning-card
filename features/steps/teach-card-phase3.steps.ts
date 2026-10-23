@@ -370,7 +370,7 @@ Then('the marker is visible in the interface', function (this: LearningWorld) {
 
 Then('it says nothing can be generated right now', function (this: LearningWorld) {
   const view = st(this).session!.view();
-  assert.equal(view.deepenError, ERROR_MESSAGES['no-model']);
+  assert.equal(view.deepenError, (ERROR_MESSAGES as Record<string, string>)['no-model']);
   assert.equal(view.deepenError, '現在沒辦法產生新卡:連不上雲端,也沒有可用的本機模型。');
   const s = st(this);
   assert.deepEqual(diskHashes(s.vault!), s.before, '沒有模型時磁碟不能變');
