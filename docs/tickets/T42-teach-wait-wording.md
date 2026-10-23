@@ -4,7 +4,7 @@ deps: [T40]
 touches: [apps/teach-card/src/]
 cpu: light
 budget_usd: 1
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 教學卡的 BUSY_MESSAGE 不是剛好 考試卡還在用複習程式,稍等一下。(還是舊字樣、少一個字、標點換成半形):teach-session 的常數測試必須紅
@@ -28,7 +28,7 @@ T40 之後兩個視窗共用一個側車。app 一開,考試卡的 `start` 常�
 
 ## 改什麼
 
-- `../../apps/teach-card/src/teach-session.ts` 第 9 行 `BUSY_MESSAGE` 的值改成 `考試卡還在用複習程式,稍等一下。`(全形逗號、全形句號,跟舊字樣同樣的標點)。
+- `../../apps/teach-card/src/teach-session.ts` 第 9 行 `BUSY_MESSAGE` 的值改成 `考試卡還在用複習程式,稍等一下。`(半形逗號、全形句號,跟舊字樣同樣的標點)。
 - 別的都不動:
   - 重試在共用的 `../../apps/desktop/src/webview/review-client.ts`(300 ms、1 秒、180 秒,ADR-078),這張不碰那個檔;
   - 等候時按鈕停用、`onWait` 驅動畫面、樣式都照舊;
