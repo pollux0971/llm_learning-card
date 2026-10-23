@@ -11,7 +11,7 @@
  *   - 能讓某個 method 回一個錯誤(`__t44.inject[method]` 一串錯誤,用掉就放行;同 card-render-phase3.test.ts 的做法)。
  * 這是測試那一邊的事,產品程式不用為它改。
  *
- * 對應工單 must_catch:a 生成中有那一行與「取消」;b 三顆主按鈕停用(回上一層出現就也停用);c 生成中按「下一個」0 個 teach.next、沒有出錯畫面;
+ * 對應工單 must_catch:a 生成中有那一行與「取消」(T45 取代「在按鈕列上面」的位置規定,顧問 2026-10-24:位置改由 t45-status-layout-render.test.ts 量結果);b 三顆主按鈕停用(回上一層出現就也停用);c 生成中按「下一個」0 個 teach.next、沒有出錯畫面;
  * d 完成後畫面自己換成子卡;e 取消回原卡、按鈕恢復;f 有子卡的那張按深入不閃出生成中那一行;g 樣式(生成中與深入的錯誤字樣:
  * 字比內文小、上方 1px var(--hud-line)、「取消」跟「下一個」一樣大、最深一層四顆按鈕都在面板裡且點得到)。
  * 工單預期在 930de2a 之前的基底上 a、b、c、e、g 紅,d、f 本來就綠(它們守的是修完之後不能退步)。
@@ -208,17 +208,12 @@ describe('T44 渲染(A):生成中的畫面——a、b、c、e、g 生成中那�
     expect(GENERATING_MESSAGE).toBe('正在產生更深入的卡片,可能要等幾十秒。');
   });
 
-  it('a. 按深入、teach.poll 被扣住時:畫面上有生成中那一行與「取消」(而且在按鈕列上面)', async () => {
+  it('a. 按深入、teach.poll 被扣住時:畫面上有生成中那一行與「取消」', async () => {
     await p().reset();
     await startHeldDeepen(p());
     expect(await waitFor(p(), `(() => { const e = document.querySelector('.generating'); return e && e.textContent.includes(${JSON.stringify(GENERATING_MESSAGE)}); })()`, 2000), `畫面要出現「${GENERATING_MESSAGE}」;畫面文字:${await pageText(p())}`).toBe(true);
     expect(await hasButton(p(), '取消'), '要有「取消」').toBe(true);
     expect(await isDisabled(p(), '取消'), '「取消」可以按').toBe(false);
-    const above = await p().evaluate<boolean>(`(() => {
-      const line = document.querySelector('.generating'); const controls = document.querySelector('.controls');
-      return Boolean(line && controls) && Boolean(line.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING);
-    })()`);
-    expect(above, '生成中那一行在按鈕列上面').toBe(true);
     await p().evaluate('window.__t44.release()');
   });
 
