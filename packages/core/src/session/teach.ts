@@ -6,13 +6,24 @@
 import { mkdirSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { CategorySchema, type CardId, type Review } from '@contracts/index.js';
+import { CategorySchema, type Card, type CardId, type CategoryId, type Review } from '@contracts/index.js';
 import { readOrderFile } from '../schema/graph.js';
 import { recordEvent } from '../schema/log.js';
 import { parseCardText } from '../schema/parse-card.js';
 import { listCardIds } from '../schema/validate-question.js';
 import { applyLearnedTransition } from '../scheduler/transitions.js';
-import { nextUnlearned, orderDeck, remainingCount, unlearnedPrereqs } from '../teach/deck.js';
+import {
+  atDeepenFloor,
+  childIdsOf,
+  isMainFlowLevel,
+  nextUnlearned,
+  omitIds,
+  orderDeck,
+  planAdvance,
+  remainingCount,
+  unlearnedPrereqs,
+  type CrumbState,
+} from '../teach/deck.js';
 import { findCardFile, readReviewsSnapshot, saveReviewsIfUnchanged } from './io.js';
 import type { Session } from './types.js';
 
@@ -34,9 +45,20 @@ export interface TeachView {
   categories: TeachCategoryRow[];
   card: TeachCardRef | null;
   prereqs: { id: string; title: string }[];
+  /** 麵包屑最上層(目前這組子卡)的父卡。沒有麵包屑是 null。 */
+  from: { id: string; title: string } | null;
+  canBack: boolean;
+  /** 生成中由側車蓋掉;這裡組畫面時恆為 false。 */
+  generating: boolean;
 }
 
 export type TeachOutcome = { ok: true; view: TeachView } | { ok: false; kind: 'bad-request' | 'teach-record-changed' };
+
+export type DeepenPrep =
+  | { action: 'bad-request' }
+  | { action: 'floor' }
+  | { action: 'reuse'; view: TeachView }
+  | { action: 'generate'; parent: Card; view: TeachView };
 
 export interface TeachHost {
   learningDir: string;
@@ -55,6 +77,8 @@ interface CategoryConfig {
 interface CardMeta {
   title: string;
   prereqs: string[];
+  level: number;
+  parent?: string;
 }
 
 const WRITE_ATTEMPTS = 2;
@@ -92,7 +116,34 @@ function readMeta(learningDir: string, id: string): CardMeta {
   const fm = parseCardText(text).frontmatter;
   const title = typeof fm.title === 'string' && fm.title.length > 0 ? fm.title : id;
   const prereqs = Array.isArray(fm.prereqs) ? fm.prereqs.filter((item): item is string => typeof item === 'string') : [];
-  return { title, prereqs };
+  const level = typeof fm.level === 'number' ? fm.level : 0;
+  const parent = typeof fm.parent === 'string' ? fm.parent : undefined;
+  return parent === undefined ? { title, prereqs, level } : { title, prereqs, level, parent };
+}
+
+function loadCard(learningDir: string, id: string): Card {
+  const text = readFileSync(findCardFile(learningDir, id as CardId), 'utf8');
+  const parsed = parseCardText(text);
+  const fm = parsed.frontmatter;
+  const meta = readMeta(learningDir, id);
+  const created = typeof fm.created === 'string' ? fm.created : '2026-01-01';
+  return {
+    frontmatter: {
+      id: id as CardId,
+      category: String(fm.category) as CategoryId,
+      title: meta.title,
+      level: meta.level,
+      source: fm.source === 'raw' ? 'raw' : 'llm',
+      created,
+      ...(meta.parent === undefined ? {} : { parent: meta.parent as CardId }),
+      prereqs: meta.prereqs as CardId[],
+      provisional: fm.provisional === true,
+      stale: fm.stale === true,
+      source_missing: fm.source_missing === true,
+    },
+    body: parsed.body,
+    examples: parsed.examples,
+  };
 }
 
 function cardRef(learningDir: string, id: string): TeachCardRef {
@@ -106,18 +157,28 @@ export function createTeachRuntime(host: TeachHost): {
   next(): TeachOutcome;
   switchTo(category: string): TeachOutcome;
   prereq(index: number): TeachOutcome;
+  back(): TeachOutcome;
+  prepareDeepen(): DeepenPrep;
+  /** 生成寫完之後推一層麵包屑,顯示第一張新卡。 */
+  enterChildren(parentId: string, childIds: readonly string[]): TeachOutcome;
+  view(): TeachView;
 } {
   const { learningDir } = host;
   let category: string | undefined;
   let cardId: string | undefined;
+  let crumbs: CrumbState[] = [];
   const warned = new Set<string>();
 
   function allIds(): Set<string> {
     return new Set(listCardIds(learningDir));
   }
 
+  function mainFlowIds(cat: string, ids: ReadonlySet<string>): string[] {
+    return cardsInCategory(learningDir, cat, ids).filter((id) => isMainFlowLevel(readMeta(learningDir, id).level));
+  }
+
   function deckOf(cat: string, reviews: Record<string, unknown>, ids: ReadonlySet<string>): string[] {
-    const onDisk = cardsInCategory(learningDir, cat, ids);
+    const onDisk = mainFlowIds(cat, ids);
     const order = readOrderFile(learningDir, cat);
     if (order.kind === 'missing') {
       if (!warned.has(cat)) {
@@ -135,56 +196,104 @@ export function createTeachRuntime(host: TeachHost): {
     return orderDeck(order.ids, onDisk);
   }
 
+  function crumbParents(): string[] {
+    return crumbs.map((crumb) => crumb.parentId);
+  }
+
   function buildView(reviews: Record<string, Review>, ids: ReadonlySet<string>): TeachView {
     const cats = loadCategories(learningDir);
     const current = category ?? cats[0]?.id ?? '';
     const categories: TeachCategoryRow[] = cats.map((cat) => ({
       id: cat.id,
       name: cat.name,
-      remaining: remainingCount(cardsInCategory(learningDir, cat.id, ids), reviews),
+      remaining: remainingCount(mainFlowIds(cat.id, ids), reviews),
       requireRaw: cat.requireRaw,
     }));
+    const top = crumbs[crumbs.length - 1];
+    const from = top === undefined ? null : { id: top.parentId, title: readMeta(learningDir, top.parentId).title };
+    const canBack = crumbs.length > 0;
     if (cardId === undefined) {
-      return { category: current, categories, card: null, prereqs: [] };
+      return { category: current, categories, card: null, prereqs: [], from, canBack, generating: false };
     }
     const meta = readMeta(learningDir, cardId);
-    const prereqIds = unlearnedPrereqs(meta.prereqs, reviews, [...ids]);
+    const prereqIds = omitIds(unlearnedPrereqs(meta.prereqs, reviews, [...ids]), crumbParents());
     return {
       category: current,
       categories,
       card: cardRef(learningDir, cardId),
       prereqs: prereqIds.map((id) => ({ id, title: readMeta(learningDir, id).title })),
+      from,
+      canBack,
+      generating: false,
     };
   }
 
+  function currentView(): TeachView {
+    return buildView(readReviewsSnapshot(learningDir).reviews, allIds());
+  }
+
+  function shownPrereqs(): string[] {
+    if (cardId === undefined) return [];
+    const ids = allIds();
+    const reviews = readReviewsSnapshot(learningDir).reviews;
+    return omitIds(unlearnedPrereqs(readMeta(learningDir, cardId).prereqs, reviews, [...ids]), crumbParents());
+  }
+
   /**
-   * 把目前顯示的那張標成學過。已經在 reviews 裡就不寫。
-   * 衝突重試一次;還是不過就不改目前卡。
+   * 把這幾張一起標成學過(同一次寫入)。已經在 reviews 裡的略過、不重複記 learned。
+   * 衝突重試一次;還是不過就一筆都不寫。空清單是 none。
    */
-  function recordCurrent(): 'ok' | 'conflict' | 'none' {
-    if (cardId === undefined) return 'none';
-    const id = cardId;
+  function recordIds(ids: readonly string[]): 'ok' | 'conflict' | 'none' {
+    const unique: string[] = [];
+    for (const id of ids) {
+      if (id.length > 0 && !unique.includes(id)) unique.push(id);
+    }
+    if (unique.length === 0) return 'none';
     const learnedAt = host.today();
     for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt += 1) {
       const snap = readReviewsSnapshot(learningDir);
-      if (Object.prototype.hasOwnProperty.call(snap.reviews, id)) return 'ok';
-      const nextReviews: Record<CardId, Review> = {
-        ...snap.reviews,
-        [id]: applyLearnedTransition({ card: id, learnedAt }) as unknown as Review,
-      };
+      const fresh = unique.filter((id) => !Object.prototype.hasOwnProperty.call(snap.reviews, id));
+      if (fresh.length === 0) return 'ok';
+      const nextReviews: Record<CardId, Review> = { ...snap.reviews };
+      for (const id of fresh) {
+        nextReviews[id as CardId] = applyLearnedTransition({ card: id as CardId, learnedAt }) as unknown as Review;
+      }
       try {
         const newHash = saveReviewsIfUnchanged(learningDir, nextReviews, snap.hash);
         const exam = host.examSession();
         if (exam && exam.reviewsHash === snap.hash) exam.reviewsHash = newHash;
         const logPath = join(learningDir, 'state/log.jsonl');
         mkdirSync(dirname(logPath), { recursive: true });
-        recordEvent(logPath, { ts: new Date().toISOString(), type: 'learned', card: id });
+        for (const id of fresh) {
+          recordEvent(logPath, { ts: new Date().toISOString(), type: 'learned', card: id as CardId });
+        }
         return 'ok';
       } catch (err) {
         if (!isReviewsChanged(err)) throw err;
       }
     }
     return 'conflict';
+  }
+
+  function childrenOf(parentId: string): string[] {
+    if (category === undefined) return [];
+    const ids = cardsInCategory(learningDir, category, allIds());
+    return childIdsOf(
+      ids.map((id) => {
+        const parent = readMeta(learningDir, id).parent;
+        return parent === undefined ? { id } : { id, parent };
+      }),
+      parentId,
+    );
+  }
+
+  function pushCrumb(parentId: string, childIds: readonly string[]): TeachOutcome {
+    const sorted = [...childIds].sort();
+    const first = sorted[0];
+    if (first === undefined) return { ok: false, kind: 'bad-request' };
+    crumbs = [...crumbs, { parentId, childIds: sorted, index: 0 }];
+    cardId = first;
+    return { ok: true, view: currentView() };
   }
 
   function showCategory(cat: string): TeachOutcome {
@@ -200,35 +309,72 @@ export function createTeachRuntime(host: TeachHost): {
     open(requested?: string): TeachOutcome {
       const cats = loadCategories(learningDir);
       if (cats.length === 0) return { ok: false, kind: 'bad-request' };
+      crumbs = [];
       const picked = requested !== undefined && cats.some((cat) => cat.id === requested) ? requested : cats[0]!.id;
       return showCategory(picked);
     },
 
     next(): TeachOutcome {
       if (category === undefined) return { ok: false, kind: 'bad-request' };
-      const recorded = recordCurrent();
-      if (recorded === 'conflict') return { ok: false, kind: 'teach-record-changed' };
-      return showCategory(category);
+      const plan = planAdvance(cardId, crumbs);
+      if (plan.record.length > 0) {
+        const recorded = recordIds(plan.record);
+        if (recorded === 'conflict') return { ok: false, kind: 'teach-record-changed' };
+      }
+      crumbs = plan.crumbs;
+      if (plan.cardId === undefined) return showCategory(category);
+      cardId = plan.cardId;
+      return { ok: true, view: currentView() };
     },
 
     switchTo(nextCategory: string): TeachOutcome {
       const cats = loadCategories(learningDir);
       if (!cats.some((cat) => cat.id === nextCategory)) return { ok: false, kind: 'bad-request' };
-      const recorded = recordCurrent();
-      if (recorded === 'conflict') return { ok: false, kind: 'teach-record-changed' };
+      if (cardId !== undefined) {
+        const recorded = recordIds([cardId]);
+        if (recorded === 'conflict') return { ok: false, kind: 'teach-record-changed' };
+      }
+      crumbs = [];
       return showCategory(nextCategory);
     },
 
     prereq(index: number): TeachOutcome {
       if (category === undefined || cardId === undefined) return { ok: false, kind: 'bad-request' };
-      const ids = allIds();
-      const reviews = readReviewsSnapshot(learningDir).reviews;
-      const prereqs = unlearnedPrereqs(readMeta(learningDir, cardId).prereqs, reviews, [...ids]);
+      const prereqs = shownPrereqs();
       if (!Number.isInteger(index) || index < 0 || index >= prereqs.length) return { ok: false, kind: 'bad-request' };
       const picked = prereqs[index];
       if (picked === undefined) return { ok: false, kind: 'bad-request' };
+      crumbs = [];
       cardId = picked;
-      return { ok: true, view: buildView(reviews, ids) };
+      return { ok: true, view: currentView() };
     },
+
+    back(): TeachOutcome {
+      if (crumbs.length === 0) return { ok: false, kind: 'bad-request' };
+      const top = crumbs[crumbs.length - 1];
+      if (top === undefined) return { ok: false, kind: 'bad-request' };
+      crumbs = crumbs.slice(0, -1);
+      cardId = top.parentId;
+      return { ok: true, view: currentView() };
+    },
+
+    prepareDeepen(): DeepenPrep {
+      if (category === undefined || cardId === undefined) return { action: 'bad-request' };
+      const meta = readMeta(learningDir, cardId);
+      if (atDeepenFloor(meta.level)) return { action: 'floor' };
+      const kids = childrenOf(cardId);
+      if (kids.length > 0) {
+        const entered = pushCrumb(cardId, kids);
+        if (!entered.ok) return { action: 'bad-request' };
+        return { action: 'reuse', view: entered.view };
+      }
+      return { action: 'generate', parent: loadCard(learningDir, cardId), view: currentView() };
+    },
+
+    enterChildren(parentId: string, childIds: readonly string[]): TeachOutcome {
+      return pushCrumb(parentId, childIds);
+    },
+
+    view: currentView,
   };
 }

@@ -57,6 +57,58 @@ interface RegeneratedCard {
   count: number;
 }
 
+export type WordLimitTask = 'ingest.cards' | 'deepen';
+
+export interface WordLimitInput {
+  title: string;
+  body: string;
+  examples: string[];
+}
+
+export interface WordLimitResult {
+  title: string;
+  body: string;
+  examples: string[];
+  accepted: boolean;
+  attempts: RegenerateAttempt[];
+  warnings: string[];
+}
+
+/**
+ * 字數超過上限就用 regenerate 模板重寫,最多 3 次嘗試(初稿 + 2 次重寫)。
+ * ingest 與深入共用。task 由呼叫端決定:ingest 用 `ingest.cards`,深入用 `deepen`。
+ */
+export async function enforceWordLimit(
+  call: (task: WordLimitTask, prompt: string) => Promise<{ text: string }>,
+  task: WordLimitTask,
+  category: string,
+  sourceLabel: string,
+  input: WordLimitInput,
+): Promise<WordLimitResult> {
+  let current: WordLimitInput = { title: input.title, body: input.body, examples: [...input.examples] };
+  const attempts: RegenerateAttempt[] = [{ attempt: 1, wordCount: countBodyWords(current.body), body: current.body }];
+  const warnings: string[] = [];
+  let attemptNum = 1;
+  while (countBodyWords(current.body) > BODY_WORD_LIMIT && attemptNum < MAX_ATTEMPTS) {
+    attemptNum += 1;
+    if (task === 'ingest.cards') witness('ingest.cards.regenerate-retry');
+    const regenerated = await callAndParseRegenerated(call, task, buildRegeneratePrompt(category, sourceLabel, current));
+    if (regenerated.count > 1) {
+      warnings.push(`regenerate 回了 ${regenerated.count} 筆,只用第一筆(${current.title})`);
+    }
+    current = applyRegenerated(current, regenerated);
+    attempts.push({ attempt: attemptNum, wordCount: countBodyWords(current.body), body: current.body });
+  }
+  return {
+    title: current.title,
+    body: current.body,
+    examples: current.examples,
+    accepted: countBodyWords(current.body) <= BODY_WORD_LIMIT,
+    attempts,
+    warnings,
+  };
+}
+
 export async function generateCards(
   router: LlmRouter,
   opts: GenerateCardsOptions,
@@ -69,26 +121,19 @@ export async function generateCards(
   let regenerateEvents = 0;
 
   for (const candidate of initial) {
-    let current = candidate;
-    const attempts: RegenerateAttempt[] = [{ attempt: 1, wordCount: countBodyWords(current.body), body: current.body }];
-
-    let attemptNum = 1;
-    while (countBodyWords(current.body) > BODY_WORD_LIMIT && attemptNum < MAX_ATTEMPTS) {
-      attemptNum += 1;
-      witness('ingest.cards.regenerate-retry');
-      const regenerated = await callAndParseRegenerated(router, buildRegeneratePrompt(opts, current));
-      if (regenerated.count > 1) {
-        warnings.push(`regenerate 回了 ${regenerated.count} 筆,只用第一筆(${current.title})`);
-      }
-      current = applyRegenerated(current, regenerated);
-      attempts.push({ attempt: attemptNum, wordCount: countBodyWords(current.body), body: current.body });
-    }
-
-    if (countBodyWords(current.body) <= BODY_WORD_LIMIT) {
-      accepted.push(current);
-      if (attemptNum > 1) regenerateEvents += 1;
+    const limited = await enforceWordLimit(
+      (task, prompt) => router.call(task, prompt),
+      'ingest.cards',
+      opts.category,
+      opts.relLabel,
+      candidate,
+    );
+    warnings.push(...limited.warnings);
+    if (limited.accepted) {
+      accepted.push({ ...candidate, body: limited.body, examples: limited.examples });
+      if (limited.attempts.length > 1) regenerateEvents += 1;
     } else {
-      parked.push({ title: current.title, lines: current.lines, attempts });
+      parked.push({ title: candidate.title, lines: candidate.lines, attempts: limited.attempts });
     }
   }
 
@@ -103,8 +148,8 @@ function countBodyWords(body: string): number {
   return countWords(parseCardText(CARD_FILE_PREFIX + body.trim() + '\n').body);
 }
 
-/** 只換 body;examples 有採用才換。title 與 lines 永遠留在目前候選上。 */
-function applyRegenerated(current: CardCandidate, regenerated: RegeneratedCard): CardCandidate {
+/** 只換 body;examples 有採用才換。title 留在目前候選上。 */
+function applyRegenerated(current: WordLimitInput, regenerated: RegeneratedCard): WordLimitInput {
   if (regenerated.examples === undefined) {
     return { ...current, body: regenerated.body };
   }
@@ -116,8 +161,12 @@ async function callAndParse(router: LlmRouter, prompt: string): Promise<CardCand
   return parseCardCandidates(result.text);
 }
 
-async function callAndParseRegenerated(router: LlmRouter, prompt: string): Promise<RegeneratedCard> {
-  const result = await router.call('ingest.cards', prompt);
+async function callAndParseRegenerated(
+  call: (task: WordLimitTask, prompt: string) => Promise<{ text: string }>,
+  task: WordLimitTask,
+  prompt: string,
+): Promise<RegeneratedCard> {
+  const result = await call(task, prompt);
   return parseRegenerated(result.text);
 }
 
@@ -200,12 +249,12 @@ function buildBatchPrompt(opts: GenerateCardsOptions): string {
   );
 }
 
-function buildRegeneratePrompt(opts: GenerateCardsOptions, previous: CardCandidate): string {
+function buildRegeneratePrompt(category: string, sourceLabel: string, previous: { title: string; body: string }): string {
   return [
     REGENERATE_TEMPLATE,
     '---',
-    `category: ${opts.category}`,
-    `source: ${opts.relLabel}`,
+    `category: ${category}`,
+    `source: ${sourceLabel}`,
     `title: ${previous.title}`,
     `limit: ${BODY_WORD_LIMIT}`,
     `previous body: ${previous.body}`,
