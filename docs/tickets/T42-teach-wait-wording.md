@@ -4,7 +4,7 @@ deps: [T40]
 touches: [apps/teach-card/src/]
 cpu: light
 budget_usd: 1
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 教學卡的 BUSY_MESSAGE 不是剛好 考試卡還在用複習程式,稍等一下。(還是舊字樣、少一個字、標點換成半形):teach-session 的常數測試必須紅
