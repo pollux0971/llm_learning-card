@@ -4,6 +4,9 @@
  * 給 vitest(`hud/card-static.test.ts`)與 cucumber(`features/steps/hud-skin-phase2.steps.ts`)共用。
  * 用 fs 讀卡片的檔,**不 import** 06、07 的模組(boundaries 只開 06→14、07→14,沒有 14→06 / 14→07)。
  * 每個檢查回傳問題清單,空 = 通過。
+ *
+ * <style> 不畫框有兩個窄例外(見 styleProblems 上方):例子框的 border-left、教學卡生成中那一行的 1px 上分隔線。
+ * 理由:分隔線是內容裡的分隔,不是外框;顧問 2026-10-24 裁,T44 第 8 條(外框只能由 HudPanel 畫,例子框與分隔線是內文)。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -336,6 +339,29 @@ const COLOUR_PROPS = /^(color|background|background-color|background-image|fill|
 const COLOUR_OK = /^(transparent|inherit|currentcolor|none|initial|unset)$/i;
 const LC_EXAMPLE_ALLOWED = new Set(['border-left', 'border-left-width', 'border-left-style', 'border-left-color']);
 
+/**
+ * 第二個例外(T44 第 8 條,顧問 2026-10-24 裁):教學卡「生成中」「深入失敗」兩行的上方 1px 分隔線。
+ * 分隔線是內容裡的分隔,不是外框;外框只能由 HudPanel 畫,例子框與分隔線是內文。
+ * 窄:只放教學卡;selector 只能是 .generating、.deepen-error 或兩者合寫的那一條;
+ * 屬性只能是 border-top 或它的 width / style / color;值只能是 1px solid var(--hud-line)。
+ * 別的 border-*、2px、dashed、別的顏色、別的 selector、outline、box-shadow 都照舊紅。
+ */
+const SEPARATOR_SELECTORS = new Set(['.generating', '.deepen-error']);
+const SEPARATOR_ALLOWED: Record<string, string> = {
+  'border-top': '1px solid var(--hud-line)',
+  'border-top-width': '1px',
+  'border-top-style': 'solid',
+  'border-top-color': 'var(--hud-line)',
+};
+const normCss = (v: string): string => v.trim().replace(/\s+/g, ' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').toLowerCase();
+function separatorAllowed(name: CardName, selector: string, prop: string, value: string): boolean {
+  if (name !== 'teach-card') return false;
+  const parts = selector.split(',').map((x) => x.trim());
+  if (parts.length === 0 || !parts.every((x) => SEPARATOR_SELECTORS.has(x)) || new Set(parts).size !== parts.length) return false;
+  const want = SEPARATOR_ALLOWED[prop];
+  return want !== undefined && normCss(value) === want;
+}
+
 /** 驗收 1、2:<style> 不畫框;顏色只用 var(--hud-*) */
 export function styleProblems(name: CardName, src: CardSource = readCardSource(name)): string[] {
   const problems: string[] = [];
@@ -343,7 +369,10 @@ export function styleProblems(name: CardName, src: CardSource = readCardSource(n
   for (const { rule } of flattenRules(nodes)) {
     const isExample = /\.lc-example\b/.test(rule.selector);
     for (const [k, v] of Object.entries(rule.decls)) {
-      if (FRAME_PROP.test(k) && !(isExample && LC_EXAMPLE_ALLOWED.has(k))) problems.push(`<style> 畫框:${rule.selector} { ${k}: ${v} }(只有 .lc-example 的 border-left 例外)`);
+      if (FRAME_PROP.test(k) && !(isExample && LC_EXAMPLE_ALLOWED.has(k)) && !separatorAllowed(name, rule.selector, k, v)) {
+        problems.push(`<style> 畫框:${rule.selector} { ${k}: ${v} }(只有兩個例外:.lc-example 的 border-left;教學卡 .generating / .deepen-error 的 1px solid var(--hud-line) border-top 分隔線)`);
+      }
+      if (/^background/.test(k) && /gradient\s*\(/i.test(v)) problems.push(`<style> 畫框:${rule.selector} { ${k}: ${v} }(background 漸層可以偽造線,不准)`);
       if (COLOUR_PROPS.test(k) || (isExample && k === 'border-left')) {
         const parts = v.replace(/!important/i, '').trim();
         const colourish = k === 'border-left' ? parts.split(/\s+/).slice(2).join(' ') || parts : parts;

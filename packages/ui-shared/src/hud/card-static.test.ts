@@ -17,7 +17,7 @@ describe.each(['teach-card', 'test-card'] as const)('%s 的原始碼', (name) =>
     expect(buttonProblems(name)).toEqual([]);
   });
 
-  it('<style> 不畫框(border / outline / box-shadow / clip-path / mask;.lc-example 的 border-left 除外),顏色只用 var(--hud-*)', () => {
+  it('<style> 不畫框(border / outline / box-shadow / clip-path / mask / 漸層;例外:.lc-example 的 border-left、教學卡 .generating 的 1px 上分隔線),顏色只用 var(--hud-*)', () => {
     expect(styleProblems(name)).toEqual([]);
   });
 
