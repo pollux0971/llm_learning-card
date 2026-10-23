@@ -95,7 +95,7 @@ describe('F1:只有一條重試路徑(T40 must_catch:兩層重試)', () => {
     expect(late.length).toBeGreaterThan(0);
     for (const seen of late) {
       expect(seen.waiting).toBe(true);
-      expect(seen.busyNotice).toBe('考試卡正在批改,稍等一下。');
+      expect(seen.busyNotice).toBe('考試卡還在用複習程式,稍等一下。');
       expect(seen.controlsDisabled).toBe(true);
     }
     for (const seen of r.views.filter((seen) => seen.at <= 900)) {

@@ -8,7 +8,7 @@
  *   LAST_CATEGORY_KEY = 'lc-teach-last-category'
  *   (T40/ADR-078:busy 重試與 180 秒上限搬到共用的 ReviewClient,這裡不再有 BUSY_RETRY_MS / BUSY_NOTICE_AFTER_MS / REQUEST_TIMEOUT_MS,
  *    也不再有自己的 sleep / now。重試的測試在 apps/desktop/src/review-client-busy.test.ts。)
- *   BUSY_MESSAGE = '考試卡正在批改,稍等一下。',FINISHED_MESSAGE = '這個類別已經學完了。可以考慮補充更多素材。'
+ *   BUSY_MESSAGE = '考試卡還在用複習程式,稍等一下。',FINISHED_MESSAGE = '這個類別已經學完了。可以考慮補充更多素材。'
  *
  *   createTeachSession(deps: {
  *     client: Pick<ReviewClient, 'teachOpen' | 'teachNext' | 'teachSwitch' | 'teachPrereq' | 'onWait'>;   // T40:多一個 onWait
@@ -207,7 +207,7 @@ describe('常數與固定字樣', () => {
   it('鍵名、等候字樣、學完字樣照 ADR-077', async () => {
     const m = await mod();
     expect(m.LAST_CATEGORY_KEY).toBe('lc-teach-last-category');
-    expect(m.BUSY_MESSAGE).toBe('考試卡正在批改,稍等一下。');
+    expect(m.BUSY_MESSAGE).toBe('考試卡還在用複習程式,稍等一下。');
     expect(m.FINISHED_MESSAGE).toBe('這個類別已經學完了。可以考慮補充更多素材。');
   });
 
@@ -397,7 +397,7 @@ describe('等候字樣由 client.onWait 驅動(T40;重試本身在 ReviewClient)
     r.emitWait(true);
     let v = r.session.view();
     expect(v.waiting).toBe(true);
-    expect(v.busyNotice).toBe('考試卡正在批改,稍等一下。');
+    expect(v.busyNotice).toBe('考試卡還在用複習程式,稍等一下。');
     expect(v.controlsDisabled).toBe(true);
     r.emitWait(false);
     v = r.session.view();
