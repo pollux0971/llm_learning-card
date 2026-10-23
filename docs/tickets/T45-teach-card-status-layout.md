@@ -4,7 +4,7 @@ deps: [T44]
 touches: [apps/teach-card/src/]
 cpu: light
 budget_usd: 2
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 同一張卡上系統狀態字樣出現、收掉或換成另一種時,任何一顆前後都在的按鈕位置變了(不是 0 px):渲染測試 a 必須紅
