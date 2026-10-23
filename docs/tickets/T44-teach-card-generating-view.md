@@ -4,7 +4,7 @@ deps: [T43]
 touches: [apps/teach-card/src/]
 cpu: light
 budget_usd: 2
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 按深入之後、生成結果回來之前,畫面上沒有 正在產生更深入的卡片,可能要等幾十秒。 那一行或沒有 取消:渲染測試 a 必須紅
@@ -57,6 +57,7 @@ session 層(第二道防線,F2 不靠畫面停用才擋得住):
 8. **系統狀態的字樣跟內文分開**。生成中那一行(`.generating`)與深入的錯誤字樣(`.deepen-error`:最深一層「這張已經是最深的一層了。」、沒有模型、其他深入錯誤)是系統狀態,現在跟卡片內文同色同大小(16 px)、沒有分隔,看起來像內文最後一段。要改成:
    - 字比內文小。顧問建議 `font-size: 0.85rem`(跟 `.markers` 一樣)。
    - 上面一條 1 px 的分隔線,顏色 `var(--hud-line)`。顧問建議上內距約 0.4rem。
+   - 分隔線用 `border-top`:`packages/ui-shared` 的 card-static 規則「不畫框」對教學卡的 `.generating`、`.deepen-error` 開窄例外(只放行 `border-top: 1px solid var(--hud-line)`;顧問 2026-10-24 裁,理由:分隔線是內文裡的分隔,不是外框)。測試支援與自測由 `t44-static` 改。
    - 字色照舊 `var(--hud-text)`,不加新顏色;只用 `var(--hud-*)`。
    - 那一行裡的「取消」大小跟「下一個」一樣。按鈕的字沒有自己的 `font-size`,會繼承外層,所以外層改成 0.85rem 時要讓按鈕維持原來的大小。
    - 只改 `App.svelte` 的 `<style>` 與 class,不改 `../../packages/ui-shared/src/hud/hud.css`。
