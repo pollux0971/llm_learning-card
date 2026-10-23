@@ -273,7 +273,7 @@ describe('Scenario: Children are generated when there are none(@llm,這裡用假
   });
 });
 
-describe('Scenario: Offline generation falls back and is marked(provisional)', () => {
+describe('Scenario: Offline generation falls back and is marked(provisional;顧問裁決 g:一張新卡用到的任何一個呼叫是本機,那張就是 provisional;deepened.provisional = 任何一張新卡是)', () => {
   it('每個呼叫都是本機(provisional: true):每張新卡 provisional: true,log 的 deepened.provisional 也是 true', async () => {
     const r = await deepRig({
       setup: (router) => {
@@ -304,6 +304,7 @@ describe('Scenario: Offline generation falls back and is marked(provisional)', (
     const fm = (id: string): Record<string, unknown> => parseCardText(readCardText(r.v, id)).frontmatter as Record<string, unknown>;
     expect(fm('sec-0004')['provisional']).toBe(false);
     expect(fm('sec-0005')['provisional']).toBe(true);
+    expect(logEvents(r.v, 'deepened')[0], '任何一張新卡是 provisional,deepened.provisional 就是 true(顧問裁決 g)').toMatchObject({ provisional: true });
   });
 
   it('只有字數重寫的那個呼叫是本機的:那一張算 provisional', async () => {
@@ -320,6 +321,7 @@ describe('Scenario: Offline generation falls back and is marked(provisional)', (
     const fm = (id: string): Record<string, unknown> => parseCardText(readCardText(r.v, id)).frontmatter as Record<string, unknown>;
     expect(fm('sec-0004')['provisional']).toBe(true);
     expect(fm('sec-0005')['provisional']).toBe(false);
+    expect(logEvents(r.v, 'deepened')[0]).toMatchObject({ provisional: true });
   });
 
   it('只有子卡那個呼叫是本機的(考題是雲端):新卡也算 provisional(用到的任何一個呼叫)', async () => {
@@ -333,6 +335,7 @@ describe('Scenario: Offline generation falls back and is marked(provisional)', (
     await r.send('teach.deepen');
     await r.pollDone();
     expect((parseCardText(readCardText(r.v, 'sec-0004')).frontmatter as Record<string, unknown>)['provisional']).toBe(true);
+    expect(logEvents(r.v, 'deepened')[0]).toMatchObject({ provisional: true });
   });
 });
 

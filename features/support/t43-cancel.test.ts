@@ -149,19 +149,23 @@ describe('Scenario: Cancelling writes nothing', () => {
 });
 
 describe('同一時間最多一個沒被取消的工作', () => {
-  it('生成中再按深入:不開第二個工作(子卡的呼叫只有一個);回 bad-request 或原本的 generating 畫面都行', async () => {
+  it('生成中再按深入(雙擊):回原本的 generating 畫面(跟前一次一樣),不開第二個工作、不發新呼叫、不回錯誤(顧問裁決 b)', async () => {
     const r = await deepRig();
     await r.view('teach.open');
     const gate = r.router.hold((c) => c.kind === 'children');
-    await r.send('teach.deepen');
+    const first = await r.send('teach.deepen');
     await gate.reached;
+    const callsBefore = r.router.calls.length;
     const second = await r.send('teach.deepen');
-    if (second['ok'] === true) expect(resultOf(second).generating).toBe(true);
-    else expect(errorKind(second)).toBe('bad-request');
+    expect(second['ok'], '雙擊不該閃錯誤').toBe(true);
+    expect(resultOf(second)).toEqual(resultOf(first));
+    expect(resultOf(second)).toMatchObject({ generating: true, card: { id: PARENT }, canBack: false });
+    expect(r.router.calls, '呼叫數沒變').toHaveLength(callsBefore);
     gate.release();
     await r.pollDone();
-    expect(r.router.of('children')).toHaveLength(1);
+    expect(r.router.of('children'), '工作只有一個').toHaveLength(1);
     expect(cardFiles(r.v)).toEqual([...BASE, ...newIds(2)]);
+    expect(logEvents(r.v, 'deepened')).toHaveLength(1);
   });
 });
 
