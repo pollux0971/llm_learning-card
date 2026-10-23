@@ -1588,6 +1588,7 @@ graph TD
   - 已知限制:側車的第一個請求還要等 `hello`(最多 20 秒),極端情況下教學卡會比考試卡先顯示逾時;按「再試一次」即可。
 - **Related**: ADR-038、ADR-060、ADR-071、ADR-073、ADR-074、ADR-075(refined)、ADR-076、T26、T37(`docs/tickets/T37-teach-card-phase-2.md`)、`features/07-teach-card/phase-2.feature`
 - **refined by ADR-078(2026-10-22)**:第 6 點(D5)的重試從教學卡自己的迴圈搬到共用的 webview client(`apps/desktop/src/webview/review-client.ts`),常數不變(300 ms、1 秒、180 秒),考試卡也走同一條;教學卡出錯只顯示依 kind 查到的固定字樣。
+- **refined 2026-10-23(顧問,依 T40 `@manual` 的 O5;T42 工單)**:第 6 點(D5)的教學卡等候字樣由「考試卡正在批改,稍等一下。」改成「考試卡還在用複習程式,稍等一下。」。理由:教學卡開機時考試卡先起來的話(12/12,最長 2.2 秒)那時考試卡是在起動、不是在批改,新字樣兩種情況都說得通。只改字樣和釘它的測試,行為(300 ms、1 秒、180 秒)不動;不開新 ADR 號。
 
 ## ADR-078 · 兩個視窗共用一個側車:請求 id 由 Rust 編、`busy` 重試只在共用 client、錯誤只顯示固定字樣
 
