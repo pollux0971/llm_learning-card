@@ -47,6 +47,28 @@
     void act(() => session.next());
   }
 
+  /**
+   * 直角引號裡的短詞不折斷。只包比一行短的(≤14 字,含兩個括號);
+   * 長詞不包,照常折行,避免橫向凸出。對每一句都切,不寫死某一句。
+   */
+  const QUOTE_KEEP_MAX = 14;
+
+  function quoteParts(text: string | undefined): { text: string; keep: boolean }[] {
+    const parts: { text: string; keep: boolean }[] = [];
+    if (!text) return parts;
+    const re = /「[^」]*」/g;
+    let last = 0;
+    for (const match of text.matchAll(re)) {
+      const start = match.index ?? 0;
+      if (start > last) parts.push({ text: text.slice(last, start), keep: false });
+      const segment = match[0];
+      parts.push({ text: segment, keep: segment.length <= QUOTE_KEEP_MAX });
+      last = start + segment.length;
+    }
+    if (last < text.length) parts.push({ text: text.slice(last), keep: false });
+    return parts;
+  }
+
   async function act(run: () => Promise<void>): Promise<void> {
     await run();
     pull();
@@ -106,15 +128,6 @@
     <h2>{shown.frontmatter.title}</h2>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <div class="body">{@html shown.html}</div>
-    {#if view.generatingNotice}
-      <p class="generating">
-        {view.generatingNotice}
-        <HudButton onclick={() => void act(() => session.cancel())}>取消</HudButton>
-      </p>
-    {/if}
-    {#if view.deepenError}
-      <p class="deepen-error">{view.deepenError}</p>
-    {/if}
     <div class="controls">
       {#if view.canBack}
         <HudButton onclick={() => void act(() => session.back())} disabled={view.controlsDisabled}>回上一層</HudButton>
@@ -122,6 +135,15 @@
       <HudButton onclick={handleNext} disabled={finished}>下一個</HudButton>
       <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
       <HudButton onclick={() => void act(() => session.deepen())} disabled={!view.canDeepen}>深入這個</HudButton>
+    </div>
+    <!-- 字樣在按鈕列下面。這塊永遠在,高度固定,出現、收掉、換種類都不推動上面的按鈕。 -->
+    <div class="status-slot">
+      {#if view.generatingNotice}
+        <p class="generating">{#each quoteParts(view.generatingNotice) as part, index (index)}{#if part.keep}<span class="quote-keep">{part.text}</span>{:else}{part.text}{/if}{/each} <HudButton onclick={() => void act(() => session.cancel())}>取消</HudButton></p>
+      {/if}
+      {#if view.deepenError}
+        <p class="deepen-error">{#each quoteParts(view.deepenError) as part, index (index)}{#if part.keep}<span class="quote-keep">{part.text}</span>{:else}{part.text}{/if}{/each}</p>
+      {/if}
     </div>
   {/if}
 </HudPanel>
@@ -183,7 +205,8 @@
   .error {
     margin: 0.4rem 0;
   }
-  /* 系統狀態跟內文分開:小一號、上方 1px 分隔線。字色照舊,只用 var(--hud-*)。 */
+  /* 系統狀態跟內文分開:小一號、上方 1px 分隔線。字色照舊,只用 var(--hud-*)。
+     分隔線只寫在這兩個 selector 自己身上,不搬到外層。 */
   .generating,
   .deepen-error {
     margin: 0.75rem 0 0;
@@ -191,6 +214,16 @@
     border-top: 1px solid var(--hud-line);
     font-size: 0.85rem;
     color: var(--hud-text);
+  }
+  /* 按鈕列下面先留的位置。flow-root 讓第一個 p 的 margin-top 留在裡面,不外溢 0.75rem。
+     高度用 360 寬量到的最高金鑰句:missing/ANTHROPIC_API_KEY 邊框盒 67.4px(3 行),
+     加上這條 margin-top 0.75rem,再留 2px 給次像素。不要估成兩行。 */
+  .status-slot {
+    display: flow-root;
+    min-height: calc(67.4px + 0.75rem + 2px);
+  }
+  .quote-keep {
+    white-space: nowrap;
   }
   :global(.lc-example) {
     background: var(--hud-solid);
