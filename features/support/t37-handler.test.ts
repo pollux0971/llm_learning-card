@@ -129,11 +129,13 @@ describe('teach.open:讀、決定目前的類別與卡,什麼都不寫', () => {
     expect(view.prereqs).toEqual([{ id: 'sec-0001', title: titleOf(r.v, 'sec-0001') }]);
   });
 
-  it('回應只有四個欄位,而且不送卡片內容', async () => {
+  it('回應只有七個欄位(T37 的四個加 T43 的 from / canBack / generating),而且不送卡片內容', async () => {
     const r = await rig();
     const res = await r.send('teach.open');
     const result = res.result as Obj;
-    expect(Object.keys(result).sort()).toEqual(['card', 'categories', 'category', 'prereqs']);
+    expect(Object.keys(result).sort()).toEqual(['canBack', 'card', 'categories', 'category', 'from', 'generating', 'prereqs']);
+    // T43 改:沒有深入時 from 是 null、canBack 與 generating 是 false
+    expect(result).toMatchObject({ from: null, canBack: false, generating: false });
     expect(Object.keys(result.card as Obj).sort()).toEqual(['id', 'path', 'title']);
     expect(JSON.stringify(res)).not.toContain('的內文');
   });

@@ -66,23 +66,43 @@ const SIDECAR_KINDS = [
   'bad-request', 'unsupported-version', 'unknown-method', 'too-large', 'root-mismatch', 'router-unavailable', 'no-cards',
   'paused', 'no-session', 'no-question', 'review-record-changed', 'internal', 'credential-unavailable',
   'teach-record-changed',
+  // T43(ADR-079):深入這個加的三個種類(credential-unavailable 是既有的,字樣另有深入版,見 t43-handler.test.ts)
+  'deepen-floor', 'no-model', 'deepen-failed',
 ];
 const RUST_KINDS = ['not-configured', 'sidecar-unavailable', 'sidecar-exited', 'timeout', 'busy', 'bad-envelope', 'bad-response'];
 /** ADR-077 定的全文(T37:教學卡標學過時,寫入檢查連續兩次沒過) */
 const TEACH_RECORD_CHANGED_MESSAGE = '學習紀錄剛被別的地方改過,這一張還沒記成學過。請再按一次。';
+/** T43 工單第 5 節定的全文(三個新種類) */
+const DEEPEN_MESSAGES: Record<string, string> = {
+  'deepen-floor': '這張已經是最深的一層了。',
+  'no-model': '現在沒辦法產生新卡:連不上雲端,也沒有可用的本機模型。',
+  'deepen-failed': '這次沒有產生出能用的卡。可以再按一次「深入這個」。',
+};
 /** T26 定的全文 */
 const REVIEW_RECORD_CHANGED_MESSAGE = '複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。';
 
 describe('常數與固定清單(驗收 3)', () => {
-  it('版本 1、一行最多 262144 位元組、九個 method(T37 加四個教學卡動作)', async () => {
+  it('版本 1、一行最多 262144 位元組、十三個 method(T37 加四個教學卡動作、T43 再加四個:deepen / poll / cancel / back)', async () => {
     const p = await protocol();
     expect(p.PROTOCOL_VERSION).toBe(1);
     expect(p.MAX_LINE_BYTES).toBe(262144);
     expect(vectors.maxLineBytes).toBe(262144);
-    expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq']);
+    expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq', 'teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back']);
   });
 
-  it('錯誤 kind 的固定清單:側車 14 個(T30 加 credential-unavailable、T37 加 teach-record-changed)+ Rust 7 個,不多不少', async () => {
+  it('協定版本不變:只加動作與種類,既有訊息的形狀不變(T43 第 5 節)', async () => {
+    const p = await protocol();
+    expect(p.PROTOCOL_VERSION).toBe(1);
+    for (const method of ['teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back']) {
+      expect(p.RequestSchema.safeParse({ v: 1, id: 1, method, params: {} }).success, method).toBe(true);
+      expect(p.RequestSchema.safeParse({ v: 2, id: 1, method, params: {} }).success, `${method} v2`).toBe(false);
+      for (const field of ['path', 'card', 'category', 'job', 'index']) {
+        expect(p.RequestSchema.safeParse({ v: 1, id: 1, method, params: { [field]: 'x' } }).success, `${method} + ${field}`).toBe(false);
+      }
+    }
+  });
+
+  it('錯誤 kind 的固定清單:側車 17 個(T30 加 credential-unavailable、T37 加 teach-record-changed、T43 加 deepen-floor / no-model / deepen-failed)+ Rust 7 個,不多不少', async () => {
     const p = await protocol();
     expect([...p.ERROR_KINDS].sort()).toEqual([...SIDECAR_KINDS, ...RUST_KINDS].sort());
   });
@@ -102,6 +122,13 @@ describe('常數與固定清單(驗收 3)', () => {
   it('teach-record-changed 的句子是 ADR-077 定的全文', async () => {
     const p = await protocol();
     expect(p.ERROR_MESSAGES['teach-record-changed']).toBe(TEACH_RECORD_CHANGED_MESSAGE);
+  });
+
+  it('deepen-floor / no-model / deepen-failed 的句子是 T43 工單第 5 節的全文', async () => {
+    const p = await protocol();
+    for (const [kind, text] of Object.entries(DEEPEN_MESSAGES)) {
+      expect(p.ERROR_MESSAGES[kind], kind).toBe(text);
+    }
   });
 
   it('review-record-changed 的句子是 T26 定的全文', async () => {
@@ -229,5 +256,29 @@ describe('protocol.ts 不 import 任何 node: 模組(webview 也要用)', () => 
     const scan = (code: string) => [...code.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)].map((m) => m[1]!).filter((s) => s.startsWith('node:'));
     expect(scan("import { readFileSync } from 'node:fs';")).toEqual(['node:fs']);
     expect(scan("import { z } from 'zod';")).toEqual([]);
+  });
+});
+
+describe('T43:四個新動作在向量檔裡(量尺自測:向量被刪掉會被抓到)', () => {
+  it('每個新動作至少一列合法請求、各至少一列不合法 params、至少一列相近的未知 method', () => {
+    const okNames = vectors.requests.filter((e) => e.ts.ok).map((e) => e.name);
+    for (const m of ['teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back']) {
+      expect(okNames.some((n) => n.includes(m)), `${m} 合法`).toBe(true);
+      const bad = vectors.requests.filter((e) => !e.ts.ok && e.ts.kind === 'bad-request' && e.name.includes(m));
+      expect(bad.length, `${m} 不合法 params`).toBeGreaterThanOrEqual(1);
+    }
+    const unknown = vectors.requests.filter((e) => !e.ts.ok && e.ts.kind === 'unknown-method').map((e) => e.name);
+    expect(unknown.some((n) => n.includes('teach.deeper')), 'teach.deeper 是未知 method').toBe(true);
+  });
+
+  it('三個新種類各有一列「錯誤回應」,字樣跟 ERROR_MESSAGES 一樣', async () => {
+    const p = await protocol();
+    for (const kind of Object.keys(DEEPEN_MESSAGES)) {
+      const entry = vectors.responses.find((e) => e.name.includes(kind));
+      expect(entry, kind).toBeDefined();
+      const parsed = JSON.parse(lineOf(entry!)) as { error: { kind: string; message: string } };
+      expect(parsed.error.kind).toBe(kind);
+      expect(parsed.error.message).toBe(p.ERROR_MESSAGES[kind]);
+    }
   });
 });
