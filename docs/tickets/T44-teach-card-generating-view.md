@@ -4,7 +4,7 @@ deps: [T43]
 touches: [apps/teach-card/src/]
 cpu: light
 budget_usd: 2
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 按深入之後、生成結果回來之前,畫面上沒有 正在產生更深入的卡片,可能要等幾十秒。 那一行或沒有 取消:渲染測試 a 必須紅
