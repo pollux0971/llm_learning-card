@@ -1,7 +1,7 @@
 ---
 id: T43
 deps: [T40, T42]
-touches: [packages/core/src/ingest/deepen.ts, packages/core/src/ingest/children.ts, packages/core/src/ingest/questions.ts, packages/core/src/ingest/generate-cards.ts, packages/core/src/teach/deck.ts, packages/core/src/session/teach.ts, packages/core/src/session/teach-deepen.ts, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, packages/core/src/llm/credentials.ts, scripts/review-sidecar.ts, apps/desktop/src/webview/review-client.ts, apps/teach-card/src/, apps/teach-card/dev/]
+touches: [packages/core/src/ingest/deepen.ts, packages/core/src/ingest/children.ts, packages/core/src/ingest/questions.ts, packages/core/src/ingest/generate-cards.ts, packages/core/src/teach/deck.ts, packages/core/src/session/teach.ts, packages/core/src/session/teach-deepen.ts, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, packages/core/src/llm/credentials.ts, scripts/review-sidecar.ts, scripts/boundaries.allow.json, apps/desktop/src/webview/review-client.ts, apps/teach-card/src/, apps/teach-card/dev/]
 cpu: heavy
 budget_usd: 8
 status: todo
@@ -16,6 +16,7 @@ must_catch:
   - 沒有模型時換掉目前的卡、進出錯畫面、或寫了 cards/ questions/ graph/ state/reviews.json 任何一個:No model at all is reported plainly 必須紅
   - 取消之後還寫了 cards/ questions/ graph/ state/reviews.json、記了 deepened,或又發了新的呼叫:Cancelling writes nothing 必須紅
   - 取消時把已經送出的那一個呼叫中斷、它的 llm_call 沒進帳本:必須紅(ADR-050,帳只能多不能少)
+  - 取消後馬上再按深入,舊工作手上那一個呼叫回來之後寫了檔、或改到新工作的 poll 狀態或結果(舊工作只准記帳):必須紅
   - 字數超過上限不重試、重試超過 3 次、失敗 3 次的那張被寫進去、或因為一張失敗整批不寫:Generated cards obey the same word limit 必須紅
   - 先寫卡檔再寫考題檔(考題檔寫失敗時卡檔已經在磁碟上):必須紅
   - 最後一張子卡按下一個沒有把父卡一起記成學過、子卡與父卡分兩次寫、或之後顯示的不是父卡之後那張:Next within a set of children 必須紅
@@ -34,8 +35,8 @@ must_catch:
 
 # 工單 T43:07-teach-card phase-3——深入這個
 
-> 狀態:草稿 2026-10-23,**待顧問審**(九點,見「待顧問審」)。規格:UI/Tauri 負責人。編號 T43:協調者配。
-> 決定的記錄:顧問判完,由前端照判決起草一則新 ADR(refine ADR-075、ADR-077;號碼協調者配),跟這張同一批合。
+> 狀態:顧問審過 2026-10-23(D1–D9 照建議;補三處:touches 加 `scripts/boundaries.allow.json`、舊工作不得碰新工作、真的深入前先查今日花費)。規格:UI/Tauri 負責人。編號 T43:協調者配。
+> 決定的記錄:ADR-079(refine ADR-075、ADR-077;號碼協調者配),跟這張同一批合。
 > 實作:worker(opencode + grok-4.7);紅測試、步驟定義、協定向量、cucumber 用的假網路:測試 agent;驗收:驗收 agent;觀感(`@manual`):前端,技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 > 依據:[phase-3.feature](../../features/07-teach-card/phase-3.feature)、[FEATURE.md](../../features/07-teach-card/FEATURE.md)、[NEXT.md](../../features/07-teach-card/NEXT.md)(gate 全滿足:07 phase-2 done 2026-10-23、03 phase-2 done 2026-09-03、02 phase-2 done 2026-09-03);[00-design.md](../00-design.md) §4.1、§4.3、§7;契約 §1、§2、§3、§7、§8、§10;ADR-004、006、032、039、050、075、077、078。
@@ -157,6 +158,10 @@ FEATURE.md 的「不在範圍」寫明卡片生成邏輯歸 02。所以生成與
 - 同一時間最多一個**沒被取消的**工作。
 - 被取消的工作只會跑完手上那一個呼叫:那個呼叫照常記帳,之後不再發呼叫、不寫任何檔。
   - 所以取消後馬上再按深入,新的工作直接開始,不用等舊的。
+- **每個工作帶一個編號**(側車開著就只增不減)。側車只記「目前的工作編號」。
+  - `teach.poll` 只回目前那個編號的工作。
+  - 舊編號的工作收尾時(它手上那一個呼叫回來、或丟錯),發現自己不是目前的工作:不寫檔、不改麵包屑與目前那張、不改 poll 的狀態或結果,只留下 router 已經記的帳。
+  - 寫入前的檢查是「沒被取消,而且我還是目前的工作」,兩個條件都要。
 - 工作自己的錯一律接住、變成 `teach.poll` 的錯誤種類,不往外丟。背景工作沒被接住的錯,會讓 Node 結束側車。
 - 開工前照 `start` / `submit` 的做法:
   1. 重讀 `.env`(ADR-076);
@@ -206,9 +211,14 @@ FEATURE.md 的「不在範圍」寫明卡片生成邏輯歸 02。所以生成與
   - 這個檔是新的,由 worker 寫,照 `apps/test-card/dev/fake-cloud.mjs` 的做法,不 import `features/`;深入回兩張合格的子卡與考題,延遲約 1.5 秒,看得到生成中。
   - 現在 `apps/teach-card/dev/standalone.ts` 第 28–45 行只給假金鑰、沒有假網路:按深入會真的連到 provider。
 
-## 待顧問審
+## 顧問的裁決(2026-10-23,記在 ADR-079)
 
-| | 問題 | 建議 | 另一個做法與為什麼不選 |
+D1–D9 全部照下表的「定案」。另外補了三處:
+- `touches` 加 `scripts/boundaries.allow.json`(D8 會動到它,R2 才看得到跟別張的重疊);
+- `must_catch` 與第 4 節加「舊工作不得碰新工作」;
+- 「預算」加「真的深入之前先查今日花費」。
+
+| | 問題 | 定案 | 另一個做法與為什麼不選 |
 |---|---|---|---|
 | D1 | 生成怎麼跑才能取消 | **背景工作 + 輪詢**:`teach.deepen` 馬上回,`teach.poll` 看狀態,`teach.cancel` 取消。Rust 不改,每個請求都只握鎖幾毫秒,考試卡不受影響 | **一個請求做完整段**:取消送不進去(`try_lock` 回 `busy`);考試卡整段 `busy`;最壞超過 180 秒被收掉。**Rust 加取消的 command**:stdin 現在在鎖裡面(`review_sidecar.rs` 的 `Inner`),要改鎖的設計;超過「起、傳、收、關」要問使用者(ADR-075 第 2 點) |
 | D2 | 場景的「Then the request is aborted」怎麼做 | **工作中止,不中斷 HTTP**:不再發新的呼叫、丟掉結果、不寫檔、視窗馬上回到原本那張;已經送出的那一個呼叫讓它跑完,照常記帳 | **真的中斷呼叫**(router 加 `opts.signal`,契約 §7 的函式簽章是軟約定,但要動 03 的 router):被中斷的呼叫 provider 可能照樣計費,我們卻拿不到用量,帳本少記,`LLM_DAILY_CAP_USD` 的煞車就低估了(ADR-050 的教訓) |
@@ -220,8 +230,8 @@ FEATURE.md 的「不在範圍」寫明卡片生成邏輯歸 02。所以生成與
 | D8 | 側車呼叫 02 的生成 | **新增一條 import 例外 11 → 02**(組合層,跟 11 → 04/05/07 同理由),協調者加進 `scripts/boundaries.allow.json` | **把生成搬進 11**:FEATURE.md 寫明卡片生成歸 02;`children.ts` 與 `questions.ts` 會多一份 |
 | D9 | 要不要新 ADR | **要**:背景工作、取消的意思、task、麵包屑與學過的規則都是 ADR-075、ADR-077 沒講到的。顧問判完由前端起草 | 只寫在工單:下一張碰側車的工單找不到這些規則 |
 
-- **協調者注意**:動 `scripts/boundaries.allow.json` 的那一批,要跑釘例外條數的測試(2026-10-21 加兩條讓 t31-static 釘 21 條的測試紅、main 紅)。
-- 我沒看到要問使用者的事:場景都在 `phase-3.feature` 裡,契約的硬約定不動,CLAUDE.md 不動。
+- **協調者注意**:`scripts/boundaries.allow.json` 由協調者在同一批加 D8 那一條(worker 不改)。它是設定 JSON,不算只動文件:那一批要跑完整的 `check:test-ledger`,再 grep 釘例外條數的測試(2026-10-21 加兩條讓 t31-static 釘 21 條的測試紅、main 紅)。
+- 沒有要問使用者的事:場景都在 `phase-3.feature` 裡,契約的硬約定不動,CLAUDE.md 不動。
 - 已知限制(要顧問知道,不打算這張修):
   - 考試卡批改與深入同時在跑時,兩邊各自查日上限,最多多超一次呼叫(ADR-039 第 4 點的 b:帳本本來就偏低估)。
   - 側車被收掉時(關 app、Rust 逾時)手上那一個呼叫記不到帳,跟今天 Rust 逾時收掉側車一樣。
@@ -276,7 +286,7 @@ FEATURE.md 的「不在範圍」寫明卡片生成邏輯歸 02。所以生成與
 - **背景工作**:
   - 生成中考試卡的 `start`、`next` 馬上回;
   - 生成中 `teach.next` 回 `bad-request`;
-  - 取消後馬上再深入,新的工作開始、舊的不寫;
+  - 取消後馬上再深入,新的工作開始;舊工作手上那一個呼叫在新工作還在跑、與新工作已經寫完兩種時點回來,都不寫檔、不改麵包屑與目前那張、新工作的 `teach.poll` 照舊回新工作的狀態與結果,`log.jsonl` 只多那一個呼叫的 `llm_call`;
   - 工作裡丟錯不會讓側車結束;
   - 側車 stdin 結束時不等手上的呼叫,之後沒有寫檔。
 - **協定向量**:四個新動作的合法與不合法請求各至少一列,三個新種類的字樣;TS 與 Rust 都讀。
@@ -360,6 +370,8 @@ worker 覺得測試有錯,寫進報告的「待協調」,不改。
     - 一般一次(1 次子卡 + 3 次考題)約 US$0.04;
     - 最壞(13 次都用滿輸出上限)約 US$0.6。
   - 當日預算用完時深入改走閘道、標 provisional(ADR-039,閘道免費),不會超過日上限再花雲端的錢。
+  - **任何一次真的深入之前**(例如 I4 的真資料確認),先跑 `npx tsx scripts/llm-spend.ts --today`,確認「今天已花 + 最壞 US$0.6」不超過 `LLM_DAILY_CAP_USD`。
+    會超過就不跑,改問使用者(當日花費超過上限是使用者保留的決定)。
 
 ## 測試誰寫
 
@@ -378,6 +390,6 @@ worker 覺得測試有錯,寫進報告的「待協調」,不改。
   - `apps/teach-card/` → 07;
   - `apps/desktop/src/webview/review-client.ts` → 10;
   - `scripts/review-sidecar.ts` → 11。
-- 都已在 `../../scripts/boundaries.owners.json` 的範圍裡,新檔不用另登記。新的 import 例外只有 D8 那一條(協調者加)。
+- 都已在 `../../scripts/boundaries.owners.json` 的範圍裡,新檔不用另登記。新的 import 例外只有 D8 那一條:`scripts/boundaries.allow.json` 列在 `touches` 裡,但由協調者在同一批加,worker 不改。
 - 真的 learning/ 開工、收工各量一次,前後要相同(不寫死數字)。
 - 重活(cucumber、vitest、cargo、tauri build)先跟協調者拿位子:`CARGO_BUILD_JOBS=2`、`VITEST_MAX_WORKERS=1`,cucumber 一律 `--tags`。

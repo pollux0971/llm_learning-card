@@ -1527,6 +1527,7 @@ graph TD
 - **refined by ADR-076(2026-10-17)**:第 5 點的「固定的訊息」加上缺金鑰的兩句樣板;第 6 點「假 router 只能由啟動時的環境變數開」補上「`LC_REVIEW_` 開頭的鍵不從 `.env` 設」(原本側車先載入 `.env` 才讀這兩個變數,`.env` 裡寫就會開);側車每次 `start` 重算今天。
 - **refined by ADR-077(2026-10-21)**:第 3 點的高階動作多四個教學卡的(`teach.open` / `teach.next` / `teach.switch` / `teach.prereq`);第 7 點的表多一種寫入情況(教學卡標學過),寫入規則見 ADR-077 第 3 點。
 - **refined by ADR-078(2026-10-22)**:兩個視窗共用同一個 `SidecarHost` 之後,請求 id 改由 Rust 編(T22 工單第 223 行「webview 的 id 要比上一個大」那條拒絕拿掉,「id 是正整數」的信封檢查留著);`busy` 的重試統一放在共用的 webview client,考試卡也走。Rust 仍然不排隊。
+- **refined by ADR-079(2026-10-23)**:側車多四個教學卡動作(`teach.deepen` / `teach.poll` / `teach.cancel` / `teach.back`);深入的生成在側車裡當背景工作跑,請求本身馬上回,所以第 8 點「一次只處理一個請求」照舊成立、Rust 不改。第 7 點的表多一種寫入情況(深入寫考題檔、卡檔、`deps.json`),寫入規則見 ADR-079 第 3 點。
 
 ## ADR-076 · 側車每次 start / submit 重讀 `.env`、每次 start 重算今天;缺金鑰時 start 就說清楚(`credential-unavailable`)
 
@@ -1589,6 +1590,7 @@ graph TD
 - **Related**: ADR-038、ADR-060、ADR-071、ADR-073、ADR-074、ADR-075(refined)、ADR-076、T26、T37(`docs/tickets/T37-teach-card-phase-2.md`)、`features/07-teach-card/phase-2.feature`
 - **refined by ADR-078(2026-10-22)**:第 6 點(D5)的重試從教學卡自己的迴圈搬到共用的 webview client(`apps/desktop/src/webview/review-client.ts`),常數不變(300 ms、1 秒、180 秒),考試卡也走同一條;教學卡出錯只顯示依 kind 查到的固定字樣。
 - **refined 2026-10-23(顧問,依 T40 `@manual` 的 O5;T42 工單)**:第 6 點(D5)的教學卡等候字樣由「考試卡正在批改,稍等一下。」改成「考試卡還在用複習程式,稍等一下。」。理由:教學卡開機時考試卡先起來的話(12/12,最長 2.2 秒)那時考試卡是在起動、不是在批改,新字樣兩種情況都說得通。只改字樣和釘它的測試,行為(300 ms、1 秒、180 秒)不動;不開新 ADR 號。
+- **refined by ADR-079(2026-10-23)**:麵包屑之下的「下一個」:最後一張子卡往前走時連父卡一起記學過,在同一次寫入裡,規則同第 3 點的 a、b;主流程只排 level 0、1(第 2 點的 deck 多一個 level 篩選)。
 
 ## ADR-078 · 兩個視窗共用一個側車:請求 id 由 Rust 編、`busy` 重試只在共用 client、錯誤只顯示固定字樣
 
@@ -1611,3 +1613,36 @@ graph TD
   - T22 的 Rust 測試「id 要遞增、被拒的不送」改成「線上 id 一直變大、回應 id 換回原本的、兩個 client 交錯與重新從 1 數都成功」。
   - ADR-077 D5 的常數與字樣不變,位置搬到共用 client;考試卡多一句等候字樣(見 T40)。
 - **Related**: ADR-075(refined)、ADR-077(refined)、T22(`docs/tickets/T22-review-sidecar.md` 第 223 行)、T37、T40(`docs/tickets/T40-shared-sidecar-ids-busy-errors.md`)、`docs/reviews/T37-manual-2026-10-22.md`
+
+## ADR-079 · 教學卡的「深入這個」在側車裡當背景工作跑:請求馬上回、輪詢看狀態;取消不中斷已送出的呼叫;一次深入的呼叫都用 task `deepen`
+
+- **Status**: accepted · 2026-10-23(技術顧問審 T43 的 D1–D9,全部照建議,另補三處;前端起草;refine ADR-075、ADR-077,不推翻)
+- **Context**:
+  1. 07 phase-3(`features/07-teach-card/phase-3.feature`):有子卡就直接顯示;沒有就生 1 到 3 張下一層的卡(在線雲端、離線本機並標 provisional、都沒有就說現在沒辦法);生成中看得到、可以取消、取消不寫檔;字數照 ingest 重試;可以回上一層;有最深的一層。
+  2. Rust 的 `SidecarHost::call` 整個請求握著鎖,拿不到回 `busy`,一個請求 180 秒沒回就收掉側車(ADR-075 第 8 點、ADR-077 第 5 點)。一次深入最多 13 個呼叫,雲端每個呼叫的逾時 60 秒。整段生成如果是一個請求:取消送不進去、考試卡整段 `busy`、最壞超過 180 秒被收掉。
+  3. 側車的 stdin 迴圈一次處理一行,但 Node 可以讓工作在背景跑、同時回下一行。
+  4. 契約 §7:`deepen` 在線雲端、離線本機並標 provisional、沒有模型丟 `NO_MODEL`;`ingest.questions` 只走雲端。學過卻沒有考題檔的卡,隔天考試卡 `loadQuestionFile` 丟錯、handler 回 `internal`。
+  5. FEATURE.md 的「不在範圍」:卡片生成邏輯歸 02。
+- **Decision**:
+  1. **背景工作 + 輪詢**(D1):側車多四個動作。`teach.deepen` 有子卡就推一層麵包屑、顯示第一張;最深一層(契約 §1 `Level` 0..4 的 4)回 `deepen-floor`;沒有子卡就開一個背景工作、馬上回。`teach.poll` 馬上回工作的狀態(成功的畫面或失敗的種類,各只回一次)。`teach.cancel` 取消。`teach.back` 回父卡、子卡不記學過。不收路徑、不收卡 id(ADR-075 第 3 點)。Rust 不改,每個請求只握鎖幾毫秒。
+  2. **取消 = 中止工作,不中斷 HTTP**(D2):不再發新的呼叫、丟掉結果、不寫檔、視窗馬上回原本那張;已經送出的那一個呼叫跑完、照常記帳(ADR-050:帳只能多不能少)。每個工作帶一個只增不減的編號,`teach.poll` 只回目前那個編號的工作;舊工作收尾時不寫檔、不改麵包屑、不改 poll 的狀態或結果,只留下 router 記的帳。寫入前的檢查是「沒被取消、而且還是目前的工作」。側車讀到 stdin 結束時把工作當成取消、馬上結束。
+  3. **一次深入的每個呼叫都用 task `deepen`**(D3):生子卡、字數重寫、出考題都是。考題的 `maxTokens` 明講用 `ingest.questions` 的表格值。§7 的 `LlmTask` 與路由表不動。不改 `packages/core/prompts/`:重用既有的 children、regenerate、questions 三個模板。一張卡字數重試三次還超過、或考題生不出來,就略過那張,其他照留;寫入順序是考題檔 → 卡檔(都用 `writeFileAtomic`,卡檔內容跟 ingest 的一字不差)→ `deps.json` → `deepened` 事件,整段同步、寫前確認不覆寫既有檔。
+  4. **父卡什麼時候記學過**(D4):在最後一張子卡按「下一個」時,連父卡一起記(一路往上,在同一次 `saveReviewsIfUnchanged` 裡,規則同 ADR-077 第 3 點的 a、b)。按深入本身不記。先備提示不列麵包屑上的父卡。
+  5. **主流程只排 level 0、1**(D5,設計 §4.1),剩幾張也只算這兩層;level 2 以上只從深入進去。
+  6. **新卡 `prereqs: [父卡]`,圖加 `[父卡, 子卡]`**(D6),兩邊一致;分類沒有圖或圖壞了不建新圖、記 `warning`、卡照留。
+  7. **缺金鑰的字樣**(D7):深入用「產生新卡要用的金鑰沒有設定:{鍵名}。……」與「產生新卡用的金鑰被拒絕:{鍵名}……」兩句,批改的兩句不變。
+  8. **生成留在 02**(D8):`packages/core/src/ingest/deepen.ts`;側車(11)呼叫它,新增一條 import 例外 11 → 02(組合層,同 11 → 04/05/07)。
+- **Alternatives**:
+  - **一個請求做完整段生成** —— 不採用。取消送不進去、考試卡整段 `busy`、最壞超過 180 秒被收掉(Context 2)。
+  - **Rust 加一個取消的 command** —— 不採用。stdin 在鎖裡面,要改鎖的設計;超過「起、傳、收、關」要問使用者(ADR-075 第 2 點)。
+  - **router 加 `opts.signal` 真的中斷呼叫** —— 不採用。被中斷的呼叫 provider 可能照樣計費,我們拿不到用量,帳本少記,`LLM_DAILY_CAP_USD` 的煞車就低估了。
+  - **考題照舊用 `ingest.questions`** —— 不採用。離線出不了考題,要嘛不能離線深入,要嘛留下沒考題的卡害考試卡壞掉。
+  - **按深入時就記父卡學過** —— 不採用。多一次寫入,衝突時的字樣講不通;設計 §4.1 只有「下一個」「換類別」記學過。
+  - **新卡 `prereqs: []`**、**沒圖就建一張** —— 不採用。前者圖與 frontmatter 不一致;後者只有這幾張卡的圖會被當成整個分類的圖。
+- **Consequences**:
+  - 生成中考試卡照常作答;取消一定不寫檔。
+  - 考試卡批改與深入同時跑時,兩邊各自查日上限,最多多超一次呼叫(ADR-039 第 4 點的 b:帳本本來偏低估)。側車被收掉時手上那一個呼叫記不到帳(跟今天 Rust 逾時收掉側車一樣)。
+  - `protocol.ts` 的 `REQUEST_METHODS` 多四個、`ERROR_KINDS` 多 `deepen-floor`、`no-model`、`deepen-failed`(core 的軟約定,不動 `contracts/`);`protocol.vectors.json` 同一批更新;協定版本 `v` 不變。
+  - 合併之後任何一次真的深入之前,先用 `npx tsx scripts/llm-spend.ts --today` 確認「今天已花 + 最壞 US$0.6」不超過 `LLM_DAILY_CAP_USD`;會超過就不跑、問使用者。
+  - provisional 的新卡交給之後的複審(03 phase-3、I6),這次不做。
+- **Related**: ADR-004、ADR-006、ADR-032、ADR-039、ADR-050、ADR-075(refined)、ADR-076、ADR-077(refined)、ADR-078、T43(`docs/tickets/T43-teach-card-phase-3.md`)、`features/07-teach-card/phase-3.feature`、`contracts/types.md` §1 §7 §8 §10
