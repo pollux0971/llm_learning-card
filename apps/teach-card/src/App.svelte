@@ -23,6 +23,12 @@
     });
   });
 
+  $effect(() => {
+    return session.onChange(() => {
+      pull();
+    });
+  });
+
   function parsed(): { frontmatter: CardFrontmatter; html: string } | null {
     if (!view.cardText) return null;
     try {
@@ -176,6 +182,15 @@
   .finished,
   .error {
     margin: 0.4rem 0;
+  }
+  /* 系統狀態跟內文分開:小一號、上方 1px 分隔線。字色照舊,只用 var(--hud-*)。 */
+  .generating,
+  .deepen-error {
+    margin: 0.75rem 0 0;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--hud-line);
+    font-size: 0.85rem;
+    color: var(--hud-text);
   }
   :global(.lc-example) {
     background: var(--hud-solid);
