@@ -532,6 +532,18 @@ describe('開工前的檢查(照 start / submit 的做法)', () => {
     expect(diskHashes(r.v)).toEqual(before);
   });
 
+  it('呼叫途中才丟缺鍵的錯(MissingCredentialError):poll 回 credential-unavailable + 深入版的「沒有設定」那句,不寫檔', async () => {
+    const { MissingCredentialError } = await import('../../packages/core/src/llm/errors.js');
+    const r = await deepRig({ setup: (router) => { router.children = new MissingCredentialError('OPENAI_API_KEY'); } });
+    await r.view('teach.open');
+    const before = diskHashes(r.v);
+    await r.send('teach.deepen');
+    const done = await r.pollDone();
+    expect(errorKind(done)).toBe('credential-unavailable');
+    expect(errorMessage(done)).toBe('產生新卡要用的金鑰沒有設定:OPENAI_API_KEY。請在專案根目錄的 .env 加上。');
+    expect(diskHashes(r.v)).toEqual(before);
+  });
+
   it('已有子卡時不查金鑰、不拿 router:缺金鑰也能顯示子卡', async () => {
     const r = await deepRig({ children: 2, missingKeys: () => ['OPENAI_API_KEY'] });
     await r.view('teach.open');

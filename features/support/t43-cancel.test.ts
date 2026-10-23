@@ -74,6 +74,21 @@ describe('Scenario: Cancelling writes nothing', () => {
     expect(logEvents(r.v, 'learned')).toEqual([]);
   });
 
+  it('手上是「最後一個呼叫」時取消(後面沒有下一個呼叫會去問要不要停):寫入前還要再檢查一次,不寫任何檔', async () => {
+    const r = await deepRig({ setup: (router) => { router.children = () => candidates(1); } });
+    await r.view('teach.open');
+    const before = diskHashes(r.v);
+    const gate = r.router.hold((c) => c.kind === 'questions'); // 一張卡,所以這就是最後一個呼叫
+    await r.send('teach.deepen');
+    await gate.reached;
+    await r.send('teach.cancel');
+    gate.release();
+    await r.quiet();
+    expect(r.router.calls.map((c) => c.kind)).toEqual(['children', 'questions']);
+    expect(diskHashes(r.v), '最後一個呼叫回來之後不能寫').toEqual(before);
+    expect(logEvents(r.v, 'deepened')).toEqual([]);
+  });
+
   it('字數重寫的呼叫在途中取消:不再重寫、不再出考題、不寫檔', async () => {
     const long = Array.from({ length: 101 }, (_, i) => `w${i}`).join(' ');
     const r = await deepRig({ setup: (router) => { router.children = () => [{ title: '新卡1', body: long, examples: [] }]; } });
@@ -241,6 +256,24 @@ describe('顧問補的一條:取消後馬上再按深入,舊工作手上那一�
     expect(cardFiles(r.v)).toEqual([...BASE, ...newIds(2)]);
     expect(logEvents(r.v, 'deepened'), '只記一次 deepened(新工作的)').toHaveLength(1);
     expect(r.router.of('children'), '子卡呼叫:舊的一次、新的一次').toHaveLength(2);
+  });
+
+  it('舊工作手上是「最後一個呼叫」,新工作已經寫完才回來:舊工作寫入前再檢查,不重複寫、不撞號、不多記 deepened', async () => {
+    const r = await deepRig({ setup: (router) => { router.children = () => candidates(1); } });
+    await r.view('teach.open');
+    const oldGate = r.router.hold((c) => c.kind === 'questions');
+    await r.send('teach.deepen');
+    await oldGate.reached;
+    await r.send('teach.cancel');
+    await r.send('teach.deepen');
+    const done = await r.pollDone();
+    expect(done['ok'], JSON.stringify(done)).toBe(true);
+    const afterNew = diskHashes(r.v);
+    oldGate.release();
+    await r.quiet(100);
+    expect(diskHashes(r.v)).toEqual(afterNew);
+    expect(logEvents(r.v, 'deepened')).toHaveLength(1);
+    expect(resultOf(await r.send('teach.poll'))).toMatchObject({ generating: false, card: { id: 'sec-0004' }, canBack: true });
   });
 
   it('新工作已經寫完才輪到舊呼叫回來:磁碟不再變、麵包屑與目前那張不變、新工作的結果沒被蓋掉', async () => {

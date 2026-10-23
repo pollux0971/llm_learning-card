@@ -546,7 +546,7 @@ describe('靜態:輪詢用注入的等待函式,視窗長相照工單第 6 節',
   it('main.ts 把 pause 接上(瀏覽器與 Tauri 兩條 deps 都有),間隔由那裡的計時器做', () => {
     const code = strip(readFileSync(join(import.meta.dirname, 'main.ts'), 'utf8'));
     const hits = code.match(/\bpause\b/g) ?? [];
-    expect(hits.length, '兩條 deps 各一個').toBeGreaterThanOrEqual(2);
+    expect(hits.length, '定義一個、兩條 deps(Tauri 與瀏覽器)各用一個').toBeGreaterThanOrEqual(3);
     expect(code).toMatch(/setTimeout/);
   });
 
