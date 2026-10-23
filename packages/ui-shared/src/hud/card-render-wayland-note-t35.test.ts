@@ -330,3 +330,63 @@ describe('T35 靜態:提示程式只走 CSSOM,而且有碰 .hud-body 的 padding
     expect(code()).toMatch(/padding-bottom|paddingBottom/);
   });
 });
+
+/* ───────────── N10(顧問 2026-10-23):.hud-body 原本就有 inline 的 padding-bottom ───────────── */
+
+const PRESET_INLINE = '20px';
+
+/** 在提示程式之前,.hud-body 一出現就先設一個 inline 的 padding-bottom(模擬「原本就有 inline 值」);之後才接提示程式 */
+function initScriptPreset(): string {
+  const preset = `(() => {
+    const SEL = '[data-hud="panel"].hud-fill .hud-body';
+    const apply = () => { const e = document.querySelector(SEL); if (e && !e.__lcPreset) { e.__lcPreset = true; e.style.setProperty('padding-bottom', ${JSON.stringify(PRESET_INLINE)}); } };
+    new MutationObserver(apply).observe(document, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', apply);
+    apply();
+  })();`;
+  return `${COLLECT_ERRORS}\n${preset}\nwindow.__LC_WINDOW_MODE__ = ${JSON.stringify({ frameless: true, solid: false })};\n${readFileSync(WINDOW_MODE_JS, 'utf8')}\n${existsSync(WAYLAND_NOTE_JS) ? readFileSync(WAYLAND_NOTE_JS, 'utf8') : ''}`;
+}
+
+for (const card of ['teach-card', 'test-card'] as const) {
+  describe(`${card}:T35 N10 .hud-body 原本就有 inline padding-bottom(${PRESET_INLINE})`, () => {
+    let page: GalleryPage | undefined;
+    beforeAll(async () => {
+      page = await openCard(card, { initScript: initScriptPreset(), headers: { 'Content-Security-Policy': DEV_PAGE_CSP } });
+    }, 120_000);
+    afterAll(async () => { await page?.close(); }, 60_000);
+    const p = (): GalleryPage => { if (!page) throw new Error('卡片沒有開起來'); return page; };
+
+    it('提示在的時候:留白 = 原本的 inline 值 + 提示高度(量測前提:預設值真的被設上了);按「知道了」:inline 值還原成原本的那個,不是拿掉、也不是 16px', async () => {
+      await freshLoad(p(), card);
+      expect(await waitForNote(p())).toBe(true);
+      const before = await measure(p());
+      expect(before.scroll.padding, `預設的 inline 值沒有設上(量測壞了?)。${fmt(before)}`).toBeGreaterThan(Number.parseFloat(PRESET_INLINE) + 1);
+      expect(before.scroll.padding, '提示在的時候:原本的值(20)+ 提示的高度').toBeGreaterThan(Number.parseFloat(PRESET_INLINE) + before.note!.height - 0.5);
+      expect(before.scroll.padding).toBeLessThan(Number.parseFloat(PRESET_INLINE) + before.note!.height + 0.5);
+      expect(await p().evaluate<boolean>(`(() => { const n = ${FIND_NOTE}; const b = n && [...n.querySelectorAll('button')].find((x) => x.textContent.trim() === ${JSON.stringify(WAYLAND_NOTE_DISMISS_LABEL)}); if (!b) return false; b.click(); return true; })()`)).toBe(true);
+      await sleep(250);
+      expect(await hasNote(p())).toBe(false);
+      const after = await measure(p(), 'bottom');
+      expect(after.scroll.inline, '按掉之後 inline 的 padding-bottom 要回到原本的 20px').toBe(PRESET_INLINE);
+      expect(after.scroll.padding).toBeCloseTo(Number.parseFloat(PRESET_INLINE), 1);
+    }, 180_000);
+
+    it('提示的高度變了(變窄)再按掉:還原的仍是最原本的 inline 值(不是中間算出來的留白)', async () => {
+      await freshLoad(p(), card);
+      expect(await waitForNote(p())).toBe(true);
+      try {
+        await p().resize!(230, CARD_VIEWPORT.height);
+        await sleep(300);
+        const narrow = await measure(p());
+        expect(narrow.scroll.padding).toBeGreaterThan(Number.parseFloat(PRESET_INLINE) + narrow.note!.height - 0.5);
+      } finally {
+        await p().resize!(CARD_VIEWPORT.width, CARD_VIEWPORT.height);
+      }
+      await sleep(300);
+      await p().evaluate(`(() => { const n = ${FIND_NOTE}; [...n.querySelectorAll('button')].find((x) => x.textContent.trim() === ${JSON.stringify(WAYLAND_NOTE_DISMISS_LABEL)}).click(); return true; })()`);
+      await sleep(250);
+      const after = await measure(p());
+      expect(after.scroll.inline).toBe(PRESET_INLINE);
+    }, 180_000);
+  });
+}
