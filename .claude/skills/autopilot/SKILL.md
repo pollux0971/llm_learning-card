@@ -733,6 +733,7 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent openco
 ### 工單檔頭與模板(2026-10-22,T39 合併後)
 27. **工單檔頭的 `status` 由協調者在「同一批 main commit」裡維護**(13-work-dag phase-2 起,`dag:check` 會紅):新工單一定要有檔頭(`id`、`deps`、`touches`、`cpu`、`status`、`owner`,格式見 `features/13-work-dag/FEATURE.md`);派工 → `dispatched`、送審 → `review`、合併 → `merged`、放棄 → `dropped`。狀態改動跟著對應的 main 批次一起 commit,不要事後補;合併後與派工前各跑一次 `npx tsx scripts/dag.ts --root .` 看 `problems=0`。**工單檔頭的 status 現在是 dag 測試的輸入**(2026-10-23,c9ba0b5 把 T39 標 merged 後 `scripts/dag-check.test.ts` 有一條寫死 T39 在進行中而紅,推上去才發現):**動到工單檔頭的批次,推之前要跑 `npx vitest run scripts/dag.test.ts scripts/dag-check.test.ts`**,跟設定 JSON 一樣不算「只動文件」。
 28. **模板 repo 的路徑是 `/data/python/dev-loop-mcp`**(2026-10-23 使用者答覆:舊的 `/data/python/dev-paradigm` 是舊版、他刪的;新版是同一個 git repo 改名延續,歷史與 tag 都在,`v1.6.8` = `88a3e11`)。`scripts/check-gates-pinned.sh` 的 `TEMPLATE_REPO` 預設已改成這個路徑,不設任何變數的 `npm run check:gates` 即可。釘版模板:`git -C /data/python/dev-loop-mcp archive v1.6.8 | tar -x -C <目錄>`。垃圾桶裡那份(`/data/.Trash-1000/files/dev-paradigm`)不要再用。專案要不要從 v1.6.8 升到 dlm 是另一件事,現在不動。
+29. **UI 工單只要有「使用者看得到的狀態轉換」,紅測試就要真的渲染,不收原始碼字串比對**(顧問 2026-10-24 裁決):T43 的視窗層測試對 `App.svelte` 只比原始碼字串,整鏈 243 檔全綠,`@manual` 卻發現按「深入這個」後整段生成(18–27 秒)畫面完全不變(沒有「正在產生…」、沒有取消、按鈕沒停用),因為畫面只在 `act()` 的 promise 結束時更新(F1,另引出 F2:生成中按「下一個」跳出錯誤畫面)。工單的驗收條件要點名「哪幾個畫面狀態要被真渲染的測試看到」(用 `packages/ui-shared/src/hud/render-test-support.ts` 的 `openApp` 加假的慢 client 或等價做法,不新增 npm 依賴),驗收者核紅測試時要確認它在基底上真的紅,而不是只在原始碼裡找到字串。
 
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
