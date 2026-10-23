@@ -4,7 +4,7 @@ deps: [T40, T42]
 touches: [packages/core/src/ingest/deepen.ts, packages/core/src/ingest/children.ts, packages/core/src/ingest/questions.ts, packages/core/src/ingest/generate-cards.ts, packages/core/src/teach/deck.ts, packages/core/src/session/teach.ts, packages/core/src/session/teach-deepen.ts, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, packages/core/src/llm/credentials.ts, scripts/review-sidecar.ts, scripts/boundaries.allow.json, apps/desktop/src/webview/review-client.ts, apps/teach-card/src/, apps/teach-card/dev/]
 cpu: heavy
 budget_usd: 8
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 已經有子卡還打模型、或重生一批蓋掉既有子卡:Existing children are reused 必須紅(假網路的請求紀錄要是 0 行,既有子卡檔雜湊前後相同)
