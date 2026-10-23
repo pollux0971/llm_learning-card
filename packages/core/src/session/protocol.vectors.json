@@ -926,6 +926,196 @@
    },
    "rust": "accept",
    "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "valid teach.deepen {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.deepen\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept",
+   "note": "T43:ADR-079 加的動作"
+  },
+  {
+   "name": "valid teach.poll {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.poll\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept",
+   "note": "T43:ADR-079 加的動作"
+  },
+  {
+   "name": "valid teach.cancel {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.cancel\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept",
+   "note": "T43:ADR-079 加的動作"
+  },
+  {
+   "name": "valid teach.back {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.back\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept",
+   "note": "T43:ADR-079 加的動作"
+  },
+  {
+   "name": "params content: teach.deepen {\"card\": \"sec-0001\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.deepen\",\"params\":{\"card\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.deepen 不帶卡 id(深入的是目前顯示的那張)(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.deepen {\"path\": \"cards/security/sec-0001.md\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.deepen\",\"params\":{\"path\":\"cards/security/sec-0001.md\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.deepen 不帶路徑(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.deepen {\"x\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.deepen\",\"params\":{\"x\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.deepen 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.poll {\"job\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.poll\",\"params\":{\"job\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.poll 不帶工作編號(工作編號只在側車裡,ADR-079)(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.poll {\"x\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.poll\",\"params\":{\"x\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.poll 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.cancel {\"job\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.cancel\",\"params\":{\"job\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.cancel 不帶工作編號(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.cancel {\"x\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.cancel\",\"params\":{\"x\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.cancel 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.back {\"card\": \"sec-0001\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.back\",\"params\":{\"card\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.back 不帶卡 id(回的是麵包屑上那一層)(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.back {\"category\": \"language\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.back\",\"params\":{\"category\":\"language\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.back 不帶類別(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.back {\"x\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.back\",\"params\":{\"x\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.back 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "method teach.deeper",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach.deeper\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method teach.forward",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach.forward\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method teach.deepen.cancel",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach.deepen.cancel\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method Teach.Deepen (case differs)",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"Teach.Deepen\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
   }
  ],
  "responses": [
@@ -1122,6 +1312,38 @@
    },
    "rust": "reject",
    "note": "超過 256 KiB:整行丟掉(Rust 回 bad-response)"
+  },
+  {
+   "name": "failure with kind deepen-floor (T43)",
+   "line": "{\"v\":1,\"id\":3,\"ok\":false,\"error\":{\"kind\":\"deepen-floor\",\"message\":\"這張已經是最深的一層了。\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "failure with kind no-model (T43)",
+   "line": "{\"v\":1,\"id\":3,\"ok\":false,\"error\":{\"kind\":\"no-model\",\"message\":\"現在沒辦法產生新卡:連不上雲端,也沒有可用的本機模型。\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "failure with kind deepen-failed (T43)",
+   "line": "{\"v\":1,\"id\":3,\"ok\":false,\"error\":{\"kind\":\"deepen-failed\",\"message\":\"這次沒有產生出能用的卡。可以再按一次「深入這個」。\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "teach view while generating (T43)",
+   "line": "{\"v\":1,\"id\":5,\"ok\":true,\"result\":{\"category\":\"security\",\"categories\":[],\"card\":{\"id\":\"sec-0001\",\"path\":\"cards/security/sec-0001.md\",\"title\":\"t\"},\"prereqs\":[],\"from\":null,\"canBack\":false,\"generating\":true}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
   }
  ],
  "hello": [
