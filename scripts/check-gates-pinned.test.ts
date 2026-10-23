@@ -1,6 +1,6 @@
 /**
  * T4b 驗收 3、4、5 的測試。全部用合成 fixture,不改本 repo 的 SOURCE 標頭,
- * 不碰 /data/python/dev-paradigm。
+ * 不碰 /data/python/dev-loop-mcp。
  *
  * 包裝腳本契約(實作必須對上這些字,測試轉綠之後不要改這裡):
  * - 呼叫:`bash scripts/check-gates-pinned.sh <consumer-root>`
