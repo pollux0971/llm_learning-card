@@ -17,6 +17,7 @@
  * 刻意不定義 step,跟 05-grading phase-2 的慣例一致。
  */
 import { p3Active, p3Estimate } from './test-card-phase3.steps.js';
+import { phase3Active, phase3NoFileWritten } from './teach-card-phase3.steps.js';
 import { Given, Then, When } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -194,6 +195,11 @@ Then('it prints them in the order they would be asked', function (this: Learning
 });
 
 Then('no file is written', function (this: LearningWorld) {
+  // 07 phase-3「Cancelling writes nothing」用同一句話:在那個 world 裡改派(T43)
+  if (phase3Active(this)) {
+    phase3NoFileWritten(this);
+    return;
+  }
   const s = stateOf(this);
   assert.equal(readFileSync(reviewsPath(this), 'utf8'), s.reviewsSnapshotBefore, 'dry run 不該寫任何檔案');
 });
