@@ -6,7 +6,7 @@
 |---|---|
 | 已完成 | phase-3(2026-10-24:T43 實作〔背景生成、可取消〕、T44 修補〔生成中的畫面跟著更新〕;@manual `docs/reviews/T43-manual-2026-10-24.md`〔F1/F2 不過〕與重做 `docs/reviews/T44-manual-2026-10-24.md`〔全過〕顧問判通過)、phase-2(2026-10-23:T37 實作、T40 修補〔兩視窗共用側車〕;@manual 重做 `docs/reviews/T40-manual-2026-10-23.md` 顧問判通過)、phase-1(2026-09-03) |
 | 進行中 | 無 |
-| 下一個 | phase-4(只要 phase-1 done);T45(系統狀態字樣不推動按鈕,低優先) |
+| 下一個 | phase-4(只要 phase-1 done) |
 
 ## Gate
 
