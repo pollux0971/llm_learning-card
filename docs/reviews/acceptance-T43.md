@@ -109,3 +109,48 @@ worker 花費 $25.74(只記錄,grok 不設上限),工單 budget_usd 8,比值 3.2
 
 ## 9. 結論
 通過,附缺口 G1(中)、G2、G3(中低)與低風險 G4–G7;不擋合併。G1 是硬規則 3 的寫檔前閘門沒有測試守住,建議交測試角色補一條再收。@manual 與 I4 的人工確認不在這份範圍。
+
+## 10. 重驗(補測 G1–G3):t43-gaps
+
+- 被驗:分支 t43-gaps,sha a6660cb3da1b525bd3de9d5f32c89446894d2669(= t43-accept-tests 26c09d2 + 只新增 features/support/t43-gaps.test.ts,365 行、13 條)。
+- tree 開跑前 df30e9fbddcf75fcbd1d1b215e55b9be27eccaad,跑完 df30e9fbddcf75fcbd1d1b215e55b9be27eccaad(相同,手改全數還原)。日期 2026-10-23。乾淨 worktree,無 .env。
+- 環境:host pollux-IdeaPad,8 核,VITEST_MAX_WORKERS=1,Stryker concurrency 2。load 開跑前 2.7、收尾 11.1(別處也有行程在跑)。
+- 與 t43-accept-tests 的差:只新增那一個測試檔(git diff --stat 1 檔 +365),沒有改任何實作或既有測試。
+
+### 基準
+- t43-gaps 單跑:1 檔 13 條全過。tsc --noEmit 乾淨。
+- T43 相關 19 檔加 t43-gaps:20 檔 449 條全過(沒重跑全套 vitest 與 cucumber,依協調者指示)。
+
+### 變異測試(deepen.ts 與 teach-deepen.ts 重跑)
+指令:npm run mutate -- stryker.t43-deepen-r3.json
+測試集:原 t43 handler、commit、cancel、deck、atomic,加 t43-sidecar、t43-gaps,以及 generate-cards 的兩個既有測試檔。--bail=1,concurrency 2,timeoutMS 120000。
+結果:381 個 mutant,殺掉 313、存活 68、逾時 0;整體 82.15%(deepen.ts 81.15、teach-deepen.ts 83.16)。第一輪同兩檔存活 56+35=91 個以上,現在 68 個。
+
+原報告指定的位置:
+| 位置 | 原因 | 結果 |
+|---|---|---|
+| teach-deepen.ts 第 72 行 failJob 的 isCurrent(G2) | 舊工作被取消後才丟例外 | 殺掉 |
+| deepen.ts 第 115 行(字數重寫憑證錯誤的三個變體)、117 行(計數) | G3 | 殺掉 |
+| deepen.ts 第 116 行 NoModelError 條件的「改成 false」與兩個區塊變體 | G3 | 殺掉 |
+| deepen.ts 第 116 行 NoModelError 條件「改成永遠為真」 | 非憑證、非 NoModel 的錯誤也被當成略過 | **仍存活**(殘留低缺口 G3b,見下) |
+| deepen.ts 第 146 行(考題憑證錯誤應中止) | G3 | 殺掉 |
+| deepen.ts 第 193、194 行 validateCard 閘門(G1) | | 殺掉 |
+G4(mkdir 目標)的 197、198 行也一併被殺。
+
+### 手改 H13 與非作者抽驗(只改實作,改完還原,git status 乾淨)
+| 編號 | 改了什麼 | 結果 | 紅的測試 |
+|---|---|---|---|
+| H13 | 拿掉 commitDeepen 的 validateCard 閘門 | 紅 4 | t43-gaps 的 G1 四條:101 個詞回 ok:false 且目錄仍空;兩張裡第二張超字整批不寫;level 不是整數也不寫;session 層超字卡回 deepen-failed 且磁碟沒變 |
+| X1 | validateCard 只查第一張卡 | 紅 2 | G1「兩張裡只有第二張超字」、G1 session 層 |
+| X2 | 字數重寫的憑證錯誤改回 failed | 紅 1 | G3 (1) 字數重寫呼叫丟憑證錯誤 |
+| X3 | 考題呼叫的憑證錯誤不再中止(改為略過) | 紅 1 | G3 (3) 考題呼叫丟憑證錯誤 |
+H13 在上一輪(沒有 t43-gaps)是存活的,現在變紅。
+
+### 其餘存活 68 個的分類
+照原等價分類(E1–E10)收:DeepenStopped 建構子、stoppingRouter 的兩個直通方法、provisional 條件、stopped 回傳的各種形狀、failed/cards/collision 回傳形狀靠 runJob 的 catch 落地、isCurrent 的 active === job、工作 id、runJob 外層 catch、witness、shutdown 細節。低缺口 G4 其餘(無)、G5(第 225 行警告文字)、G6(第 165、166 行缺金鑰回傳形狀)、G7(第 179、182、195、197 行 poll 與 back 的少數分支)原樣存活,不要求補。新增殘留 G3b(低):deepen.ts 第 116 行,字數重寫呼叫丟「既非憑證也非 NoModel」的錯誤時,應整個回 failed,現在即使被改成「略過那一張」測試也不會紅。
+
+### learning/ 前後
+前:64 檔 / c2e4dd6d71de3976 / 108 行。後:64 檔 / c2e4dd6d71de3976 / 108 行。相同。
+
+### 結論
+通過。G1(中)、G2、G3 都有測試守住且手改證明會紅;殘留 G3b 與 G4–G7 低風險,不擋。
