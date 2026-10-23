@@ -6,7 +6,7 @@ import type { LearningFs } from '../../desktop/src/webview/learning-fs.js';
 import { reviewErrorText, type ReviewClient } from '../../desktop/src/webview/review-client.js';
 
 export const LAST_CATEGORY_KEY = 'lc-teach-last-category';
-export const BUSY_MESSAGE = '考試卡正在批改,稍等一下。';
+export const BUSY_MESSAGE = '考試卡還在用複習程式,稍等一下。';
 export const FINISHED_MESSAGE = '這個類別已經學完了。可以考慮補充更多素材。';
 
 export interface TeachSessionDeps {
