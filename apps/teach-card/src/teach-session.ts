@@ -92,6 +92,8 @@ export function createTeachSession(deps: TeachSessionDeps): {
   followPrereq(index: number): Promise<void>;
   retry(): Promise<void>;
   categoryNameOf(id: string): string;
+  /** 畫面該重拉的時候。形狀照 onWait:回傳的函式取消訂閱。 */
+  onChange(listener: () => void): () => void;
 } {
   let mode: Mode = 'loading';
   let beneath: Beneath = 'card';
@@ -111,11 +113,24 @@ export function createTeachSession(deps: TeachSessionDeps): {
   let deepenError: string | undefined;
   let generation = 0;
   let gate: Promise<void> = Promise.resolve();
+  const changeListeners: Array<() => void> = [];
 
   deps.client.onWait((isWaiting) => {
     waiting = isWaiting;
     controlsDisabled = isWaiting || inFlight || generating;
   });
+
+  function onChange(listener: () => void): () => void {
+    changeListeners.push(listener);
+    return () => {
+      const at = changeListeners.indexOf(listener);
+      if (at >= 0) changeListeners.splice(at, 1);
+    };
+  }
+
+  function emitChange(): void {
+    for (const listener of changeListeners.slice()) listener();
+  }
 
   function labels(): { id: string; label: string; current: boolean }[] {
     return rows.map((row) => ({
@@ -236,13 +251,18 @@ export function createTeachSession(deps: TeachSessionDeps): {
       try {
         const raw = (await track(deps.client.teachPoll())) as unknown as ServerView;
         if (gen !== generation) return;
-        if (raw.generating === true) continue;
+        if (raw.generating === true) {
+          emitChange();
+          continue;
+        }
         generating = false;
         await apply(raw);
+        emitChange();
         return;
       } catch (err) {
         if (gen !== generation) return;
         stayOnCard(err);
+        emitChange();
         return;
       }
     }
@@ -265,6 +285,7 @@ export function createTeachSession(deps: TeachSessionDeps): {
       return run({ kind: 'open', category: stored === null ? undefined : stored });
     },
     next: () => {
+      if (generating) return Promise.resolve();
       deepenError = undefined;
       return run({ kind: 'next' });
     },
@@ -278,14 +299,18 @@ export function createTeachSession(deps: TeachSessionDeps): {
         const raw = (await track(deps.client.teachDeepen())) as unknown as ServerView;
         if (gen !== generation) return;
         if (raw.generating === true) {
+          // 等回應說要生成才通知。送出當下不通知,有子卡的那張才不會閃出生成中那一行。
+          emitChange();
           await pollUntilDone(gen);
           return;
         }
         generating = false;
         await apply(raw);
+        emitChange();
       } catch (err) {
         if (gen !== generation) return;
         stayOnCard(err);
+        emitChange();
       }
     },
     cancel: async () => {
@@ -296,8 +321,10 @@ export function createTeachSession(deps: TeachSessionDeps): {
         const raw = (await deps.client.teachCancel()) as unknown as ServerView;
         generating = false;
         await apply(raw);
+        emitChange();
       } catch (err) {
         stayOnCard(err);
+        emitChange();
       }
     },
     back: async () => {
@@ -323,14 +350,19 @@ export function createTeachSession(deps: TeachSessionDeps): {
       restoreList();
     },
     chooseCategory: (id: string) => {
+      if (generating) return Promise.resolve();
       if (id === category) {
         restoreList();
         return Promise.resolve();
       }
       return run({ kind: 'switch', category: id });
     },
-    followPrereq: (index: number) => run({ kind: 'prereq', index }),
+    followPrereq: (index: number) => {
+      if (generating) return Promise.resolve();
+      return run({ kind: 'prereq', index });
+    },
     retry: () => (pending === undefined ? Promise.resolve() : run(pending)),
     categoryNameOf,
+    onChange,
   };
 }
