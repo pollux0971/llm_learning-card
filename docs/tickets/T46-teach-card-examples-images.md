@@ -21,8 +21,8 @@ must_catch:
 
 # 工單 T46:教學卡的例子可以折疊、例子裡的圖片(07-teach-card phase-4 的前半)
 
-> 狀態:草稿,待顧問審(2026-10-24)。規格:UI/Tauri 負責人。編號 T46:暫定,協調者配。
-> **07 phase-4 拆成兩張**(待顧問裁決 D0):這張做 `../../features/07-teach-card/phase-4.feature` 的場景 1–5(折疊、圖片);T47 做場景 6–8(縮放、長內容、視窗大小)。這張不改版面,T47 才改。
+> 狀態:顧問審過 2026-10-24(D0–D5 照建議;補 4 處:HUD 樣本卡也用 renderMarkdown、「原文路徑」的定義、折疊不重算整張、變異指令)。規格:UI/Tauri 負責人。編號 T46:協調者配。
+> **07 phase-4 拆成兩張**(顧問 2026-10-24 裁 D0):這張做 `../../features/07-teach-card/phase-4.feature` 的場景 1–5(折疊、圖片);T47 做場景 6–8(縮放、長內容、視窗大小)。這張不改版面,T47 才改。
 > 實作:worker(opencode + grok-4.7);紅測試(含渲染測試與 cucumber 步驟):測試 agent;驗收:驗收 agent;`@manual`:前端,技術顧問判。
 > 這份檔是工單唯一的正本;驗收條件只在這裡寫一次,不經過轉述。
 > 依據:`../../features/07-teach-card/phase-4.feature`;`../../features/07-teach-card/FEATURE.md`(phase-4 只要 phase-1 done);`../00-design.md` 第 3.2 節(圖片放 `assets/`、用相對路徑)與第 4.1 節(範例區塊可折疊);`../../contracts/types.md` 第 12、13 節(目錄、`LearningFs.assetUrl`、白名單);SKILL §4g 第 29 條(使用者看得到的狀態轉換要真渲染)。
@@ -46,14 +46,14 @@ must_catch:
 
 - 每個例子區塊上面有一個標題列,按它就收起來,再按就展開。收起來時只剩標題,例子的內容(字、圖、清單)不佔位置、看不到。
 - **一開始是展開的**(沒有記錄過的時候)。
-- **折疊的狀態跨卡記住**(待顧問裁決 D2):使用者最後一次按的是收起或展開,下一張卡(按「下一個」、換類別、深入、回上一層、先備提示換過去的卡)的每個例子就從那個狀態開始。
+- **折疊的狀態跨卡記住**(顧問裁 D2=A):**一個**狀態,等於使用者最後一次按的那一下;按的是收起或展開,下一張卡(按「下一個」、換類別、深入、回上一層、先備提示換過去的卡)的每個例子就從那個狀態開始。
   - 從第一幀就是那個狀態:不准先畫展開、下一幀才收起來(渲染測試用每一幀取樣量)。
   - 記在 `deps.storage`(同 `LAST_CATEGORY_KEY` 的做法),重開 app 之後也照舊。
 - 標題列用鍵盤也能操作(Tab 走得到、Enter 或空白鍵收放)。
 
 ### 2. 好幾個例子各自折疊(場景 2)
 
-- 每個例子區塊有自己的標題(待顧問裁決 D3:只有一個例子時寫「例子」,有好幾個時寫「例子 1」「例子 2」…)。
+- 每個例子區塊有自己的標題(顧問裁 D3:只有一個例子時寫「例子」,有好幾個時寫「例子 1」「例子 2」…;標題與內容之間不畫線)。
 - 按其中一個的標題,只有那一個收放,其他的不變。
 - 第 1 條的「跨卡記住」照最後一次按的那一下算(D2)。
 
@@ -66,14 +66,16 @@ must_catch:
 3. 過了:網址是 `LearningFs.assetUrl(<解析後的路徑>)` 的回傳值,原樣放進 `src`。
    - 桌面版是 `../../apps/desktop/src/webview/learning-fs.ts` 的 `createLearningFs().assetUrl`(`lc://localhost/` 加逐段 `encodeURIComponent`);它丟 `PathRefusedError` 就當不過。
    - 瀏覽器單獨執行版是 dev server 給的網址(見第 6 條)。
-4. **交給 `assetUrl` 的字串就是卡片原文裡寫的那段路徑解析出來的**,不多解碼也不少解碼(契約第 13 節「被檢查的字串必須和被使用的字串逐位元相同」):
+4. **交給 `assetUrl` 的字串就是卡片原文裡寫的那段路徑解析出來的**,不多解碼也不少解碼(契約第 13 節「被檢查的字串必須和被使用的字串逐位元相同」)。
+   - 「原文路徑」= markdown-it 解出來的**連結目的地**:markdown 自己的反斜線跳脫與 HTML 實體已經處理過、**normalizeLink 之前**的那串(顧問 2026-10-24)。
    - markdown-it 會把圖片網址的非 ASCII 字元編成 `%XX`(normalizeLink)。中文檔名 `../../assets/同源.png` 交給 `assetUrl` 的要是 `assets/同源.png`,不是 `assets/%E5%90%8C…`。
    - 卡片原文裡本來就寫了 `%` 的(例如 `a%20b.png`),不解碼,照第 2 條拒絕(`%` 不在字元集合)。
 5. 不過:**不載入**(畫面上沒有 `img` 去要那個網址,網路紀錄 0 個請求),改顯示佔位字樣(第 5 條)。下面這些都算不過:
    - 解析後在 `raw/`、`cards/`、`questions/` 等 `assets` 以外的地方;
    - 解析後跳出 learning 根(`../../../x.png`);
-   - 絕對網址(`http:`、`https:`、`lc:`、`file:`、`//host`)與 `data:` 網址(待顧問裁決 D4);
+   - 絕對網址(`http:`、`https:`、`lc:`、`//host`)與 `data:image/…` 網址(顧問裁 D4:拒絕);
    - 含 `?`、`#`、`%`、反斜線,或不是 NFC。
+   - markdown-it 的 validateLink 本來就擋掉 `file:`、`javascript:`、`vbscript:` 與不是圖片的 `data:`:那些根本不會變成圖片 token,畫面上是原文字。這種只要「沒有 `img`、0 個請求」就算過,**不要求**出「圖片路徑不能用」字樣。
 6. 瀏覽器單獨執行版(`npm run dev -w apps/teach-card`,渲染測試也用它):`apps/teach-card/dev/` 的 dev server 多一條路由服務暫存根裡的圖片(例如 `/__asset?path=<路徑>`),跟 `/__card` 一樣只讀暫存根、擋 `..`;回傳位元組(不是文字),`Content-Type` 照副檔名,不存在回 404。`main.ts` 的瀏覽器版 `fs` 多一個 `assetUrl` 回這條路由的網址。
    - 暫存根裡要有一張可以用的圖(單獨執行時看得到、渲染測試用得到)。做法 worker 定(例如 dev server 起暫存根時寫一張很小的 PNG 到 `assets/`);不改 `contracts/fixtures/`。
 7. 這條是 `phase-4.feature` 裡唯一不是 `@manual` 的場景,要有 cucumber 步驟(測試 agent 寫)。
@@ -87,12 +89,12 @@ must_catch:
   - 關的那一下不能穿過去按到底下的按鈕:那段時間 `/__review` 0 個請求、卡片沒換。
 - 放大時不載入第二份圖(用同一個網址,不另外要檔)。
 - 佔位字樣(第 5 條)不能放大。
-- 鍵盤放大不做(待顧問裁決 D5);Esc 關閉要做。
+- 鍵盤放大不做(顧問裁 D5);Esc 關閉要做。
 
 ### 5. 圖片不存在時不弄壞卡片(場景 5)
 
 - 圖片載入失敗(dev server 或 `lc` 協定回 404)時,那張圖的位置換成一行字樣,**寫出缺的那個檔**:「找不到圖片:<解析後的路徑>」(例如「找不到圖片:assets/a.png」)。
-- 第 3 條第 5 點拒絕的路徑,同樣位置換成「圖片路徑不能用:<卡片原文裡寫的路徑>」,不發請求。
+- 第 3 條第 5 點拒絕的路徑(markdown-it 當成圖片的那些),同樣位置換成「圖片路徑不能用:<卡片原文裡寫的路徑>」,不發請求。
 - 兩種字樣:
   - 不留破圖示、不留空的 `img`;替代文字(如果有)可以一起寫在字樣後面;
   - 樣式跟例子裡的字一樣或小一號,顏色只用 `var(--hud-*)`,不畫框(card-static);
@@ -102,6 +104,7 @@ must_catch:
 ### 6. 不變的
 
 - 例子框的樣子照舊:`.lc-example` 的 class、背景、左邊 1px `var(--hud-line)` 線、內距與外距(HUD 的 card-render 測試量它)。標題列在框裡面。
+- **`renderMarkdown` 不只教學卡用**:`../../packages/ui-shared/src/hud/card-static-samples-test-support.ts` 第 47 行也用它畫 HUD 的樣本卡;`../../packages/ui-shared/src/hud/card-render-test-support.ts` 第 137、472 行量 `.lc-example` 的邊距與左邊的線。fence 插件改輸出 `<details>`,HUD 的樣本會一起變(見「要改的既有測試」)。
 - 版面不動:這張不改按鈕列、系統狀態字樣的位置(T45)、`.hud-body` 的捲動與 `padding-bottom`(T35)。**T45 的 0 px 不准退步**(T45 的渲染測試照樣綠)。
 - 內文與例子的順序照卡片原文(這張不把例子搬到別的地方;那是 T47 的事)。
 - 「下一個」的 `onclick={handleNext}`、`disabled={finished}`;`<div class="controls">`;最外層一個 HudPanel。
@@ -118,13 +121,14 @@ must_catch:
 | 顏色只准 `var(--hud-*)`,沒有顏色字面值,背景不准漸層 | 放大層的底色、佔位字樣 | 放大層的底用 `var(--hud-solid)` 或 `var(--hud-panel)`;要半透明就用 `opacity` 加這兩個之一,不寫 `rgba(…)` |
 | `<style>` 只准用 `--hud-` 開頭的變數 | 縮放(T47)、放大層 | 不新增自己的 CSS 變數 |
 | 標記不准有 `style=` 屬性;不准插 `<style>`、`setAttribute('style')`、`.style.cssText =`;外部網址 | 放大的圖、佔位字樣 | 要動態樣式用 Svelte 的 `style:屬性` 指令(CSSOM,CSP 放行) |
-| 按鈕都要是 `HudButton`,`App.svelte` 標記裡不准原生 `<button>` | 標題列、放大層的關閉 | 標題列用 fence 插件產生的 `<details>` / `<summary>`(在 `{@html}` 裡,不是 `App.svelte` 的標記;`summary` 不是按鈕元素,鍵盤操作是瀏覽器內建的),或在 `App.svelte` 用 `HudButton`(D1);放大層不放關閉鈕(按任何地方就關) |
+| 按鈕都要是 `HudButton`,`App.svelte` 標記裡不准原生 `<button>` | 標題列、放大層的關閉 | 標題列用 fence 插件產生的 `<details>` / `<summary>`(顧問裁 D1=A;在 `{@html}` 裡,不是 `App.svelte` 的標記;`summary` 不是按鈕元素,鍵盤操作是瀏覽器內建的);放大層不放關閉鈕(按任何地方就關) |
 | 教學卡只准 import `@learning/ui-shared` 與 `@learning/ui-shared/hud/…` | 圖片路徑解析 | 解析函式放 `packages/ui-shared/src/`(新檔 image-path.ts),從 `@learning/ui-shared` 的 index 匯出 |
 | 不准 Svelte 的 `transition:` / `in:` / `out:` / `animate:` 指令 | 收放、放大 | 不做動畫(要的話只能用 CSS,而且要被 `prefers-reduced-motion` 關掉) |
 
 ## 做法(建議;量的結果才是驗收)
 
-- **折疊**:fence 插件(`../../packages/ui-shared/src/example-fence.ts`)把例子輸出成 `<details class="lc-example" open><summary>例子 N</summary>…</details>`(D1 建議)。`App.svelte` 在 `{@html}` 的容器上聽 `toggle`(capture),記下最後一次的狀態;新卡渲染時依記錄決定 `open`,在插件輸出的字串裡就決定(插件收一個選項),不在掛上去之後才改(避免第一幀先展開)。
+- **折疊**:fence 插件(`../../packages/ui-shared/src/example-fence.ts`)把例子輸出成 `<details class="lc-example" open><summary>例子 N</summary>…</details>`(D1=A)。`App.svelte` 在 `{@html}` 的容器上聽 `toggle`(capture),記下最後一次的狀態;新卡渲染時依記錄決定 `open`,在插件輸出的字串裡就決定(插件收一個選項),不在掛上去之後才改(避免第一幀先展開)。
+  - **折疊狀態只在換卡時讀。** 同一張卡上,不准因為按了一個標題就重算整張 html(例如讓 `shown` 的 `$derived` 依賴折疊狀態):整張重畫,另外兩個例子會被一起收掉或展開。渲染測試 b 會抓到;寫在這裡是為了別踩。
 - **圖片**:新檔 image-path.ts 放一個純函式,輸入「卡片檔的目錄、markdown 原文裡的路徑」,輸出「解析後的路徑」或「拒絕的原因」。fence 插件與內文共用 markdown-it 的 image 規則:拿 token 的**原文**路徑(不是 normalizeLink 之後的),過了交給呼叫端給的 `assetUrl`,不過就輸出佔位字樣(跳脫過)。`renderMarkdown` 多一個選項帶 `assetUrl` 與卡片目錄;不帶選項時行為不變(既有呼叫與測試照舊)。
 - **找不到**:`App.svelte` 在容器上用 capture 聽 `error`(`img` 的 error 不冒泡),把那張圖換成「找不到圖片」字樣。
 - **放大**:`App.svelte` 聽容器上的 click,目標是例子裡的 `img` 就開一層 `position: fixed` 蓋滿視窗的放大層,用同一個 `src`;放大層上任何 click 關掉並 `stopPropagation`;Esc 在 window 的 keydown 關掉。
@@ -140,7 +144,7 @@ must_catch:
 | ui-shared | `VITEST_MAX_WORKERS=1 npx vitest run packages/ui-shared/src/` | 全綠,含新的圖片路徑單元測試、HUD 的 card-static、card-render、Wayland 提示 T34 / T35 |
 | 場景 3 | `NODE_OPTIONS=--import=tsx npx cucumber-js --tags '@teach-card and @phase-4 and not @manual' --format summary` | 1 個場景全綠(拿位子) |
 | 不退步 | 同上,`--tags '@teach-card and @phase-1'`、`'@teach-card and @phase-2 and not @manual'`、`'@teach-card and @phase-3 and not @manual'` | 全綠(拿位子) |
-| 變異 | `npm run mutate`(範圍:fence 插件與新的圖片路徑解析) | 兩個檔各 ≥ 80(FEATURE.md 的技術棧表:fence 插件是標準 80%;圖片路徑解析是同一類共用邏輯,而且決定要不要發請求) |
+| 變異 | `npm run mutate -- <設定檔>`;設定檔由驗收 agent 新增在 repo 根(同 `../../stryker.t44-session.json` 的做法),`mutate` 範圍是 `packages/ui-shared/src/example-fence.ts` 與新檔 image-path.ts | 兩個檔各 ≥ 80(FEATURE.md 的技術棧表:fence 插件是標準 80%;圖片路徑解析是同一類共用邏輯,而且決定要不要發請求) |
 | 不動的地方 | `git diff --stat 42c8384..HEAD -- packages/core packages/ui-shared/src/hud contracts apps/desktop scripts features/07-teach-card` | 沒有輸出(`features/steps` 是測試 agent 的,不在這裡) |
 
 **單元測試 c**(新檔,放 `packages/ui-shared/src/`):圖片路徑解析的向量,至少:
@@ -153,8 +157,10 @@ must_catch:
 | `cards/demo` | `../../raw/demo/x.png` | 拒絕 |
 | `cards/demo` | `../x.png`、`assets/a.png`(在卡片目錄底下) | 拒絕(不在最上層 `assets`) |
 | `cards/demo` | `../../../x.png` | 拒絕(跳出根) |
-| `cards/demo` | `https://a.test/x.png`、`//a.test/x.png`、`lc://localhost/assets/a.png`、`file:///x.png`、`data:image/png;base64,AAAA` | 拒絕 |
+| `cards/demo` | `https://a.test/x.png`、`//a.test/x.png`、`lc://localhost/assets/a.png`、`data:image/png;base64,AAAA` | 拒絕(佔位字樣) |
+| `cards/demo` | `file:///x.png`、`javascript:x`、`data:text/plain,x` | markdown-it 的 validateLink 擋掉,不是圖片 token:輸出沒有 `<img`、`assetUrl` 0 次;不要求佔位字樣 |
 | `cards/demo` | `../../assets/a%20b.png`、`../../assets/a.png?x`、`../../assets/a.png#y`、`..\..\assets\a.png` | 拒絕(不解碼) |
+| `cards/demo` | `../../assets/a\_b.png`(markdown 的反斜線跳脫) | `assets/a_b.png`(跳脫由 markdown-it 處理過,才是原文路徑) |
 | `cards/demo` | `../../assets/é.png`(U+0065 U+0301,不是 NFC) | 拒絕 |
 | `cards/demo` | `../../assets/./a.png`、`../../assets//a.png` | 拒絕或解析成 `assets/a.png`,二選一寫死(測試 agent 定,寫進 commit 說明;交給 `assetUrl` 的字串不能含 `.` 段或空段) |
 
@@ -168,7 +174,7 @@ must_catch:
   - **a. 折疊**:例子展開(內容看得到、高度 > 標題列)→ 按標題 → 收起(內容 `offsetParent` 為 null 或高度 0、只剩標題)→ 按「下一個」→ 新卡的例子從第一幀就是收起的(頁面裡每一幀取樣,沒有一幀是展開的)→ 展開一個 → 下一張是展開的 → 重新載入頁面(同一份 storage)還是展開的。
   - **b. 三個例子**:三個標題,字是「例子 1」「例子 2」「例子 3」(D3);按第 2 個只有第 2 個收起;鍵盤 Tab 到第 1 個、按 Enter 收起。
   - **d. 放大**:按例子裡存在的那張圖 → 放大層出現,裡面的圖 `src` 跟原本的相同、矩形比原本的大且在視窗裡、`elementFromPoint` 在原本按鈕的位置打到的是放大層 → 在原本「下一個」的位置按一下 → 放大層關掉、`/__review` 0 個請求、標題沒換、`.hud-body` 的 `scrollTop` 跟打開前相同 → 再打開 → 按 Esc 關掉 → 放大期間 `/__asset` 對那張圖沒有第二個請求。
-  - **e. 找不到與拒絕**:不存在的那張 → 畫面上有「找不到圖片:assets/<檔名>」、那個位置沒有 `img`;會被拒絕的那張 → 「圖片路徑不能用:<原文>」、`/__asset` 對它 0 個請求;路徑含角括號與引號的那張 → 字樣裡看得到原字、DOM 裡沒有多出元素;同一張卡的標題、內文、別的例子、存在的那張圖、按鈕都在,「下一個」按得下去。
+  - **e. 找不到與拒絕**:不存在的那張 → 畫面上有「找不到圖片:assets/<檔名>」、那個位置沒有 `img`;會被拒絕的那幾張(要用 markdown-it 會當成圖片的路徑:`../../raw/…`、`https:…`、`data:image/png…`)→ 「圖片路徑不能用:<原文>」、`/__asset` 與外部網址 0 個請求;路徑含角括號與引號的那張 → 字樣裡看得到原字、DOM 裡沒有多出元素;同一張卡的標題、內文、別的例子、存在的那張圖、按鈕都在,「下一個」按得下去。
 - 場景 3 的 cucumber 步驟(新檔,放 `features/steps/`):用桌面殼真的 `createLearningFs({ os: 'linux', invoke: <假的> }).assetUrl` 渲染一張例子裡有相對路徑圖的卡,斷言 `src` 是 `lc://localhost/assets/<檔名>`、`assetUrl` 收到 `assets/<檔名>`、假的 `invoke` 0 次呼叫(`assetUrl` 是同步的,不經 command)。
 
 ### 2. 改壞證明(驗收 agent 的丟棄式證明)
@@ -201,7 +207,7 @@ must_catch:
 
 - `../../packages/ui-shared/src/example-fence.test.ts`:如果 D1 選 `<details>`,斷言 `class="lc-example"` 的那幾條照樣成立;有寫死 `<div class=` 的才改。不准放鬆「不是 code block」「巢狀 markdown 照常渲染」那幾條。
 - `TeachSessionDeps['fs']` 加了 `assetUrl` 之後,既有測試裡的假 `fs` 要補一個(型別才過)。只補欄位,不改斷言。
-- 其他預期不用改。HUD 的 card-render(例子框邊距、左邊 1px 線、捲動區)量的是 `.lc-example` 與 `.hud-body`,這張不改它們。
+- **HUD 的樣本卡**(顧問 2026-10-24):fence 插件改輸出 `<details>` 會一起改到 HUD 的樣本(見「不變的」)。測試 agent 寫紅測試之前,先用丟棄式的 `<details>` 版本跑一次 HUD 的 card-render 與 card-static,確認真的不用改,結果寫進紅測試的 commit 說明。**不准**為了它改 `packages/ui-shared/src/hud/` 的測試支援;真的紅了就停下來回報協調者與顧問。
 - 要注意的一條:例子多了一行標題,卡片會變高一點。T45 渲染測試的「短卡」如果因此放不下(要捲),那是前提變了,不是 T45 退步:測試 agent 換一張放得下的短卡(或在 `initScript` 裡縮短內容),不放鬆 0 px 的斷言,在 commit 說明裡講。
 
 ## 受保護的檔(開發 worker 不改)
@@ -214,14 +220,16 @@ must_catch:
 - `packages/ui-shared/src/`(hud 以外)與 `apps/teach-card/` → 07-teach-card(`../../scripts/boundaries.owners.json`;ui-shared 的根歸 07,ADR-035)。
 - 教學卡已經 import 桌面殼的 `learning-fs.ts`(`main.ts`),不新增 import 例外。
 
-## 待顧問裁決
+## 顧問的裁決(2026-10-24)
 
-- **D0 07 phase-4 拆兩張。** 建議拆:這張(場景 1–5)不改版面;T47(場景 6–8)會改版面,而且跟 T45 的 0 px、T35 的 Wayland 提示、HUD 的捲動區測試都有關係,要另外裁決(見 T47 的 D1–D4)。一張做完要驗的東西太多,出錯不好分。不拆的話,T47 的裁決要先做完這張才能派。
-- **D1 標題列怎麼做。** 建議 A:fence 插件輸出 `<details>` / `<summary>`。鍵盤、螢幕報讀是瀏覽器內建的,`App.svelte` 不多原生按鈕,card-static 不用例外。B:`App.svelte` 把例子拆出來自己畫,標題列用 `HudButton`;樣子跟其他按鈕一樣(大、有切角),例子框裡會很擠。
-- **D2 「跨卡記住」記什麼。** 建議 A:**一個**狀態,等於使用者最後一次按的那一下(收起或展開);下一張卡的每個例子都從它開始。B:照位置記(第 1 個、第 2 個…各記各的);卡片的例子數量不一樣時不好預測。
-- **D3 標題的字。** 建議:一個例子寫「例子」,好幾個寫「例子 1」「例子 2」…;標題列與內容之間不畫線(畫線要給 `.lc-example` 再開一個窄例外)。
-- **D4 `data:` 網址。** 建議拒絕(場景 3 說的是相對路徑、assets 目錄;CSP 雖然放行 `data:`,卡片裡不需要)。
-- **D5 鍵盤放大。** 建議這張不做(圖在卡片裡本來就看得到;做的話圖要能拿到焦點,插件要多包一層)。Esc 關閉照做。
+- **D0 拆兩張:同意。** 這張是場景 1–5,不改版面;T47 是場景 6–8。
+- **D1=A**:fence 插件輸出 `<details>` / `<summary>`。鍵盤、螢幕報讀是瀏覽器內建的,`App.svelte` 不多原生按鈕,card-static 不用例外。
+- **D2=A**:「跨卡記住」記**一個**狀態,等於使用者最後一次按的那一下(收起或展開);下一張卡的每個例子都從它開始。
+- **D3**:一個例子寫「例子」,好幾個寫「例子 1」「例子 2」…;標題列與內容之間不畫線。
+- **D4**:`data:` 網址拒絕。
+- **D5**:這張不做鍵盤放大;Esc 關閉要做。
+- **路徑規則同意**:第一段是 `assets`、不解碼、過契約第 13 節的白名單。這比契約第 13 節窄,是 UI 自己收緊,不動契約。
+- 補四處:HUD 樣本卡也用 `renderMarkdown`(「不變的」「要改的既有測試」);「原文路徑」的定義與 validateLink(第 3 條);折疊狀態只在換卡時讀(做法);變異的指令形式(驗收條件 1)。
 
 ## 不在範圍
 
