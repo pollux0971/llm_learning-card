@@ -97,7 +97,7 @@ describe('Scenario: Next within a set of children', () => {
     expect(readReviews(r.v)['sec-0005']).toEqual(freshLearned(TODAY));
     expect(readReviews(r.v)['sec-0002'], '父卡記學過').toEqual(freshLearned(TODAY));
     expect(saves().map((s) => s.ids), '最後一張子卡與父卡是同一次寫入,不是兩次').toEqual([['sec-0001', 'sec-0002', 'sec-0004', 'sec-0005']]);
-    expect(learnedIds(r).sort()).toEqual(['sec-0004', 'sec-0005', 'sec-0002']);
+    expect([...learnedIds(r)].sort()).toEqual(['sec-0002', 'sec-0004', 'sec-0005']);
     expect(logEvents(r.v, 'learned')).toHaveLength(3);
   });
 

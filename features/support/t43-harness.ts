@@ -371,6 +371,7 @@ export class FakeDeepenRouter {
     }
     if (call.kind === 'questions') return run(this.questions(call.card ?? '', call.title ?? ''));
     if (call.task === 'grade.apply') return scriptedApplyReply(call.prompt);
+    if (call.task === 'grade.fill.llm') return 'no';
     throw new Error(`FakeDeepenRouter 沒有預期到的呼叫(${call.task}):${call.prompt.slice(0, 80)}`);
   }
 }

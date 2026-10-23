@@ -30,6 +30,7 @@ import {
 afterAll(cleanupRigs);
 
 const BASE = ['sec-0001', 'sec-0002', 'sec-0003'];
+const nap = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const timeout = <T>(p: Promise<T>, ms = 2000): Promise<T | 'timeout'> => Promise.race([p, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), ms))]);
 
 describe('Scenario: Cancelling writes nothing', () => {
@@ -222,7 +223,7 @@ describe('顧問補的一條:取消後馬上再按深入,舊工作手上那一�
     const callsBeforeOldReturns = r.router.calls.length;
     // 舊工作手上那一個呼叫此時回來
     oldGate.release();
-    await r.quiet(80);
+    await nap(120);
     expect(r.router.calls.length, '舊工作回來之後沒有再發任何呼叫').toBe(callsBeforeOldReturns);
     expect(diskHashes(r.v), '舊工作沒寫任何東西').toEqual(before);
     const polled = await r.send('teach.poll');
@@ -274,7 +275,7 @@ describe('顧問補的一條:取消後馬上再按深入,舊工作手上那一�
     await r.send('teach.deepen');
     await newGate.reached;
     oldGate.fail(new Error('舊工作的呼叫失敗'));
-    await r.quiet(80);
+    await nap(120);
     const mid = await r.send('teach.poll');
     expect(mid['ok'], '舊工作的錯不能變成新工作的 poll 錯誤').toBe(true);
     expect(resultOf(mid).generating).toBe(true);
@@ -296,7 +297,7 @@ describe('顧問補的一條:取消後馬上再按深入,舊工作手上那一�
     await r.send('teach.deepen');
     await newGate.reached;
     oldGate.release(); // 舊工作的回應是壞的 JSON → 舊工作自己收尾,不能把 deepen-failed 寫到新工作頭上
-    await r.quiet(80);
+    await nap(120);
     expect(resultOf(await r.send('teach.poll')).generating).toBe(true);
     newGate.release();
     const done = await r.pollDone();

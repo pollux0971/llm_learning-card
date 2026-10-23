@@ -54,12 +54,13 @@ describe('TeachView 多三個欄位:from / canBack / generating(所有 teach.* �
     expect(opened).toMatchObject(PLAIN);
     expect(opened.card?.id).toBe(PARENT);
     const switched = await r.view('teach.switch', { category: 'network' });
-    expect(switched).toMatchObject(PLAIN);
+    expect(switched).toMatchObject({ ...PLAIN, category: 'network', card: { id: 'net-0001' } });
+    // 換類別時目前顯示的 sec-0002 記學過了,所以回來是 sec-0003
     const back = await r.view('teach.switch', { category: 'security' });
-    expect(back).toMatchObject(PLAIN);
+    expect(back).toMatchObject({ ...PLAIN, card: { id: AFTER_PARENT } });
     const next = await r.view('teach.next');
     expect(next).toMatchObject(PLAIN);
-    expect(next.card?.id).toBe(AFTER_PARENT);
+    expect(next.card, 'level 0、1 都學完了').toBeNull();
   });
 });
 
