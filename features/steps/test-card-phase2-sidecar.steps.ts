@@ -115,6 +115,11 @@ Then('no action the window can send carries a path or a card id', { timeout: 180
     ['teach.next', { card: 'sec-0001' }],
     ['teach.switch', { category: 'language', path: 'cards/language' }],
     ['teach.prereq', { index: 0, card: 'sec-0001' }],
+    // T43(ADR-079):深入、輪詢、取消、回上一層也不收路徑、卡 id、工作編號
+    ['teach.deepen', { card: 'sec-0001' }],
+    ['teach.poll', { job: 1 }],
+    ['teach.cancel', { path: 'cards/security/sec-0001.md' }],
+    ['teach.back', { card: 'sec-0001' }],
   ];
   let id = 2000;
   for (const [method, params] of attempts) {
@@ -125,8 +130,9 @@ Then('no action the window can send carries a path or a card id', { timeout: 180
   assert.ok(b.proc!.isAlive());
   // 視窗端的 ReviewClient 本身也沒有任何能帶 path 或 card 的方法(T40:多了 onWait,它收一個聽眾函式,不是 path 或 card)
   const client = createReviewClient({ handler: async () => '' }) as unknown as Record<string, { length: number }>;
-  assert.deepEqual(Object.keys(client).sort(), ['next', 'onWait', 'start', 'status', 'submit', 'summary', 'teachNext', 'teachOpen', 'teachPrereq', 'teachSwitch']);
-  for (const name of ['start', 'next', 'summary', 'status', 'teachNext']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
+  assert.deepEqual(Object.keys(client).sort(), ['next', 'onWait', 'start', 'status', 'submit', 'summary', 'teachBack', 'teachCancel', 'teachDeepen', 'teachNext', 'teachOpen', 'teachPoll', 'teachPrereq', 'teachSwitch']);
+  // T43:四個新方法都不收參數(沒有路徑、卡 id、工作編號)
+  for (const name of ['start', 'next', 'summary', 'status', 'teachNext', 'teachDeepen', 'teachPoll', 'teachCancel', 'teachBack']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
 });
 
 // ---------------------------------------------------------------- 場景:兩邊的訊息形狀一樣
