@@ -1,11 +1,18 @@
 // Wayland 一次性提示。Rust 只在 Wayland 把這份檔接在 window_mode 的 init script 後面
 // (initialization_script,document 還沒有 body)。等頁面載入完才畫,按掉之後寫 localStorage,之後不再出現。
 // 樣式只走 CSSOM 與 HUD 掛鉤,顏色只用 var(--hud-*)。不碰網路、不碰 invoke。
+// T35:提示固定在底部(左右各 8、離底 8),不往上挪、不改成窄條。提示在的時候,主捲動區
+// [data-hud="panel"].hud-fill .hud-body 的 padding-bottom 變成「設之前的計算值 + 提示現在的高度」。
+// 提示高度變了(變窄換行、字型晚到)就重算。按掉之後把 inline 值還原成設之前的那個,不寫死 16px。
 (function () {
   var KEY = 'lc-wayland-note-dismissed';
   var TEXT = 'Wayland 底下無法強制視窗置頂,請在桌面環境設定「永遠在最上層」。';
   var NOTE_ID = 'lc-wayland-note';
+  var SCROLL = '[data-hud="panel"].hud-fill .hud-body';
   var watch = null;
+  var sizeWatch = null;
+  var reserved = null;
+  var closed = false;
 
   function dismissed() {
     try {
@@ -22,94 +29,67 @@
     }
   }
 
-  function viewSize() {
-    return {
-      w: window.innerWidth || document.documentElement.clientWidth || 0,
-      h: window.innerHeight || document.documentElement.clientHeight || 0,
-    };
+  function scrollArea() {
+    return document.querySelector(SCROLL);
   }
 
-  function otherCenters(note) {
-    var out = [];
-    var buttons = document.querySelectorAll('button');
-    var i;
-    for (i = 0; i < buttons.length; i += 1) {
-      var b = buttons[i];
-      if (note.contains(b)) continue;
-      var q = b.getBoundingClientRect();
-      if (q.width <= 0 || q.height <= 0) continue;
-      out.push({ x: q.left + q.width / 2, y: q.top + q.height / 2 });
+  // 還原設留白之前的 inline 值。通常是空的:拿掉屬性,計算值回到樣式表,不是寫死 16px。
+  function release() {
+    if (!reserved) return;
+    var el = reserved.el;
+    var inline = reserved.inline;
+    reserved = null;
+    if (!el) return;
+    if (inline) el.style.setProperty('padding-bottom', inline);
+    else el.style.removeProperty('padding-bottom');
+  }
+
+  // 同一個元素只記一次「設之前」的計算值,避免把已經加上的留白再加一次。找不到捲動區就不加。
+  function reserve(note) {
+    if (closed || !note || !note.isConnected) return;
+    var body = scrollArea();
+    if (!body) return;
+    if (!reserved || reserved.el !== body) {
+      release();
+      var raw = parseFloat(window.getComputedStyle(body).paddingBottom);
+      reserved = {
+        el: body,
+        inline: body.style.getPropertyValue('padding-bottom'),
+        base: raw === raw ? raw : 0,
+      };
     }
-    return out;
+    var h = note.getBoundingClientRect().height;
+    body.style.setProperty('padding-bottom', (reserved.base + h) + 'px');
   }
 
-  function covers(rect, centers) {
-    var i;
-    for (i = 0; i < centers.length; i += 1) {
-      var c = centers[i];
-      if (c.x >= rect.left && c.x <= rect.right && c.y >= rect.top && c.y <= rect.bottom) return true;
-    }
-    return false;
-  }
-
-  function clampInside(note) {
-    var view = viewSize();
-    var rect = note.getBoundingClientRect();
-    if (rect.left < 0) note.style.setProperty('left', '0px');
-    if (view.w > 0 && rect.right > view.w) note.style.setProperty('right', '0px');
-    if (view.h > 0 && rect.bottom > view.h) note.style.setProperty('bottom', '8px');
-    if (rect.top < 0) {
-      note.style.setProperty('top', '8px');
-      note.style.setProperty('bottom', 'auto');
-    }
-  }
-
-  // 先靠底部、橫向留白。蓋到別的按鈕中心就往上挪;還蓋到就改成右下角的窄條,避開左對齊的卡片按鈕。
-  function place(note) {
-    if (!note.isConnected) return;
-    var gap = '8px';
+  // 固定在底部。捲動、換畫面、縮放都不改這個位置。
+  function pin(note) {
+    if (closed || !note.isConnected) return;
     paint(note, {
       position: 'fixed',
       'z-index': '4',
       'box-sizing': 'border-box',
-      left: gap,
-      right: gap,
+      left: '8px',
+      right: '8px',
       top: 'auto',
-      bottom: gap,
+      bottom: '8px',
       width: 'auto',
       'max-width': 'none',
     });
-    var centers = otherCenters(note);
-    var view = viewSize();
-    var bottom = 8;
-    var guard = 0;
-    while (covers(note.getBoundingClientRect(), centers) && guard < 24) {
-      var h = note.getBoundingClientRect().height || 40;
-      bottom += Math.max(12, Math.ceil(h / 2));
-      if (view.h > 0 && bottom + 24 > view.h) break;
-      note.style.setProperty('bottom', bottom + 'px');
-      guard += 1;
+    reserve(note);
+  }
+
+  function stop() {
+    closed = true;
+    if (watch) {
+      watch.disconnect();
+      watch = null;
     }
-    if (covers(note.getBoundingClientRect(), centers)) {
-      paint(note, {
-        left: 'auto',
-        right: gap,
-        bottom: gap,
-        top: 'auto',
-        width: 'auto',
-        'max-width': '46%',
-      });
-      bottom = 8;
-      guard = 0;
-      while (covers(note.getBoundingClientRect(), centers) && guard < 24) {
-        var narrowH = note.getBoundingClientRect().height || 40;
-        bottom += Math.max(12, Math.ceil(narrowH / 2));
-        if (view.h > 0 && bottom + 24 > view.h) break;
-        note.style.setProperty('bottom', bottom + 'px');
-        guard += 1;
-      }
+    if (sizeWatch) {
+      sizeWatch.disconnect();
+      sizeWatch = null;
     }
-    clampInside(note);
+    release();
   }
 
   function show() {
@@ -160,18 +140,27 @@
       } catch (err) {
         /* 存不到就還是先收起來 */
       }
-      if (watch) watch.disconnect();
+      stop();
       note.remove();
     });
 
     note.appendChild(text);
     note.appendChild(button);
     document.body.appendChild(note);
-    place(note);
+    pin(note);
 
+    if (typeof ResizeObserver === 'function') {
+      sizeWatch = new ResizeObserver(function () {
+        reserve(note);
+      });
+      sizeWatch.observe(note);
+    }
+
+    // 換畫面時 Svelte 通常不換 .hud-body;留著是為了它晚出現、或真的被換掉時重新記原本的值。
+    // 改 inline style 不會觸發 childList,不會跟自己叫來叫去。按掉之後 stop() 會拆掉。
     if (typeof MutationObserver === 'function' && !watch) {
       watch = new MutationObserver(function () {
-        place(note);
+        pin(note);
       });
       watch.observe(document.body, { childList: true, subtree: true });
     }

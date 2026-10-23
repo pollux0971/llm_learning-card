@@ -41,6 +41,7 @@ export async function openCard(name: CardName, opts: { initScript?: string; head
     evaluate: (e) => current.evaluate(e),
     rect: (selector, index) => current.rect(selector, index),
     screenshot: (clip) => current.screenshot(clip),
+    resize: (width, height) => current.resize!(width, height),
     forceState: (selector, index, states) => current.forceState(selector, index, states),
     close: () => current.close(),
   } as GalleryPage;
