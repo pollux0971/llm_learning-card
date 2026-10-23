@@ -1,0 +1,15 @@
+{
+  "score": 84.89,
+  "killed": 229,
+  "timeout": 7,
+  "survived": 42,
+  "noCoverage": 0,
+  "ignored": 0,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.t44-session.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.t44-session.json",
+  "commit": "0173e1f"
+}
