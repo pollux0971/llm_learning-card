@@ -5,7 +5,7 @@
 # TEMPLATE_DIR 與 TEMPLATE_REPO 不是同一個變數:
 #   TEMPLATE_DIR  使用者明設(非空)就維持舊行為,直接拿那個目錄的 sync-gates.sh。
 #                 這條路不驗證釘版本,所以必須印「TEMPLATE_DIR 明設,未驗證釘版本」。
-#   TEMPLATE_REPO 模板 git repo,給執行期 git archive 用。預設 /data/python/dev-paradigm。
+#   TEMPLATE_REPO 模板 git repo,給執行期 git archive 用。預設 /data/python/dev-loop-mcp。
 #                 取不到 repo、取不到 commit、archive 解不出 sync-gates.sh,一律紅,
 #                 不准退回活的 HEAD。
 #
@@ -31,7 +31,7 @@ if [ -n "${TEMPLATE_DIR:-}" ]; then
   exit $?
 fi
 
-repo="${TEMPLATE_REPO:-/data/python/dev-paradigm}"
+repo="${TEMPLATE_REPO:-/data/python/dev-loop-mcp}"
 
 # 目錄不存在要印我們自己的句子。不准改去預設路徑、也不准改跑活 HEAD。
 if [ ! -d "$repo" ]; then

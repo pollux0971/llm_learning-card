@@ -554,9 +554,9 @@ grep -oE '^#+ *ADR-[0-9]+' docs/02-decision-map.md | grep -oE '[0-9]+' | sort -n
 
 ### 合併後跑 check:all 的兩個條件(顧問 2026-10-01 實測)
 
-- **模板要釘版本**:`check:gates` 預設對「活的」`/data/python/dev-paradigm` HEAD,同一個 commit 會隨時間由綠變紅
+- **模板要釘版本**:`check:gates` 預設對「活的」`/data/python/dev-loop-mcp` HEAD(舊名 dev-paradigm,2026-10-23 起改這個路徑,同一個 git repo 延續,歷史與 tag 都在),同一個 commit 會隨時間由綠變紅
   (上游 `0d02c74` 起要求 `.npx-init-manifest.json`)。釘我們檔頭的版本:
-  `git -C /data/python/dev-paradigm archive v1.6.8 | tar -x -C <目錄>`,再 `TEMPLATE_DIR=<目錄>`。**只有 `check:gates` 單獨紅在 manifest 那一行時,照此判斷,不要去修,也不要當成自己合壞。**
+  `git -C /data/python/dev-loop-mcp archive v1.6.8 | tar -x -C <目錄>`,再 `TEMPLATE_DIR=<目錄>`。**只有 `check:gates` 單獨紅在 manifest 那一行時,照此判斷,不要去修,也不要當成自己合壞。**
 - **限 worker 數**:`VITEST_MAX_WORKERS=1`。預設約 7 個 worker 會把 8 核吃到 load 50–78,逾時全是自我競爭;
   **2 個 worker 在同一條件下有綠有紅**(同一份程式、load 24–28:`degraded-report.test.ts` 那個會起內層 vitest 的測試,
   孤立最慢 3 秒,鏈內 5.65 秒,一次綠一次紅)。timeout 與斷言不動。T3 量出曲線前一律用 1。
@@ -731,8 +731,8 @@ orca-ide worktree create --repo id:<workers repo id> --name <名> --agent openco
 26. **真呼叫的證據,花費與次數一律取 `llm-spend --today` 的最終輸出,而且要在「所有」真呼叫都結束後才量**(顧問 2026-10-15 19:5x):分階段回報時每一段都寫明「截至何時、含哪些呼叫」;**重跑、追加的實驗要單獨列**(次數、花費、時間範圍),不能讓早先回報的總數看起來就是最後的總數。實例:golden run 15 次 $0.0919 回報之後,又做了改壞 prompt 的 3 次 $0.0238,帳本變成 18 次 $0.1157;早先那則只含前半段,顧問量到帳本時看起來像「多出 3 筆」。對帳方法:帳本最後 N 行的 ts 與 tokens 加總要能對上每一次指令的輸出(本例 11:19:40–11:21:19 共 15 行是 golden run,11:24:05–11:24:20 共 3 行是實驗,tokens 進 1606 出 1979 與實驗輸出一致)。
 
 ### 工單檔頭與模板(2026-10-22,T39 合併後)
-27. **工單檔頭的 `status` 由協調者在「同一批 main commit」裡維護**(13-work-dag phase-2 起,`dag:check` 會紅):新工單一定要有檔頭(`id`、`deps`、`touches`、`cpu`、`status`、`owner`,格式見 `features/13-work-dag/FEATURE.md`);派工 → `dispatched`、送審 → `review`、合併 → `merged`、放棄 → `dropped`。狀態改動跟著對應的 main 批次一起 commit,不要事後補;合併後與派工前各跑一次 `npx tsx scripts/dag.ts --root .` 看 `problems=0`。
-28. **`/data/python/dev-paradigm` 2026-10-22 11:58 被移進垃圾桶**(`/data/.Trash-1000/files/dev-paradigm`),原因待使用者答。在顧問答覆前:釘版模板用垃圾桶裡唯讀的 `git -C /data/.Trash-1000/files/dev-paradigm archive v1.6.8`;不搬回去、不改垃圾桶裡的東西;不釘版的 `env -u TEMPLATE_DIR npm run check:gates` 會紅在「模板 repo 不存在」,照實寫進證據。
+27. **工單檔頭的 `status` 由協調者在「同一批 main commit」裡維護**(13-work-dag phase-2 起,`dag:check` 會紅):新工單一定要有檔頭(`id`、`deps`、`touches`、`cpu`、`status`、`owner`,格式見 `features/13-work-dag/FEATURE.md`);派工 → `dispatched`、送審 → `review`、合併 → `merged`、放棄 → `dropped`。狀態改動跟著對應的 main 批次一起 commit,不要事後補;合併後與派工前各跑一次 `npx tsx scripts/dag.ts --root .` 看 `problems=0`。**工單檔頭的 status 現在是 dag 測試的輸入**(2026-10-23,c9ba0b5 把 T39 標 merged 後 `scripts/dag-check.test.ts` 有一條寫死 T39 在進行中而紅,推上去才發現):**動到工單檔頭的批次,推之前要跑 `npx vitest run scripts/dag.test.ts scripts/dag-check.test.ts`**,跟設定 JSON 一樣不算「只動文件」。
+28. **模板 repo 的路徑是 `/data/python/dev-loop-mcp`**(2026-10-23 使用者答覆:舊的 `/data/python/dev-paradigm` 是舊版、他刪的;新版是同一個 git repo 改名延續,歷史與 tag 都在,`v1.6.8` = `88a3e11`)。`scripts/check-gates-pinned.sh` 的 `TEMPLATE_REPO` 預設已改成這個路徑,不設任何變數的 `npm run check:gates` 即可。釘版模板:`git -C /data/python/dev-loop-mcp archive v1.6.8 | tar -x -C <目錄>`。垃圾桶裡那份(`/data/.Trash-1000/files/dev-paradigm`)不要再用。專案要不要從 v1.6.8 升到 dlm 是另一件事,現在不動。
 
 ## 5. 每輪回報格式(給使用者看的,越短越好)
 
