@@ -4,7 +4,7 @@ deps: []
 touches: [apps/desktop/src-tauri/src/wayland_note.js]
 cpu: heavy
 budget_usd: 2
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 拿掉底部留白(提示在的時候捲動區沒有多出提示的高度):捲到底時最下面那顆按鈕跟提示的重疊面積大於 0,測試必須紅
