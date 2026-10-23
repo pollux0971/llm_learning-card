@@ -194,3 +194,60 @@ describe('解析器本身', () => {
     expect(rootLevel(root).els[0]!.children).toHaveLength(2);
   });
 });
+
+// ───────────────────────────── T44:教學卡分隔線的窄例外(顧問 2026-10-24 裁)
+const SEP = '1px solid var(--hud-line)';
+const withRule = (name: CardName, css: string): CardSource => {
+  const base = name === 'teach-card' ? teach() : test();
+  return parseCardSource(name, base.app.replace('</style>', `${css}\n</style>`), base.main);
+};
+const sepProblems = (css: string, name: CardName = 'teach-card'): string[] => styleProblems(name, withRule(name, css));
+
+describe('T44 分隔線例外:該放行的放行', () => {
+  const ok: [string, string][] = [
+    ['.generating + .deepen-error 合寫', `.generating,\n.deepen-error { border-top: ${SEP}; }`],
+    ['只有 .generating', `.generating { border-top: ${SEP}; }`],
+    ['只有 .deepen-error', `.deepen-error { border-top: ${SEP}; }`],
+    ['三個 longhand', '.generating { border-top-width: 1px; border-top-style: solid; border-top-color: var(--hud-line); }'],
+    ['空白與大小寫不同', '.generating { border-top:  1PX   SOLID   var( --hud-line ) ; }'],
+  ];
+  for (const [label, css] of ok) it(label, () => { expect(sepProblems(css)).toEqual([]); });
+  it('訊息把兩個例外都寫出來', () => {
+    const msg = sepProblems('.x { border-top: 1px solid var(--hud-line); }').join('\n');
+    expect(msg).toMatch(/\.lc-example 的 border-left/);
+    expect(msg).toMatch(/\.generating \/ \.deepen-error/);
+  });
+});
+
+describe('T44 分隔線例外:該紅的照舊紅', () => {
+  const bad: [string, string, CardName][] = [
+    ['2px', '.generating { border-top: 2px solid var(--hud-line); }', 'teach-card'],
+    ['dashed', '.generating { border-top: 1px dashed var(--hud-line); }', 'teach-card'],
+    ['別的 hud 顏色', '.generating { border-top: 1px solid var(--hud-text); }', 'teach-card'],
+    ['顏色字面值', '.generating { border-top: 1px solid #ccc; }', 'teach-card'],
+    ['border-bottom', `.generating { border-bottom: ${SEP}; }`, 'teach-card'],
+    ['border-left', `.generating { border-left: ${SEP}; }`, 'teach-card'],
+    ['整個 border', `.generating { border: ${SEP}; }`, 'teach-card'],
+    ['longhand 寬度 2px', '.generating { border-top-width: 2px; }', 'teach-card'],
+    ['longhand 樣式 dotted', '.generating { border-top-style: dotted; }', 'teach-card'],
+    ['longhand 顏色字面值', '.generating { border-top-color: red; }', 'teach-card'],
+    ['別的 selector', `.badge { border-top: ${SEP}; }`, 'teach-card'],
+    ['selector 多帶一個', `.generating, .badge { border-top: ${SEP}; }`, 'teach-card'],
+    ['後代 selector', `.generating p { border-top: ${SEP}; }`, 'teach-card'],
+    ['同一條規則多寫 outline', `.generating { border-top: ${SEP}; outline: 1px solid var(--hud-line); }`, 'teach-card'],
+    ['outline', '.generating { outline: 1px solid var(--hud-line); }', 'teach-card'],
+    ['box-shadow', '.generating { box-shadow: 0 -1px 0 var(--hud-line); }', 'teach-card'],
+    ['考試卡同一條規則', `.generating { border-top: ${SEP}; }`, 'test-card'],
+  ];
+  for (const [label, css, name] of bad) {
+    it(label, () => {
+      const problems = sepProblems(css, name);
+      expect(problems.length).toBeGreaterThan(0);
+      expect(problems.join('\n')).toMatch(/畫框|顏色/);
+    });
+  }
+  it('background 漸層偽造線(要紅)', () => {
+    const problems = sepProblems('.generating { background-image: linear-gradient(var(--hud-line), var(--hud-line)); background-size: 100% 1px; }');
+    expect(problems.length).toBeGreaterThan(0);
+  });
+});
