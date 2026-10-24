@@ -4,10 +4,10 @@
  * 跟考試卡同一支側車,跑在 contracts/fixtures/learning-minimal 的暫存複本上。
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { extname, join, resolve, sep } from 'node:path';
 import type { Plugin } from 'vite';
 
 const DEV = import.meta.dirname;
@@ -116,6 +116,7 @@ export async function startStandaloneBackend(opts: { repoRoot?: string } = {}): 
   mkdirSync(env.XDG_CONFIG_HOME!, { recursive: true });
   mkdirSync(env.XDG_CACHE_HOME!, { recursive: true });
   cpSync(join(repoRoot, 'contracts/fixtures/learning-minimal'), learningDir, { recursive: true });
+  seedAsset(learningDir);
 
   const tsx = join(repoRoot, 'node_modules/tsx/dist/esm/index.mjs');
   const vault = spawnSync(process.execPath, ['--import', tsx, join(repoRoot, 'scripts/vault.ts'), 'init', '--learning-dir', learningDir], {
@@ -217,6 +218,52 @@ function readLearningFile(learningDir: string, relPath: string): string | undefi
   return readFileSync(full, 'utf8');
 }
 
+/** 1×1 的真 PNG。單獨執行時 assets/ 裡要有一張能用的圖。 */
+const SEED_PNG = Buffer.from(
+  '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
+  'hex',
+);
+
+function seedAsset(learningDir: string): void {
+  const dir = join(learningDir, 'assets');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'seed.png'), SEED_PNG);
+}
+
+const IMAGE_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+
+/**
+ * 只回最上層 assets 底下的圖檔。`..` 在 resolve 之後再對一次(字串檢查被拿掉也出不去),
+ * 目錄、空路徑、不是圖的副檔名都不回。
+ */
+function readAssetFile(learningDir: string, relPath: string): { bytes: Buffer; type: string } | undefined {
+  if (relPath.length === 0 || relPath.includes('..') || relPath.includes('\\') || relPath.includes('\0') || relPath.startsWith('/')) {
+    return undefined;
+  }
+  if (!relPath.startsWith('assets/')) return undefined;
+  const root = resolve(learningDir);
+  const assetsRoot = resolve(root, 'assets');
+  const full = resolve(root, relPath);
+  if (full === assetsRoot || !full.startsWith(assetsRoot + sep)) return undefined;
+  if (!existsSync(full)) return undefined;
+  let info;
+  try {
+    info = statSync(full);
+  } catch {
+    return undefined;
+  }
+  if (!info.isFile()) return undefined;
+  const type = IMAGE_TYPES[extname(full).slice(1).toLowerCase()];
+  if (!type) return undefined;
+  return { bytes: readFileSync(full), type };
+}
+
 export function standalonePlugin(): Plugin {
   return {
     name: 'teach-card-standalone',
@@ -237,6 +284,25 @@ export function standalonePlugin(): Plugin {
           res.statusCode = 200;
           res.setHeader('content-type', 'text/plain; charset=utf-8');
           res.end(text);
+          return;
+        }
+        if (path === '/__asset') {
+          if (req.method !== 'GET') {
+            res.statusCode = 404;
+            res.end();
+            return;
+          }
+          const query = new URL(url, 'http://127.0.0.1').searchParams.get('path') ?? '';
+          const file = readAssetFile(backend.learningDir, query);
+          if (!file) {
+            res.statusCode = 404;
+            res.end();
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', file.type);
+          res.setHeader('content-length', String(file.bytes.length));
+          res.end(file.bytes);
           return;
         }
         if (path !== '/__review') {

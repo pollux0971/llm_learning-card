@@ -9,9 +9,15 @@
 
   let { deps }: { deps: TeachSessionDeps } = $props();
 
+  const EXAMPLE_OPEN_KEY = 'lc-teach-example-open';
+
   const session = createTeachSession(deps);
   const controls = createWindowControls();
   let view = $state<TeachView>(session.view());
+  let bodyEl = $state<HTMLElement | undefined>();
+  let zoom = $state<{ src: string; w: number; h: number } | null>(null);
+  let zoomEl = $state<HTMLElement | undefined>();
+  let cover = $state({ left: 0, top: 0, width: 0, height: 0 });
 
   function pull(): void {
     view = session.view();
@@ -29,11 +35,24 @@
     });
   });
 
+  function cardDirOf(path: string): string {
+    const slash = path.lastIndexOf('/');
+    return slash < 0 ? '' : path.slice(0, slash);
+  }
+
   function parsed(): { frontmatter: CardFrontmatter; html: string } | null {
     if (!view.cardText) return null;
     try {
       const card = parseCard(view.cardText);
-      return { frontmatter: card.frontmatter, html: renderMarkdown(card.bodyMarkdown) };
+      // 折疊狀態只在這裡讀(換卡才會重算 html)。不要把「開或收」放進 $state,否則按一個標題會重畫整張。
+      return {
+        frontmatter: card.frontmatter,
+        html: renderMarkdown(card.bodyMarkdown, {
+          cardDir: cardDirOf(view.card?.path ?? ''),
+          assetUrl: (relPath) => deps.fs.assetUrl(relPath),
+          examplesOpen: deps.storage.getItem(EXAMPLE_OPEN_KEY) !== '0',
+        }),
+      };
     } catch {
       return null;
     }
@@ -73,6 +92,108 @@
     await run();
     pull();
   }
+
+  function rememberExampleOpen(open: boolean): void {
+    deps.storage.setItem(EXAMPLE_OPEN_KEY, open ? '1' : '0');
+  }
+
+  function onExampleToggle(event: Event): void {
+    const target = event.target;
+    if (!(target instanceof HTMLDetailsElement)) return;
+    if (!/(?:^|\s)lc-example(?:\s|$)/.test(target.className)) return;
+    rememberExampleOpen(target.open);
+  }
+
+  function onImageError(event: Event): void {
+    const target = event.target;
+    if (!(target instanceof HTMLImageElement)) return;
+    const path = target.getAttribute('data-asset-path');
+    if (!path) return;
+    const note = document.createElement('span');
+    note.className = 'lc-missing';
+    note.textContent = `找不到圖片:${path}`;
+    target.replaceWith(note);
+  }
+
+  function fittedSize(nw: number, nh: number): { w: number; h: number } {
+    const winW = window.innerWidth;
+    const winH = window.innerHeight;
+    if (nw <= 0 || nh <= 0 || winW <= 0 || winH <= 0) return { w: 0, h: 0 };
+    const scale = Math.min(winW / nw, winH / nh);
+    return { w: nw * scale, h: nh * scale };
+  }
+
+  function onBodyClick(event: MouseEvent): void {
+    if (zoom) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const img = target.closest('img');
+    if (!(img instanceof HTMLImageElement)) return;
+    if (!img.closest('.lc-example')) return;
+    if (img.naturalWidth <= 0 || img.naturalHeight <= 0) return;
+    const src = img.currentSrc || img.src;
+    if (!src) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const size = fittedSize(img.naturalWidth, img.naturalHeight);
+    cover = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    zoom = { src, w: size.w, h: size.h };
+  }
+
+  function swallow(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function closeZoom(event: MouseEvent): void {
+    swallow(event);
+    zoom = null;
+  }
+
+  $effect(() => {
+    const el = bodyEl;
+    if (!el) return;
+    const onError = (event: Event) => onImageError(event);
+    const onToggle = (event: Event) => onExampleToggle(event);
+    const onClick = (event: MouseEvent) => onBodyClick(event);
+    el.addEventListener('error', onError, true);
+    el.addEventListener('toggle', onToggle, true);
+    el.addEventListener('click', onClick);
+    return () => {
+      el.removeEventListener('error', onError, true);
+      el.removeEventListener('toggle', onToggle, true);
+      el.removeEventListener('click', onClick);
+    };
+  });
+
+  $effect(() => {
+    if (!zoom) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      zoom = null;
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  $effect(() => {
+    const el = zoomEl;
+    if (!zoom || !el) return;
+    const place = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const rect = el.getBoundingClientRect();
+      const left = cover.left - rect.left;
+      const top = cover.top - rect.top;
+      if (left === cover.left && top === cover.top && width === cover.width && height === cover.height) return;
+      cover = { left, top, width, height };
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  });
 
   void act(() => session.open());
 </script>
@@ -127,7 +248,7 @@
     {/if}
     <h2>{shown.frontmatter.title}</h2>
     <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    <div class="body">{@html shown.html}</div>
+    <div class="body" bind:this={bodyEl}>{@html shown.html}</div>
     <div class="controls">
       {#if view.canBack}
         <HudButton onclick={() => void act(() => session.back())} disabled={view.controlsDisabled}>回上一層</HudButton>
@@ -137,6 +258,21 @@
       <HudButton onclick={() => void act(() => session.deepen())} disabled={!view.canDeepen}>深入這個</HudButton>
     </div>
     <!-- 字樣在按鈕列下面。這塊永遠在,高度固定,出現、收掉、換種類都不推動上面的按鈕。 -->
+    {#if zoom}
+      <div
+        class="lc-zoom"
+        bind:this={zoomEl}
+        style:left="{cover.left}px"
+        style:top="{cover.top}px"
+        style:width="{cover.width}px"
+        style:height="{cover.height}px"
+        onmousedown={swallow}
+        onmouseup={swallow}
+        onclick={closeZoom}
+      >
+        <img src={zoom.src} alt="" style:width="{zoom.w}px" style:height="{zoom.h}px" />
+      </div>
+    {/if}
     <div class="status-slot">
       {#if view.generatingNotice}
         <p class="generating">{#each quoteParts(view.generatingNotice) as part, index (index)}{#if part.keep}<span class="quote-keep">{part.text}</span>{:else}{part.text}{/if}{/each} <HudButton onclick={() => void act(() => session.cancel())}>取消</HudButton></p>
@@ -230,5 +366,31 @@
     border-left: 1px solid var(--hud-line);
     padding: 0.5rem 1rem;
     margin: 1rem 0;
+  }
+  :global(.lc-example summary) {
+    cursor: pointer;
+  }
+  .body :global(img) {
+    max-width: 100%;
+    height: auto;
+  }
+  .lc-missing {
+    font-size: 0.85rem;
+    color: var(--hud-text);
+  }
+  .lc-zoom {
+    position: fixed;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    background: var(--hud-solid);
+  }
+  .lc-zoom img {
+    flex: none;
+    max-width: none;
+    max-height: none;
   }
 </style>

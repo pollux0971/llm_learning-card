@@ -12,6 +12,9 @@ function browserFs(): TeachSessionDeps['fs'] {
       if (!res.ok) throw new Error('讀取失敗');
       return res.text();
     },
+    assetUrl(relPath: string): string {
+      return `/__asset?path=${encodeURIComponent(relPath)}`;
+    },
   };
 }
 
