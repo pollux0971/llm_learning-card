@@ -10,12 +10,22 @@
   let { deps }: { deps: TeachSessionDeps } = $props();
 
   const EXAMPLE_OPEN_KEY = 'lc-teach-example-open';
+  const CONTENT_ZOOM_KEY = 'lc-teach-zoom';
+  const CONTENT_ZOOM_LEVELS = [0.8, 0.9, 1, 1.1, 1.25, 1.5] as const;
+
+  function readContentZoom(): number {
+    const raw = deps.storage.getItem(CONTENT_ZOOM_KEY);
+    if (raw === null) return 1;
+    const n = Number(raw);
+    return (CONTENT_ZOOM_LEVELS as readonly number[]).includes(n) ? n : 1;
+  }
 
   const session = createTeachSession(deps);
   const controls = createWindowControls();
   let view = $state<TeachView>(session.view());
   let bodyEl = $state<HTMLElement | undefined>();
   let zoom = $state<{ src: string; w: number; h: number; nw: number; nh: number } | null>(null);
+  let contentZoom = $state(readContentZoom());
   let zoomEl = $state<HTMLElement | undefined>();
   let cover = $state({ left: 0, top: 0, width: 0, height: 0 });
   /**
@@ -196,6 +206,32 @@
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  /**
+   * 只縮卡片內容。級距記在 deps.storage,換卡、重新載入都照舊。
+   * 只從這條按鍵路改級距;不准走 webview 縮放。
+   */
+  function onContentZoomKey(event: KeyboardEvent): void {
+    if (event.altKey || !(event.ctrlKey || event.metaKey)) return;
+    let dir: 'in' | 'out' | 'reset' | null = null;
+    if (event.code === 'Equal' || event.code === 'NumpadAdd') dir = 'in';
+    else if ((event.code === 'Minus' || event.code === 'NumpadSubtract') && !event.shiftKey) dir = 'out';
+    else if ((event.code === 'Digit0' || event.code === 'Numpad0') && !event.shiftKey) dir = 'reset';
+    if (!dir) return;
+    event.preventDefault();
+    const i = CONTENT_ZOOM_LEVELS.indexOf(contentZoom as (typeof CONTENT_ZOOM_LEVELS)[number]);
+    const at = i < 0 ? CONTENT_ZOOM_LEVELS.indexOf(1) : i;
+    const next =
+      dir === 'reset' ? 1 : dir === 'in' ? CONTENT_ZOOM_LEVELS[Math.min(at + 1, CONTENT_ZOOM_LEVELS.length - 1)]! : CONTENT_ZOOM_LEVELS[Math.max(at - 1, 0)]!;
+    if (next === contentZoom) return;
+    contentZoom = next;
+    deps.storage.setItem(CONTENT_ZOOM_KEY, String(next));
+  }
+
+  $effect(() => {
+    window.addEventListener('keydown', onContentZoomKey);
+    return () => window.removeEventListener('keydown', onContentZoomKey);
+  });
+
   $effect(() => {
     const el = zoomEl;
     if (!zoom || !el) return;
@@ -250,39 +286,33 @@
       <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
     </div>
   {:else if view.state === 'card' && shown}
-    <header class="markers">
-      <span class="category">{session.categoryNameOf(shown.frontmatter.category)}</span>
-      <span class="source">{shown.frontmatter.source === 'raw' ? '原始' : '生成'}</span>
-      <span class="level">Level {shown.frontmatter.level}</span>
-      {#if view.from}
-        <span class="from">來自:{view.from.title}</span>
+    <div class="lc-scale" style:zoom={contentZoom}>
+      <header class="markers">
+        <span class="category">{session.categoryNameOf(shown.frontmatter.category)}</span>
+        <span class="source">{shown.frontmatter.source === 'raw' ? '原始' : '生成'}</span>
+        <span class="level">Level {shown.frontmatter.level}</span>
+        {#if view.from}
+          <span class="from">來自:{view.from.title}</span>
+        {/if}
+        {#if shown.frontmatter.provisional}
+          <span class="badge">待審核</span>
+        {/if}
+      </header>
+      {#if view.prereqs.length > 0}
+        <p class="prereqs">
+          <span class="prereq-label">先備還沒學:</span>
+          {#each view.prereqs as item, index (item.id)}
+            <HudButton onclick={() => void act(() => session.followPrereq(index))} disabled={view.controlsDisabled}>
+              {item.title}
+            </HudButton>
+          {/each}
+        </p>
       {/if}
-      {#if shown.frontmatter.provisional}
-        <span class="badge">待審核</span>
-      {/if}
-    </header>
-    {#if view.prereqs.length > 0}
-      <p class="prereqs">
-        <span class="prereq-label">先備還沒學:</span>
-        {#each view.prereqs as item, index (item.id)}
-          <HudButton onclick={() => void act(() => session.followPrereq(index))} disabled={view.controlsDisabled}>
-            {item.title}
-          </HudButton>
-        {/each}
-      </p>
-    {/if}
-    <h2>{shown.frontmatter.title}</h2>
-    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-    <div class="body" bind:this={bodyEl}>{@html shown.html}</div>
-    <div class="controls">
-      {#if view.canBack}
-        <HudButton onclick={() => void act(() => session.back())} disabled={view.controlsDisabled}>回上一層</HudButton>
-      {/if}
-      <HudButton onclick={handleNext} disabled={finished}>下一個</HudButton>
-      <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
-      <HudButton onclick={() => void act(() => session.deepen())} disabled={!view.canDeepen}>深入這個</HudButton>
+      <h2>{shown.frontmatter.title}</h2>
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+      <div class="body" bind:this={bodyEl}>{@html shown.html}</div>
     </div>
-    <!-- 字樣在按鈕列下面。這塊永遠在,高度固定,出現、收掉、換種類都不推動上面的按鈕。 -->
+    <!-- 放大層不能放進黏底區塊,否則會縮成那一塊的大小;也不能放進縮放層,否則跟著內容縮。 -->
     {#if zoom}
       <div
         class="lc-zoom"
@@ -298,13 +328,24 @@
         <img src={zoom.src} alt="" style:width="{zoom.w}px" style:height="{zoom.h}px" />
       </div>
     {/if}
-    <div class="status-slot">
-      {#if view.generatingNotice}
-        <p class="generating">{#each quoteParts(view.generatingNotice) as part, index (index)}{#if part.keep}<span class="quote-keep">{part.text}</span>{:else}{part.text}{/if}{/each} <HudButton onclick={() => void act(() => session.cancel())}>取消</HudButton></p>
-      {/if}
-      {#if view.deepenError}
-        <p class="deepen-error">{#each quoteParts(view.deepenError) as part, index (index)}{#if part.keep}<span class="quote-keep">{part.text}</span>{:else}{part.text}{/if}{/each}</p>
-      {/if}
+    <div class="dock">
+      <div class="controls">
+        {#if view.canBack}
+          <HudButton onclick={() => void act(() => session.back())} disabled={view.controlsDisabled}>回上一層</HudButton>
+        {/if}
+        <HudButton onclick={handleNext} disabled={finished}>下一個</HudButton>
+        <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
+        <HudButton onclick={() => void act(() => session.deepen())} disabled={!view.canDeepen}>深入這個</HudButton>
+      </div>
+      <!-- 字樣在按鈕列下面。這塊永遠在,高度固定,出現、收掉、換種類都不推動上面的按鈕。 -->
+      <div class="status-slot">
+        {#if view.generatingNotice}
+          <p class="generating">{#each quoteParts(view.generatingNotice) as part, index (index)}{#if part.keep}<span class="quote-keep">{part.text}</span>{:else}{part.text}{/if}{/each} <HudButton onclick={() => void act(() => session.cancel())}>取消</HudButton></p>
+        {/if}
+        {#if view.deepenError}
+          <p class="deepen-error">{#each quoteParts(view.deepenError) as part, index (index)}{#if part.keep}<span class="quote-keep">{part.text}</span>{:else}{part.text}{/if}{/each}</p>
+        {/if}
+      </div>
     </div>
   {/if}
 </HudPanel>
@@ -403,6 +444,28 @@
   :global(.lc-missing) {
     font-size: 0.85rem;
     color: var(--hud-text);
+  }
+  /* 只縮卡片內容。zoom 會重排;不用 transform。 */
+  .lc-scale {
+    min-width: 0;
+  }
+  /* 按鈕列與狀態字樣黏在 .hud-body 看得到的底部。內容比視窗短時留在內容後面。
+     底色蓋住捲過去的內文,不畫線。放大層在這塊外面。 */
+  .dock {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    display: flow-root;
+    background: var(--hud-panel);
+  }
+  /* .hud-body 預設 padding-bottom 1rem。sticky bottom:0 停在內容區邊緣;
+     捲到底時 bottom 不作用,那 16px 會露在按鈕下面(測試 c 要 ≤ 2)。
+     不能寫 0:T35 要求計算值 > 0,而且提示程式在卡片畫出來前就記 base,
+     0 會讓「base + 提示高度」對不上。1px 兩邊都過:黏底距離 ≤ 2,提示仍停在按鈕下面。
+     scroll-padding-bottom 讓 scrollIntoView 把標題捲到黏底區塊上面,才點得到。 */
+  :global([data-hud="panel"].hud-fill .hud-body) {
+    padding-bottom: 1px;
+    scroll-padding-bottom: 200px;
   }
   .lc-zoom {
     position: fixed;
