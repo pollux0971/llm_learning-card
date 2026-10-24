@@ -89,3 +89,30 @@ worker 花費(協調者給的):12.93 美元,工單估 5 美元,2.6 倍,超過 2 
 ## 結論
 
 有阻擋項:變異分數未達 80(`example-fence.ts` 66.67、`image-path.ts` 79.17)。缺口都在測試,不在實作:請 -a6 補上面「變異」第 1、2 點的單元測試(外加 alt 裡再有圖那條),再由我重跑變異確認 ≥ 80。另有 4 個低風險缺口可順手補:寬圖不超出卡片、內文的圖不放大、`/__asset` 對非圖檔回 404、視窗縮放時放大圖重算(最後一項要實作改,先記著)。實作本身其餘全過。
+
+## 補測後重跑(第二輪)
+
+- 組合:實作 `b447a2da408eb417c44971952ca39ebc032b706f`,測試檔來自 `t46-red` 新 sha `03c1a03025e13710a5782201912ade800710f01d`(只動 3 個測試檔 +141:`t46-asset.test.ts`、`t46-examples-images-render.test.ts`、`image-path.test.ts`),合在一個臨時簽出;合併後 tree sha `e0113143dcc7cb2308e931583dbe50f4c3023be6`。
+- 指令:`npm run mutate -- stryker.t46-ui.json`(設定不變)。報告:`reports/mutation/45ebe1b-t46-ui.json`;原始 JSON 存在驗收暫存區。
+- 全套:tsc 乾淨;vitest ui-shared 與 teach-card 40 檔 671 條全過;cucumber phase-4 1/1、teach-card phase-1/2/3 10/5/8 全過;`learning/` 前後 64 / c2e4dd6d71de3976 / 108 不變。
+
+| 檔 | 第一輪 | 第二輪 | 殺 | 逾時 | 活 |
+|---|---|---|---|---|---|
+| image-path.ts | 79.17 | **90.00** | 108 | 0 | 12 |
+| example-fence.ts | 66.67 | **73.47** | 107 | 1 | 39 |
+
+image-path.ts 過了。**example-fence.ts 還差 80**(要多殺約 10 個)。39 個存活分類:
+
+1. 等價(殺不掉,約 27 個):`examplesOpen(env)` 裡「沒這個鍵」的各種分支(`renderMarkdown` 一定放這個鍵,沒有 env 時 `undefined !== false` 照樣是展開);`exampleLabel` 的 `i <= tokens.length`、只是多一層的 `token.type !== 'fence'`(後面還有語言檢查);抓原文路徑的巢狀保護與預設圖片規則的後備(`let capturing`、`let ok`、`token.meta ?? {}`、`rules.image ?? …`、`rules.fence ?? …`:markdown-it 一定有預設)。
+2. 真的測試缺口(約 6 個,補了就殺):
+   - `html: false` 改成 `true`:**沒有測試證明卡片裡的原始 HTML(例如 script 標籤)會被當文字**。這條不是 T46 新增的行為,但在被變異的檔裡,影響最大;請補:`renderMarkdown('<script>x</script>')` 輸出沒有 `<script`。
+   - 收起時 `open` 的字串:`examplesOpen: false` 的輸出只驗「沒有 `open` 這個字」,沒驗整段標籤長相(改成亂字串也過);請用整個開頭標籤相等(`<details class="lc-example"><summary>`)。
+   - `escapeHtml` 的 `&` 沒有斷言:路徑或替代文字含 `&` 時應輸出 `&amp;`(目前只驗了 `<`、`>`、`"`)。
+   - `fenceLang`:圍欄資訊字串有多個字(`example 標題`)或前面有空白(`  example`)時照樣算例子;現有測試只用乾淨的 `example`。
+3. 不確定(要看補完再算):`ok && !silent` 的幾個變體——圖片出現在連結文字裡(`[![a](../../assets/x.png)](https://a.test)`,markdown-it 先靜默解析)。補一條向量就知道。
+
+補完這幾條(預估再殺 8 到 10 個)應能到 80 左右;如果補完仍 < 80,剩下的都屬第 1 類等價,由顧問裁是否放行(工單「變異低於 80 必須紅」的字面是分數,不是存活清單)。
+
+## 結論(第二輪)
+
+仍有阻擋項:`example-fence.ts` 73.47 < 80。其餘全過(image-path 90.00、全套綠、cucumber 綠)。實作不用動;缺口只在測試(第 2、3 類),請 -a6 補,或由顧問對第 1 類等價裁放行。
