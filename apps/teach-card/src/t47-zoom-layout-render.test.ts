@@ -790,8 +790,13 @@ describe('T47 渲染:很長的內容不弄丟按鈕(c)、縮放下 T45 照舊(d)
       for (const t of TRANSITIONS) {
         it(`d. ${Math.round(level * 100)}%、${dc.id}:${t.id}——前後每顆按鈕的矩形相同(差 0)、捲動位置不變`, async () => {
           await prepare(a(), dc.body);
+          const base = await facts(a().page);
           await setLevel(a(), level);
           await sleep(200);
+          // 前提:這一級真的生效了(不然縮放鍵沒作用時,這條會空轉通過)
+          const zoomed = await facts(a().page);
+          expect(base.bodyText, '前提:量得到內文').toBeGreaterThan(0);
+          expect(Math.abs(zoomed.bodyText / base.bodyText - level), `前提:內容要是 ${Math.round(level * 100)}%(內文寬 100% 時 ${base.bodyText.toFixed(2)}、現在 ${zoomed.bodyText.toFixed(2)})`).toBeLessThanOrEqual(0.02);
           if (dc.where !== 'none') {
             await scrollTo(a().page, dc.where);
             const l = await layout(a().page);
