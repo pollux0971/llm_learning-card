@@ -555,6 +555,8 @@ describe('T47 渲染:很長的內容不弄丟按鈕(c)、縮放下 T45 照舊(d)
     controlsInside: boolean;
     slotInside: boolean;
     visible: { top: number; bottom: number };
+    /** 黏住那塊(按鈕列 + 狀態字樣)的下緣,距 .hud-body 可見範圍下緣多少 px */
+    dockGap: number | null;
   }
 
   const LAYOUT = `(() => {
@@ -580,6 +582,7 @@ describe('T47 渲染:很長的內容不弄丟按鈕(c)、縮放下 T45 照舊(d)
       controls: cr ? [cr.x, cr.y, cr.width, cr.height] : null, slot: sr ? [sr.x, sr.y, sr.width, sr.height] : null,
       controlsInside: cr ? inside(cr) : false, slotInside: sr ? inside(sr) : false,
       visible: { top, bottom },
+      dockGap: cr && sr ? bottom - Math.max(cr.bottom, sr.bottom) : null,
     };
   })()`;
   const layout = (page: GalleryPage): Promise<Layout> => page.evaluate<Layout>(LAYOUT);
@@ -613,6 +616,10 @@ describe('T47 渲染:很長的內容不弄丟按鈕(c)、縮放下 T45 照舊(d)
       }
       expect(l.controlsInside, `${tag}、捲到${where}:.controls 整塊在看得到的範圍裡`).toBe(true);
       expect(l.slotInside, `${tag}、捲到${where}:.status-slot 整塊在看得到的範圍裡`).toBe(true);
+      // 黏在最下面:按鈕列 + 狀態字樣的下緣貼著可見範圍下緣(≤ 2 px),不能離窗底一段距離、底下露出內容
+      expect(l.dockGap, `${tag}、捲到${where}:前提:量得到按鈕列與狀態字樣的下緣`).not.toBeNull();
+      expect(l.dockGap!, `${tag}、捲到${where}:黏住那塊的下緣要貼著 .hud-body 可見範圍的下緣(距離 ${l.dockGap!.toFixed(1)} px,要 ≤ 2;底下不能露出內容)`).toBeLessThanOrEqual(2);
+      expect(l.dockGap!, `${tag}、捲到${where}:黏住那塊不能超出可見範圍下緣(${l.dockGap!.toFixed(1)} px)`).toBeGreaterThanOrEqual(-0.5);
       seen.push(l);
     }
     for (const label of ['下一個', '換類別', '深入這個']) {
