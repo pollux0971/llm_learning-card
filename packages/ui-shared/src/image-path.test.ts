@@ -224,6 +224,60 @@ describe('renderMarkdown 帶 { cardDir, assetUrl }:圖片換成 assetUrl 的回�
     expect(fake.calls).toEqual(['assets/x.png']);
   });
 
+  it('同一行兩張圖:![a](../../assets/a.png)[![b](../../assets/b.png)](https://l.test) → 各自收到自己的路徑、第一張 src 是 a、第二張是 b', async () => {
+    const render = await loadRender();
+    const fake = fakeAssetUrl();
+    const html = render('![a](../../assets/a.png)[![b](../../assets/b.png)](https://l.test)\n', { cardDir: CARD_DIR, assetUrl: fake.assetUrl });
+    expect(fake.calls).toEqual(['assets/a.png', 'assets/b.png']);
+    const imgs = [...html.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
+    expect(imgs).toEqual([
+      '<img src="fake://asset/assets/a.png" alt="a" data-asset-path="assets/a.png">',
+      '<img src="fake://asset/assets/b.png" alt="b" data-asset-path="assets/b.png">',
+    ]);
+    expect(html).toContain('<a href="https://l.test"><img src="fake://asset/assets/b.png"');
+  });
+
+  it('同一行兩張圖,第一張路徑不能用、第二張可以:第一張是拒絕字樣、第二張照常、assetUrl 只收到第二張', async () => {
+    const render = await loadRender();
+    const fake = fakeAssetUrl();
+    const html = render('![a](../../raw/a.png)![b](../../assets/b.png)\n', { cardDir: CARD_DIR, assetUrl: fake.assetUrl });
+    expect(fake.calls).toEqual(['assets/b.png']);
+    expect(html).toContain('圖片路徑不能用:../../raw/a.png');
+    expect(html.split('<img').length - 1).toBe(1);
+    expect(html).toContain('src="fake://asset/assets/b.png"');
+  });
+
+  describe('alt 裡有別的東西時,抓的仍是外層圖片自己的原文路徑(連結、方括號、兩個連結)', () => {
+    const cases: [string, string, string][] = [
+      ['![see [l](http://x.test/l)](../../assets/c.png)', 'assets/c.png', 'alt 裡有一個連結'],
+      ['![a [l1](http://x.test/1) b [l2](http://x.test/2)](../../assets/c.png)', 'assets/c.png', 'alt 裡有兩個連結'],
+      ['![see [x]](../../assets/c.png)', 'assets/c.png', 'alt 裡只有方括號'],
+      ['![see [l](../../assets/z.png)](../../assets/c.png)', 'assets/c.png', 'alt 裡的連結目標長得像圖片路徑(它不是圖,不能被當成路徑)'],
+      ['![see [l](http://x.test/l) and ![i](../../assets/i.png)](../../assets/c.png)', 'assets/c.png', 'alt 裡有連結也有圖'],
+    ];
+    for (const [src, want, why] of cases) {
+      it(`${src}(${why}):assetUrl 只收到 ${want}、一個 <img>、沒有拒絕字樣`, async () => {
+        const render = await loadRender();
+        const fake = fakeAssetUrl();
+        const html = render(`${src}\n`, { cardDir: CARD_DIR, assetUrl: fake.assetUrl });
+        expect(fake.calls).toEqual([want]);
+        expect(html.split('<img').length - 1, `只有一個 <img>;輸出:${html}`).toBe(1);
+        expect(html).toContain(`src="fake://asset/${want}"`);
+        expect(html).not.toContain('圖片路徑不能用');
+      });
+    }
+
+    it('alt 裡有連結、外層路徑不能用:拒絕字樣寫的是外層的原文(不是 alt 裡連結的網址),assetUrl 0 次', async () => {
+      const render = await loadRender();
+      const fake = fakeAssetUrl();
+      const html = render('![see [l](http://x.test/l)](../../raw/c.png)\n', { cardDir: CARD_DIR, assetUrl: fake.assetUrl });
+      expect(fake.calls).toEqual([]);
+      expect(html).toContain('圖片路徑不能用:../../raw/c.png');
+      expect(html).not.toContain('圖片路徑不能用:http://x.test/l');
+      expect(html).not.toContain('<img');
+    });
+  });
+
   it('圖片在連結文字裡、路徑不能用:連結還在、裡面是拒絕字樣、assetUrl 0 次', async () => {
     const render = await loadRender();
     const fake = fakeAssetUrl();
