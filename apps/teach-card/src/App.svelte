@@ -450,18 +450,38 @@
     min-width: 0;
   }
   /* 按鈕列與狀態字樣黏在 .hud-body 看得到的底部。內容比視窗短時留在內容後面。
-     底色蓋住捲過去的內文,不畫線。放大層在這塊外面。 */
+     底色蓋住捲過去的內文,不畫線。放大層在這塊外面。
+     面板實際畫出來的顏色是 var(--hud-panel) 疊在 var(--hud-solid) 上。card-static 不准
+     一個 background 疊兩層,所以底色與 ::before 各畫一層。::after 再墊一層不透明底,
+     跟 ::before 一起往下多蓋 1px,補 .hud-body 那 1px 縫與 Wayland 提示上的第二排。
+     bottom 與 margin-bottom 各 -1px 把黏住的位置往下挪 1px;padding-bottom 仍是 1px。 */
   .dock {
     position: sticky;
-    bottom: 0;
+    bottom: -1px;
+    margin-bottom: -1px;
     z-index: 1;
     display: flow-root;
+    background: var(--hud-solid);
+  }
+  .dock::before,
+  .dock::after {
+    content: '';
+    position: absolute;
+    inset: 0 0 -1px 0;
+    pointer-events: none;
+  }
+  .dock::before {
+    z-index: -1;
     background: var(--hud-panel);
   }
-  /* .hud-body 預設 padding-bottom 1rem。sticky bottom:0 停在內容區邊緣;
-     捲到底時 bottom 不作用,那 16px 會露在按鈕下面(測試 c 要 ≤ 2)。
-     不能寫 0:T35 要求計算值 > 0,而且提示程式在卡片畫出來前就記 base,
-     0 會讓「base + 提示高度」對不上。1px 兩邊都過:黏底距離 ≤ 2,提示仍停在按鈕下面。
+  .dock::after {
+    z-index: -2;
+    background: var(--hud-solid);
+  }
+  /* .hud-body 預設 padding-bottom 1rem。捲到底時 sticky 的 bottom 不作用,
+     那 16px 會露在按鈕下面(測試 c 要 ≤ 2)。不能寫 0:T35 要求計算值 > 0,
+     而且提示程式在卡片畫出來前就記 base,0 會讓「base + 提示高度」對不上。
+     1px 兩邊都過:黏底距離 ≤ 2,提示仍停在按鈕下面。
      scroll-padding-bottom 讓 scrollIntoView 把標題捲到黏底區塊上面,才點得到。 */
   :global([data-hud="panel"].hud-fill .hud-body) {
     padding-bottom: 1px;
