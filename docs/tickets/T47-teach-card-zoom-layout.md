@@ -4,7 +4,7 @@ deps: [T46, T48]
 touches: [apps/teach-card/src/, apps/desktop/src-tauri/tauri.conf.json]
 cpu: heavy
 budget_usd: 4
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 放大、縮小、還原的按鍵沒有讓卡片內容變一級、到頭不停、換卡或重新載入之後回到 100%,或按鈕列、系統狀態字樣、標題列跟著變大小:渲染測試 a 必須紅
