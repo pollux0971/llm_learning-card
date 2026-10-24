@@ -58,37 +58,66 @@ type ImageRule = (state: StateInline, silent: boolean) => boolean;
 /**
  * 圖片規則與內文、例子共用:拿 token 的原文路徑(normalizeLink 之前),
  * 過了才把 assetUrl 的回傳值放進 src,不過就輸出佔位字樣(跳脫過)。
+ *
+ * 原文路徑 = 這顆 image 的目的地交給 normalizeLink 的那個引數,不是 alt 裡的。
+ * markdown-it 掃 alt 兩次(parseLinkLabel 用 skipToken,在目的地正規化之前;
+ * 之後 inline.parse 再掃一次),裡面的連結、autolink、linkify 也呼叫 normalizeLink。
+ * 那兩段先關掉擷取,再只留 normalizeLink(引數) 等於這顆 token src 的那個。
+ * 只靠「第一個」或「最後一個」分不出來:連結可能在目的地之前,也可能在之後,
+ * 而且正規化後可能跟圖的 src 撞在一起。
  */
 function installAssetImages(md: MarkdownItInstance, options: RenderMarkdownOptions): void {
   const originalNormalize = md.normalizeLink.bind(md);
-  let capturing = false;
-  let captured: string | undefined;
+  // null = 現在不記(掃 alt)。陣列 = 這顆圖自己這輪的引數。
+  let captured: string[] | null = null;
   md.normalizeLink = (url: string) => {
-    if (capturing && captured === undefined) captured = url;
+    if (captured) captured.push(url);
     return originalNormalize(url);
+  };
+
+  const withoutCapture = <T>(fn: () => T): T => {
+    const saved = captured;
+    captured = null;
+    try {
+      return fn();
+    } finally {
+      captured = saved;
+    }
+  };
+
+  // 標籤掃描在目的地的 normalizeLink 之前。巢狀圖會再進 image 規則,自己開一輪清單。
+  const originalParseLinkLabel = md.helpers.parseLinkLabel;
+  md.helpers.parseLinkLabel = (state, start, disableNested) =>
+    withoutCapture(() => originalParseLinkLabel(state, start, disableNested));
+
+  const originalInlineParse = md.inline.parse.bind(md.inline);
+  md.inline.parse = (str, md_, env, outTokens) => {
+    withoutCapture(() => {
+      originalInlineParse(str, md_, env, outTokens);
+    });
   };
 
   const rule = md.inline.ruler.__rules__.find((item) => item.name === 'image');
   if (!rule) throw new Error('markdown-it 沒有 image 規則');
   const originalImage = rule.fn as ImageRule;
   md.inline.ruler.at('image', (state, silent) => {
-    // 解析 alt 時會再進這條規則。巢狀呼叫不能清掉外層已經抓到的原文路徑。
-    const saved = { capturing, captured };
-    capturing = true;
-    captured = undefined;
+    // alt 裡的圖會再進這條規則。巢狀呼叫不能清掉外層已經抓到的原文路徑。
+    const saved = captured;
+    const mine: string[] = [];
+    captured = mine;
     let ok = false;
-    let mine: string | undefined;
     try {
       ok = originalImage(state, silent);
-      mine = captured;
     } finally {
-      capturing = saved.capturing;
-      captured = saved.captured;
+      captured = saved;
     }
-    if (ok && !silent && mine !== undefined) {
+    if (ok && !silent) {
       const token = state.tokens[state.tokens.length - 1];
       if (token && token.type === 'image') {
-        token.meta = { ...(token.meta ?? {}), rawSrc: mine };
+        const src = token.attrGet('src');
+        const matches = typeof src === 'string' ? mine.filter((arg) => originalNormalize(arg) === src) : [];
+        const raw = matches[matches.length - 1];
+        if (raw !== undefined) token.meta = { ...(token.meta ?? {}), rawSrc: raw };
       }
     }
     return ok;
