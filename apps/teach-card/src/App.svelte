@@ -15,9 +15,14 @@
   const controls = createWindowControls();
   let view = $state<TeachView>(session.view());
   let bodyEl = $state<HTMLElement | undefined>();
-  let zoom = $state<{ src: string; w: number; h: number } | null>(null);
+  let zoom = $state<{ src: string; w: number; h: number; nw: number; nh: number } | null>(null);
   let zoomEl = $state<HTMLElement | undefined>();
   let cover = $state({ left: 0, top: 0, width: 0, height: 0 });
+  /**
+   * 上一張卡的 html。鍵是 path + cardText,只記一份。
+   * 不是 $state:寫進 $derived 裡不能再變成依賴,否則每次 pull 都會為了記下來而重跑。
+   */
+  let cardMemo: { path: string; cardText: string; frontmatter: CardFrontmatter; html: string } | null = null;
 
   function pull(): void {
     view = session.view();
@@ -42,23 +47,34 @@
 
   function parsed(): { frontmatter: CardFrontmatter; html: string } | null {
     if (!view.cardText) return null;
+    const path = view.card?.path ?? '';
+    const cardText = view.cardText;
+    // 鍵沒變就回同一份字串:不呼叫 renderMarkdown、不讀 storage。{@html} 比的是字串相等,節點才不會換。
+    if (cardMemo && cardMemo.path === path && cardMemo.cardText === cardText) {
+      return { frontmatter: cardMemo.frontmatter, html: cardMemo.html };
+    }
     try {
-      const card = parseCard(view.cardText);
-      // 折疊狀態只在這裡讀(換卡才會重算 html)。不要把「開或收」放進 $state,否則按一個標題會重畫整張。
-      return {
-        frontmatter: card.frontmatter,
-        html: renderMarkdown(card.bodyMarkdown, {
-          cardDir: cardDirOf(view.card?.path ?? ''),
-          assetUrl: (relPath) => deps.fs.assetUrl(relPath),
-          examplesOpen: deps.storage.getItem(EXAMPLE_OPEN_KEY) !== '0',
-        }),
-      };
+      const card = parseCard(cardText);
+      // 折疊狀態只在換卡時讀。不要把「開或收」放進 $state,也不要只把這行包 untrack:view 一換 parsed 還是會重跑,讀到的是新的 storage。
+      const html = renderMarkdown(card.bodyMarkdown, {
+        cardDir: cardDirOf(path),
+        assetUrl: (relPath) => deps.fs.assetUrl(relPath),
+        examplesOpen: deps.storage.getItem(EXAMPLE_OPEN_KEY) !== '0',
+      });
+      cardMemo = { path, cardText, frontmatter: card.frontmatter, html };
+      return { frontmatter: card.frontmatter, html };
     } catch {
       return null;
     }
   }
 
   const shown = $derived(parsed());
+
+  // 離開卡片畫面({@html} 卸下)再回來,鍵可能一樣,但元件是新掛上的,不能拿舊 html。
+  // $derived 是惰性的:類別清單時 shown 沒被讀,parsed() 不會跑,所以不能在裡面清。
+  $effect(() => {
+    if (view.state !== 'card') cardMemo = null;
+  });
   const finished = $derived(view.state !== 'card' || !view.canNext || view.controlsDisabled);
 
   function handleNext(): void {
@@ -135,9 +151,11 @@
     if (!src) return;
     event.preventDefault();
     event.stopPropagation();
-    const size = fittedSize(img.naturalWidth, img.naturalHeight);
+    const nw = img.naturalWidth;
+    const nh = img.naturalHeight;
+    const size = fittedSize(nw, nh);
     cover = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
-    zoom = { src, w: size.w, h: size.h };
+    zoom = { src, w: size.w, h: size.h, nw, nh };
   }
 
   function swallow(event: MouseEvent): void {
@@ -187,8 +205,15 @@
       const rect = el.getBoundingClientRect();
       const left = cover.left - rect.left;
       const top = cover.top - rect.top;
-      if (left === cover.left && top === cover.top && width === cover.width && height === cover.height) return;
-      cover = { left, top, width, height };
+      if (left !== cover.left || top !== cover.top || width !== cover.width || height !== cover.height) {
+        cover = { left, top, width, height };
+      }
+      // 不只對位置:用打開時那張圖的 naturalWidth / naturalHeight,照目前視窗重算寬高(等比例、裝得下的最大)。
+      const current = zoom;
+      if (!current) return;
+      const size = fittedSize(current.nw, current.nh);
+      if (current.w === size.w && current.h === size.h) return;
+      zoom = { src: current.src, w: size.w, h: size.h, nw: current.nw, nh: current.nh };
     };
     place();
     window.addEventListener('resize', place);
@@ -374,7 +399,8 @@
     max-width: 100%;
     height: auto;
   }
-  .lc-missing {
+  /* 執行時 createElement 的節點,scoped 選不到;:global 才套得到,也不留死樣式。 */
+  :global(.lc-missing) {
     font-size: 0.85rem;
     color: var(--hud-text);
   }
