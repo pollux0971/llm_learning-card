@@ -4,7 +4,7 @@ deps: [T46]
 touches: [apps/teach-card/src/]
 cpu: light
 budget_usd: 2
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 同一張卡上每次 pull 都重算 html(或照舊在 parsed 裡讀 storage):渲染測試 f 必須紅(別的例子被改、details 節點換了一顆、按鈕動、缺圖再要一次)
