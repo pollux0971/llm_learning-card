@@ -38,7 +38,8 @@ Feature: Examples, zoom and images
   @manual
   Scenario: Text size can be adjusted
     When the person uses the zoom in shortcut
-    Then the whole card scales up one step
+    Then the card content scales up one step
+    And the controls keep their size
     And the zoom out and reset shortcuts work
     And the setting persists across cards
 
@@ -46,9 +47,8 @@ Feature: Examples, zoom and images
   Scenario: Long content scrolls without losing the controls
     Given a card with a very long example
     When it is displayed
-    Then the body stays fixed at the top
-    And the example area scrolls
-    And the three controls stay fixed at the bottom
+    Then the body and the examples scroll together
+    And the controls stay fixed at the bottom
 
   @manual
   Scenario: The layout adapts to the window size
