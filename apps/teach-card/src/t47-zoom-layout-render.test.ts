@@ -954,3 +954,129 @@ describe('T47 渲染:Wayland 一次性提示不蓋住黏在下面的按鈕列(f)
     for (const it of f.items.filter((x) => x.label.startsWith('按鈕'))) expect(it.hitsSelf, `${it.label} 中心點打得到自己`).toBe(true);
   });
 });
+
+// ================================================================ G4:補測(顧問 2026-10-24 裁:M10、M16/M17、M18)
+
+describe('T47 補測:放大層不跟著捲動(M10)、壞的縮放記錄(M16/M17)、Ctrl+Alt 不縮放(M18)', () => {
+  let app: App | undefined;
+  beforeAll(async () => {
+    app = await start({ frameless: false, wayland: false });
+  });
+  afterEach(async () => {
+    if (!app) return;
+    await app.page.resize?.(VIEWPORT.width, VIEWPORT.height);
+    await quiesce(app.page).catch(() => undefined);
+  });
+  afterAll(async () => {
+    await stop(app);
+  });
+  const a = (): App => {
+    if (!app) throw new Error('教學卡沒有開起來');
+    return app;
+  };
+
+  async function scrollTo(page: GalleryPage, where: 'top' | 'middle' | 'bottom'): Promise<void> {
+    await page.evaluate(`(() => { const b = document.querySelector('.hud-body'); const max = b.scrollHeight - b.clientHeight; b.scrollTop = ${JSON.stringify(where)} === 'top' ? 0 : ${JSON.stringify(where)} === 'middle' ? Math.round(max / 2) : max; return true; })()`);
+    await sleep(200);
+  }
+
+  const ALT = 1;
+  const withAlt = (spec: KeySpec): KeySpec => ({ ...spec, modifiers: spec.modifiers | ALT });
+
+  /** localStorage 全部(不含測試自己放的 t47.*) */
+  const storageSnapshot = (page: GalleryPage): Promise<Record<string, string>> =>
+    page.evaluate<Record<string, string>>(`(() => { const out = {}; for (let i = 0; i < localStorage.length; i += 1) { const k = localStorage.key(i); if (!k.startsWith('t47.')) out[k] = localStorage.getItem(k); } return out; })()`);
+
+  async function expectLevel(base: Facts, level: number, why: string): Promise<void> {
+    const now = await facts(a().page);
+    expect(scaleProblems(base, now, level), `${why}:內容要是 ${Math.round(level * 100)}%`).toEqual([]);
+  }
+
+  // ---- M10
+
+  for (const level of [1, 1.5] as const) {
+    it(`M10. 放大層打開後,程式把 .hud-body 捲到別的位置(${Math.round(level * 100)}%):放大層還在 (0, 0)、蓋滿視窗寬高,computed position 是 fixed(不是 absolute 跟著內容跑)`, async () => {
+      await prepare(a(), 'long');
+      await setLevel(a(), level);
+      await sleep(200);
+      await scrollTo(a().page, 'bottom');
+      const at = await a().page.evaluate<{ x: number; y: number } | null>(`(() => {
+        const img = document.querySelector('.lc-example img');
+        if (!img) return null;
+        const r = img.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      })()`);
+      expect(at, '前提:例子裡有圖').not.toBeNull();
+      await a().input.click(at!.x, at!.y);
+      expect(await waitFor(a().page, `document.querySelector('.lc-zoom')`, 5000), `按圖之後要出現放大層;畫面文字:${await pageText(a().page)}`).toBe(true);
+      await sleep(250);
+      const measure = (): Promise<{ left: number; top: number; width: number; height: number; position: string; innerW: number; innerH: number; scrollTop: number }> =>
+        a().page.evaluate(`(() => {
+          const z = document.querySelector('.lc-zoom');
+          const r = z.getBoundingClientRect();
+          return { left: r.left, top: r.top, width: r.width, height: r.height, position: getComputedStyle(z).position, innerW: window.innerWidth, innerH: window.innerHeight, scrollTop: document.querySelector('.hud-body').scrollTop };
+        })()`);
+      const problems = (m: Awaited<ReturnType<typeof measure>>): string[] => {
+        const out: string[] = [];
+        if (m.position !== 'fixed') out.push(`position 是 ${m.position},要 fixed`);
+        if (Math.abs(m.left) > 0.5 || Math.abs(m.top) > 0.5) out.push(`放大層的左上角在 (${m.left.toFixed(1)}, ${m.top.toFixed(1)}),要 (0, 0)`);
+        if (Math.abs(m.width - m.innerW) > 0.5 || Math.abs(m.height - m.innerH) > 0.5) out.push(`放大層 ${m.width.toFixed(1)} × ${m.height.toFixed(1)},要蓋滿視窗 ${m.innerW} × ${m.innerH}`);
+        return out;
+      };
+      const before = await measure();
+      expect(problems(before), '前提:打開時放大層就蓋滿視窗').toEqual([]);
+      expect(before.scrollTop, '前提:打開時 .hud-body 捲在底').toBeGreaterThan(50);
+      for (const where of ['top', 'middle'] as const) {
+        await scrollTo(a().page, where);
+        const m = await measure();
+        expect(Math.abs(m.scrollTop - before.scrollTop), `前提:程式真的把 .hud-body 捲到${where}(scrollTop ${before.scrollTop.toFixed(0)} → ${m.scrollTop.toFixed(0)})`).toBeGreaterThan(50);
+        expect(problems(m), `.hud-body 被捲到${where}之後,放大層要還蓋滿視窗`).toEqual([]);
+      }
+    });
+  }
+
+  // ---- M16 / M17
+
+  it('M16/M17. 記錄的縮放值壞掉(abc、1.7、1.15 不是級距)→ 進卡是 100%;再按一次 Ctrl+= 是 110%(不是 1.7 或壞值再放大)', async () => {
+    await prepare(a(), 'plain');
+    const base = await facts(a().page);
+    // 不寫死記錄用的鍵名:按一次 Ctrl+= 看哪一個 localStorage 的鍵變成 1.1
+    const before = await storageSnapshot(a().page);
+    await press(a(), KEYS.in[0]);
+    await expectLevel(base, 1.1, '前提:按一次 Ctrl+=');
+    const after = await storageSnapshot(a().page);
+    const keys = Object.keys(after).filter((k) => after[k] !== before[k] && Number(after[k]) === 1.1);
+    expect(keys.length, `前提:找得到記錄縮放級距的 localStorage 鍵(按之前 ${JSON.stringify(before)}、之後 ${JSON.stringify(after)})`).toBe(1);
+    const key = keys[0]!;
+    for (const bad of ['abc', '1.7', '1.15', '', 'NaN', '-1']) {
+      await a().page.evaluate(`(() => { try { localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(bad)}); } catch {} return true; })()`);
+      await prepare(a(), 'plain', { keepStorage: true });
+      expect(await a().page.evaluate<string | null>(`localStorage.getItem(${JSON.stringify(key)})`), `前提:壞值 ${JSON.stringify(bad)} 還在 storage 裡`).toBe(bad);
+      await expectLevel(base, 1, `記錄是 ${JSON.stringify(bad)},進卡`);
+      await press(a(), KEYS.in[0]);
+      await expectLevel(base, 1.1, `記錄是 ${JSON.stringify(bad)},再按一次 Ctrl+=`);
+    }
+  });
+
+  // ---- M18
+
+  it('M18. Ctrl+Alt+=、Ctrl+Alt+-、Ctrl+Alt+0 不改級距、也不寫 storage(Alt 組合不是縮放鍵;100% 與 125% 各試一次)', async () => {
+    await prepare(a(), 'plain');
+    const base = await facts(a().page);
+    const altKeys = [KEYS.in[0], KEYS.in[2], KEYS.out[0], KEYS.out[1], KEYS.reset[0], KEYS.reset[1]].map(withAlt);
+    const stored0 = await storageSnapshot(a().page);
+    for (const k of altKeys) {
+      await press(a(), k);
+      await expectLevel(base, 1, `100% 時按 ${k.code} + Ctrl + Alt`);
+    }
+    expect(await storageSnapshot(a().page), '100% 時按這些鍵,storage 不能被寫').toEqual(stored0);
+    await setLevel(a(), 1.25);
+    await expectLevel(base, 1.25, '前提:放大到 125%');
+    const stored1 = await storageSnapshot(a().page);
+    for (const k of altKeys) {
+      await press(a(), k);
+      await expectLevel(base, 1.25, `125% 時按 ${k.code} + Ctrl + Alt`);
+    }
+    expect(await storageSnapshot(a().page), '125% 時按這些鍵,storage 不變').toEqual(stored1);
+  });
+});
