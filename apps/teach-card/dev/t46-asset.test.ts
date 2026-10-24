@@ -177,6 +177,18 @@ describe('GET /__asset?path=…', () => {
     expect((await getAsset('assets/t46-bytes.png')).status, '被擋的請求之後 server 還在').toBe(200);
   });
 
+  it('assets/ 底下不是圖的檔(.md、.txt、.html、沒有副檔名):404,不回位元組(不能把任意檔當 image/png 送出去)', async () => {
+    const marker = Buffer.concat([Buffer.from('T46-NOT-AN-IMAGE-'), ALL_BYTES]);
+    const names = ['t46-note.md', 't46-note.txt', 't46-note.html', 't46-noext', 'sub/t46-note.md'];
+    for (const name of names) put(`assets/${name}`, marker);
+    for (const name of names) {
+      const got = await getAsset(`assets/${name}`);
+      expect(got.status, `assets/${name} 要 404`).toBe(404);
+      expect(got.bytes.includes(Buffer.from('T46-NOT-AN-IMAGE-')), `assets/${name} 不能回檔案的位元組`).toBe(false);
+    }
+    expect((await getAsset('assets/t46-bytes.png')).status, '之後 server 還在').toBe(200);
+  });
+
   it('指到目錄、空路徑、沒有 path:404,不是 500,server 照常活著', async () => {
     for (const path of ['assets', 'assets/', 'assets/sub', '']) {
       const got = await getAsset(path);
