@@ -1,6 +1,6 @@
 ---
 id: T47
-deps: [T46]
+deps: [T46, T48]
 touches: [apps/teach-card/src/, apps/desktop/src-tauri/tauri.conf.json]
 cpu: heavy
 budget_usd: 4
