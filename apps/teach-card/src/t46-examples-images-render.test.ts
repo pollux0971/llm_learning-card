@@ -679,13 +679,13 @@ describe('T46 渲染:放大(d)、找不到與拒絕(e)', () => {
     const fitsWidth = Math.abs(rect.w - VIEWPORT.width) <= 2;
     const fitsHeight = Math.abs(rect.h - VIEWPORT.height) <= 2;
     expect(fitsWidth || fitsHeight, `放到視窗裝得下的最大(寬 ${rect.w}、高 ${rect.h},視窗 360×480)`).toBe(true);
-    // 蓋住整個視窗:放大層 = 放大的圖往上最高、而且不含原本那張圖的祖先;幾個點打到的都要在它裡面,而且它蓋滿視窗
+    // 蓋住整個視窗(四角內縮到 HudPanel 的 10px 切角 --hud-cut 外,切角裡 elementFromPoint 本來就打到 .hud-fill):放大層 = 放大的圖往上最高、而且不含原本那張圖的祖先;幾個點打到的都要在它裡面,而且它蓋滿視窗
     const cover = await a().page.evaluate<{ roots: string[]; same: boolean; covers: boolean; containsBig: boolean }>(`(() => {
       const origImg = document.querySelector('img[data-t46-orig]');
       const big = [...document.querySelectorAll('img')].find((i) => !i.hasAttribute('data-t46-orig'));
       let root = big;
       while (root.parentElement && !root.parentElement.contains(origImg)) root = root.parentElement;
-      const pts = [[2, 2], [358, 2], [2, 478], [358, 478], [180, 6], [${s.button.x}, ${s.button.y}], [180, 240]];
+      const pts = [[12, 12], [348, 12], [12, 468], [348, 468], [180, 6], [${s.button.x}, ${s.button.y}], [180, 240]];
       const hits = pts.map(([x, y]) => document.elementFromPoint(x, y));
       const r = root.getBoundingClientRect();
       return {
@@ -727,7 +727,7 @@ describe('T46 渲染:放大(d)、找不到與拒絕(e)', () => {
     expect(hit, '關掉之後,原本的位置又是「下一個」').toBe('下一個');
   });
 
-  it('d. 按放大的圖本身關掉;按放大層的角落(圖外)也關掉;兩次都不送請求、不換卡', async () => {
+  it('d. 按放大的圖本身關掉;按放大層的角落(圖外,內縮到 HudPanel 的 10px 切角外)也關掉;兩次都不送請求、不換卡', async () => {
     const s = await zoomSetup('zoom');
     const titleBefore = await title(a().page);
     const seenBefore = await methods(a().page);
@@ -736,7 +736,7 @@ describe('T46 渲染:放大(d)、找不到與拒絕(e)', () => {
     await sleep(500);
     expect(await isClosed(a().page, s.orig.src), '按圖本身:關掉').toBe(true);
     await openZoom(s);
-    await a().input.click(3, 3);
+    await a().input.click(12, 12);
     await sleep(500);
     expect(await isClosed(a().page, s.orig.src), '按角落(圖外):關掉').toBe(true);
     expect((await methods(a().page)).slice(seenBefore.length), '沒有請求').toEqual([]);
