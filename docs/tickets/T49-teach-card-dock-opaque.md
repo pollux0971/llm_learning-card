@@ -4,7 +4,7 @@ deps: [T47]
 touches: [apps/teach-card/src/]
 cpu: light
 budget_usd: 2
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 黏底那一塊的底是半透明(42bbcb2 現況,只有一層 var(--hud-panel)),捲到底下的洋紅圖或字透出來:渲染測試 a 必須紅
