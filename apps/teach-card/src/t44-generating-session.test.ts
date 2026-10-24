@@ -136,7 +136,7 @@ async function rig(): Promise<Rig> {
       teachBack: run('teachBack'),
       onWait: () => () => undefined,
     },
-    fs: { read: async (path: string): Promise<string> => `TEXT:${path}` },
+    fs: { read: async (path: string): Promise<string> => `TEXT:${path}`, ...{ assetUrl: (relPath: string): string => `fake://asset/${relPath}` } }, // T46:補 assetUrl(展開,基底也過 tsc)
     storage: { getItem: () => null, setItem: () => undefined },
     pause: async () => undefined,
   });

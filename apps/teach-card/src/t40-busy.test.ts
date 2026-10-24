@@ -65,7 +65,7 @@ async function rig(script: Script): Promise<{ session: Session; invokes: string[
   });
   session = createTeachSession({
     client,
-    fs: { read: async (path: string) => `TEXT:${path}` },
+    fs: { read: async (path: string) => `TEXT:${path}`, ...{ assetUrl: (relPath: string): string => `fake://asset/${relPath}` } }, // T46:補 assetUrl(展開,基底也過 tsc)
     storage: { getItem: () => null, setItem: () => undefined },
   });
   return { session, invokes, views, clock };

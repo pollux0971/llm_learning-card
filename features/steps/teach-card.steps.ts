@@ -12,6 +12,7 @@ import { createDeck, currentCardId, pressNext, type DeckState } from '../../apps
 import { fakeOrder } from '../../apps/teach-card/src/stubs/order.js';
 import { phase2Active, phase2PressNext } from './teach-card-phase2.steps.js';
 import { phase3Active, phase3PressNext } from './teach-card-phase3.steps.js';
+import { phase4Active, phase4Render } from './teach-card-phase4.steps.js';
 
 // fixture-data.ts 用 Vite 的 `?raw` import 讀卡片內容,只在 Vite/vitest 底下能跑,
 // cucumber 用純 tsx(沒有 Vite 轉譯層)沒辦法載入它。這裡只需要卡片 id 順序,不需要內容,
@@ -52,7 +53,12 @@ Given(/^a fenced block with the language (.+)$/, function (this: LearningWorld, 
 
 // ---------------------------------------------------------------- When
 
-When('it is rendered', function (this: LearningWorld) {
+When('it is rendered', async function (this: LearningWorld) {
+  // phase-4 的 Given(圖片路徑)把 world 標成 phase-4 之後,改派到 teach-card-phase4.steps.ts(帶桌面殼的 assetUrl)
+  if (phase4Active(this)) {
+    await phase4Render(this);
+    return;
+  }
   assert.ok(this.cardText, 'this.cardText 還沒設定(Given 步驟要先讀卡片原文)');
   this.resultText = renderMarkdown(stripFrontmatter(this.cardText));
 });

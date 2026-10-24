@@ -13,7 +13,7 @@ export const GENERATING_MESSAGE = '正在產生更深入的卡片,可能要等�
 
 export interface TeachSessionDeps {
   client: Pick<ReviewClient, 'teachOpen' | 'teachNext' | 'teachSwitch' | 'teachPrereq' | 'teachDeepen' | 'teachPoll' | 'teachCancel' | 'teachBack' | 'onWait'>;
-  fs: Pick<LearningFs, 'read'>;
+  fs: Pick<LearningFs, 'read' | 'assetUrl'>;
   storage: { getItem(key: string): string | null; setItem(key: string, value: string): void };
   /** 輪詢間隔用的注入等待。main.ts 給。這裡不自己計時。 */
   pause(ms: number): Promise<void>;
