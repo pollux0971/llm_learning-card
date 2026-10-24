@@ -155,6 +155,28 @@ describe('GET /__asset?path=…', () => {
     expect((await getAsset('assets/t46-bytes.png')).status, '被擋的請求之後 server 還在').toBe(200);
   });
 
+  it('擋 ..:cards/ 底下有一個 .png(副檔名白名單擋不到的檔),用 assets/../ 與 ../ 開頭的路徑取:不回 200、不回位元組', async () => {
+    const marker = Buffer.concat([Buffer.from('T46-OUTSIDE-ASSETS-'), ALL_BYTES]);
+    put('cards/security/t46-outside.png', marker);
+    put('t46-root-outside.png', marker);
+    const bad = [
+      'assets/../cards/security/t46-outside.png',
+      '../cards/security/t46-outside.png',
+      'assets/sub/../../cards/security/t46-outside.png',
+      'assets/../t46-root-outside.png',
+      '../t46-root-outside.png',
+      'assets/../../t46-root-outside.png',
+    ];
+    for (const path of bad) {
+      const got = await getAsset(path);
+      expect(got.status, `${JSON.stringify(path)} 不能是 200`).not.toBe(200);
+      expect(got.status, `${JSON.stringify(path)} 要是 4xx`).toBeGreaterThanOrEqual(400);
+      expect(got.status).toBeLessThan(500);
+      expect(got.bytes.includes(Buffer.from('T46-OUTSIDE-ASSETS-')), `${JSON.stringify(path)} 不能回檔案的位元組`).toBe(false);
+    }
+    expect((await getAsset('assets/t46-bytes.png')).status, '被擋的請求之後 server 還在').toBe(200);
+  });
+
   it('指到目錄、空路徑、沒有 path:404,不是 500,server 照常活著', async () => {
     for (const path of ['assets', 'assets/', 'assets/sub', '']) {
       const got = await getAsset(path);
