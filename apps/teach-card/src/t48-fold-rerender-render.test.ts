@@ -10,6 +10,7 @@
  *   - 換 `/__card` 的內文(`localStorage['t48.body']`);`mutate` 為真時,之後每一次 `/__card` 的內文都把「T48-BODY」換成「T48-CHANGED」(同一個 path、內容變了,而且之後不再變);
  *     session 只在側車回「帶卡片的畫面」時重讀卡片檔(輪詢拿到不是生成中的畫面,例如取消之後),所以換內容的時機是「取消」放行輪詢那一下;
 
+ *   - `levelPatch`:為真時,不是 sec-0001 的卡,frontmatter 的 level 由 0 改成 3(讓兩張卡的標記不同);
  *   - `rewrite`:把某個 method 的回應裡 `card.path` 改成別的目錄(`/__card` 對那個 path 回同樣的內文),用來造「內文一樣、目錄不同」的兩張卡;
  *   - 記錄 `/__review` 的 method、能「扣住」`teach.poll`(`hold`)、放行時能改回錯誤(`holdError`)、能讓某個 method 回指定錯誤(`inject`);
  *   - 每幀取樣(`requestAnimationFrame` + `MutationObserver`):每個例子的開或收、每個 `details` 的記號(`data-t48`:節點被換掉記號就沒了)、
@@ -90,7 +91,7 @@ const IMAGES = {
 
 const INIT_SCRIPT = `(() => {
   const orig = window.fetch.bind(window);
-  const st = (window.__t48 = { methods: [], cardFetches: 0, mutate: false, rewrite: null, lastFm: '', cardPaths: [], hold: false, holdError: null, waiters: [], inject: {}, samples: [], armed: false });
+  const st = (window.__t48 = { methods: [], cardFetches: 0, mutate: false, levelPatch: false, rewrite: null, lastFm: '', cardPaths: [], hold: false, holdError: null, waiters: [], inject: {}, samples: [], armed: false });
   st.release = () => {
     st.hold = false;
     for (const wake of st.waiters.splice(0)) wake();
@@ -116,8 +117,11 @@ const INIT_SCRIPT = `(() => {
       if (!body) return new Response(text, { status: res.status, headers: { 'content-type': 'text/plain' } });
       if (st.mutate) body = body.replace('T48-BODY', 'T48-CHANGED');
       const fm = /^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n?/.exec(text);
-      if (fm) st.lastFm = fm[0];
-      return new Response((fm ? fm[0] : '') + body, { status: 200, headers: { 'content-type': 'text/plain' } });
+      // levelPatch:不是 sec-0001 的卡,等級標記改成 3(固定測資的卡等級都是 0、類別都是 security,只有標題不同;標記要能分出兩張卡)
+      let head = fm ? fm[0] : '';
+      if (st.levelPatch && head && !/^id: sec-0001$/m.test(head)) head = head.replace(/^level: 0$/m, 'level: 3');
+      if (fm) st.lastFm = head;
+      return new Response(head + body, { status: 200, headers: { 'content-type': 'text/plain' } });
     }
     if (!url.includes('/__review')) return orig(input, init);
     const req = JSON.parse(init.body);
@@ -407,6 +411,38 @@ describe('T48 渲染:同一張卡不重畫例子(f)與同一個 path 內容變�
     expect(await waitFor(a().page, `document.body.innerText.includes('圖片路徑不能用')`, 8000), `新卡在深一層的目錄,同一條 ../../assets/t48-ok.png 解析成 cards/assets/…,不在最上層 assets,要出現「圖片路徑不能用」(內文一樣但目錄不同,html 要重算,不能沿用舊卡的);第一張卡的圖:${first};畫面文字:${await pageText(a().page)}`).toBe(true);
     expect(await pageText(a().page)).toContain('圖片路徑不能用:../../assets/t48-ok.png');
     expect(await a().page.evaluate<number>(`document.querySelectorAll('.lc-example img').length`), '新卡的例子裡不能還留著舊卡的 <img>').toBe(0);
+  });
+
+  it('M22. 換到另一張 frontmatter 不同的卡(標題、等級標記不同),之後同一張卡上再 pull 一次(深入 → 取消):標題與標記留在新卡的,不退回上一張卡的', async () => {
+    await prepare(a(), 'three');
+    await a().page.evaluate('(window.__t48.levelPatch = true)');
+    const marks = (): Promise<{ title: string; level: string; category: string }> =>
+      a().page.evaluate<{ title: string; level: string; category: string }>(`(() => ({
+        title: (document.querySelector('h2')?.textContent ?? '').trim(),
+        level: (document.querySelector('.markers .level')?.textContent ?? '').trim(),
+        category: (document.querySelector('.markers .category')?.textContent ?? '').trim(),
+      }))()`);
+    const cardA = await marks();
+    expect(cardA.title, `前提:第一張卡有標題;畫面文字:${await pageText(a().page)}`).not.toBe('');
+    expect(cardA.level, '前提:第一張卡(sec-0001)的等級標記是 Level 0').toBe('Level 0');
+    await a().page.evaluate(`(() => { const b = ${BUTTON('下一個')}; if (!b) return false; b.click(); return true; })()`);
+    expect(await waitFor(a().page, `(document.querySelector('.markers .level')?.textContent ?? '').trim() === 'Level 3'`, 10_000), `「下一個」之後要換成另一張卡(等級標記 Level 3);畫面文字:${await pageText(a().page)}`).toBe(true);
+    await sleep(300);
+    const cardB = await marks();
+    expect(cardB.title, '前提:兩張卡的標題不同').not.toBe(cardA.title);
+    // 同一張卡再 pull 一次:深入 → 取消(取消之後輪詢拿到帶卡片的畫面,session 重讀卡片檔,畫面重新 pull)
+    await a().page.evaluate('(() => { window.__t48.samples.length = 0; return true; })()');
+    await holdGenerating();
+    await sleep(300);
+    const during = await marks();
+    await a().page.evaluate(`(() => { const b = ${BUTTON('取消')}; if (b) b.click(); window.__t48.release(); return true; })()`);
+    expect(await waitFor(a().page, `!document.querySelector('.generating')`, 10_000), '取消之後生成中那一行要收掉').toBe(true);
+    await sleep(1000);
+    const after = await marks();
+    expect(during, '生成中:標題、類別、等級標記還是新卡的').toEqual(cardB);
+    expect(after, '取消之後(同一張卡再 pull):標題、類別、等級標記還是新卡的,不能變回上一張卡的').toEqual(cardB);
+    expect(after.title, '標題不是上一張卡的').not.toBe(cardA.title);
+    expect(after.level, '等級標記不是上一張卡的').not.toBe(cardA.level);
   });
 
   it('h. 同一個 path、內容變了算換卡:html 重算、例子照 storage 畫(開);之後同一張新卡上的 pull 不再重算(收放的結果留著)', async () => {
