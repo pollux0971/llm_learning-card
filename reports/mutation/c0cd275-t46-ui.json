@@ -1,0 +1,15 @@
+{
+  "score": 83.33,
+  "killed": 234,
+  "timeout": 1,
+  "survived": 47,
+  "noCoverage": 0,
+  "ignored": 0,
+  "runtimeError": 0,
+  "compileError": 0,
+  "pending": 0,
+  "command": "npm run mutate -- stryker.t46-ui.json",
+  "strykerVersion": "10.0.0",
+  "config": "stryker.t46-ui.json",
+  "commit": "c0cd275"
+}

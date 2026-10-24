@@ -158,3 +158,50 @@ image-path.ts 過了。**example-fence.ts 還差 80**(要多殺約 10 個)。39 
 2. 實作缺陷:圖的替代文字裡有連結時,原文路徑抓錯(見上),需要 worker 修,並由 -a6 補紅測試。
 
 其餘全過(image-path 90.00、全套綠、cucumber 綠、`learning/` 不變)。補測與修完之後,預估 `example-fence.ts` 到 82 左右;若仍略低於 80,剩餘存活皆為上面逐個列出的等價類,請顧問裁放行。
+
+## 第四輪(追加修正 `t46fix-impl`)
+
+- 被驗:`t46fix-impl` sha `adcfb1efaf22dfcce3ef7d5f9412270ef491034d`(起點 `t46fix-start` `611df006e954abbd2f1c0aadb61f9ffbe1316ef4` = 實作 `b447a2d` + 追加紅測試 `73314c6`)。只 1 個 fix commit、2 檔(`example-fence.ts`、`T46fix-implementation.md`),沒有測試檔,`mutants.out` 0。
+- 組合:修正後的 `example-fence.ts`,測試檔來自 `t46-red` 的 `73314c6`,臨時簽出的 tree sha `a277bee0a596867851d4a33c4cd1c7e48ea13cd1`(跑完手動還原,未留痕)。
+- 全套:tsc 乾淨;boundaries 368;doc-links 131;vitest ui-shared 與 teach-card 40 檔 687 條全過(含 `image-path.test.ts` 的新紅轉綠);cucumber phase-4 1/1、teach-card phase-1/2/3 10/5/8 全過;`learning/` 前後 64 / c2e4dd6d71de3976 / 108 不變。
+
+### 讀 diff:修法是否一定拿這顆圖自己的原文
+
+是,沒有猜測式特例。做法:
+1. `normalizeLink` 只在「這顆圖自己的一輪」記引數(`captured` 是陣列,每顆圖自己開一輪;巢狀圖進來會另開、離開時還原)。
+2. 掃替代文字的兩處(`parseLinkLabel` 的 skipToken、`inline.parse`)包在「先關掉擷取」裡,所以 alt 裡的連結、autolink、linkify 都不會被記進來。
+3. 最後只留 `normalizeLink(引數) === 這顆 image token 的 src 屬性` 的那個(取最後一個符合的)。找不到就不設 `rawSrc`(走預設圖片規則)。
+雙層保護(關擷取 + 比對 src):任何一層單獨都夠,所以第二層的變異殺不掉(見下)。沒有寫死連結網址、副檔名、檔名。
+
+### 變異(`npm run mutate -- stryker.t46-ui.json`;報告 `reports/mutation/c0cd275-t46-ui.json`)
+
+| 檔 | 第一輪 | 第二輪 | 第三輪 | 第四輪 | 殺 | 逾時 | 活 |
+|---|---|---|---|---|---|---|---|
+| image-path.ts | 79.17 | 90.00 | 90.00 | **90.00** | 108 | 0 | 12 |
+| example-fence.ts | 66.67 | 73.47 | 76.19 | **78.40** | 126 | 1 | 35 |
+
+**example-fence.ts 仍 < 80(78.40)。35 個存活逐個分類,真缺口 0 個,全部是等價或多層防線:**
+
+| 行 | 個數 | 內容 | 分類 | 理由 |
+|---|---|---|---|---|
+| 26 | 2 | `split(/\s+/)` 改 `/\s/`;`?? ''` 後備 | 等價 | 取第一個字,結果相同;`split` 一定有第 0 項 |
+| 33 | 1 | `i <= tokens.length` | 等價 | 多走的一格是 `undefined`,被 `!token` 跳過 |
+| 35 | 3 | `!token`、`type !== 'fence'` 被改 | 多層防線 | 後面的語言檢查仍擋掉非例子圍欄 |
+| 44 | 6 | `examplesOpen(env)` 的「沒有這個鍵」分支 | 等價 | `renderMarkdown` 一定放這個鍵;沒有 env 時 `undefined !== false` 也是展開 |
+| 101 | 2 | 找不到 image 規則的防呆 | 等價 | markdown-it 一定有 |
+| 106 | 1 | `mine` 預先塞一個亂字串 | 多層防線 | 下一步用 src 比對,亂字串被濾掉 |
+| 108 | 1 | `let ok = false` 初值 | 等價 | try 裡一定重新賦值 |
+| 111 | 1 | `finally {}` 清空(不還原 `captured`) | 等價 | 巢狀圖都在「先關掉擷取」裡跑,外層用的是自己的 `mine` 常數 |
+| 114 | 2 | `ok && !silent` 變 `true` / `ok || !silent` | 多層防線 | 靜默時最後一個 token 是別顆圖,它的 src 與這輪的引數不符,比對濾掉(第三輪那個「兩張圖串成一個」的缺口就是被這層補上的) |
+| 116 | 3 | `token && token.type === 'image'` | 多層防線 | 同上,非圖 token 沒有 src 屬性,比對得到空 |
+| 118 | 5 | `typeof src === 'string'` 與 filter 被拿掉、`[]` 換成亂值 | 多層防線 | 關掉擷取之後,`mine` 裡只剩這顆圖自己的引數,filter 等於恆真;`src` 一定是字串 |
+| 120 | 2 | `raw !== undefined`、`token.meta ?? {}` | 等價 | `raw` 為 undefined 時設的是 undefined,渲染端當沒設;meta 此時是 null,展開無害 |
+| 127、131、132、154 | 8 | 預設圖片規則與預設圍欄規則的後備、「沒有 rawSrc 就走預設」 | 等價 | markdown-it 一定有預設規則;每個走到渲染的圖片都已有 `rawSrc` |
+
+**image-path.ts 的 12 個**同第二、三輪:第 38 與第 70 行 NFC 檢查互相重複;第 48、50、52 行被第 62 行的 `.`/空段與字元集合擋掉;第 62 行的 5 個又被 `startsWith('.')` 與字元集合擋掉。全是多層防線。
+
+例子 + 圖片路徑兩個檔合計 83.33(`All files`);但工單的條件是「兩個檔各 ≥ 80」,字面上 `example-fence.ts` 78.40 未達。**請顧問裁放行**:35 個存活 0 個真缺口,算上等價後的上限就是 78.40(存活 35 個都殺不掉)。
+
+## 結論(第四輪)
+
+實作修正通過:alt 裡有連結的缺陷已修,修法每一步都能追溯到這顆圖自己的原文,5 條紅轉綠、同行兩張圖也對;全套綠、cucumber 綠、`learning/` 不變。唯一的阻擋項是變異分數字面 78.40 < 80,35 個存活全部分類為等價或多層防線、真缺口 0 個,留給顧問裁是否放行。
