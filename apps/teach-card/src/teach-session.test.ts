@@ -181,6 +181,8 @@ async function rig(opts: { stored?: string; onCall?: (n: number, call: Call) => 
         reads.push(path);
         return `TEXT:${path}`;
       },
+      // T46:補 assetUrl(展開,基底也過 tsc)
+      ...{ assetUrl: (relPath: string): string => `fake://asset/${relPath}` },
     },
     storage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) },
   });
