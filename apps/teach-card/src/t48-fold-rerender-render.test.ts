@@ -9,6 +9,8 @@
  * 頁面腳本(`initScript`,測試那一邊的事,產品程式不為它改):
  *   - 換 `/__card` 的內文(`localStorage['t48.body']`);`mutate` 為真時,之後每一次 `/__card` 的內文都把「T48-BODY」換成「T48-CHANGED」(同一個 path、內容變了,而且之後不再變);
  *     session 只在側車回「帶卡片的畫面」時重讀卡片檔(輪詢拿到不是生成中的畫面,例如取消之後),所以換內容的時機是「取消」放行輪詢那一下;
+
+ *   - `rewrite`:把某個 method 的回應裡 `card.path` 改成別的目錄(`/__card` 對那個 path 回同樣的內文),用來造「內文一樣、目錄不同」的兩張卡;
  *   - 記錄 `/__review` 的 method、能「扣住」`teach.poll`(`hold`)、放行時能改回錯誤(`holdError`)、能讓某個 method 回指定錯誤(`inject`);
  *   - 每幀取樣(`requestAnimationFrame` + `MutationObserver`):每個例子的開或收、每個 `details` 的記號(`data-t48`:節點被換掉記號就沒了)、
  *     三顆按鈕的矩形、`.hud-body` 的 scrollTop、生成中那一行與「取消」是否整塊在看得到的範圍裡。
@@ -68,6 +70,8 @@ const BODIES = {
     LIST('T48-E3', 6),
     '```',
   ].join('\n'),
+  /** 換卡的鍵要含 path:兩張內文一樣、目錄深度不同的卡,同一條相對路徑解析結果不同 */
+  dirs: ['T48-BODY 同樣的內文。', '', '```example', '例子:', '', '![圖](../../assets/t48-ok.png)', '```'].join('\n'),
   /** g:裝得進視窗的圖(120×60) */
   ok: ['T48-ZOOM 小圖。', '', '```example', '例子:', '', '![小圖](../../assets/t48-ok.png)', '```'].join('\n'),
   /** g:比視窗高的圖(240×960) */
@@ -86,7 +90,7 @@ const IMAGES = {
 
 const INIT_SCRIPT = `(() => {
   const orig = window.fetch.bind(window);
-  const st = (window.__t48 = { methods: [], cardFetches: 0, mutate: false, hold: false, holdError: null, waiters: [], inject: {}, samples: [], armed: false });
+  const st = (window.__t48 = { methods: [], cardFetches: 0, mutate: false, rewrite: null, lastFm: '', cardPaths: [], hold: false, holdError: null, waiters: [], inject: {}, samples: [], armed: false });
   st.release = () => {
     st.hold = false;
     for (const wake of st.waiters.splice(0)) wake();
@@ -96,6 +100,14 @@ const INIT_SCRIPT = `(() => {
   window.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input.url;
     if (url.includes('/__card')) {
+      const wanted = new URL(url, location.href).searchParams.get('path') || '';
+      st.cardPaths.push(wanted);
+      if (wanted.includes('/nested/')) {
+        // 被改寫成不同目錄的那張卡:檔案不存在,用上一張的 frontmatter 與同樣的內文
+        let nestedBody = '';
+        try { nestedBody = localStorage.getItem('t48.body') || ''; } catch { nestedBody = ''; }
+        return new Response(st.lastFm + nestedBody, { status: 200, headers: { 'content-type': 'text/plain' } });
+      }
       const res = await orig(input, init);
       const text = await res.text();
       st.cardFetches += 1;
@@ -104,6 +116,7 @@ const INIT_SCRIPT = `(() => {
       if (!body) return new Response(text, { status: res.status, headers: { 'content-type': 'text/plain' } });
       if (st.mutate) body = body.replace('T48-BODY', 'T48-CHANGED');
       const fm = /^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n?/.exec(text);
+      if (fm) st.lastFm = fm[0];
       return new Response((fm ? fm[0] : '') + body, { status: 200, headers: { 'content-type': 'text/plain' } });
     }
     if (!url.includes('/__review')) return orig(input, init);
@@ -118,6 +131,16 @@ const INIT_SCRIPT = `(() => {
         st.holdError = null;
         return errorResponse(req.id, error);
       }
+    }
+    if (st.rewrite && req.method === st.rewrite.method) {
+      // 側車回的畫面,把卡片的 path 改成別的目錄(同一個內文)
+      const res = await orig(input, init);
+      const reply = await res.json();
+      if (reply.ok && reply.result && reply.result.card) {
+        reply.result.card = { ...reply.result.card, path: st.rewrite.to };
+        st.rewrite = null;
+      }
+      return new Response(JSON.stringify(reply), { status: 200, headers: { 'content-type': 'application/json' } });
     }
     return orig(input, init);
   };
@@ -372,6 +395,19 @@ describe('T48 渲染:同一張卡不重畫例子(f)與同一個 path 內容變�
       });
     }
   }
+
+  it('換卡的鍵要含 path:兩張內文一樣、目錄深度不同的卡,換過去之後圖片路徑照新目錄重算(同一條 ../../assets/x.png 在新目錄不在最上層 assets,要變成「圖片路徑不能用」,不能沿用舊的 <img>)', async () => {
+    await prepare(a(), 'dirs');
+    expect(await waitFor(a().page, `document.querySelector('.lc-example img')`, 8000), `前提:第一張卡的圖要畫出來(卡在 cards/<分類>/,../../assets/ 就是最上層 assets);畫面文字:${await pageText(a().page)}`).toBe(true);
+    expect(await pageText(a().page), '前提:第一張卡沒有拒絕字樣').not.toContain('圖片路徑不能用');
+    const first = await a().page.evaluate<string>(`document.querySelector('.lc-example img').getAttribute('data-asset-path') || document.querySelector('.lc-example img').src`);
+    await a().page.evaluate(`(window.__t48.rewrite = { method: 'teach.next', to: 'cards/security/nested/t48-nested.md' })`);
+    await a().page.evaluate(`(() => { const b = ${BUTTON('下一個')}; if (!b) return false; b.click(); return true; })()`);
+    expect(await waitFor(a().page, `window.__t48.cardPaths.some((p) => p.includes('/nested/'))`, 10_000), `「下一個」之後要讀新卡(cards/security/nested/t48-nested.md);已讀:${JSON.stringify(await a().page.evaluate<string[]>('window.__t48.cardPaths'))};畫面文字:${await pageText(a().page)}`).toBe(true);
+    expect(await waitFor(a().page, `document.body.innerText.includes('圖片路徑不能用')`, 8000), `新卡在深一層的目錄,同一條 ../../assets/t48-ok.png 解析成 cards/assets/…,不在最上層 assets,要出現「圖片路徑不能用」(內文一樣但目錄不同,html 要重算,不能沿用舊卡的);第一張卡的圖:${first};畫面文字:${await pageText(a().page)}`).toBe(true);
+    expect(await pageText(a().page)).toContain('圖片路徑不能用:../../assets/t48-ok.png');
+    expect(await a().page.evaluate<number>(`document.querySelectorAll('.lc-example img').length`), '新卡的例子裡不能還留著舊卡的 <img>').toBe(0);
+  });
 
   it('h. 同一個 path、內容變了算換卡:html 重算、例子照 storage 畫(開);之後同一張新卡上的 pull 不再重算(收放的結果留著)', async () => {
     await reachManualState(a(), 1);
