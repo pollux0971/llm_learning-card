@@ -592,7 +592,7 @@ describe('T47 渲染:很長的內容不弄丟按鈕(c)、縮放下 T45 照舊(d)
     await sleep(200);
   }
 
-  const sameRect = (x: number[] | null, y: number[] | null): boolean => Boolean(x && y) && x!.every((v, i) => Math.abs(v - y![i]!) <= 0.5); // sticky 在捲到底時差小數點捲動量(實測 ≤ 0.3 px);沒黏住的會差幾十到幾百 px
+  const sameRect = (x: number[] | null, y: number[] | null): boolean => Boolean(x && y) && x!.every((v, i) => Math.abs(v - y![i]!) <= 1.5); // sticky 離窗底一排半以內都算不動:捲到最底時自然位置與黏住的位置差 ≤ 1 px(T49:Wayland 提示的結構性 1 px 要補);沒黏住的會差幾十到幾百 px
 
   async function longCheck(level: number, size: [number, number]): Promise<void> {
     await prepare(a(), 'long');
