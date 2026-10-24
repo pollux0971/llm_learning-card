@@ -4,7 +4,7 @@ deps: [T45]
 touches: [packages/ui-shared/src/example-fence.ts, packages/ui-shared/src/image-path.ts, packages/ui-shared/src/index.ts, apps/teach-card/src/, apps/teach-card/dev/]
 cpu: light
 budget_usd: 5
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 例子一開始不是展開的、按標題收不起來、收起來之後換下一張卡新卡的例子不是收著的(或第一幀先展開再收):渲染測試 a 必須紅
