@@ -216,6 +216,64 @@ describe('renderMarkdown 帶 { cardDir, assetUrl }:圖片換成 assetUrl 的回�
     expect(html).not.toContain('<img');
   });
 
+  it('圖片在連結文字裡:[![a](../../assets/x.png)](https://a.test) → 連結還在、裡面的圖照樣換 src(工單 §3:每一張圖都算)', async () => {
+    const render = await loadRender();
+    const fake = fakeAssetUrl();
+    const html = render('[![a](../../assets/x.png)](https://a.test)\n', { cardDir: CARD_DIR, assetUrl: fake.assetUrl });
+    expect(html).toContain('<a href="https://a.test"><img src="fake://asset/assets/x.png" alt="a" data-asset-path="assets/x.png"></a>');
+    expect(fake.calls).toEqual(['assets/x.png']);
+  });
+
+  it('圖片在連結文字裡、路徑不能用:連結還在、裡面是拒絕字樣、assetUrl 0 次', async () => {
+    const render = await loadRender();
+    const fake = fakeAssetUrl();
+    const html = render('[![a](../../raw/x.png)](https://a.test)\n', { cardDir: CARD_DIR, assetUrl: fake.assetUrl });
+    expect(html).toContain('<a href="https://a.test">圖片路徑不能用:../../raw/x.png</a>');
+    expect(html).not.toContain('<img');
+    expect(fake.calls).toEqual([]);
+  });
+
+  it('跳脫:alt 含 & < > " 各自變 &amp; &lt; &gt; &quot;(& 先換,不會變成 &amp;lt;)', async () => {
+    const render = await loadRender();
+    const fake = fakeAssetUrl();
+    const html = render('![a&b<c>d"e](../../assets/a.png)\n', { cardDir: CARD_DIR, assetUrl: fake.assetUrl });
+    expect(html).toContain('alt="a&amp;b&lt;c&gt;d&quot;e"');
+    expect(html).not.toContain('&amp;lt;');
+    expect(html).not.toContain('&amp;amp;');
+  });
+
+  it('跳脫:assetUrl 回傳的網址含 & < > " 也跳脫過才放進 src(不能從 src 逃出去)', async () => {
+    const render = await loadRender();
+    const html = render('![a](../../assets/a.png)\n', { cardDir: CARD_DIR, assetUrl: () => 'fake://x?a=1&b="2"<3>' });
+    expect(html).toContain('src="fake://x?a=1&amp;b=&quot;2&quot;&lt;3&gt;"');
+    expect(html.split('<img').length - 1).toBe(1);
+    expect(html).not.toMatch(/<img[^>]*"2"/);
+  });
+
+  it('跳脫:拒絕字樣裡的原文路徑含 & 變 &amp;(原文 ../../assets/x&y.png)', async () => {
+    const render = await loadRender();
+    const fake = fakeAssetUrl();
+    const html = render('![a](../../assets/x&y.png)\n', { cardDir: CARD_DIR, assetUrl: fake.assetUrl });
+    expect(html).toContain('圖片路徑不能用:../../assets/x&amp;y.png');
+    expect(html).not.toMatch(/x&y\.png/);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it('原始 HTML 不會變成標籤(html: false):內文與例子裡的 <script>、<img onerror> 都是文字,有帶選項與沒帶選項都一樣', async () => {
+    const render = await loadRender();
+    const src = '<script>x</script>\n\n<img src=x onerror=window.__pwn=1>\n\n```example\n<script>y</script>\n\n<b onclick=z>粗</b>\n```\n';
+    const fake = fakeAssetUrl();
+    for (const html of [render(src), render(src, { cardDir: CARD_DIR, assetUrl: fake.assetUrl }), render(src, { cardDir: CARD_DIR, assetUrl: fake.assetUrl, examplesOpen: false })]) {
+      expect(html).not.toContain('<script');
+      expect(html).not.toContain('<img');
+      expect(html).not.toContain('<b ');
+      expect(html).toContain('&lt;script&gt;x&lt;/script&gt;');
+      expect(html).toContain('&lt;script&gt;y&lt;/script&gt;');
+      expect(html).toContain('&lt;img src=x onerror=window.__pwn=1&gt;');
+    }
+    expect(fake.calls).toEqual([]);
+  });
+
   it('中文檔名:交給 assetUrl 的是 assets/同源.png,不是 markdown-it 編過的 %E5…', async () => {
     const render = await loadRender();
     const fake = fakeAssetUrl();
@@ -393,6 +451,18 @@ describe('例子圍欄輸出 <details>/<summary>,標題 例子 / 例子 N', () =
       expect(html).toContain('<li>內容二</li>');
     });
 
+    it('收合時整個開頭是 <details class="lc-example"><summary>(沒有 open、也沒有多餘屬性);展開時是 <details class="lc-example" open><summary>', async () => {
+      const render = await loadRender();
+      const one = '```example\n- 內容一\n```\n';
+      expect(render(one, opts(false))).toContain('<details class="lc-example"><summary>例子</summary>');
+      expect(render(one, opts(true))).toContain('<details class="lc-example" open><summary>例子</summary>');
+      expect(render(one)).toContain('<details class="lc-example" open><summary>例子</summary>');
+      const two = render(body, opts(false));
+      expect(two).toContain('<details class="lc-example"><summary>例子 1</summary>');
+      expect(two).toContain('<details class="lc-example"><summary>例子 2</summary>');
+      expect(two.split('</details>').length - 1).toBe(2);
+    });
+
     it('examplesOpen: true → 每個 <details> 都有 open', async () => {
       const render = await loadRender();
       const html = render(body, opts(true));
@@ -427,6 +497,20 @@ describe('例子圍欄輸出 <details>/<summary>,標題 例子 / 例子 N', () =
       expect(tags(render(body, opts()))[0]).toMatch(/\bopen\b/);
       expect(tags(render(body))[0]).toMatch(/\bopen\b/);
     });
+  });
+
+  it('圍欄資訊:```example 標題(多字)、```  example(前面有空白)、```example<tab>x 仍算例子;```Example、```examples、```example-x 不算', async () => {
+    const render = await loadRender();
+    const yes = render(['```example 這是標題', 'a', '```', '', '```  example', 'b', '```', '', '```example\tx y', 'c', '```', ''].join('\n'));
+    expect(summaries(yes)).toEqual(['例子 1', '例子 2', '例子 3']);
+    expect(yes).toContain('<p>a</p>');
+    expect(yes).toContain('<p>b</p>');
+    expect(yes).toContain('<p>c</p>');
+    for (const info of ['Example', 'examples', 'example-x', 'xexample', 'sample']) {
+      const html = render(`\`\`\`${info}\nz\n\`\`\`\n`);
+      expect(html, `\`\`\`${info} 不是例子`).not.toContain('<details');
+      expect(html).toContain('<pre><code');
+    }
   });
 
   it('三個例子:例子 1、例子 2、例子 3,依序,各自一個 <details>', async () => {
