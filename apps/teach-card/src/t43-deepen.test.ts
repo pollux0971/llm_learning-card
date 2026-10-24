@@ -177,6 +177,8 @@ async function rig(): Promise<Rig> {
         reads.push(path);
         return `TEXT:${path}`;
       },
+      // T46:補 assetUrl(展開,基底也過 tsc)
+      ...{ assetUrl: (relPath: string): string => `fake://asset/${relPath}` },
     },
     storage: { getItem: () => null, setItem: () => undefined },
     pause: async (ms: number) => {
