@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-3(2026-10-24:T43 實作〔背景生成、可取消〕、T44 修補〔生成中的畫面跟著更新〕;@manual `docs/reviews/T43-manual-2026-10-24.md`〔F1/F2 不過〕與重做 `docs/reviews/T44-manual-2026-10-24.md`〔全過〕顧問判通過)、phase-2(2026-10-23:T37 實作、T40 修補〔兩視窗共用側車〕;@manual 重做 `docs/reviews/T40-manual-2026-10-23.md` 顧問判通過)、phase-1(2026-09-03) |
+| 已完成 | phase-4(2026-10-25:T46 折疊與圖片放大、T47 縮放與黏底與視窗、T48 修補〔圖片放大層〕、T49 修補〔黏底塊不透明、不留縫〕;@manual `docs/reviews/T46-manual-2026-10-24.md`、`docs/reviews/T47-manual-2026-10-24.md`、`docs/reviews/T49-manual-2026-10-25.md` 顧問判通過;F2〔捲到底按鈕上移 1.29 px〕交 T50 小票)、phase-3(2026-10-24:T43 實作〔背景生成、可取消〕、T44 修補〔生成中的畫面跟著更新〕;@manual `docs/reviews/T43-manual-2026-10-24.md`〔F1/F2 不過〕與重做 `docs/reviews/T44-manual-2026-10-24.md`〔全過〕顧問判通過)、phase-2(2026-10-23:T37 實作、T40 修補〔兩視窗共用側車〕;@manual 重做 `docs/reviews/T40-manual-2026-10-23.md` 顧問判通過)、phase-1(2026-09-03) |
 | 進行中 | 無 |
-| 下一個 | phase-4(只要 phase-1 done) |
+| 下一個 | T50(捲到底按鈕上移 ≤ 1 px,小票);07 資料夾 phase 全 done,屬 I4 的關鍵路徑之一 |
 
 ## Gate
 
