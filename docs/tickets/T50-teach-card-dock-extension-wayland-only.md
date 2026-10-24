@@ -7,10 +7,10 @@ budget_usd: 1
 status: todo
 owner: worker-grok
 must_catch:
-  - 沒有 Wayland 提示時,黏底那一塊的偽元素仍往下多蓋 1 px(67e2ded 現況,可以捲的範圍多 1 px、捲到底按鈕上移約 1.3 px):新的渲染測試 c1 與 c4 必須紅
+  - 沒有 Wayland 提示時,黏底那一塊的偽元素仍往下多蓋 1 px(67e2ded 現況,可以捲的範圍多 1 px、捲到底按鈕上移約 1.3 px):新的渲染測試 c1 必須紅;c4 留下的話也必須紅
   - 按掉提示之後偽元素仍往下多蓋:新的渲染測試 c3 必須紅
   - 提示在時不多蓋(多蓋整個拿掉,或判斷提示在不在的選擇器永遠不中,例如提示的 id 寫錯):新的渲染測試 c2 與 T49 的 b(Wayland 那一組)必須紅
-  - 動到黏底那一塊本身的 bottom 或 margin-bottom(各負 1px 照舊),或 .hud-body 的 padding-bottom:T49 的 a 或 b、T47 的 c、T35、新的 c4 其中至少一條必須紅
+  - 動到黏底那一塊本身的 bottom 或 margin-bottom(各負 1px 照舊),或 .hud-body 的 padding-bottom:T49 的 a 或 b、T47 的 c、T35、新的 c4 其中至少一條必須紅(c4 沒留的話,margin-bottom 那一條由 @manual 的 U-150 抓)
   - 用了 card-static 不准的寫法(畫框的屬性、漸層、hud 以外的顏色或變數、色碼字面值、style= 屬性):card-static 必須紅
   - 實作動到 touches 以外的檔:不動的地方那條 diff 檢查必須有輸出
   - T43 到 T49 的教學卡測試、HUD 的 card-static 與 card-render、Wayland 提示的 T34 與 T35 測試任一變紅:不退步必須紅
@@ -96,10 +96,14 @@ must_catch:
 - **c1. 沒有提示**(有合成器與 `hud-solid` 兩種底 × 100% 與 150%,長卡):
   - 兩個偽元素計算後的 `bottom` 是 `0px`;
   - `scrollHeight` 等於在測試頁裡用 CSSOM `insertRule` 把兩個偽元素的 `bottom` 改成 0 之後的值(量完 `deleteRule`)。
+  - **插入的規則要真的生效**:Svelte 會在選擇器加 scoped class,裸的 `.dock::before` 權重輸,不生效時兩邊永遠相等,這半條是假綠。規則要加 `!important`,插完先量一次兩個偽元素計算後的 `bottom`,確認是 `0px` 再比 `scrollHeight`。T49 `@manual` 的探針用 `.hud-body .dock::before, .hud-body .dock::after { bottom: 0px !important; }`,量到計算值變成 `0px`、`scrollHeight` 少 1。
 - **c2. 提示在**:兩個偽元素計算後的 `bottom` 是 `-1px`。
 - **c3. 提示在 → 按「知道了」**:回到 c1 的兩條。
 - **c4. 沒有提示,150% 長卡**:捲到中間 − 捲到底,三顆按鈕的 y 差都 ≤ 0.5 px(只在這個檔,T47 c 的容差不動)。
-- 在 `67e2ded` 的 App.svelte 上:**c1、c3、c4 紅**,紅的原因是「還沒有這個功能」(偽元素一律多蓋 1 px)。c2 本來就綠,是護欄。每一條的紅綠寫進紅測試的 commit 說明。
+  - **留 c4 之前先證明它在 Chrome 轉得綠**:紅測試作者用丟棄式實作(只在沒提示時讓偽元素的 `bottom` 是 0,不進 git)跑 c4,Chrome 量到 ≤ 0.5 px 才留。
+  - 量不到就把 c4 拿掉,這一條只靠 `@manual`,並把 Chrome 量到的數字回報顧問。
+  - 理由:`21c0e18` 只證明「多蓋時」Chrome 看得到約 1.2 px,沒證明「不多蓋時」Chrome 回得到 0.3。
+- 在 `67e2ded` 的 App.svelte 上:**c1、c3 紅;c4 留下的話也紅**。紅的原因是「還沒有這個功能」(偽元素一律多蓋 1 px)。c2 本來就綠,是護欄。每一條的紅綠、c4 丟棄式實作量到的數字,寫進紅測試的 commit 說明。
 - 不准用讀原始碼比字串代替渲染(SKILL §4g 第 29 條)。CSSOM 只在測試頁裡用,不改檔。
 
 ### 2. 改壞證明(驗收 agent 的丟棄式證明)
@@ -110,7 +114,9 @@ must_catch:
 - 選擇器裡提示的 id 寫錯 → c2 與 T49 b(Wayland)紅;
 - 多蓋整個拿掉 → c2 與 T49 b(Wayland)紅;
 - 黏底那一塊的 `bottom` 改成 0 → T49 b 紅(捲到中間時露 1 排);
-- 黏底那一塊的 `margin-bottom` 拿掉 → c4 應該紅(沒提示時可以捲的範圍又多 1 px,捲到底按鈕上移約 1.3 px)。T49 驗收時這一條存活過(N12,當時偽元素一律多蓋,差別被蓋掉),所以這次要寫下紅的是哪一條。
+- 黏底那一塊的 `margin-bottom` 拿掉 → c4 應該紅(沒提示時可以捲的範圍又多 1 px,捲到底按鈕上移約 1.3 px)。T49 驗收時這一條存活過(N12,當時偽元素一律多蓋,差別被蓋掉),所以這次要寫下紅的是哪一條。c4 沒留的話,標「只靠 `@manual`」。
+- 在 `:has(…)` 那條規則裡放一個禁止的宣告(例如 `box-shadow` 或色碼)→ card-static 必須紅。這一條證明 card-static 的 `parseCss`(自己寫的,`../../packages/ui-shared/src/hud/test-support.ts:269`)讀得進 `:has(> …)` 這種巢狀括號的規則,沒有整條跳過。
+  - 起草時試過(把規則接在 `67e2ded` 的 `<style>` 後面,只讀不寫):選擇器整條讀進來;`box-shadow`、`#ff00ff`、`var(--x-pink)` 三種都被抓到;只有 `bottom: -1px` 的乾淨那條 0 個問題(`#lc-` 沒被當成色碼)。驗收要在真的實作上再做一次(規則的位置可能不在最後面)。
 
 ### 3. 觀感(`@manual`,前端做、技術顧問判)
 
@@ -142,10 +148,16 @@ T50 合併後,前端照 T49 `@manual` 的做法重拍(暫存根 + 假網路、Xv
 - 紅測試抓 Chrome 也抓得到的那半:沒提示時偽元素不加可捲範圍;有提示時多蓋那 1 px 還在。要在 `67e2ded` 上紅。
 - `@manual` 只重拍 U-150(兩種 X11)與 WL-150-mid。
 
-**起草時補的兩處**(請顧問看):
+**起草時補的兩處**(顧問 2026-10-25 審過,同意):
 
 - c3(按掉提示之後回到沒有提示的樣子):提示按掉就拿掉,選擇器要跟著不中。
 - c4(按鈕位移 ≤ 0.5 px 直接寫成渲染測試):`21c0e18` 說明 Chrome 量得到這 1 px,所以 Chrome 上也能紅,不必只靠 `@manual`。
+
+**顧問審工單時加的三條**(2026-10-25):
+
+- c4 要先用丟棄式實作證明 Chrome 轉得綠(≤ 0.5 px)才留;量不到就降成只靠 `@manual`,數字回報顧問。
+- c1 用 `insertRule` 比 `scrollHeight` 時,插入的規則要真的生效(`!important`,並先量計算後的 `bottom` 是 0),不然那半條是假綠。
+- 改壞證明加一條:`:has(…)` 那條規則裡放禁止的宣告 → card-static 必須紅(證明 `parseCss` 讀得進巢狀括號的規則)。
 
 ## 不在範圍
 
