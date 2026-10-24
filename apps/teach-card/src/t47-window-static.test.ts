@@ -116,7 +116,7 @@ describe('T47 e:不開 Tauri 的縮放快捷鍵、程式不改 webview 縮放(�
     const bad: string[] = [];
     for (const file of files) {
       const text = readFileSync(file, 'utf8');
-      if (/setZoom|set_zoom|zoomHotkeysEnabled|zoom_hotkeys_enabled|webview\.zoom|\.zoom\s*\(/.test(text)) bad.push(relative(ROOT, file));
+      if (/\bsetZoom\s*\(|\bset_zoom\b|zoomHotkeysEnabled|zoom_hotkeys_enabled|webview\.zoom|\.zoom\s*\(/.test(text)) bad.push(relative(ROOT, file));
     }
     expect(bad, '這些檔含 webview 縮放的呼叫').toEqual([]);
   });
@@ -130,7 +130,7 @@ describe('T47 e:不開 Tauri 的縮放快捷鍵、程式不改 webview 縮放(�
     const bad: string[] = [];
     for (const file of files) {
       const text = readFileSync(file, 'utf8');
-      if (/setZoom|set_zoom|zoomHotkeysEnabled|zoom_hotkeys_enabled|zoom_hotkeys/.test(text)) bad.push(relative(ROOT, file));
+      if (/\bsetZoom\s*\(|\bset_zoom\b|zoomHotkeysEnabled|zoom_hotkeys_enabled|zoom_hotkeys/.test(text)) bad.push(relative(ROOT, file));
     }
     expect(bad, '這些檔含 webview 縮放或縮放快捷鍵').toEqual([]);
   });

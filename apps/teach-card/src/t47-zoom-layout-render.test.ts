@@ -52,7 +52,8 @@ const LEVEL_STEPS = (level: number): { dir: 'in' | 'out'; times: number } => {
 // ---------------------------------------------------------------- 卡片內容
 
 const TEXT_BODY = '一二三四五六七八九十';
-const TEXT_EXAMPLE = '十九八七六五四三二一';
+// 6 個全形字:150% 時 144 px,例子欄放得下一行(10 個字會在 150% 折行,Range 寬度被欄寬截住,量不到縮放)
+const TEXT_EXAMPLE = '六五四三二一';
 const PARA = '這是一段用來數行數的內文,它夠長所以在三百六十寬的視窗裡會折成很多行,縮放之後折行的位置會跟著變。'.repeat(3);
 const LIST_LINES = (n: number): string => Array.from({ length: n }, (_, i) => `- 補充的第 ${i + 1} 行,讓例子很長`).join('\n');
 const IMG = '![圖](../../assets/t47-img.png)';
@@ -116,7 +117,14 @@ const FETCH_SCRIPT = `(() => {
 })();`;
 
 function initScript(opts: { frameless: boolean; wayland: boolean }): string {
-  const mode = opts.frameless ? `window.__LC_WINDOW_MODE__ = ${JSON.stringify({ frameless: true, solid: false })};\n${readFileSync(WINDOW_MODE_JS, 'utf8')}` : '';
+  // initScript 在文件開始時跑,那時 documentElement 可能還沒有;window_mode.js 只在有 root 時才加 class,所以等 root 出現再跑
+  const mode = opts.frameless
+    ? `window.__LC_WINDOW_MODE__ = ${JSON.stringify({ frameless: true, solid: false })};
+(function applyMode() {
+  if (!document.documentElement) { new MutationObserver((_, o) => { if (document.documentElement) { o.disconnect(); applyMode(); } }).observe(document, { childList: true }); return; }
+${readFileSync(WINDOW_MODE_JS, 'utf8')}
+})();`
+    : '';
   const note = opts.wayland && existsSync(WAYLAND_NOTE_JS) ? readFileSync(WAYLAND_NOTE_JS, 'utf8') : '';
   return `${COLLECT_ERRORS}\n${mode}\n${note}\n${FETCH_SCRIPT}`;
 }
@@ -276,10 +284,12 @@ async function setLevel(app: App, level: number): Promise<void> {
 }
 
 /** 這一級的內容大小要等於 level × 100% 時的(同一張卡):文字 ±2%、圖 ±0.5 px */
-function scaleProblems(base: Facts, now: Facts, level: number): string[] {
+function scaleProblems(base: Facts, now: Facts, level: number, sameCard = true): string[] {
   const out: string[] = [];
   const ratio = (a: number, b: number): number => a / b;
-  for (const [name, a, b] of [['內文', now.bodyText, base.bodyText], ['例子裡的字', now.exText, base.exText], ['標題', now.title, base.title]] as const) {
+  // 換了卡,標題的字不同,寬度不能跟 100% 時的同一張卡比(內文與例子的固定字每張卡都一樣)
+  const rows = [['內文', now.bodyText, base.bodyText], ['例子裡的字', now.exText, base.exText], ...(sameCard ? [['標題', now.title, base.title]] : [])] as [string, number, number][];
+  for (const [name, a, b] of rows) {
     if (b <= 0 || a <= 0) out.push(`${name}量不到(100%:${b}、這一級:${a})`);
     else if (Math.abs(ratio(a, b) - level) > 0.02) out.push(`${name}的寬是 100% 時的 ${ratio(a, b).toFixed(3)} 倍,要 ${level} 倍(100%:${b.toFixed(2)}、這一級:${a.toFixed(2)})`);
   }
@@ -326,9 +336,9 @@ describe('T47 渲染:縮放(a)與重排(b)', () => {
   };
 
   /** 等級距生效後量一次,對 100% 的 base 比 */
-  async function expectLevel(base: Facts, level: number, why: string): Promise<Facts> {
+  async function expectLevel(base: Facts, level: number, why: string, sameCard = true): Promise<Facts> {
     const now = await facts(a().page);
-    expect(scaleProblems(base, now, level), `${why}:內容要是 ${Math.round(level * 100)}%`).toEqual([]);
+    expect(scaleProblems(base, now, level, sameCard), `${why}:內容要是 ${Math.round(level * 100)}%`).toEqual([]);
     return now;
   }
 
@@ -454,16 +464,16 @@ describe('T47 渲染:縮放(a)與重排(b)', () => {
     await clickButtonReal(a(), '下一個');
     expect(await waitFor(a().page, `document.querySelector('h2') && document.querySelector('h2').textContent.trim() !== ${JSON.stringify(first)} && document.querySelector('.body img')`, 10_000), `「下一個」之後要換卡;畫面文字:${await pageText(a().page)}`).toBe(true);
     await sleep(300);
-    await expectLevel(base, 1.25, '按「下一個」換卡之後');
+    await expectLevel(base, 1.25, '按「下一個」換卡之後', false);
     await clickButtonReal(a(), '換類別');
     expect(await waitFor(a().page, `document.querySelector('.list button')`, 8000), `「換類別」要出現類別清單;畫面文字:${await pageText(a().page)}`).toBe(true);
     const picked = await a().page.evaluate<string>(`(() => { const b = [...document.querySelectorAll('.list button')].find((x) => x.textContent.replace(/\\s+/g, '') !== '取消'); const t = b.textContent.trim(); b.click(); return t; })()`);
     expect(picked, '前提:有類別可選').toBeTruthy();
     expect(await waitFor(a().page, `document.querySelector('.markers') && document.querySelector('.body img')`, 10_000), `選了類別之後要出現卡片;畫面文字:${await pageText(a().page)}`).toBe(true);
     await sleep(300);
-    await expectLevel(base, 1.25, '「換類別」選了類別之後');
+    await expectLevel(base, 1.25, '「換類別」選了類別之後', false);
     await prepare(a(), 'plain', { keepStorage: true });
-    await expectLevel(base, 1.25, '重新載入頁面之後');
+    await expectLevel(base, 1.25, '重新載入頁面之後', false);
   });
 
   it('a. 深入這個、回上一層之後也還是同一級', async () => {
@@ -477,7 +487,7 @@ describe('T47 渲染:縮放(a)與重排(b)', () => {
     await clickButtonReal(a(), '深入這個');
     expect(await waitFor(a().page, `/來自:/.test(document.querySelector('.markers')?.textContent ?? '') && document.querySelector('.body img')`, 60_000), `深入之後要出現子卡;畫面文字:${await pageText(a().page)}`).toBe(true);
     await sleep(300);
-    await expectLevel(base, 1.5, '深入這個、出現子卡之後');
+    await expectLevel(base, 1.5, '深入這個、出現子卡之後', false);
     await clickButtonReal(a(), '回上一層');
     expect(await waitFor(a().page, `!/來自:/.test(document.querySelector('.markers')?.textContent ?? '') && document.querySelector('.body img')`, 10_000), `回上一層之後要回到原卡;畫面文字:${await pageText(a().page)}`).toBe(true);
     await sleep(300);
@@ -579,7 +589,7 @@ describe('T47 渲染:很長的內容不弄丟按鈕(c)、縮放下 T45 照舊(d)
     await sleep(200);
   }
 
-  const sameRect = (x: number[] | null, y: number[] | null): boolean => Boolean(x && y) && x!.every((v, i) => Math.abs(v - y![i]!) <= 0.01);
+  const sameRect = (x: number[] | null, y: number[] | null): boolean => Boolean(x && y) && x!.every((v, i) => Math.abs(v - y![i]!) <= 0.5); // sticky 在捲到底時差小數點捲動量(實測 ≤ 0.3 px);沒黏住的會差幾十到幾百 px
 
   async function longCheck(level: number, size: [number, number]): Promise<void> {
     await prepare(a(), 'long');
