@@ -94,6 +94,8 @@ const IMAGES: Record<string, { w: number; h: number; rgb: [number, number, numbe
   'assets/t46-tall.png': { w: 60, h: 240, rgb: [40, 40, 200] },
   'assets/同源.png': { w: 40, h: 40, rgb: [40, 160, 40] },
   'assets/sub/t46-b.png': { w: 50, h: 50, rgb: [200, 180, 40] },
+  /** 比視窗(360)寬很多:沒有 max-width 就會把卡片撐出去 */
+  'assets/t46-wide.png': { w: 1200, h: 60, rgb: [40, 160, 160] },
 };
 
 // ---------------------------------------------------------------- 卡片內文
@@ -134,6 +136,8 @@ const BODIES = {
   /** d:長卡,圖在例子最後,捲到底時圖與按鈕都看得到 */
   zoom: ['T46-ZOOM 說明文字。', '', '```example', FILLER, '', OK_IMG, '```'].join('\n'),
   tall: ['T46-ZOOM 高圖。', '', '```example', FILLER, '', '![高圖](../../assets/t46-tall.png)', '```'].join('\n'),
+  /** 寬圖:例子裡一張、內文裡一張,都比卡片寬 */
+  wide: ['T46-WIDE 內文。', '', '![內文寬圖](../../assets/t46-wide.png)', '', '```example', '寬圖例子:', '', '![例子寬圖](../../assets/t46-wide.png)', '```'].join('\n'),
   /** e:存在、不存在、會被拒絕、會注入的、中文檔名、內文裡的圖,兩個例子 */
   mixed: [
     'T46-BODY 這是內文。',
@@ -755,6 +759,28 @@ describe('T46 渲染:放大(d)、找不到與拒絕(e)', () => {
     const requestsAfter = await imgRequests(a().page);
     expect([...new Set(requestsAfter)], '放大前後,圖片的網址只有原本那一個').toEqual([...new Set(requestsBefore)]);
     expect(new Set(requestsAfter).size, '只有一張圖').toBe(1);
+  });
+
+  // ---- 寬圖不超出卡片(工單 3 的圖片顯示:圖不能把卡片撐寬)
+
+  it('寬圖(原圖 1200px,視窗 360px)在內文與例子裡:顯示寬度不超過卡片內容區,卡片沒有橫向捲動、等比例', async () => {
+    await prepare(a(), 'wide');
+    expect(await waitFor(a().page, `document.querySelectorAll('.hud-body img').length === 2 && [...document.querySelectorAll('.hud-body img')].every((i) => i.complete && i.naturalWidth > 0)`, 10_000), `兩張寬圖要載好;圖:${JSON.stringify(await imgFacts(a().page))}`).toBe(true);
+    const got = await a().page.evaluate<{ bodyLeft: number; bodyRight: number; scrollW: number; clientW: number; docScrollW: number; imgs: { x: number; w: number; h: number; nw: number; nh: number }[] }>(`(() => {
+      const b = document.querySelector('.hud-body');
+      const r = b.getBoundingClientRect();
+      const imgs = [...b.querySelectorAll('img')].map((i) => { const q = i.getBoundingClientRect(); return { x: q.left, w: q.width, h: q.height, nw: i.naturalWidth, nh: i.naturalHeight }; });
+      return { bodyLeft: r.left, bodyRight: r.right, scrollW: b.scrollWidth, clientW: b.clientWidth, docScrollW: document.documentElement.scrollWidth, imgs };
+    })()`);
+    expect(got.imgs, '兩張圖').toHaveLength(2);
+    for (const img of got.imgs) {
+      expect(img.nw, '前提:原圖比視窗寬').toBeGreaterThan(VIEWPORT.width);
+      expect(img.w, `圖的顯示寬度 ${img.w} 不能超過卡片內容區 ${got.clientW}`).toBeLessThanOrEqual(got.clientW + 0.5);
+      expect(img.x + img.w, '圖的右邊不能超出卡片右緣').toBeLessThanOrEqual(got.bodyRight + 0.5);
+      expect(Math.abs(img.w / img.h - img.nw / img.nh) / (img.nw / img.nh), '等比例(誤差 < 2%)').toBeLessThan(0.02);
+    }
+    expect(got.scrollW, `卡片不能橫向捲動(scrollWidth ${got.scrollW}、clientWidth ${got.clientW})`).toBeLessThanOrEqual(got.clientW + 1);
+    expect(got.docScrollW, '整頁沒有橫向捲動').toBeLessThanOrEqual(VIEWPORT.width + 1);
   });
 
   // ---- 找不到與拒絕(e)
