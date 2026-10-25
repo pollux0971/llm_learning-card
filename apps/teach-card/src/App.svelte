@@ -452,9 +452,11 @@
   /* 按鈕列與狀態字樣黏在 .hud-body 看得到的底部。內容比視窗短時留在內容後面。
      底色蓋住捲過去的內文,不畫線。放大層在這塊外面。
      面板實際畫出來的顏色是 var(--hud-panel) 疊在 var(--hud-solid) 上。card-static 不准
-     一個 background 疊兩層,所以底色與 ::before 各畫一層。::after 再墊一層不透明底,
-     跟 ::before 一起往下多蓋 1px,補 .hud-body 那 1px 縫與 Wayland 提示上的第二排。
-     bottom 與 margin-bottom 各 -1px 把黏住的位置往下挪 1px;padding-bottom 仍是 1px。 */
+     一個 background 疊兩層,所以底色與 ::before 各畫一層。::after 再墊一層不透明底。
+     沒有 Wayland 提示時兩個偽元素 inset 是 0,不把多蓋的 1px 算進可以捲的範圍。
+     提示在時(body 直接子元素 #lc-wayland-note)才把 bottom 設成 -1px,蓋提示上緣那一排。
+     按掉提示就從 DOM 拿掉,:has() 自然不中。黏底那一塊本身的 bottom 與 margin-bottom
+     各 -1px 照舊;padding-bottom 仍是 1px。 */
   .dock {
     position: sticky;
     bottom: -1px;
@@ -467,8 +469,12 @@
   .dock::after {
     content: '';
     position: absolute;
-    inset: 0 0 -1px 0;
+    inset: 0;
     pointer-events: none;
+  }
+  :global(body:has(> #lc-wayland-note)) .dock::before,
+  :global(body:has(> #lc-wayland-note)) .dock::after {
+    bottom: -1px;
   }
   .dock::before {
     z-index: -1;
