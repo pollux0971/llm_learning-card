@@ -487,6 +487,7 @@ describe('要求 4(Q3):字數判斷與 validateCard 一模一樣', () => {
     ['body 以 --- 開頭(不能被當成 front matter 吃掉)', '---\nfoo: bar\n---\n' + '同'.repeat(99)],
     // 下面兩列是 word-count-min.ts 的圍欄正則(\n 可有可無)和 parse-card.ts 的(\n 必須緊接 example)算法不同的地方,
     // 都不是同一行開閉。這裡只要求和 validateCard 一樣;§2 對它們應該算多少是 T20 的事。
+    // (T51 補測之後:example 後面只有空白是圍欄開始行;example 後面還有字仍不是圍欄,契約沒定義,維持現狀。)
     ['example 後面有空白再換行', '同'.repeat(120) + `\n${F}example \n內容\n${F}`],
     ['example 後面還有字', '同'.repeat(120) + `\n${F}example js\n內容\n${F}`],
   ];
@@ -505,8 +506,9 @@ describe('要求 4(Q3):字數判斷與 validateCard 一模一樣', () => {
     ['--- 開頭 99', '---\nfoo: bar\n---\n' + '同'.repeat(99), 101],
     ['多個圍欄 50+50', '同'.repeat(50) + `\n${F}example\n很多字很多字\n${F}\n` + '同'.repeat(50) + `\n${F}example\n又是很多字\n${F}`, 100],
     ['多個圍欄 51+50', '同'.repeat(51) + `\n${F}example\n很多字很多字\n${F}\n` + '同'.repeat(50) + `\n${F}example\n又是很多字\n${F}`, 101],
-    ['example 後面有空白 97', '同'.repeat(97) + `\n${F}example \n內容\n${F}`, 100],
-    ['example 後面有空白 98', '同'.repeat(98) + `\n${F}example \n內容\n${F}`, 101],
+    // T51 補測(顧問 2026-10-25 乙):example 後面只有空白/Tab 再換行,是 CommonMark 的圍欄開始行,整段圍欄不算字(原本這兩列把它當一般文字,97 → 100)
+    ['example 後面有空白(是圍欄)100', '同'.repeat(100) + `\n${F}example \n內容\n${F}`, 100],
+    ['example 後面有空白(是圍欄)101', '同'.repeat(101) + `\n${F}example \n內容\n${F}`, 101],
     ['example 後面還有字 96', '同'.repeat(96) + `\n${F}example js\n內容\n${F}`, 100],
     ['example 後面還有字 97', '同'.repeat(97) + `\n${F}example js\n內容\n${F}`, 101],
   ];
