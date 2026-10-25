@@ -4,7 +4,7 @@ deps: [T54]
 touches: [packages/ui-shared/src/hud/HudResizeHandles.svelte, packages/ui-shared/src/hud/HudTitleBar.svelte, packages/ui-shared/src/hud/hud-drag-wiring-render.test.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 只有 mousedown、沒有 pointerdown 的那一下(WebKitGTK 在桌面接手拖拉之後就是這樣)沒有開始拖拉:渲染測試 d 必須紅(現況紅)
