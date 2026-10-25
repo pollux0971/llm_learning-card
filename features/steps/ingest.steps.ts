@@ -9,7 +9,7 @@ import { ROOT, type LearningWorld } from './_world.js';
 import { FakeLlmRouter, type FakeFixtureRecord } from '../../packages/core/src/ingest/fake-llm.js';
 import { runIngest, type RunIngestResult } from '../../packages/core/src/ingest/ingest.js';
 import { ensureInitialized, setCategory } from '../../packages/core/src/ingest/init.js';
-import { countBodyWords } from '../../packages/core/src/ingest/word-count-min.js';
+import { enforceWordLimit } from '../../packages/core/src/ingest/generate-cards.js';
 import { readJsonOr, readLogEvents } from '../../packages/core/src/ingest/state.js';
 
 // ---------------------------------------------------------------- 場景內狀態
@@ -266,11 +266,25 @@ Then('every line range falls inside the file', function (this: LearningWorld) {
   }
 });
 
-Then('the written card has a {int} word body', function (this: LearningWorld, n: number) {
+/** ingest 對一段 body 算出的字數:generate-cards 的字數函式(跟 validateCard 同一條路),字數沒超過上限時不會叫 LLM。 */
+async function ingestBodyWordCount(body: string): Promise<number> {
+  const r = await enforceWordLimit(
+    async () => {
+      throw new Error('字數沒超過上限,不該叫 LLM');
+    },
+    'ingest.cards',
+    'step',
+    'step',
+    { title: 'step', body, examples: [] },
+  );
+  return r.attempts[0]!.wordCount;
+}
+
+Then('the written card has a {int} word body', async function (this: LearningWorld, n: number) {
   const s = ctx(this);
   const cards = readAllCards(this.dir!, s.category);
   assert.equal(cards.length, 1, `預期只有一張卡,實際 ${cards.length}`);
-  assert.equal(countBodyWords(cards[0]!.content.trim()), n);
+  assert.equal(await ingestBodyWordCount(cards[0]!.content.trim()), n);
 });
 
 Then('one regenerate event is logged', function (this: LearningWorld) {

@@ -1,7 +1,8 @@
 /**
  * Wave 0 的本地型別,對應 contracts/types.md §2 §7。
- * I1 整合後改成從 @learning/contracts import,這份檔案跟著 fake-llm.ts /
- * word-count-min.ts 一起移除(見 FEATURE.md「Wave 0 的重複」表)。
+ * I1 整合後改成從 @learning/contracts import。字數已改走 schema 的
+ * parseCardText + countWords 與 @contracts 的 CARD_BODY_WORD_LIMIT(T20);
+ * 這份檔案與 fake-llm.ts 仍是 Wave 0 stub(見 FEATURE.md「Wave 0 的重複」表)。
  */
 
 export type CardId = string;

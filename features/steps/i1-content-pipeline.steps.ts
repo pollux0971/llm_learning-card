@@ -40,7 +40,7 @@ import { CloudRequiredError as RealCloudRequiredError } from '../../packages/cor
 import { validateCard } from '../../packages/core/src/schema/validate-card.js';
 import { parseCardText } from '../../packages/core/src/schema/parse-card.js';
 import { countWords as dataLayerCountWords } from '../../packages/core/src/schema/word-count.js';
-import { countBodyWords as ingestCountBodyWords } from '../../packages/core/src/ingest/word-count-min.js';
+import { enforceWordLimit } from '../../packages/core/src/ingest/generate-cards.js';
 import { detectCycle, readCategoryGraph, checkPrereqConsistency } from '../../packages/core/src/schema/graph.js';
 
 // ---------------------------------------------------------------- 場景內狀態
@@ -287,15 +287,26 @@ When('the person runs it again', async function (this: LearningWorld) {
   await runPipeline(this);
 });
 
-When('both the ingest validator and lint are run against the word count fixture', function (this: LearningWorld) {
+When('both the ingest validator and lint are run against the word count fixture', async function (this: LearningWorld) {
   const raw = readFileSync(join(ROOT, 'contracts/fixtures/cards/wordcount-cases.md'), 'utf8');
   const parsed = parseCardText(raw);
   const c = ctx(this);
   // 兩邊都對「已經去掉 frontmatter 與 example 圍欄」的同一段 body 計算,
   // 隔離出「兩個獨立實作的計數演算法是否一致」這件事,不混進 frontmatter/
   // 圍欄解析的差異(那是共用的 parseCardText,不是這個場景要測的東西)。
-  c.wordCountFixtureIngestCount = ingestCountBodyWords(parsed.body);
-  c.wordCountFixtureDataLayerCount = dataLayerCountWords(parsed.body);
+  // ingest 這邊:generate-cards 的字數函式(經 enforceWordLimit 記下的第一次字數);data-layer 這邊:validateCard 的 bodyWordCount。
+  // 兩條路現在是同一條(T20 之後沒有獨立複本),這一步要證明它們對同一份 fixture 算出同一個數字。
+  const attempt = await enforceWordLimit(
+    async () => {
+      throw new Error('字數沒超過上限,不該叫 LLM');
+    },
+    'ingest.cards',
+    'security',
+    'word-count-fixture',
+    { title: 'word count fixture', body: parsed.body, examples: [] },
+  );
+  c.wordCountFixtureIngestCount = attempt.attempts[0]!.wordCount;
+  c.wordCountFixtureDataLayerCount = validateCard(raw).bodyWordCount;
 });
 
 // ---------------------------------------------------------------- Then
