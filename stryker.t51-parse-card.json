@@ -1,0 +1,15 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='{packages/core/src/schema/parse-card.test.ts,packages/core/src/schema/validate-card.test.ts,packages/core/src/schema/validate-card.contract-vectors.test.ts,packages/core/src/schema/validate-card.fence-whitespace.test.ts}' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": ["clear-text", "progress-append-only", "json"],
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "coverageAnalysis": "off",
+  "concurrency": 2,
+  "timeoutMS": 120000,
+  "mutate": ["packages/core/src/schema/parse-card.ts"],
+  "thresholds": { "high": 90, "low": 80, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "apps/desktop/src-tauri/target"]
+}
