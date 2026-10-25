@@ -103,3 +103,32 @@ describe('C3. 開始行 example 後面有空白或 Tab(CommonMark 允許)', () =
     }
   }
 });
+
+// ---------------------------------------------------------------- D. 不算結束的行(護欄;顧問 5a 裁決乙:①結束反引號後面有字、③貼在內容行尾,CommonMark 也不算)
+// 圍欄「裡面」放這種行,圍欄要撐到真正的結束行:examples 含那些行、body 只剩 前、後 = 2。
+// 讓「結束不必在行首」「結束反引號後面可以接字」這類改壞轉紅。ee0d8ef 上本來就綠。
+describe('D. 圍欄裡面的「N 個反引號後面接字」「內容貼著 N 個反引號結尾」不算結束(護欄)', () => {
+  const trapFollowedByWord = (n: number): string => `${TICKS(n)}後面有字`;
+  const trapGluedToContent = (n: number): string => `貼著結尾的內容${TICKS(n)}`;
+  const cases = (n: number): [string, string[]][] => [
+    ['N 個反引號後面接字', [trapFollowedByWord(n)]],
+    ['內容貼著 N 個反引號結尾', [trapGluedToContent(n)]],
+    ['兩種都有(順序:貼著在前、接字在後)', [trapGluedToContent(n), trapFollowedByWord(n)]],
+  ];
+  for (const n of [3, 4]) {
+    for (const [name, traps] of cases(n)) {
+      it(`${n} 個反引號:圍欄裡面有「${name}」的行,圍欄撐到真正的結束行`, () => {
+        const inner = `${contentFor(n)}\n${traps.join('\n')}`;
+        const raw = card(`前\n${TICKS(n)}example\n${inner}\n${TICKS(n)}\n後`);
+        const parsed = parseCardText(raw);
+        expect(parsed.examples, '那些行都在 example 裡面,沒有提早結束').toEqual([inner]);
+        expect(parsed.body.replace(/\s+/g, ''), 'body 只剩 前、後').toBe('前後');
+        const r = validateCard(raw);
+        expect(r.errors, '卡要合法').toEqual([]);
+        expect(r.bodyWordCount, '圍欄整段拿掉,只剩 前、後').toBe(2);
+        expect(r.examplesCount).toBe(1);
+        expect(r.card?.examples).toEqual([inner]);
+      });
+    }
+  }
+});
