@@ -4,7 +4,7 @@ deps: [T49]
 touches: [apps/teach-card/src/]
 cpu: light
 budget_usd: 1
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 沒有 Wayland 提示時,黏底那一塊的偽元素仍往下多蓋 1 px(67e2ded 現況,可以捲的範圍多 1 px、捲到底按鈕上移約 1.3 px):新的渲染測試 c1 必須紅;c4 留下的話也必須紅
