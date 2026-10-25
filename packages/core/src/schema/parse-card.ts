@@ -9,7 +9,12 @@ export interface ParsedCard {
   examples: string[];
 }
 
-const EXAMPLE_FENCE_RE = /```example\r?\n([\s\S]*?)```/g;
+/**
+ * 契約 §2「Example 圍欄」:三個以上反引號接著 example 與換行開始,
+ * 以同樣數量、自成一行的反引號結束。數量比開始少的那一行不結束。
+ * 第一個捕獲組是開頭的反引號,第二個是圍欄內容(尚未 trim)。
+ */
+const EXAMPLE_FENCE_RE = /(?<!`)(`{3,})example\r?\n([\s\S]*?)^\1(?!`)(?=\r?\n|$)/gm;
 
 /**
  * gray-matter 底層的 YAML 解析器(js-yaml)會把 `created: 2026-09-01` 這種
@@ -29,7 +34,7 @@ export function parseCardText(raw: string): ParsedCard {
   const { data, content } = matter(raw);
   const examples: string[] = [];
   const body = content
-    .replace(EXAMPLE_FENCE_RE, (_match, inner: string) => {
+    .replace(EXAMPLE_FENCE_RE, (_match, _ticks: string, inner: string) => {
       examples.push(inner.trim());
       return '';
     })
