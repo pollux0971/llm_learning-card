@@ -14,7 +14,8 @@
 
   let { controls }: { controls?: WindowControls } = $props();
 
-  function onResize(edge: ResizeDirection): void {
+  function onResize(event: MouseEvent, edge: ResizeDirection): void {
+    if (event.button !== 0) return;
     void controls?.startResizeDragging(edge);
   }
 </script>
@@ -23,6 +24,6 @@
   <div
     data-hud="resize-handle"
     data-hud-edge={edge}
-    onpointerdown={() => onResize(edge)}
+    onmousedown={(event) => onResize(event, edge)}
   ></div>
 {/each}
