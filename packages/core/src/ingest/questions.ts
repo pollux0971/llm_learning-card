@@ -15,9 +15,9 @@
  * does not lose the others」)。
  *
  * 型別選擇:這裡直接用 @contracts/index.js 的 Card / QuestionFile 等——那是
- * 01-data-layer 已經做完的真型別,不是 ingest/types.ts 的 Wave 0 stub(那份留給
- * fake-llm.ts / word-count-min.ts,換不換是下一輪對「Wave 0 的重複」表的決定,
- * 跟這裡的新模組無關,新模組沒有理由背這筆技術債)。
+ * 01-data-layer 已經做完的真型別,不是 ingest/types.ts 的 Wave 0 stub(那份現在
+ * 只留給 fake-llm.ts。換不換是「Wave 0 的重複」表的決定,跟這裡的新模組無關,
+ * 新模組沒有理由背這筆技術債)。
  *
  * ---- 型別 ----
  * interface QuestionCandidate { fill: FillQuestion[]; apply: ApplyQuestion[] }  // 模型回應,不含 card id

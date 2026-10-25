@@ -1,7 +1,7 @@
 /** 呼叫 LlmRouter 產生卡片候選,對超過字數上限的卡片重試,最多 3 次嘗試。 */
 import type { LlmRouter } from './types.js';
-import { BODY_WORD_LIMIT } from './word-count-min.js';
 import { loadPromptTemplate } from './prompts.js';
+import { CARD_BODY_WORD_LIMIT } from '@contracts/index.js';
 import { witness } from '@contracts/witness.js';
 import { countWords, parseCardText } from '@core/schema/index.js';
 
@@ -89,7 +89,7 @@ export async function enforceWordLimit(
   const attempts: RegenerateAttempt[] = [{ attempt: 1, wordCount: countBodyWords(current.body), body: current.body }];
   const warnings: string[] = [];
   let attemptNum = 1;
-  while (countBodyWords(current.body) > BODY_WORD_LIMIT && attemptNum < MAX_ATTEMPTS) {
+  while (countBodyWords(current.body) > CARD_BODY_WORD_LIMIT && attemptNum < MAX_ATTEMPTS) {
     attemptNum += 1;
     if (task === 'ingest.cards') witness('ingest.cards.regenerate-retry');
     const regenerated = await callAndParseRegenerated(call, task, buildRegeneratePrompt(category, sourceLabel, current));
@@ -103,7 +103,7 @@ export async function enforceWordLimit(
     title: current.title,
     body: current.body,
     examples: current.examples,
-    accepted: countBodyWords(current.body) <= BODY_WORD_LIMIT,
+    accepted: countBodyWords(current.body) <= CARD_BODY_WORD_LIMIT,
     attempts,
     warnings,
   };
@@ -142,7 +142,7 @@ export async function generateCards(
 
 /**
  * 字數唯一函式:跟寫檔前後把關的 `validateCard` 走同一條路
- * (`countWords(parseCardText(前綴 + body).body)`),不用 `word-count-min.ts` 的複本。
+ * (`countWords(parseCardText(前綴 + body).body)`)。上限是 @contracts 的 CARD_BODY_WORD_LIMIT。
  */
 function countBodyWords(body: string): number {
   return countWords(parseCardText(CARD_FILE_PREFIX + body.trim() + '\n').body);
@@ -256,7 +256,7 @@ function buildRegeneratePrompt(category: string, sourceLabel: string, previous: 
     `category: ${category}`,
     `source: ${sourceLabel}`,
     `title: ${previous.title}`,
-    `limit: ${BODY_WORD_LIMIT}`,
+    `limit: ${CARD_BODY_WORD_LIMIT}`,
     `previous body: ${previous.body}`,
   ].join('\n');
 }
