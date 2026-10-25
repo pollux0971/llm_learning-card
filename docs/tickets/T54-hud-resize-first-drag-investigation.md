@@ -4,7 +4,7 @@ deps: []
 touches: [docs/reviews/]
 cpu: heavy
 budget_usd: 1
-status: todo
+status: merged
 owner: 前端
 must_catch:
   - 結論沒有數字撐住(每個假說都要有一個實驗能讓它不成立;報告列出每個實驗的次數與結果)
