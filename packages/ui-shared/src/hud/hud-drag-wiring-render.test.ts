@@ -320,3 +320,37 @@ describe('T56 e. 一次左鍵按下,剛好開始一次', () => {
     });
   }
 });
+
+// T56 補測 f(顧問裁 A,2026-10-25):不加 preventDefault。T54 量過它沒用,而且擋掉 mousedown 的預設動作還會改到焦點。
+// 送可取消(cancelable)的左鍵 mousedown,把手與標題列都要:事件最後 defaultPrevented 必須是假。
+// 基底(onpointerdown)上本來就綠(沒人呼叫 preventDefault),是護欄;實作加了 preventDefault 就紅。
+describe('T56 f. 不加 preventDefault(左鍵 mousedown 的預設動作留著)', () => {
+  for (const t of TARGETS) {
+    it(`f. ${nameOf(t)}:可取消的左鍵 mousedown(合成)→ defaultPrevented 為假(dispatchEvent 回 true)`, async () => {
+      await prepare();
+      const got = await pg().evaluate<{ notCanceled: boolean; defaultPrevented: boolean; cancelable: boolean }>(`(() => {
+        const el = document.querySelector(${JSON.stringify(selectorOf(t))});
+        const b = el.getBoundingClientRect();
+        const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true, composed: true, button: 0, buttons: 1, clientX: b.left + 3, clientY: b.top + 3 });
+        const notCanceled = el.dispatchEvent(ev);
+        return { notCanceled, defaultPrevented: ev.defaultPrevented, cancelable: ev.cancelable };
+      })()`);
+      expect(got.cancelable, '前提:事件是可取消的').toBe(true);
+      expect(got.defaultPrevented, `${nameOf(t)} 的 mousedown 被 preventDefault 了`).toBe(false);
+      expect(got.notCanceled).toBe(true);
+    });
+  }
+
+  it('f. 真的左鍵按在九個位置:冒泡到 document 時 mousedown 的 defaultPrevented 都是假', async () => {
+    await prepare();
+    await pg().evaluate(`(() => { window.__t56f = []; document.addEventListener('mousedown', (e) => window.__t56f.push({ prevented: e.defaultPrevented, button: e.button, target: e.target.closest('[data-hud]')?.getAttribute('data-hud') ?? '' }), false); return true; })()`);
+    for (const t of TARGETS) {
+      const { x, y } = await centre(t);
+      await ptr().click(x, y, 'left');
+    }
+    await sleep(300);
+    const seen = await pg().evaluate<{ prevented: boolean; button: number; target: string }[]>('window.__t56f.slice()');
+    expect(seen.length, `前提:九次真的按下都收到 mousedown(實際 ${seen.length})`).toBe(TARGETS.length);
+    expect(seen.filter((s) => s.prevented), `這些 mousedown 被 preventDefault 了:${JSON.stringify(seen)}`).toEqual([]);
+  });
+});
