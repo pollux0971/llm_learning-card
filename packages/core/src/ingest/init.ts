@@ -51,3 +51,11 @@ export function setCategory(dir: string, category: CategoryConfig): void {
   const next = [...list.filter((c) => c.id !== category.id), category];
   writeFileSync(categoriesPath, stringify(next), 'utf8');
 }
+
+/** 讀 categories.yaml。檔案不在或不是陣列就當空清單。只讀,不建骨架。 */
+export function listCategories(dir: string): CategoryConfig[] {
+  const categoriesPath = join(dir, 'config/categories.yaml');
+  if (!existsSync(categoriesPath)) return [];
+  const parsed = parse(readFileSync(categoriesPath, 'utf8'));
+  return Array.isArray(parsed) ? (parsed as CategoryConfig[]) : [];
+}
