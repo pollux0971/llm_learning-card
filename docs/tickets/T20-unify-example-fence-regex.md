@@ -4,7 +4,7 @@ deps: [T19]
 touches: [packages/core/src/ingest/word-count-min.ts, packages/core/src/ingest/word-count-min.test.ts, packages/core/src/ingest/generate-cards.ts, packages/core/src/ingest/index.ts, packages/core/src/ingest/types.ts, packages/core/src/ingest/questions.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 移除或改接之後,`ingest` 資料夾裡仍有任何地方呼叫 `word-count-min.ts` 的圍欄正則或 `countBodyWords`(兩份算法還在)
