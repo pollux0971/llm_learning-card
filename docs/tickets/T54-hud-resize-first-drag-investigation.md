@@ -1,5 +1,5 @@
 ---
-id: T51
+id: T54
 deps: []
 touches: [docs/reviews/]
 cpu: heavy
@@ -14,11 +14,11 @@ must_catch:
   - 對 :1 送任何輸入,或碰真桌面的 ibus-daemon
 ---
 
-# 工單 T51(調查):HUD 縮放把手第一下拖不動、變成選字(T47 `@manual` 的 O1)
+# 工單 T54(調查):HUD 縮放把手第一下拖不動、變成選字(T47 `@manual` 的 O1)
 
-> 狀態:起草 2026-10-25,依技術顧問 2026-10-25 的交代(07p4 之後;低優先;先寫「要量什麼才能分辨視窗管理員吃事件還是我們的程式」,送顧問審)。規格與調查:UI/Tauri 負責人。編號 T51:暫用,協調者配號時改。
+> 狀態:起草 2026-10-25,依技術顧問 2026-10-25 的交代(07p4 之後;低優先;先寫「要量什麼才能分辨視窗管理員吃事件還是我們的程式」,送顧問審)。規格與調查:UI/Tauri 負責人。編號 T54:暫用(T51–T53 協調者已配給別張),協調者配號時改。
 > 依據:`../reviews/T47-manual-2026-10-24.md` 的 O1;元件 `../../packages/ui-shared/src/hud/HudResizeHandles.svelte:26`(14-hud-skin phase-1)。
-> **這張只調查,不改產品碼。** 交件是一份報告(`docs/reviews/T51-investigation.md`)加建議:開修正工單,或收。LLM 真呼叫 0。
+> **這張只調查,不改產品碼。** 交件是一份報告(`docs/reviews/T54-investigation.md`)加建議:開修正工單,或收。LLM 真呼叫 0。
 
 ## 已經知道的(T47 `@manual`,Xvfb `:97` + 巢狀 `gnome-shell --x11`,XTest 真拖拉)
 
@@ -73,7 +73,7 @@ must_catch:
 
 ## 交件
 
-- 報告 `docs/reviews/T51-investigation.md`:
+- 報告 `docs/reviews/T54-investigation.md`:
   - 每個實驗每一次的四層紀錄(表格),次數、結果。
   - H1 / H2 / H3 哪一個成立,哪一個實驗讓另一個不成立。
   - 建議:開修正工單(寫是改我們的元件、改 tao / WebKitGTK 的用法、還是只能繞過),或收(真人遇不到的理由)。
