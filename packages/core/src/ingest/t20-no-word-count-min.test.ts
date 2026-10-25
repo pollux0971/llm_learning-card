@@ -36,10 +36,14 @@ describe('T20:word-count-min 的複本已經移除', () => {
   it('前提:掃得到檔,而且這份測試自己不算', () => {
     const files = SCAN_DIRS.flatMap((d) => walk(join(ROOT, d)));
     expect(files.length, '前提:packages/、scripts/、features/ 要掃到不少檔').toBeGreaterThan(100);
-    expect(IMPORT_OF_RE.test(`import { x } from './word-count-min.js';`), '前提:正則抓得到 import').toBe(true);
-    expect(IMPORT_OF_RE.test(`export * from './word-count-min.js';`), '前提:正則抓得到 export from').toBe(true);
-    expect(IMPORT_OF_RE.test(`const m = await import('../x/word-count-min.js');`), '前提:正則抓得到動態 import').toBe(true);
-    expect(IMPORT_OF_RE.test(`// 不用 word-count-min.ts 的複本`), '前提:只提到檔名的註解不算').toBe(false);
+    // 示範字串不寫成連續的 import('…') / from '…' 字面(boundaries 掃描器會把它當成真的 import),拆成串接後再丟給正則
+    const NAME = 'word-count' + '-min';
+    const dynamic = 'const m = await import(' + `'../x/${NAME}.js'` + ');';
+    expect(IMPORT_OF_RE.test(`import { x } from './${NAME}.js';`), '前提:正則抓得到 import').toBe(true);
+    expect(IMPORT_OF_RE.test(`export * from './${NAME}.js';`), '前提:正則抓得到 export from').toBe(true);
+    expect(IMPORT_OF_RE.test(dynamic), '前提:正則抓得到動態 import(拆開寫的字串)').toBe(true);
+    expect(IMPORT_OF_RE.test('const m = await import(' + `'../x/other-module.js'` + ');'), '對照:動態 import 別的模組不抓').toBe(false);
+    expect(IMPORT_OF_RE.test(`// 不用 ${NAME}.ts 的複本`), '前提:只提到檔名的註解不算').toBe(false);
   });
 
   it('packages/、scripts/、features/ 沒有任何 import word-count-min(含測試與步驟定義)', () => {
