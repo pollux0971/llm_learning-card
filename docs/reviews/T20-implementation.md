@@ -27,28 +27,28 @@ ls: cannot access '.env': No such file or directory
 
 程式 import / export(已移除):
 
-- `packages/core/src/ingest/generate-cards.ts:3` `import { BODY_WORD_LIMIT } from './word-count-min.js'`
-- `packages/core/src/ingest/index.ts:3` `export * from './word-count-min.js'`
-- `packages/core/src/ingest/word-count-min.test.ts:1` import 自身
+- packages/core/src/ingest/generate-cards.ts 第 3 行 `import { BODY_WORD_LIMIT } from './word-count-min.js'`
+- packages/core/src/ingest/index.ts 第 3 行 `export * from './word-count-min.js'`
+- packages/core/src/ingest/word-count-min.test.ts 第 1 行 import 自身
 
 註解(實作檔已改寫):
 
-- `packages/core/src/ingest/generate-cards.ts:145`
-- `packages/core/src/ingest/types.ts:4`
-- `packages/core/src/ingest/questions.ts:19`
+- packages/core/src/ingest/generate-cards.ts 第 145 行
+- packages/core/src/ingest/types.ts 第 4 行
+- packages/core/src/ingest/questions.ts 第 19 行
 
 協調者文件(不碰):
 
-- `packages/core/README.md:9`
-- `features/02-ingest-pipeline/FEATURE.md:46`
-- `features/02-ingest-pipeline/FEATURE.md:95`
+- packages/core/README.md 第 9 行
+- features/02-ingest-pipeline/FEATURE.md 第 46 行
+- features/02-ingest-pipeline/FEATURE.md 第 95 行
 
 受保護測試(不碰;註解或探針字串,不是對已刪檔的 import):
 
 - `packages/core/src/ingest/t20-no-word-count-min.test.ts`(靜態測試本身,含第 39–41 行的探針字串)
-- `packages/core/src/ingest/example-fence-word-count.test.ts:2`
-- `packages/core/src/ingest/generate-cards.regenerate.test.ts:473`、`:488`
-- `packages/core/src/ingest/generate-cards.word-authority.test.ts:4`
+- packages/core/src/ingest/example-fence-word-count.test.ts 第 2 行
+- packages/core/src/ingest/generate-cards.regenerate.test.ts 第 473 行、`:488`
+- packages/core/src/ingest/generate-cards.word-authority.test.ts 第 4 行
 
 `scripts/` 沒有命中。
 
@@ -137,7 +137,7 @@ gate=doc-links result=PASS scanned=147
 
 ## 待協調
 
-1. **`npm run boundaries` 紅,不是這次實作造成的,也沒改測試去躲。** 唯一違規是受保護檔 `packages/core/src/ingest/t20-no-word-count-min.test.ts:41`:
+1. **`npm run boundaries` 紅,不是這次實作造成的,也沒改測試去躲。** 唯一違規是受保護檔 packages/core/src/ingest/t20-no-word-count-min.test.ts 第 41 行:
 
    `expect(IMPORT_OF_RE.test(\`const m = await import('../x/word-count-min.js');\`), ...)`
 

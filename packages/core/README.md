@@ -6,7 +6,7 @@
 | 功能 | 程式碼落點 | CLI 入口 | Wave 0 的 stub 也放這裡 |
 |---|---|---|---|
 | 01-data-layer | `packages/contracts/src/`、`src/schema/` | `src/schema/cli.ts` | — |
-| 02-ingest-pipeline | `src/ingest/`、`prompts/` | `scripts/ingest.ts` | `src/ingest/fake-llm.ts`、`src/ingest/word-count-min.ts` |
+| 02-ingest-pipeline | `src/ingest/`、`prompts/` | `scripts/ingest.ts` | `src/ingest/fake-llm.ts` |
 | 03-llm-router | `src/llm/` | `scripts/llm.ts` | `src/llm/log-min.ts` |
 | 04-scheduler | `src/scheduler/` | `scripts/due.ts` | — |
 | 05-grading | `src/grading/` | `scripts/grade.ts` | `src/grading/fake-llm.ts` |
