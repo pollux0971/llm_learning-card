@@ -4,7 +4,7 @@ deps: [T20]
 touches: [packages/core/src/schema/parse-card.ts]
 cpu: light
 budget_usd: 1
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 只認三個反引號的 example 圍欄(現況):契約 §2 四反引號那一列(= 2)與 fixture valid-example-with-nested-content.md(= 27)的 validateCard 測試必須紅
