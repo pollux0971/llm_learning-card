@@ -4,7 +4,7 @@ deps: [T20, T51]
 touches: [packages/core/src/ingest/, scripts/ingest.ts]
 cpu: light
 budget_usd: 2
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 已經處理過的 raw 又被處理,或它產生的卡被改寫:場景 4 必須紅
