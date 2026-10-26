@@ -1121,6 +1121,7 @@ graph TD
   - **維持四份實作 + 加交叉測試** —— 部分採用。**交叉測試要,但不是拿它換統一。** 理由:統一之後還是可能長出第五份,所以交叉測試無論如何都要有;但留著四份等交叉測試去抓,是讓守門去補設計的債。
 - **Consequences**: 契約本文第一次承認「它自己的字面比實作窄」。⚠️ **誠實記下這條 ADR 沒解決的問題**:§2 早就附了一張測試向量表(`same-origin`=2、`1.5`=2、`don't`=2 等六列),**四份實作還是漂了**,因為表只涵蓋寫表的人想到的類別 —— Script 對區段、四反引號,兩者都不在表上。所以**附向量表不等於防住漂移**。統籌 session 提出的分工要另案處理:契約負責提供機器可讀的向量檔(且向量要涵蓋定義裡每一個**類別**,不只每個例子),守門負責登記「實作這個定義的每一份程式」並檢查每一份都真的跑了同一份向量。那是 ADR-061 之後的事,不在這條裡。
 - **Related**: ADR-061(契約索引缺口)、`contracts/types.md` §2、`contracts/fixtures/cards/valid-example-with-nested-content.md`、四份 `word-count` 實作
+- **refined by ADR-081(2026-10-27)**:Decision 第 1 點的圍欄語法改成「以教學卡畫面的區塊解析為準」(markdown-it 15.0.1):結束至少跟開始一樣多、波浪號也算、資訊字串看第一段、清單與引用裡的也算;「尚未定義」的寫法都有了定義(使用者選 A)。第 2、3 點不變。
 
 ## ADR-061 · 契約的硬約定索引從一開始就不完整:§11b 與 §1 兩筆補上,論證只有一個
 
@@ -1668,3 +1669,32 @@ graph TD
   - sticky 遇到 T35 加在 `.hud-body` 的 `padding-bottom`:黏底的按鈕不能被 Wayland 提示蓋住,T47 紅測試 f 守這條。
   - 縮放級別記在 `deps.storage`,換卡、重新載入、重開 app 都保留。
 - **Related**: ADR-075、ADR-077、ADR-079、T35、T45(`docs/tickets/T45-teach-card-status-layout.md`)、T47(`docs/tickets/T47-teach-card-zoom-layout.md`)、`features/07-teach-card/phase-4.feature`。
+
+## ADR-081 · 契約 §2 的 example 圍欄以教學卡畫面的區塊解析為準(補充 ADR-060,不推翻)
+
+- **Status**: accepted · 2026-10-27(**使用者選 A**;做法由技術顧問裁;§2 是硬約定;前端起草)
+- **Context**:
+  1. ADR-060 把圍欄寫成「三個以上反引號 + `example`,同樣數量結束(與 CommonMark 的圍欄規則一致)」,留了兩種「尚未定義」(開閉同一行、沒有結束)。T51、T52 又量到四種(結束比開始多、`example` 後面有字、縮排 4 格、開始行前面有字)。字面「同樣數量」跟括號「與 CommonMark 一致」在「結束比開始多」上自相矛盾。
+  2. T57 起草時再量到:波浪號、清單與引用裡的圍欄、只有 CR 的換行、資訊字串的大小寫與 HTML 實體。
+  3. 畫面(`packages/ui-shared/src/example-fence.ts`)用 markdown-it。T57 向量檔新加的 30 種寫法裡,今天的 `validateCard` 有 20 種跟畫面算得不一樣。
+  4. 真資料 25 張卡、30 個圍欄,golden 117 個 body:這些寫法全部 0 次。用新做法重算,字數、examples、body 全部 0 筆不同。
+- **Decision**:
+  1. **哪些是 example 圍欄,以畫面的區塊解析為準**:markdown-it 15.0.1、選項 `{ html: false, linkify: true }`、解析 `String.prototype.trim()` 過的 body。資訊字串原文(`token.info`,不處理跳脫與 HTML 實體)trim 後用 `/\s+/` 切,第一段逐字等於 `example`。CommonMark 只用來描述。
+  2. **移除**:圍欄在解析結果裡佔的行(`token.map`)中,開始行留下第一個反引號或波浪號之前的部分(容器記號,例如清單的 `1. ` 照算 1),其他行整行拿掉。trim 過的 body 裡,圍欄以外逐位元組不變。
+  3. **examples** 用 `token.content` 再 trim,換行一律 `\n`(CRLF 的卡也一樣;已存的 CRLF 向量列跟著改)。內容是空的也算一個(空字串)。
+  4. 步驟 2 的「其他」寫完整:CJK 與 L*/N* 以外的所有字元(含 P*、S*、Z*、M*、C*)。所有實作本來就這樣算,程式不改。
+  5. **markdown-it 的版本寫進 §2(15.0.1)**。任何升版都是改 §2(硬約定),要先問使用者,並附向量檔每一列升版前後的差異。
+  6. 選項與 `isExampleFence(info)` 放在 `packages/contracts/src/card-markdown.ts`(0 個 import),這個檔是 §2 的一部分;core 與畫面都用它,`'example'` 這個字只出現在這個檔。core 對 markdown-it 只准用 `new MarkdownIt(選項)` 與實例的 `parse`,token 只准讀 `type`、`info`、`map`、`content`(白名單)。
+  7. 契約 1.4.0 → 1.5.0。1.2.0 向量表裡四反引號那一列的依據改成「結束至少要跟開始一樣多」。
+- **Alternatives**:
+  - **B 先不定義** —— 使用者不選。哪天模型這樣寫,字數跟畫面對不上。
+  - **乙:core 自己寫 regex 追 CommonMark** —— 不採用。容器、波浪號、沒有結束,等於自己再寫一個區塊解析器,是第六份實作,ADR-060 的漂移會再來一次。
+  - **驗證器直接拒收怪寫法** —— 不採用。手寫的卡畫面照樣顯示,字數還是跟畫面分家。
+  - **開始行整行拿掉** —— 不採用。清單的 `1. ` 是畫面看得到的編號,整行拿掉會少算(3 變 2)。
+  - **只在「向量變了」時才問使用者升版** —— 不採用。版本號寫在 §2 裡,升版本身就是改硬約定。
+- **Consequences**:
+  - core 的字數第一次依賴一個第三方解析器的版本。代價用三樣東西守:版本釘死、向量檔(每一份實作都跑每一列,T52),以及兩邊實例的規則鏈跟全新預設實例比函式身分(block 的每一條鏈、core 的鏈)。ADR-060 說「附向量表不等於防住漂移」;這次權威是一份程式(畫面用的解析器),向量檔是它的快照。
+  - `card-markdown.ts` 0 個 import:這個檔只裝 §2 的東西,不受其他契約檔影響。
+  - 一個已存的向量列改了(CRLF 的 examples 換成 `\n`)。這是 fixture 的「改既有的要 ADR」,就是這一條。
+  - 沒解決:畫面拆 frontmatter 用自己的 regex(`apps/teach-card/src/lib/card.ts`),core 用 gray-matter;兩邊拆法不同不在 §2,不在這條。
+- **Related**: ADR-060(refined)、T51、T52、T57、T58、`contracts/types.md` §2、`contracts/fixtures/word-count-vectors.json`、`docs/tickets/T57-example-fence-follows-screen.md`
