@@ -4,7 +4,7 @@ deps: [T53]
 touches: [packages/core/src/ingest/, scripts/ingest.ts, packages/core/prompts/ingest/topic.md, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/types.ts]
 cpu: light
 budget_usd: 2
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 分類要求 raw 時仍照主題生成,或分類有 raw 時拿主題生成:T53 的場景 1、3 必須紅(不退步)
