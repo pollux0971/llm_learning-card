@@ -1,0 +1,8 @@
+{
+  "id": "topic-git-branch",
+  "text": "[\n  {\n    \"title\": \"分支是提交的指標\",\n    \"body\": \"Git 分支是指向某個提交的可移動指標，建立分支不會複製整個專案。\",\n    \"examples\": [\n      \"main\\n└─ A ← B ← C\\n             ↑\\n          feature\"\n    ]\n  },\n  {\n    \"title\": \"建立與切換分支\",\n    \"body\": \"使用分支可在不同開發線之間切換，彼此的提交進度可以分開管理。\",\n    \"examples\": [\n      \"git switch -c feature/login\\ngit switch main\"\n    ]\n  },\n  {\n    \"title\": \"合併分支\",\n    \"body\": \"合併會把一個分支的提交整合到目前分支；若修改衝突，必須先解決衝突再完成合併。\",\n    \"examples\": [\n      \"git switch main\\ngit merge feature/login\"\n    ]\n  }\n]",
+  "structural": {
+    "issues": [],
+    "note": "結構性檢查只抓機械性的失敗(字數、JSON 合法性、rubric 條數、空格與答案數一致);內容對不對、是不是一個概念,需要人來評分。"
+  }
+}
