@@ -2125,6 +2125,20 @@
       ],
       "basis": "s2-fence-1.5.0",
       "why": "an empty example fence is still one example (an empty string); two of them give two"
+    },
+    {
+      "name": "fence: tilde inside a backtick fence info string",
+      "body": "\u524d\n\n```example a~b\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "strippedBody": "\u524d\n\n\n\n\u5f8c",
+      "covers": [
+        "fence-info-trailing-text"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "the opening line is cut at the first backtick; a tilde later in the info string must not move the cut (a tilde cut would leave the example marker in the body)"
     }
   ]
 }
