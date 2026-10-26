@@ -24,7 +24,7 @@
  */
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -478,5 +478,173 @@ describe('B3\' 登記:零輸入守門的 entry 與 owners', () => {
   });
   it('boundaries.owners.json 登記它的測試(測試 agent 已登記;worker 不要拿掉)', () => {
     expect(ownersText()).toMatch(/"scripts\/check-all-wrapped\.test\.ts",\s*"infra"/);
+  });
+});
+
+// ================================================================ 補測(T3 B3' 實作驗收缺口,顧問裁 A 點名版)
+// 只測行為與匯出的純函式,不要求任何防禦碼存在(worker 第二輪會刪掉不可達的守衛)。
+
+describe('B3\' 補 1:VITEST_MAX_WORKERS 設成空字串 → workers=default(不印空值)', () => {
+  it('VITEST_MAX_WORKERS="":起跑與結束行都是 workers=default', () => {
+    const r = runRunner(node('0'), { VITEST_MAX_WORKERS: '' });
+    expect(r.status, r.stderr).toBe(0);
+    const lines = chainLines(r.stderr);
+    expect(lines.length, '前提:wrapper 真的有跑').toBeGreaterThanOrEqual(2);
+    for (const line of lines) expect(line).toMatch(/ workers=default /);
+    for (const line of lines) expect(START_RE.test(line) || END_RE.test(line), line).toBe(true);
+  });
+});
+
+describe('B3\' 補 2:被包指令起不來 → 退出碼 127、只印一行 end(error 與 close 兩個事件都來,不重印)', () => {
+  const notExecutable = (): string => {
+    const f = join(tmp('lc-t3b-noexec-'), 'not-executable');
+    writeFileSync(f, '#!/bin/sh\nexit 0\n', 'utf8');
+    chmodSync(f, 0o644);
+    return f;
+  };
+  for (const [label, command] of [
+    ['指令不存在', '/nonexistent/definitely-not-a-command-xyz'],
+    ['檔案存在但沒有執行權限', notExecutable()],
+  ] as const) {
+    it(`${label}:退出碼 127、恰好一行 start 與一行 end、end 是最後一行、不卡住`, () => {
+      const r = runRunner([command], {}, 20_000);
+      expect(r.timedOut).toBe(false);
+      expect(r.status, r.stderr).toBe(127);
+      const lines = chainLines(r.stderr);
+      expect(lines.filter((l) => START_RE.test(l)).length, `start 行數:${lines.join('\n')}`).toBe(1);
+      expect(lines.filter((l) => END_RE.test(l)).length, `end 行數(重入守衛):${lines.join('\n')}`).toBe(1);
+      expect(lines.at(-1)).toMatch(/^\[chain-env\] end /);
+      expect(nonChain(r.stderr).trim().length, '要有一句說明').toBeGreaterThan(0);
+    });
+  }
+});
+
+describe('B3\' 補 3:CHAIN_ENV_SAMPLE_MS 只收「純十進位整數字串」且 100 ≤ n ≤ 3600000', () => {
+  const bad = ['0100', ' 100', '100 ', '3600001', '2147483648', '99999999999999999999', '1e3', '+100', '0x64', '100.0', '１００'];
+  for (const value of bad) {
+    it(`CHAIN_ENV_SAMPLE_MS=${JSON.stringify(value)}:退出碼 2、點名變數、沒有 start 行、被包指令沒跑`, () => {
+      const fx = fixture((m) => ({ mark: markerScript(m) }), ['mark']);
+      const r = runCli(WRAPPER, ['--root', fx.root], { CHAIN_ENV_SAMPLE_MS: value });
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(2);
+      expect(r.stderr).toContain('CHAIN_ENV_SAMPLE_MS');
+      expect(chainLines(r.stderr).filter((l) => START_RE.test(l)), '驗證要在印 start 行之前').toEqual([]);
+      expect(existsSync(fx.marker), '被包指令不該被啟動').toBe(false);
+      expect(r.stdout).not.toMatch(/gate=all/);
+    });
+  }
+
+  for (const good of ['100', '3600000']) {
+    it(`CHAIN_ENV_SAMPLE_MS=${good}(上下限本身合法):照跑、退出碼 0、有 start 行`, () => {
+      const fx = fixture((m) => ({ mark: markerScript(m) }), ['mark']);
+      const r = runCli(WRAPPER, ['--root', fx.root], { CHAIN_ENV_SAMPLE_MS: good });
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      expect(readFileSync(fx.marker, 'utf8')).toBe('x');
+      expect(chainLines(r.stderr).some((l) => START_RE.test(l))).toBe(true);
+    });
+  }
+});
+
+describe('B3\' 補 4:匯出純函式 childArgs(tsxCli, checkAll, argv)——只轉 argv.slice(2)', () => {
+  type ChildArgs = (tsxCli: string, checkAll: string, argv: readonly string[]) => string[];
+  const load = async (): Promise<ChildArgs> => {
+    const mod = (await import(pathToFileURL(WRAPPER).href)) as { childArgs?: ChildArgs };
+    if (typeof mod.childArgs !== 'function') throw new Error('scripts/check-all-wrapped.ts 要匯出 childArgs(tsxCli, checkAll, argv)');
+    return mod.childArgs;
+  };
+
+  it('結果 = [tsxCli, checkAll, ...argv.slice(2)]:前兩個是 node 與腳本路徑,後面原樣轉', async () => {
+    const childArgs = await load();
+    expect(childArgs('/t/tsx-cli.mjs', '/t/check-all.ts', ['/usr/bin/node', '/t/check-all-wrapped.ts', '--root', '/x', '--fail-fast', '--markdown'])).toEqual([
+      '/t/tsx-cli.mjs',
+      '/t/check-all.ts',
+      '--root',
+      '/x',
+      '--fail-fast',
+      '--markdown',
+    ]);
+  });
+
+  it('沒有額外參數(argv 只有兩個):只有兩個路徑', async () => {
+    const childArgs = await load();
+    expect(childArgs('/a/cli.mjs', '/b/check-all.ts', ['node', 'wrapper.ts'])).toEqual(['/a/cli.mjs', '/b/check-all.ts']);
+  });
+
+  it('參數原樣、順序不變(空字串、空白、引號、--、$、中文都不動);第一個參數不被吃掉', async () => {
+    const childArgs = await load();
+    const extra = ['', 'a b', "it's", '--', '$HOME', '中文', '--root=x y', '-'];
+    expect(childArgs('/a/cli.mjs', '/b/check-all.ts', ['node', 'wrapper.ts', ...extra])).toEqual(['/a/cli.mjs', '/b/check-all.ts', ...extra]);
+    expect(childArgs('c', 'k', ['n', 'w', 'only'])).toEqual(['c', 'k', 'only']);
+  });
+
+  it('不改傳進來的 argv,每次呼叫回新陣列', async () => {
+    const childArgs = await load();
+    const argv = Object.freeze(['node', 'wrapper.ts', '--root', '/x']);
+    const a = childArgs('c', 'k', argv);
+    const b = childArgs('c', 'k', argv);
+    expect(argv).toEqual(['node', 'wrapper.ts', '--root', '/x']);
+    expect(a).toEqual(b);
+    expect(a).not.toBe(b);
+  });
+
+  it('接線:CLI 的 main 用 childArgs(…, process.argv) 組子行程參數(不是各自再切一次)', () => {
+    const text = readFileSync(WRAPPER, 'utf8');
+    expect(text).toMatch(/childArgs\(\s*\w+\s*,\s*\w+\s*,\s*process\.argv\s*\)/);
+  });
+});
+
+describe('B3\' 補 5:runWrapped 結束後 SIGINT / SIGTERM 的 listener 數回到呼叫前(detach)', () => {
+  const COUNTER = join(RUNNER_DIR, 'counter.mts');
+  writeFileSync(
+    COUNTER,
+    [
+      `import { runWrapped } from ${JSON.stringify(pathToFileURL(WRAPPER).href)};`,
+      `const [command, ...args] = process.argv.slice(2);`,
+      `const count = () => ({ int: process.listenerCount('SIGINT'), term: process.listenerCount('SIGTERM') });`,
+      `const before = count();`,
+      `const code = await runWrapped({ command: command!, args, intervalMs: 100000 });`,
+      `console.log('COUNTS ' + JSON.stringify({ before, after: count(), code }));`,
+      ``,
+    ].join('\n'),
+    'utf8',
+  );
+  const counts = (childArgs: string[]): { before: { int: number; term: number }; after: { int: number; term: number }; code: number } => {
+    const r = spawnSync(process.execPath, [TSX_CLI, COUNTER, ...childArgs], { cwd: EMPTY_CWD, encoding: 'utf8', env: cleanEnv(), timeout: 60_000 });
+    const line = (r.stdout ?? '').split('\n').find((l) => l.startsWith('COUNTS '));
+    if (!line) throw new Error(`runner 沒印 COUNTS:${r.stdout}\n${r.stderr}`);
+    return JSON.parse(line.slice('COUNTS '.length));
+  };
+
+  for (const [label, argv, code] of [
+    ['正常結束', node('0'), 0],
+    ['失敗結束', node('process.exit(5)'), 5],
+    ['起不來', ['/nonexistent/definitely-not-a-command-xyz'], 127],
+    ['被訊號殺掉', node(`process.kill(process.pid, 'SIGKILL'); setTimeout(() => {}, 10000)`), 137],
+  ] as const) {
+    it(`${label}:runWrapped resolve(${code}) 之後,SIGINT 與 SIGTERM 的 listener 數跟呼叫前一樣`, () => {
+      const c = counts([...argv]);
+      expect(c.code).toBe(code);
+      expect(c.after.int, 'SIGINT listener 沒拆').toBe(c.before.int);
+      expect(c.after.term, 'SIGTERM listener 沒拆').toBe(c.before.term);
+    });
+  }
+});
+
+describe('B3\' 補 6:訊號一到就轉(行為,不看程式怎麼寫)', () => {
+  it('start 行一印出就送 SIGTERM(子行程還在開機、沒有 handler):wrapper 退出碼 143、自己不被訊號殺、子行程沒活下來', async () => {
+    const live = startRunner(node(`setTimeout(() => console.log('SURVIVED'), 4000)`));
+    await until(() => live.err().includes('[chain-env] start'), 'start 行');
+    live.child.kill('SIGTERM');
+    const res = await live.done;
+    expect(res.signal, 'wrapper 自己不能被訊號殺掉').toBeNull();
+    expect(res.code, live.err()).toBe(143);
+    expect(live.out(), '子行程沒被轉來的訊號殺掉').not.toContain('SURVIVED');
+    expect(chainLines(live.err()).filter((l) => END_RE.test(l)).length).toBe(1);
+  });
+
+  it('子行程已自己結束的情況下,wrapper 不丟錯:跑完就一行 end、退出碼是子行程的', () => {
+    const r = runRunner(node('process.exit(4)'));
+    expect(r.status, r.stderr).toBe(4);
+    expect(chainLines(r.stderr).filter((l) => END_RE.test(l)).length).toBe(1);
+    expect(nonChain(r.stderr)).toBe('');
   });
 });
