@@ -22,14 +22,14 @@ const quiet = (offline = false) => countingRouter({}, { offline });
 const titles = (n: number): string[] => Array.from({ length: n }, (_, i) => `卡${i + 1}`);
 
 describe('T53 extra:拒絕的結果每個桶都是空的', () => {
-  it('分類沒設定、要求 raw、主題還沒做:topicIgnored 為 false,所有清單都是空陣列', async () => {
+  it('分類沒設定、要求 raw(沒有 raw 卻給主題):topicIgnored 為 false,所有清單都是空陣列', async () => {
     const scan = await loadScan();
     const dir = makeLearning([
       { id: 'security', name: '資安', require_raw: true },
       { id: 'peach', name: '桃子', require_raw: false },
     ]);
     const empties = { topicIgnored: false, processed: [], skipped: [], skippedLinks: [], outsideCategory: [], staleCards: [], missingSourceCards: [], unreadableFlags: [], unconfiguredFolders: [] };
-    for (const args of [{ category: 'ghost' }, { category: 'security', topic: 'x' }, { category: 'peach', topic: 'x' }]) {
+    for (const args of [{ category: 'ghost' }, { category: 'security', topic: 'x' }]) {
       const r = await scan({ outDir: dir, router: quiet().router, today: TODAY, levelZeroOnly: true, ...args });
       expect(r.refused, JSON.stringify(args)).toBeDefined();
       expect(r).toMatchObject(empties);

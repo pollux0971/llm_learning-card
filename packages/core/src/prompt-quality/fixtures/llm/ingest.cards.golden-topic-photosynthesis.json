@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: topic-photosynthesis",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"光合作用是什麼\", \"body\": \"光合作用是植物、藻類與部分細菌利用光能,把二氧化碳和水製成葡萄糖並釋出氧氣的過程。光能被轉成儲存在糖裡的化學能。\", \"examples\": []}, {\"title\": \"光反應與暗反應\", \"body\": \"光反應在葉綠體的類囊體膜進行,吸收光能產生 ATP 與 NADPH,並分解水釋出氧。暗反應(卡爾文循環)在基質進行,用 ATP 與 NADPH 把二氧化碳固定成糖。\", \"examples\": []}, {\"title\": \"葉子為什麼是綠色\", \"body\": \"葉綠素主要吸收紅光與藍紫光,對綠光吸收較少,綠光多被反射出來,所以葉子看起來是綠色。\", \"examples\": []}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

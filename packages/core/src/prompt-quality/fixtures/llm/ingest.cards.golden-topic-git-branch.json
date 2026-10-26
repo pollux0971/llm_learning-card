@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: topic-git-branch",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"什麼是分支\", \"body\": \"Git 的分支是指向某個提交的輕量指標。建立分支很快,讓你在不影響主線的情況下開發新功能或修正問題。\", \"examples\": []}, {\"title\": \"合併分支\", \"body\": \"合併把一條分支的變更整合進目前的分支。兩邊沒有改到同一處時,Git 會自動合併;改到同一處就會產生衝突,需要人工解決。\", \"examples\": []}, {\"title\": \"快轉合併\", \"body\": \"目前分支沒有新提交、目標分支只是比它多走幾步時,Git 只要把指標往前移,這叫快轉合併,不會產生合併提交。\", \"examples\": []}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}
