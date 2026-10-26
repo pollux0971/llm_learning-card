@@ -7,18 +7,19 @@
  *
  * 匯出的 runWrapped 不自己 process.exit,intervalMs 不設下限。CLI 才讀 CHAIN_ENV_SAMPLE_MS。
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { availableParallelism, constants, hostname, loadavg } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SAMPLE_DEFAULT_MS = 30_000;
 const SAMPLE_MIN_MS = 100;
+const SAMPLE_MAX_MS = 3_600_000;
 
 export interface WrappedCommand {
   command: string;
   args: readonly string[];
-  /** 取樣間隔(毫秒)。函式裡不設下限;CLI 才拒絕 < 100 或非整數。 */
+  /** 取樣間隔(毫秒)。函式裡不設上下限;CLI 才拒絕範圍外或非整數。 */
   intervalMs: number;
 }
 
@@ -28,14 +29,12 @@ function workersField(): string {
   return raw;
 }
 
-function formatLoadPart(n: number | undefined): string {
-  if (n === undefined || !Number.isFinite(n) || n < 0) return '0';
-  // 避免 1e-7 這種科學記號,regex 要的是 1.23 形式。
+function formatLoadPart(n: number): string {
   return n.toFixed(2);
 }
 
 function formatLoad(): string {
-  const [one, five, fifteen] = loadavg();
+  const [one, five, fifteen] = loadavg() as [number, number, number];
   return `${formatLoadPart(one)}/${formatLoadPart(five)}/${formatLoadPart(fifteen)}`;
 }
 
@@ -48,8 +47,7 @@ function writeEnv(kind: 'start' | 'end' | 'sample'): void {
 }
 
 function signalNumber(signal: NodeJS.Signals): number {
-  const n = constants.signals[signal];
-  return typeof n === 'number' ? n : 1;
+  return constants.signals[signal];
 }
 
 /**
@@ -65,21 +63,13 @@ export function runWrapped({ command, args, intervalMs }: WrappedCommand): Promi
   }, intervalMs);
 
   return new Promise((resolve) => {
-    let child: ChildProcess | undefined;
-    let failedToStart = false;
-    let pending: NodeJS.Signals | undefined;
+    const child = spawn(command, args, { stdio: 'inherit' });
 
     const forward = (sig: NodeJS.Signals): void => {
-      if (!child || child.exitCode !== null || child.signalCode !== null) return;
-      try {
-        child.kill(sig);
-      } catch {
-        // ESRCH:子行程已經不見,結束行等 close / error。
-      }
+      child.kill(sig);
     };
 
     const onSignal = (sig: NodeJS.Signals): void => {
-      pending = sig;
       forward(sig);
     };
 
@@ -100,20 +90,12 @@ export function runWrapped({ command, args, intervalMs }: WrappedCommand): Promi
     process.on('SIGINT', onSignal);
     process.on('SIGTERM', onSignal);
 
-    child = spawn(command, args, { stdio: 'inherit' });
-    if (pending !== undefined) forward(pending);
-
     child.on('error', (err: Error) => {
-      failedToStart = true;
       process.stderr.write(`起不來 ${command}: ${err.message}\n`);
       finish(127);
     });
 
     child.on('close', (code, signal) => {
-      if (failedToStart) {
-        finish(127);
-        return;
-      }
       if (signal) {
         finish(128 + signalNumber(signal));
         return;
@@ -124,7 +106,7 @@ export function runWrapped({ command, args, intervalMs }: WrappedCommand): Promi
 }
 
 function rejectSampleMs(raw: string): never {
-  process.stderr.write(`CHAIN_ENV_SAMPLE_MS 必須是 >= ${SAMPLE_MIN_MS} 的正整數,收到 ${JSON.stringify(raw)}\n`);
+  process.stderr.write(`CHAIN_ENV_SAMPLE_MS 必須是 ${SAMPLE_MIN_MS} 到 ${SAMPLE_MAX_MS} 的純十進位整數(無前導零、無空白),收到 ${JSON.stringify(raw)}\n`);
   process.exit(2);
 }
 
@@ -133,8 +115,13 @@ function sampleIntervalMs(): number {
   if (raw === undefined) return SAMPLE_DEFAULT_MS;
   if (!/^[1-9]\d*$/.test(raw)) rejectSampleMs(raw);
   const n = Number(raw);
-  if (!Number.isSafeInteger(n) || n < SAMPLE_MIN_MS) rejectSampleMs(raw);
+  if (!Number.isSafeInteger(n) || n < SAMPLE_MIN_MS || n > SAMPLE_MAX_MS) rejectSampleMs(raw);
   return n;
+}
+
+/** 子行程參數:tsx cli、check-all.ts,再加上 argv 從第 3 個起(node 與本腳本路徑不轉發)。 */
+export function childArgs(tsxCli: string, checkAll: string, argv: readonly string[]): string[] {
+  return [tsxCli, checkAll, ...argv.slice(2)];
 }
 
 function isDirectRun(): boolean {
@@ -150,7 +137,7 @@ async function main(): Promise<void> {
   const checkAll = fileURLToPath(new URL('./check-all.ts', import.meta.url));
   const code = await runWrapped({
     command: process.execPath,
-    args: [tsxCli, checkAll, ...process.argv.slice(2)],
+    args: childArgs(tsxCli, checkAll, process.argv),
     intervalMs,
   });
   process.exit(code);

@@ -112,3 +112,86 @@ gate=doc-links result=PASS scanned=154
 ```
 
 `git diff -- scripts/check-all.ts` 無輸出。未追蹤的實作檔是 `scripts/check-all-wrapped.ts`。worktree 原本沒有 `node_modules`,用 tar 從 `/data/python/llm_learning-cards` 複製(排除 `.vite`、`.vite-temp`、`node_modules/node_modules`,連同 apps/teach-card、apps/test-card、packages/ui-shared 的 node_modules;沒有 symlink 當 node_modules;沒複製 src-tauri/target)。`node_modules` 被 gitignore,沒有 add、沒有 commit。
+
+## 第二輪
+
+起點:`git merge --ff-only t3b-round2`,快轉到 `f60b812`(驗收證據與補測)。只改 `scripts/check-all-wrapped.ts`,沒改測試檔。顧問點名的 7 件:
+
+1. `CHAIN_ENV_SAMPLE_MS` 只收純十進位整數字串(無前導零、無空白),且 100 ≤ n ≤ 3600000。否則在印 start 之前退出碼 2、stderr 點名該變數。scripts/check-all-wrapped.ts 第 108–119 行。
+2. load 取值刪掉 undefined / NaN / 負值守衛,直接 `toFixed(2)`。`loadavg()` 用 `as [number, number, number]` 應付 `noUncheckedIndexedAccess`。第 32–38 行。
+3. `signalNumber` 的 `typeof` 後備刪掉,直接回 `constants.signals[signal]`。第 49–51 行。
+4. 訊號 handler 改在 `spawn` 之後才註冊(第 66 行 spawn,第 90–91 行註冊)。刪掉 `pending` 與 spawn 後的補轉。`forward` 不再檢查 child 是否存在。
+5. `forward` 只留 `child.kill(sig)`。已退出檢查與 try/catch 刪掉。第 68–70 行。
+6. close handler 的 `failedToStart` 分支刪掉。error 與 close 都走 `finish`,重入守衛保留(第 82 行)。
+7. 匯出 `childArgs`。第 123–125 行。main 寫成 `childArgs(tsxCli, checkAll, process.argv)`。第 140 行。
+
+保留沒刪:`detach`(第 76–79 行)、`isDirectRun` 的 argv1 檢查(第 127–130 行)、main 最外層 catch(第 146–151 行)。`ChildProcess` 型別 import 因 child 不再是 optional 而拿掉,沒有別的邏輯改動。
+
+### 待協調
+
+沒有。沒跑變異、沒跑 `npm run check:all`、沒跑整鏈。
+
+### 指令與輸出原文
+
+`git merge --ff-only t3b-round2`:
+
+```text
+Updating 44db1bb..f60b812
+Fast-forward
+ docs/reviews/acceptance-T3B-impl.md |  59 +++++++++++++
+ scripts/check-all-wrapped.test.ts   | 170 +++++++++++++++++++++++++++++++++++-
+ stryker.t3b-wrapper.json            |  32 +++++++
+ 3 files changed, 260 insertions(+), 1 deletion(-)
+```
+
+`CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 npx vitest run scripts/check-all-wrapped.test.ts`:
+
+```text
+ RUN  v4.1.11 /home/pollux/orca/workspaces/llm_learning-cards-workers/t3b-opencode
+
+
+ Test Files  1 passed (1)
+      Tests  74 passed (74)
+   Start at  23:47:03
+   Duration  24.64s (transform 158ms, setup 71ms, import 111ms, tests 24.34s, environment 0ms)
+```
+
+`CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 npx vitest run scripts/zero-input-guard.test.ts`:
+
+```text
+ RUN  v4.1.11 /home/pollux/orca/workspaces/llm_learning-cards-workers/t3b-opencode
+
+
+ Test Files  1 passed (1)
+      Tests  789 passed | 174 skipped (963)
+   Start at  23:47:32
+   Duration  45.05s (transform 244ms, setup 132ms, import 157ms, tests 44.63s, environment 0ms)
+```
+
+`npx tsc --noEmit`:無輸出,exit 0。
+
+`npm run boundaries`:
+
+```text
+> boundaries
+> tsx scripts/check-boundaries.ts
+
+boundaries.owners.json: 設定:/home/pollux/orca/workspaces/llm_learning-cards-workers/t3b-opencode/scripts/boundaries.owners.json
+boundaries.allow.json: 設定:/home/pollux/orca/workspaces/llm_learning-cards-workers/t3b-opencode/scripts/boundaries.allow.json
+gates.config.json: 設定:/home/pollux/orca/workspaces/llm_learning-cards-workers/t3b-opencode/scripts/gates.config.json
+boundaries: 掃描 398 個檔案,允許例外 24 條
+涵蓋:納管 456 / 掃描 456 檔(100.0%),未納管目錄:
+  (無)
+✓ 無違規
+gate=boundaries result=PASS scanned=398
+```
+
+`npx tsx scripts/check-doc-links.ts`:
+
+```text
+doc-links: 排除片段 [node_modules, .git, .next, .nuxt, .svelte-kit, dist, build, out, coverage, .turbo, .cache, target, .stryker-tmp, __pycache__, .venv, venv, reports, archive, tmp-learning, learning]、排除前綴 [.claude/worktrees, contracts/fixtures]
+doc-links: 掃描 301 個 markdown 檔,154 條相對連結
+✓ 無壞掉的連結
+gate=doc-links result=PASS scanned=154
+```
+
