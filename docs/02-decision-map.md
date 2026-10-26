@@ -1680,7 +1680,7 @@ graph TD
   4. 真資料 25 張卡、30 個圍欄,golden 117 個 body:這些寫法全部 0 次。用新做法重算,字數、examples、body 全部 0 筆不同。
 - **Decision**:
   1. **哪些是 example 圍欄,以畫面的區塊解析為準**:markdown-it 15.0.1、選項 `{ html: false, linkify: true }`、解析 `String.prototype.trim()` 過的 body。資訊字串原文(`token.info`,不處理跳脫與 HTML 實體)trim 後用 `/\s+/` 切,第一段逐字等於 `example`。CommonMark 只用來描述。
-  2. **移除**:圍欄在解析結果裡佔的行(`token.map`)中,開始行留下第一個反引號或波浪號之前的部分(容器記號,例如清單的 `1. ` 照算 1),其他行整行拿掉。trim 過的 body 裡,圍欄以外逐位元組不變。
+  2. **移除**:圍欄在解析結果裡佔的行(`token.map`)中,開始行留下第一個反引號或波浪號之前的部分(容器記號,例如清單的 `1. ` 照算 1),其他行整行拿掉。trim 過的 body 裡,圍欄以外逐位元組不變。結果再 trim 就是 `Card.body`。
   3. **examples** 用 `token.content` 再 trim,換行一律 `\n`(CRLF 的卡也一樣;已存的 CRLF 向量列跟著改)。內容是空的也算一個(空字串)。
   4. 步驟 2 的「其他」寫完整:CJK 與 L*/N* 以外的所有字元(含 P*、S*、Z*、M*、C*)。所有實作本來就這樣算,程式不改。
   5. **markdown-it 的版本寫進 §2(15.0.1)**。任何升版都是改 §2(硬約定),要先問使用者,並附向量檔每一列升版前後的差異。
