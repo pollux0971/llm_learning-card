@@ -14,6 +14,7 @@
  *     host = os.hostname()、cores = os.availableParallelism()、workers = VITEST_MAX_WORKERS(沒設印 `default`,不猜數字)、load = os.loadavg() 三個數字(`1.23` 形式)。
  *   - CLI 取樣間隔:環境變數 `CHAIN_ENV_SAMPLE_MS`(預設 30000);不是正整數或 < 100 → 在啟動 check-all 前退出碼 2、stderr 點名該變數。
  *
+ * 安全:所有 spawn 的 cwd 都是 EMPTY_CWD(空的、非 git 的暫存目錄),見 EMPTY_CWD 的說明;wrapper 啟動 check-all 不得依賴 cwd。
  * 測試方式:
  *   - 匯出函式(a、b 取樣、c、e):用一個暫存的 runner(.mts)匯入 wrapper 並呼叫 runWrapped,當成子行程跑,從外面看它的 stdout/stderr/退出碼/收到訊號;
  *     這樣才能看見「stdio inherit 之後被包指令自己的輸出」與「wrapper 自己的行」是否分流、以及 resolve 後行程會不會卡住。
@@ -23,7 +24,7 @@
  */
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -47,6 +48,14 @@ function tmp(prefix: string): string {
   tmpDirs.push(d);
   return d;
 }
+
+/**
+ * 所有會起子行程的測試都用這個 cwd:一個空的、不在任何 git 工作樹裡的暫存目錄。
+ * 為什麼:check-all 沒有 --root 時用 cwd 的 git 根,cwd 是 repo 根的話,wrapper 一旦壞到不轉 --root,就會起真的整鏈(全套 vitest、cargo build)。
+ * 在這個 cwd 下沒有 --root 的 check-all 只會印「找不到 package.json」、FAIL、退出 1,不起任何一步。
+ * 因此 wrapper 啟動 check-all 的方式不能依賴 cwd(例如不能 `--import tsx` 靠 cwd 解析 tsx;要用絕對路徑)。
+ */
+const EMPTY_CWD = tmp('lc-t3b-cwd-');
 
 function cleanEnv(extra: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   const { NODE_OPTIONS: _n, VITEST_MAX_WORKERS: _w, CHAIN_ENV_SAMPLE_MS: _s, ...rest } = process.env;
@@ -85,7 +94,7 @@ interface Ran {
 }
 function runRunner(childArgs: string[], env: Record<string, string | undefined> = {}, timeoutMs = 60_000): Ran {
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, [TSX_CLI, RUNNER, ...childArgs], { cwd: ROOT, encoding: 'utf8', env: cleanEnv(env), timeout: timeoutMs });
+  const r = spawnSync(process.execPath, [TSX_CLI, RUNNER, ...childArgs], { cwd: EMPTY_CWD, encoding: 'utf8', env: cleanEnv(env), timeout: timeoutMs });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', timedOut: r.error !== undefined && (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT', ms: Date.now() - t0 };
 }
 const node = (script: string): string[] => [process.execPath, '-e', script];
@@ -213,7 +222,7 @@ function fixture(scripts: Record<string, string> | ((marker: string) => Record<s
 const markerScript = (marker: string): string => `node -e "require('fs').appendFileSync(${JSON.stringify(marker).replace(/"/g, "'")},'x')"`;
 
 function runCli(entry: string, args: string[], env: Record<string, string | undefined> = {}): { status: number | null; stdout: string; stderr: string } {
-  const r = spawnSync(process.execPath, [TSX_CLI, entry, ...args], { cwd: ROOT, encoding: 'utf8', env: cleanEnv(env), timeout: 120_000 });
+  const r = spawnSync(process.execPath, [TSX_CLI, entry, ...args], { cwd: EMPTY_CWD, encoding: 'utf8', env: cleanEnv(env), timeout: 120_000 });
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
@@ -288,6 +297,21 @@ describe('B3\' c(匯出函式):失敗輸出逐字、退出碼相同、stdout 最
   });
 });
 
+describe('B3\' 安全:不管 wrapper 怎麼壞,測試都不會在 repo 根起真的整鏈', () => {
+  it('測試用的 cwd 是空目錄、不在任何 git 工作樹裡', () => {
+    expect(readdirSync(EMPTY_CWD)).toEqual([]);
+    const g = spawnSync('git', ['-C', EMPTY_CWD, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+    expect(g.status, `${g.stdout}`).not.toBe(0);
+  });
+
+  it('這個 cwd 下、沒有 --root 的 check-all 不起任何一步:印找不到、FAIL、退出 1(wrapper 吞掉 --root 時就是這個下場)', () => {
+    const r = runCli(CHECK_ALL, []);
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(1);
+    expect(r.stdout).toMatch(/gate=all result=FAIL/);
+    expect(r.stdout).not.toMatch(/^✓ /m);
+  });
+});
+
 describe('B3\' c(CLI):跟直接跑 check-all.ts 比——退出碼、stdout、stderr(扣掉 [chain-env] 行)逐字相同,參數轉給 check-all', () => {
   const okFx = (): Fixture => fixture({ ok: 'node -e "console.log(\'hello-from-ok\')"', ok2: 'node -e "console.log(\'hello-from-ok2\')"' }, ['ok', 'ok2']);
   const badFx = (): Fixture => {
@@ -359,7 +383,7 @@ interface Live {
   done: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 function startRunner(childArgs: string[]): Live {
-  const child = spawn(process.execPath, [TSX_CLI, RUNNER, ...childArgs], { cwd: ROOT, env: cleanEnv({ RUNNER_INTERVAL_MS: '100000' }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [TSX_CLI, RUNNER, ...childArgs], { cwd: EMPTY_CWD, env: cleanEnv({ RUNNER_INTERVAL_MS: '100000' }), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   let err = '';
   child.stdout!.on('data', (d: Buffer) => (out += d.toString()));
