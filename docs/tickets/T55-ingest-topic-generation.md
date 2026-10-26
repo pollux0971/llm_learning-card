@@ -123,7 +123,7 @@ must_catch:
   - **先跑一次主題,再跑一次掃描**:主題卡一個位元組都不變,沒有被標 `source_missing`,`ingested.json` 的 `topic:` 鍵還在。
   - 主題正規化後空的、剛好 200 字元(過)、201 字元(拒絕);拒絕時 LLM 呼叫數 = 0、輸出目錄前後相同。
   - `state/` 底下沒有多出新檔。
-- golden:`ingest.topic` 的三個輸入、`--fake` 回應(`golden-fake/` 底下,`prompt_contains` 的標記唯一)、登記表的測試。
+- golden:`ingest.topic` 的三個輸入、`--fake` 回應(放在 `packages/core/src/prompt-quality/fixtures/llm/`〔`DEFAULT_FAKE_FIXTURE_DIR`〕;`golden-fake/` 只是 `--fake` 的輸出目錄、不進 git;`prompt_contains` 的標記唯一)、登記表的測試。
 - 紅綠寫進 commit 說明。`.feature` 有錯就回報顧問,不改。
 
 **改壞證明**(驗收 agent):`must_catch` 每一條各做一次(真呼叫那兩條看證據,不重跑),另外至少:6 張全寫 → 上限那條紅;寫出 `source_ref` → 場景 2 紅;重跑又生一批 → 那條紅;掃描不略過 `topic:` 鍵 → 先主題後掃描那條紅;sha 用沒正規化的主題 → 「只差空白」那條紅;拿掉長度檢查 → 201 字元那條紅。
