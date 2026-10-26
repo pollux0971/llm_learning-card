@@ -121,3 +121,12 @@ learning/:檔案數 64、整體雜湊 01d84e9c918e1cf4、帳本 111 行;前後�
 ## 花費
 
 實作者 $3.18 / 預算 $3 = 1.06 倍(沒超過 2 倍)。LLM(產品用)0。驗收的 i9 CPU:單元、畫面、build、cucumber 六個 tag 各一次,變異三次(第一次範圍設錯、第二次乾跑被擋、第三次完整)。
+
+## 補驗:E10 向量補列(紅測試分支補了一列之後)
+
+- 驗收簽出 tree 448caad55dd8373b48ae509852c5fbf4597528c1(實作 + 驗收證據 + 補的那一列)。
+- 向量檔新列「fence: tilde inside a backtick fence info string」:body 手算:反引號圍欄、資訊字串 example a~b 是 example,拿掉後剩「前」「後」2 個字,strippedBody 是前、兩個換行加空行、後,對。
+- 向量跨實作測試 + 守門測試 2 檔 63/63 全綠。
+- E10 改壞版(前綴「有波浪號就用波浪號」)套上去:9 條轉紅,失敗訊息都帶新列名,例如「fence: tilde inside a backtick fence info string」字數 4,該是 2;以及同一列的 body 留下 example 字樣,與該有的 body 不同。還原後 63/63 綠。
+- 結論:E10 缺口已補,且補得接得住。
+- learning/ 前後:64 / 01d84e9c918e1cf4 / 111 不變。
