@@ -221,11 +221,19 @@
       "infra"
     ],
     [
+      "scripts/check-all-wrapped.ts",
+      "infra"
+    ],
+    [
       "scripts/check-deliberately-absent.ts",
       "infra"
     ],
     [
       "scripts/check-all.test.ts",
+      "infra"
+    ],
+    [
+      "scripts/check-all-wrapped.test.ts",
       "infra"
     ],
     [

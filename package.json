@@ -23,7 +23,7 @@
     "accept:coverage": "tsx scripts/check-phase-coverage.ts",
     "check:gates": "bash scripts/check-gates-pinned.sh",
     "check:template-freshness": "tsx scripts/check-template-freshness.ts",
-    "check:all": "tsx scripts/check-all.ts",
+    "check:all": "tsx scripts/check-all-wrapped.ts",
     "check:deliberately-absent": "tsx scripts/check-deliberately-absent.ts",
     "check:doc-rot": "tsx scripts/check-doc-rot.ts",
     "check:next-gates": "tsx scripts/check-next-gates.ts",

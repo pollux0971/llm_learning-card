@@ -271,6 +271,29 @@ const WITNESS_OK = `${JSON.stringify({ file: 'packages/core/src/llm/router.test.
 
 // ───────────────────────────────────────────────────────────────── 清單
 
+/**
+ * check-all 與 check-all-wrapped 共用這一批 builder(同一個參考,不要複製)。
+ * --root 指到假 consumer,零輸入守門才不會起真的整鏈。
+ */
+const checkAllCommand: Command = {
+  label: 'check-all',
+  // 不對本 repo 跑(chain 含全套 test,幾分鐘):--root 指到一個只有一條 `node -e 0` 鏈的假 consumer。
+  baselines: {
+    healthy: (s) => {
+      const root = emptyDir(s, 'consumer');
+      file(root, 'package.json', JSON.stringify({ name: 'c', private: true, scripts: { ok: 'node -e 0' } }));
+      file(root, 'scripts/gates.config.json', JSON.stringify({ chain: ['ok'] }));
+      return { args: ['--root', root] };
+    },
+  },
+  probes: [
+    { kind: 'empty', name: 'chain 是空陣列', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": [] }'); return { args: ['--root', root] }; } },
+    { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
+    { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": ['); return { args: ['--root', root] }; } },
+    { kind: 'wrong-type', name: 'chain 是字串', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": "test" }'); return { args: ['--root', root] }; } },
+  ],
+};
+
 export const SCHEMA_CLI = 'packages/core/src/schema/cli.ts';
 
 export const ROSTER: Record<string, Entry> = {
@@ -357,24 +380,15 @@ export const ROSTER: Record<string, Entry> = {
   // ── 守門腳本(模板 v1.3.4,勿手改;這裡的紅燈走模板升版,不直接改檔) ──
   'scripts/check-all.ts': {
     kind: 'entry',
+    commands: [checkAllCommand],
+  },
+  'scripts/check-all-wrapped.ts': {
+    kind: 'entry',
     commands: [
       {
-        label: 'check-all',
-        // 不對本 repo 跑(chain 含全套 test,幾分鐘):--root 指到一個只有一條 `node -e 0` 鏈的假 consumer。
-        baselines: {
-          healthy: (s) => {
-            const root = emptyDir(s, 'consumer');
-            file(root, 'package.json', JSON.stringify({ name: 'c', private: true, scripts: { ok: 'node -e 0' } }));
-            file(root, 'scripts/gates.config.json', JSON.stringify({ chain: ['ok'] }));
-            return { args: ['--root', root] };
-          },
-        },
-        probes: [
-          { kind: 'empty', name: 'chain 是空陣列', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": [] }'); return { args: ['--root', root] }; } },
-          { kind: 'missing', name: '--root 不存在', build: (s) => { const p = missingPath(s, 'nope'); return { args: ['--root', p], mention: p }; } },
-          { kind: 'malformed', name: 'gates.config.json 是壞 JSON', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": ['); return { args: ['--root', root] }; } },
-          { kind: 'wrong-type', name: 'chain 是字串', build: (s) => { const root = emptyDir(s, 'consumer'); file(root, 'package.json', '{ "scripts": {} }'); file(root, 'scripts/gates.config.json', '{ "chain": "test" }'); return { args: ['--root', root] }; } },
-        ],
+        label: 'check-all-wrapped',
+        baselines: checkAllCommand.baselines,
+        probes: checkAllCommand.probes,
       },
     ],
   },
