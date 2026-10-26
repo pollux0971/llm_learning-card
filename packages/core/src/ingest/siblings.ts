@@ -8,19 +8,13 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CardFrontmatterSchema, type Card } from '@contracts/index.js';
-import { parseCardText } from '@core/schema/index.js';
+import { parseCardText, stripExampleFences } from '@core/schema/index.js';
 
 /** 一句摘要的字元上限(code point)。超過就截到這個長度再加 `…`(總長 61)。 */
 const SUMMARY_MAX_CODE_POINTS = 60;
 
 /** 同分類列出的兄弟卡上限。超過時留 id 最大的這麼多張。 */
 const DEFAULT_SIBLING_CAP = 80;
-
-/**
- * example 圍欄:三個以上反引號加 `example` 開始、同數量結束。
- * 跟 `normalizeBody` 同一條規則;四個反引號的內層圍欄是 T20,這裡不另發明切法。
- */
-const EXAMPLE_FENCE = /(`{3,})example[\s\S]*?\1/g;
 
 export interface Sibling {
   id: string;
@@ -40,14 +34,14 @@ function codePoints(text: string): string[] {
 /**
  * body 的第一句,最多 60 個 code point。
  *
- * 1. 拿掉 example 圍欄(圍欄裡的句號不算句子結束)。
+ * 1. 拿掉 example 圍欄(圍欄裡的句號不算句子結束)。用 01 的 stripExampleFences(T52、ADR-060),不在這裡另寫 regex。
  * 2. 空白(含換行)壓成一個半形空格,去頭尾。
  * 3. 取到第一個句子結束為止。結束符是 `。` `！` `？` `!` `?`,或「`.` 後面接空白或字串結尾」。
  *    結束符留在摘要裡。沒有結束符就取整段。
  * 4. 超過 60 個 code point 就截到 60,尾端加 `…`。
  */
 export function cardSummary(body: string): string {
-  const flat = collapseSpace(body.replace(EXAMPLE_FENCE, ''));
+  const flat = collapseSpace(stripExampleFences(body).body);
   const chars = codePoints(flat);
   let end = chars.length;
   for (let i = 0; i < chars.length; i += 1) {

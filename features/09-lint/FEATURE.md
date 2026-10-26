@@ -38,11 +38,15 @@ npx tsx scripts/lint.ts --dir contracts/fixtures/learning-broken
 
 | 東西 | 位置 | 整合時移除於 |
 |---|---|---|
-| 最小卡片驗證器 | `packages/core/src/lint/validator-min.ts` | I6(改用 01) |
+| 字數與 example 圍欄 | T52 起改用 01 的 `stripExampleFences` / `countBodyWords`(ADR-060 第 3 點) | T52 已改用 01 |
+| 最小卡片驗證器的其餘部分(frontmatter) | `packages/core/src/lint/validator-min.ts` | I6(改用 01) |
+
+字數與圍欄 T52 起改用 01。最小驗證器的其餘部分(frontmatter,gray-matter 原樣、不做日期轉換)仍在 I6 移除。
 
 **這個重複是刻意的且值得**:lint 的價值在於「用另一雙眼睛看」。
-Wave 0 期間它用自己的驗證器,如果它跟 01 的驗證器對同一張卡結論不同,
+Wave 0 期間 frontmatter 仍用自己的最小驗證,如果它跟 01 的驗證器對同一張卡結論不同,
 那就發現了一個真正的歧異——契約寫得不夠清楚。整合前把這件事查清楚。
+字數與圍欄不再各寫一份(T52):兩份算法曾經算出不同數字,那正是上面說的歧異,已收成 01。
 
 ## 技術棧
 

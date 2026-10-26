@@ -57,7 +57,7 @@
   {
     "from": "09-lint",
     "to": "01-data-layer",
-    "reason": "§11b 只留一份實作(T7):scripts/lint.ts 寫 state/lint-report 用 01 的 writeFileAtomic"
+    "reason": "§11b 只留一份實作(T7):scripts/lint.ts 寫 state/lint-report 用 01 的 writeFileAtomic。字數與 example 圍欄也用 01(T52、ADR-060):validator-min 的 countBodyWords 轉 export、parseCard 的 body 與 examples 用 stripExampleFences,checks.ts 的字數用 countWords。不加新條"
   },
   {
     "from": "11-review-cli",
@@ -83,6 +83,11 @@
     "from": "12-prompt-quality",
     "to": "02-ingest-pipeline",
     "reason": "T18 (d):golden 的 already_covered 跟 children 管線共用 ingest/siblings.ts 的 cardSummary / formatAlreadyCovered,工單要求不另寫一份"
+  },
+  {
+    "from": "12-prompt-quality",
+    "to": "01-data-layer",
+    "reason": "T52、ADR-060 第 3 點:字數與 example 圍欄只留 01 一份。countBodyWords 轉 export 01 的 countBodyWords,normalizeBody 用 stripExampleFences,不留自己的圍欄 regex 或 CJK 判斷"
   },
   {
     "from": "06-test-card",
