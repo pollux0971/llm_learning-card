@@ -7,6 +7,7 @@
  *   - fill 題目:有 `prompt` 字串與 `answers` 陣列 → 檢查 `___` 數量與 answers 數量一致
  * 遞迴掃描整個 JSON 樹,任何符合形狀的節點都會被檢查。
  */
+import { stripExampleFences } from '@core/schema/example-fence.js';
 import { countBodyWords } from './word-count.js';
 import type {
   BatchCard,
@@ -122,8 +123,6 @@ export function runStructuralChecks(outputText: string): StructuralCheckResult {
 export const DUPLICATE_BODY_JACCARD_THRESHOLD = 0.6;
 export const DUPLICATE_NGRAM_SIZE = 3;
 
-/** 契約 §2 的 example 圍欄。跟 word-count.ts 同一條規則,兩邊都要移除。 */
-const EXAMPLE_FENCE = /```example[\s\S]*?```/g;
 /** `\s` 已含全形空白 U+3000(NFKC 也會把它折成半形空白,兩層都擋得住)。 */
 const WHITESPACE = /\s/gu;
 /** Unicode 標點(P*)與符號(S*)。只用在標題,body 保留標點。 */
@@ -154,7 +153,7 @@ export function normalizeTitle(title: string): string {
  * ——兩張卡引用同一段程式碼不代表它們在講同一件事。
  */
 export function normalizeBody(body: string): string {
-  return body.replace(EXAMPLE_FENCE, '').normalize('NFKC').toLowerCase().replace(WHITESPACE, '');
+  return stripExampleFences(body).body.normalize('NFKC').toLowerCase().replace(WHITESPACE, '');
 }
 
 /** 字元 n-gram 集合。字串短於 n 時回傳整個字串當唯一一個 gram,不回空集合。 */

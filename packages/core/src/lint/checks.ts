@@ -3,8 +3,8 @@
  */
 import type { ScannedDir, Graph } from './scan.js';
 import type { LintProblem, LintResult, LintStatus } from './types.js';
-import { countBodyWords } from './validator-min.js';
 import { formatCategoryIdRefusal, validateCategoryId } from '@core/schema/category-id.js';
+import { countWords } from '@core/schema/word-count.js';
 
 /** 教學卡 body 字數上限,契約 §2 硬約定,不是 settings.short_body_limit(那是縮短版用的) */
 const BODY_WORD_LIMIT = 100;
@@ -12,7 +12,7 @@ const BODY_WORD_LIMIT = 100;
 export function checkBodyLimit(scanned: ScannedDir): LintProblem[] {
   const problems: LintProblem[] = [];
   for (const c of scanned.cards) {
-    const n = countBodyWords(c.parsed.body);
+    const n = countWords(c.parsed.body);
     if (n > BODY_WORD_LIMIT) {
       problems.push({
         type: 'body_over_limit',

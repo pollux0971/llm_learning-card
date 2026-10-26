@@ -7,4 +7,3 @@ export { exampleFencePlugin, createMarkdownRenderer, renderMarkdown, EXAMPLE_CLA
 export type { RenderMarkdownOptions } from './example-fence.js';
 export { resolveImagePath } from './image-path.js';
 export type { ImagePathResult } from './image-path.js';
-export { wordCount } from './word-count.js';
