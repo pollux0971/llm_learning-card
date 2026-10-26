@@ -4,7 +4,7 @@ deps: [T51]
 touches: [packages/core/src/schema/example-fence.ts, packages/core/src/schema/parse-card.ts, packages/core/src/schema/word-count.ts, packages/core/src/schema/index.ts, packages/core/src/lint/validator-min.ts, packages/core/src/lint/checks.ts, packages/core/src/prompt-quality/word-count.ts, packages/core/src/prompt-quality/structural-checks.ts, packages/core/src/ingest/siblings.ts, packages/ui-shared/src/word-count.ts, packages/ui-shared/src/index.ts, scripts/boundaries.allow.json, features/09-lint/FEATURE.md]
 cpu: light
 budget_usd: 3
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - lint 或 prompt-quality 留著自己的圍欄 regex 或 CJK 判斷(只是不再被呼叫也算) 登記掃描必須紅
