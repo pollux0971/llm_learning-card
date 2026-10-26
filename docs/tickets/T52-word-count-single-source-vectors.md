@@ -4,7 +4,7 @@ deps: [T51]
 touches: [packages/core/src/schema/example-fence.ts, packages/core/src/schema/parse-card.ts, packages/core/src/schema/word-count.ts, packages/core/src/schema/index.ts, packages/core/src/lint/validator-min.ts, packages/core/src/lint/checks.ts, packages/core/src/prompt-quality/word-count.ts, packages/core/src/prompt-quality/structural-checks.ts, packages/core/src/ingest/siblings.ts, packages/ui-shared/src/word-count.ts, packages/ui-shared/src/index.ts, scripts/boundaries.allow.json, features/09-lint/FEATURE.md]
 cpu: light
 budget_usd: 3
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - lint 或 prompt-quality 留著自己的圍欄 regex 或 CJK 判斷(只是不再被呼叫也算) 登記掃描必須紅
@@ -39,7 +39,7 @@ ADR-060 決定 §2 的字數規則只留一份實作,還要交叉測試。T20 �
    | 01 `validateCard` / `parseCardText` + `countWords` | `../../packages/core/src/schema/parse-card.ts:22` | 0 | (權威,T51 之後) |
    | 09-lint `countBodyWords` | `../../packages/core/src/lint/validator-min.ts:36` | 字數 13 列、examples 2 列 | 圍欄寫死三個反引號、碰到第一個三反引號就結束;開始行 `example` 後面有空白就不認 |
    | 12-prompt-quality `countBodyWords` | `../../packages/core/src/prompt-quality/word-count.ts:7` | 17 列 | 同上的圍欄問題;CJK 用 Unicode 區段,擴充 B、相容區、Hangul Jamo、Hangul 相容字母各算 1(該 2,ADR-060 的表);`examples` 這種較長的標記也被當成圍欄 |
-   | `packages/ui-shared` 的 `wordCount` | `../../packages/ui-shared/src/word-count.ts:11` | 2 列 | 結束行前面有 1–3 個空白就不認(裁決乙說要認)。**沒有正式呼叫端**:`apps/` 裡 0 處用它,只有自己的測試與 `index.ts` 的 export |
+   | `packages/ui-shared` 的 `wordCount` | packages/ui-shared/src/word-count.ts 第 11 行(T52 已刪) | 2 列 | 結束行前面有 1–3 個空白就不認(裁決乙說要認)。**沒有正式呼叫端**:`apps/` 裡 0 處用它,只有自己的測試與 `index.ts` 的 export |
    | 畫面(markdown-it,`exampleFencePlugin`) | `../../packages/ui-shared/src/example-fence.ts:158` | example 個數 0 列 | (只比 example 個數,它不算字) |
 
 2. **另外兩處也自己寫了圍欄 regex**(不是算字數,是比對內容前先拿掉例子,但規則是同一條 §2 步驟 1):
