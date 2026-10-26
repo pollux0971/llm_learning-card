@@ -73,3 +73,57 @@
 
 ## 結論
 有阻擋項:變異分數 79.81%(全分母)低於 80%,而且 `topic.ts` 只有 62.77%;原因是真的測試缺口(壞回應、探測丟例外、後半失敗處理、重試事件、卡旗標、today 預設、prompt 組裝)。其餘全部通過:範圍乾淨、全套 2928 與四組 cucumber 全綠、T53 原範圍變異沒退步(85.38%,合併範圍的 `scan.ts` 87.65%)。建議測試 agent 補測後重跑變異;實作建議把壞回應與丟錯包成 `topic_failed`(行為備註 1)。
+
+## 實作第二輪驗收(被驗分支 t55-impl2,提交 a8f67a366bbf1c8b7c9c99dfb3f6e4a072cb7166;疊在 t55-red2 8b2bc6f 上)
+
+被驗樹 sha(tree):d44f33c488376b34b8fc180a293bf8726b4bf83a(含驗收用變異設定檔,實作檔相同)。日期 2026-10-26。
+
+### 範圍(第 1 點)
+- 對 t55-red2 的差異只有 `topic.ts` 與 `T55-implementation.md` 兩個檔;沒有測試、fixture、`.feature`、`scan.ts`、`scripts/ingest.ts`、prompt 的改動。沒有 `.env`。
+- `tsc --noEmit` 乾淨;`npm run boundaries` PASS(398);`npm run check:steps` PASS;doc-links PASS(154)。
+
+### 測試(第 2 點;i9)
+- `packages/core` 132 檔、**2959 條全綠**(含 t55 全部與補測 31 條)。
+- cucumber 全綠:`@ingest-pipeline and @phase-3` 8/8;`@ingest-pipeline and not @phase-3 and not @manual` 29/29;`@prompt-quality and @phase-2 and not @manual and not @live` 22/22;`@i1 and not @manual and not @llm and not @e2e` 78/78。
+
+### try/catch 的範圍(第 3 點,讀程式)
+- 只包第一段:`router.call` → `parseTopicCards` → 逐張 `enforceWordLimit`(含重生呼叫);失敗在寫任何東西之前返回(`logWarning`、`writeParked`、寫卡、`ingested.json` 都在 catch 之後)。
+- 後半(寫卡的 fs 錯誤、`validateCard` 失敗、`GraphFileCorruptError`)在 try 外面,照丟。雲端錯看 `code === 'CLOUD_REQUIRED'`,不看 class name,走與離線相同的訊息加 `cloudBlocked`;其他錯回 `topic_failed` 加錯誤第一行,不帶堆疊。
+- 註:第一段裡的程式錯誤(例如解析時的 TypeError)也會變成 `topic_failed`,不再往外丟;這是工單與補測要的(壞回應 = 失敗),不算吞 bug。
+
+### 變異(第 4 點;i9,全分母,沒有排除任何變異種類)
+- 在 i9 跑:開跑 19:44(load 約 0.6),跑完 20:23(load 約 4);兩個設定同時排隊(Stryker 鎖讓它們依序)。
+- `stryker.t55-topic.json`(`topic.ts` 加 `scan.ts`):**85.01%**(殺 649、逾時 3、存活 115);`topic.ts` **80.00%**(殺 210、逾時 2、存活 53)、`scan.ts` 87.65%(存活 62)。上一輪 79.81%(topic.ts 62.77%)。
+- `stryker.t53-scan.json`:**85.38%**(`scan.ts` 85.06%、`init.ts` 94.44%),與上一輪完全相同,不退步。
+
+### `topic.ts` 存活 53 個的歸類(獨立核)
+| 類 | 約個數 | 內容 | 判斷 |
+|---|---|---|---|
+| W 純措辭 | 約 14 | 各訊息文字(30、108、110、114、147、182、261、268、277、305、327、350 行等) | 同意,純文字 |
+| 等價 | 約 24 | `utf8` 編碼字串(83);預設陣列被蓋掉(91、202、203);`isPlainObject` 的子條件(99,後面還有 title/body 型別檢查);探測 `catch {}`(242,初值已是 false);雲端錯判斷的型別前置條件(249,字串型的丟出值沒有 `code`);`trim`、空訊息的備援字串(254、261);`>` 與 `>=`、`true`(295,最多 5 張時 `slice(0,5)` 無差別);`!check.ok || !check.card`(181,通過時一定有 card);`JSON.parse` 失敗的 `catch` 空塊(107,後面的陣列檢查仍會丟,只是訊息不同) | 同意 |
+| 真缺口(低) | 約 14 | prompt 組裝的分隔與行(95 行 5 個);暫緩紀錄的 `source`、`reason`(141、142);`examples` 的過濾(116 行 3 個:非字串的 example 被丟掉);重試警告轉進 log 的 `file`(308、323);`isTopicKey`(72、73,已知兩道防線冗餘,不擋) | 都是低風險,不擋 80% |
+沒有任何行為類缺口留在前半失敗處理、雲端錯、探測丟例外、後半失敗、重生事件、卡旗標、today 預設。
+
+### 手改壞(第 5 點,對 impl2,筆電跑 t55 加 t53-scan,每個還原後乾淨)
+| 編號 | 改法 | 結果 |
+|---|---|---|
+| S1 | 雲端錯當一般錯 | 紅 4 |
+| S2 | 雲端錯只看 class name | 紅 2 |
+| S3 | 說明帶整段多行訊息 | 紅 2 |
+| S5 | 寫卡的 fs 錯誤也被吞成 topic_failed | 紅 1(P 組) |
+| S6 | `GraphFileCorruptError` 被吞 | 紅 1(P 組) |
+| S8 | 失敗不標 `topic_failed` | 紅 16 |
+| S9 | 失敗時多記 warning(寫了東西) | 紅 20 |
+| S10 | 壞 JSON 吞成空陣列 | **存活**(結果仍是 `topic_failed`,只是說明變成「沒有可用的卡片」,屬措辭,低) |
+| S11 | 驗證失敗被吞 | 紅 1(P 組) |
+| S12 | 空訊息備援字串拿掉 | 存活(等價,措辭) |
+| S13 | 第一行不 trim | 存活(等價,措辭) |
+| S14 | 離線時 `cloudBlocked: false` | 紅 6 |
+共 12 個:9 紅、3 存活(都是措辭或等價)。
+
+### 其他
+- `learning/` 前後:64 檔 / `c2e4dd6d71de3976` / 108 行,相同。
+- 花費:worker 累計 10.96 美元(只記錄,grok 不設限),預算 2 美元,比值約 5.5 倍,超過 2 倍;真呼叫的 golden run 不是這一輪的事,由協調者在主簽出跑。
+
+### 結論(實作第二輪)
+通過。範圍乾淨;全套測試與四組 cucumber 全綠;變異 85.01%(全分母,`topic.ts` 單檔剛好 80.00%),T53 範圍 85.38% 不退步;try/catch 只包第一段,後半的程式錯誤與 fs 錯誤照丟,雲端錯看 code。剩下的存活點是措辭、等價或低風險。
