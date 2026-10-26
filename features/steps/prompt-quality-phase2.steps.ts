@@ -534,9 +534,9 @@ Then('the gate fails', function () {
   assert.equal(gate.cli?.code, 1, gate.cli?.output);
 });
 
-Then('each of the five ingest prompt files is named by exactly one golden set', function () {
+Then('each of the six ingest prompt files is named by exactly one golden set', function () {
   assert.ok(gate.coverage);
-  // .feature 的字樣是「five」(12 phase-2 當時只有五個檔);T55 多了 topic.md,現在是六個。字樣由顧問決定要不要改(.feature 我不改)。
+  // 12 phase-2 規格小修(顧問批准):T55 加了 packages/core/prompts/ingest/topic.md,ingest 的 prompt 檔從五個變六個。
   assert.equal(gate.coverage.scanned.length, 6);
   assert.deepEqual(gate.coverage.unregistered, []);
   assert.deepEqual(gate.coverage.missing, []);
