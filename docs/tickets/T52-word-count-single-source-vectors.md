@@ -111,7 +111,7 @@ ADR-060 決定 §2 的字數規則只留一份實作,還要交叉測試。T20 �
 | `contracts/fixtures/word-count-vectors.json` | 上面第 1 節 | — |
 | `features/support/word-count-vectors.test.ts`(新;`features/support/` 是膠水,import 哪一層都不會被邊界檢查擋) | 向量檔的結構檢查(ASCII、欄位、`basis` 合法、`covers` 涵蓋全部類別、U+F900 那一列真的是 U+F900、fixture 檔存在、gherkin 表九列都在);登記表每份實作跑每一列;指紋掃描 | `validateCard`、`parseCardText`、ingest、畫面那幾份綠(護欄);`stripExampleFences`、`countBodyWords` 紅(還沒有);lint、prompt-quality 紅(列數見第一張表);掃描紅 |
 | lint 的護欄 | `parseCard` 的 frontmatter 照舊(沒加引號的 `created` 還是 gray-matter 給的 Date,不是字串) | 本來就綠 |
-| 既有的向量測試 | 第 3 點那七個檔:各自抄的表**改成讀向量檔**,或確認已被新測試蓋到後刪掉(刪的每一條要在 commit 說明寫替身在哪);`ui-shared/src/word-count.test.ts` 跟著刪(D1 = A) | — |
+| 既有的向量測試 | `ui-shared/src/word-count.test.ts` 跟著刪(D1 = A)。**第 3 點其餘六個檔不在 T52 動**(顧問 2026-10-27:延到 T57 一次收斂,因為 T57 本來就要改這批向量)。T52 期間它們照原樣、必須照綠(T52 不改任何已定義列的結果) | 本來就綠 |
 
 - 測試一律從 `@core/schema/index.js` import 新函式,不綁內部檔名。
 - **不測**:最後一節那一題的幾種寫法,M*(組合記號)、Cf(格式字元)這類 §2 沒列名的字元(見 F2)。測試與向量檔裡都不放這類字串。
@@ -161,6 +161,7 @@ ADR-060 決定 §2 的字數規則只留一份實作,還要交叉測試。T20 �
 ## 不在範圍
 
 - 契約沒定義的圍欄寫法與字元類別(最後一節那一題、F2)。**使用者 2026-10-27 選 A**,另開 **T57**(改 §2、加向量列、改 `schema/example-fence.ts`,F2 那句一起寫),等 T52 合進 main 才起草。T57 寫完之前,這幾種寫法照本張「碰到就停」。
+- 第 3 點的六個舊向量測試檔改讀向量檔或刪掉(顧問 2026-10-27 裁:T57 的正式範圍)。
 - `ingest/generate-cards.ts` 的字數寫法(T20 定的 `countWords(parseCardText(...).body)`,跟 `countBodyWords` 同值,登記表會守著)。
 - 寫卡片時一律用三個反引號(F1,另開小票 **T58**)。
 - `contracts/fixtures/cards/README.md` 第 5 行的 26(D3,協調者處理)。
