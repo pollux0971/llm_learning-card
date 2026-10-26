@@ -1,0 +1,1033 @@
+{
+  "description": "Vectors for contracts/types.md section 2 (body word count and example fences). EVERY implementation that reads the section 2 rule must run every row (ADR-060, ticket T52). Each row is derived from the section 2 definition, not copied from any implementation output. Everything is ASCII: non-ASCII characters are JSON unicode escapes so no editor can normalise them (U+F900 must stay U+F900). body is the raw text to count; fixture (instead of body) is a path under contracts/fixtures/ whose frontmatter is dropped. words is the section 2 count of the body after example fences are removed; examples is the trimmed content of each example fence, in order. covers lists the categories a row exercises; basis says where the number comes from (s2-key-table, s2-vector-table, s2-definition, ruling-b, fixture, gherkin-p1); why is the derivation in one sentence. Fence shapes that section 2 does not define are NOT in this file (ticket T57).",
+  "rows": [
+    {
+      "name": "key: same-origin",
+      "body": "same-origin",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-hyphen",
+        "alnum-latin"
+      ],
+      "basis": "s2-key-table",
+      "why": "hyphen is punctuation and cuts the sequence: same + origin"
+    },
+    {
+      "name": "key: TLS",
+      "body": "TLS",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-latin"
+      ],
+      "basis": "s2-key-table",
+      "why": "one alphanumeric sequence"
+    },
+    {
+      "name": "key: 1.5",
+      "body": "1.5",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-period",
+        "alnum-digit"
+      ],
+      "basis": "s2-key-table",
+      "why": "period cuts the digits: 1 + 5"
+    },
+    {
+      "name": "key: dont",
+      "body": "don't",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-apostrophe",
+        "alnum-latin"
+      ],
+      "basis": "s2-key-table",
+      "why": "apostrophe cuts: don + t"
+    },
+    {
+      "name": "key: four han",
+      "body": "\u540c\u6e90\u653f\u7b56",
+      "words": 4,
+      "examples": [],
+      "covers": [
+        "cjk-han"
+      ],
+      "basis": "s2-key-table",
+      "why": "step 3: each Han character counts 1"
+    },
+    {
+      "name": "key: RFC 6265",
+      "body": "RFC 6265",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-space",
+        "alnum-latin",
+        "alnum-digit"
+      ],
+      "basis": "s2-key-table",
+      "why": "space cuts: RFC + 6265"
+    },
+    {
+      "name": "vec: han pair",
+      "body": "\u540c\u6e90",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-han"
+      ],
+      "basis": "s2-vector-table",
+      "why": "step 3: Han each 1"
+    },
+    {
+      "name": "vec: han ext A",
+      "body": "\u3400\u3400",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-han-ext-a"
+      ],
+      "basis": "s2-vector-table",
+      "why": "Script=Han, so CJK, each 1"
+    },
+    {
+      "name": "vec: han ext B",
+      "body": "\ud840\udc00\ud840\udc00",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-han-ext-b"
+      ],
+      "basis": "s2-vector-table",
+      "why": "Script=Han, so CJK, each 1"
+    },
+    {
+      "name": "vec: han compat",
+      "body": "\uf900\uf900",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-han-compat"
+      ],
+      "basis": "s2-vector-table",
+      "why": "Script=Han, so CJK, each 1 (U+F900 must stay U+F900, not NFC U+8C48)"
+    },
+    {
+      "name": "vec: hangul jamo",
+      "body": "\u1100\u1100",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-hangul-jamo"
+      ],
+      "basis": "s2-vector-table",
+      "why": "Script=Hangul, so CJK, each 1"
+    },
+    {
+      "name": "vec: hangul compat letters",
+      "body": "\u3131\u3131",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-hangul-compat"
+      ],
+      "basis": "s2-vector-table",
+      "why": "Script=Hangul, so CJK, each 1"
+    },
+    {
+      "name": "vec: hiragana + katakana",
+      "body": "\u304b\u30ab",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-hiragana",
+        "cjk-katakana"
+      ],
+      "basis": "s2-vector-table",
+      "why": "Hiragana and Katakana are CJK, each 1"
+    },
+    {
+      "name": "vec: three-backtick example fence",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-3"
+      ],
+      "basis": "s2-vector-table",
+      "why": "step 1: the whole fence is removed, only the two outer characters remain"
+    },
+    {
+      "name": "vec: four-backtick fence with inner three",
+      "body": "\u524d\n````example\n```js\nconst x = 1;\n```\n\u5185\u5c64\u6587\u5b57\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5185\u5c64\u6587\u5b57"
+      ],
+      "covers": [
+        "fence-4-nested"
+      ],
+      "basis": "s2-vector-table",
+      "why": "closing needs the same number of backticks, the inner three do not close the outer"
+    },
+    {
+      "name": "vec: js fence is not removed",
+      "body": "```js\nab\n```",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "fence-non-example",
+        "cut-symbol"
+      ],
+      "basis": "s2-vector-table",
+      "why": "not an example fence, so js and ab count 1 each; backticks are symbols and count 0"
+    },
+    {
+      "name": "gherkin: TLS handshake needs 3 rounds.",
+      "body": "TLS handshake needs 3 rounds.",
+      "words": 5,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "gherkin: \u540c\u6e90\u653f\u7b56",
+      "body": "\u540c\u6e90\u653f\u7b56",
+      "words": 4,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "gherkin: \u540c\u6e90\u653f\u7b56(same-origin policy)",
+      "body": "\u540c\u6e90\u653f\u7b56(same-origin policy)",
+      "words": 7,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "gherkin: a b c d e",
+      "body": "a b c d e",
+      "words": 5,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "gherkin: \u4e00\u3001\u4e8c\u3001\u4e09\u3002",
+      "body": "\u4e00\u3001\u4e8c\u3001\u4e09\u3002",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "gherkin: TLS 1.3",
+      "body": "TLS 1.3",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "gherkin: don't",
+      "body": "don't",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "gherkin: RFC 6265",
+      "body": "RFC 6265",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "gherkin: (empty)",
+      "body": "",
+      "words": 0,
+      "examples": [],
+      "covers": [
+        "gherkin"
+      ],
+      "basis": "gherkin-p1",
+      "why": "row of the 01 phase-1 Word counting table"
+    },
+    {
+      "name": "cjk cuts: han then latin",
+      "body": "\u5b57a",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "CJK counts 1 and ends the sequence; a starts a new one"
+    },
+    {
+      "name": "cjk cuts: in the middle",
+      "body": "\u5728TLS\u4e0b",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "one + TLS + one"
+    },
+    {
+      "name": "cjk cuts: latin both sides",
+      "body": "a\u5b57b",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "a + han + b"
+    },
+    {
+      "name": "cjk: hiragana pair",
+      "body": "\u3042\u3042",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-hiragana"
+      ],
+      "basis": "s2-definition",
+      "why": "each Hiragana counts 1"
+    },
+    {
+      "name": "cjk: katakana pair",
+      "body": "\u30a2\u30a2",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-katakana"
+      ],
+      "basis": "s2-definition",
+      "why": "each Katakana counts 1"
+    },
+    {
+      "name": "cjk: hangul syllable pair",
+      "body": "\uac00\uac00",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-hangul-syllable"
+      ],
+      "basis": "s2-definition",
+      "why": "each Hangul syllable counts 1"
+    },
+    {
+      "name": "alnum: latin words",
+      "body": "hello world",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "alnum-latin",
+        "cut-space"
+      ],
+      "basis": "s2-definition",
+      "why": "two sequences"
+    },
+    {
+      "name": "alnum: greek letters",
+      "body": "\u03b1\u03b2\u03b3",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-non-latin-letter"
+      ],
+      "basis": "s2-definition",
+      "why": "category L and not CJK: one sequence"
+    },
+    {
+      "name": "alnum: cyrillic words",
+      "body": "\u043f\u0440\u0438\u0432\u0435\u0442 \u043c\u0438\u0440",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "alnum-non-latin-letter",
+        "cut-space"
+      ],
+      "basis": "s2-definition",
+      "why": "two sequences"
+    },
+    {
+      "name": "alnum: fullwidth latin",
+      "body": "\uff21\uff22",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-fullwidth"
+      ],
+      "basis": "s2-definition",
+      "why": "fullwidth letters are category L: one sequence"
+    },
+    {
+      "name": "alnum: fullwidth digits",
+      "body": "\uff11\uff12",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-fullwidth",
+        "alnum-digit"
+      ],
+      "basis": "s2-definition",
+      "why": "fullwidth digits are category N: one sequence"
+    },
+    {
+      "name": "alnum: ascii digits",
+      "body": "2026",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-digit"
+      ],
+      "basis": "s2-definition",
+      "why": "one sequence"
+    },
+    {
+      "name": "alnum: letter then superscript two",
+      "body": "x\u00b2",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-other-number"
+      ],
+      "basis": "s2-definition",
+      "why": "U+00B2 is category No (an N* class), so it joins the sequence"
+    },
+    {
+      "name": "alnum: superscript two and three",
+      "body": "\u00b2\u00b3",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-other-number"
+      ],
+      "basis": "s2-definition",
+      "why": "No characters are N*: one sequence"
+    },
+    {
+      "name": "alnum: roman numeral eight",
+      "body": "\u2167",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-other-number"
+      ],
+      "basis": "s2-definition",
+      "why": "U+2167 is category Nl: one sequence"
+    },
+    {
+      "name": "alnum: prolonged sound mark pair",
+      "body": "\u30fc\u30fc",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-common-script-letter"
+      ],
+      "basis": "s2-definition",
+      "why": "U+30FC has Script=Common and category Lm: not CJK, so alphanumeric; two in a row are one sequence"
+    },
+    {
+      "name": "alnum: katakana then prolonged sound mark pair",
+      "body": "\u30ab\u30fc\u30fc",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "alnum-common-script-letter",
+        "cjk-katakana",
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "katakana counts 1 and ends the sequence; the two U+30FC are one sequence"
+    },
+    {
+      "name": "cut: tab",
+      "body": "a\tb",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-space"
+      ],
+      "basis": "s2-definition",
+      "why": "whitespace cuts"
+    },
+    {
+      "name": "cut: newline",
+      "body": "a\nb",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-space"
+      ],
+      "basis": "s2-definition",
+      "why": "whitespace cuts"
+    },
+    {
+      "name": "cut: ideographic space",
+      "body": "a\u3000b",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-ideographic-space"
+      ],
+      "basis": "s2-definition",
+      "why": "U+3000 is whitespace and cuts"
+    },
+    {
+      "name": "cut: typographic apostrophe",
+      "body": "don\u2019t",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-apostrophe"
+      ],
+      "basis": "s2-definition",
+      "why": "U+2019 is punctuation and cuts"
+    },
+    {
+      "name": "cut: underscore",
+      "body": "a_b",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-symbol"
+      ],
+      "basis": "s2-definition",
+      "why": "underscore is punctuation (Pc) and cuts"
+    },
+    {
+      "name": "cut: plus sign",
+      "body": "a+b",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-symbol"
+      ],
+      "basis": "s2-definition",
+      "why": "plus is a symbol and cuts"
+    },
+    {
+      "name": "cut: backtick inside a word",
+      "body": "a`b",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-symbol"
+      ],
+      "basis": "s2-definition",
+      "why": "a backtick is a symbol and cuts"
+    },
+    {
+      "name": "cut: emoji",
+      "body": "a\ud83d\ude00b",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-symbol"
+      ],
+      "basis": "s2-definition",
+      "why": "an emoji is a symbol and cuts"
+    },
+    {
+      "name": "cut: cjk punctuation only",
+      "body": "\u3002\u3001",
+      "words": 0,
+      "examples": [],
+      "covers": [
+        "cut-cjk-punct"
+      ],
+      "basis": "s2-definition",
+      "why": "punctuation counts 0"
+    },
+    {
+      "name": "cut: cjk punctuation between han",
+      "body": "\u4e00\u3001\u4e8c\u3001\u4e09\u3002",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "cut-cjk-punct",
+        "cjk-han"
+      ],
+      "basis": "s2-definition",
+      "why": "three Han, punctuation counts 0"
+    },
+    {
+      "name": "cut: ascii punctuation only",
+      "body": ".,!?;:",
+      "words": 0,
+      "examples": [],
+      "covers": [
+        "cut-symbol"
+      ],
+      "basis": "s2-definition",
+      "why": "punctuation counts 0"
+    },
+    {
+      "name": "inline code is not a fence",
+      "body": "a `code` b",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "cut-symbol"
+      ],
+      "basis": "s2-definition",
+      "why": "single backticks are symbols: a, code, b"
+    },
+    {
+      "name": "empty string",
+      "body": "",
+      "words": 0,
+      "examples": [],
+      "covers": [
+        "empty"
+      ],
+      "basis": "s2-definition",
+      "why": "nothing to count"
+    },
+    {
+      "name": "whitespace only",
+      "body": "  \n\t ",
+      "words": 0,
+      "examples": [],
+      "covers": [
+        "empty",
+        "cut-space"
+      ],
+      "basis": "s2-definition",
+      "why": "whitespace counts 0"
+    },
+    {
+      "name": "limit: 100 han",
+      "body": "\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c",
+      "words": 100,
+      "examples": [],
+      "covers": [
+        "limit-100"
+      ],
+      "basis": "s2-definition",
+      "why": "each counts 1"
+    },
+    {
+      "name": "limit: 101 han",
+      "body": "\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c\u540c",
+      "words": 101,
+      "examples": [],
+      "covers": [
+        "limit-101"
+      ],
+      "basis": "s2-definition",
+      "why": "each counts 1"
+    },
+    {
+      "name": "fence: two examples in order",
+      "body": "```example\nA\n```\n\u4e2d\u9593\n```example\nB\n```",
+      "words": 2,
+      "examples": [
+        "A",
+        "B"
+      ],
+      "covers": [
+        "fence-multi"
+      ],
+      "basis": "s2-definition",
+      "why": "both fences removed, examples kept in order, the two middle Han remain"
+    },
+    {
+      "name": "fence: three examples in order",
+      "body": "```example\nA\n```\n```example\nB\n```\n```example\nC\n```",
+      "words": 0,
+      "examples": [
+        "A",
+        "B",
+        "C"
+      ],
+      "covers": [
+        "fence-multi"
+      ],
+      "basis": "s2-definition",
+      "why": "everything is inside fences"
+    },
+    {
+      "name": "fence: example then js fence",
+      "body": "\u6b63\u6587\n```example\nA\n```\n```js\n\u56db\u500b\u5b57\u5440\n```",
+      "words": 7,
+      "examples": [
+        "A"
+      ],
+      "covers": [
+        "fence-multi",
+        "fence-non-example"
+      ],
+      "basis": "s2-definition",
+      "why": "example removed; the js fence stays: two Han, js, four Han"
+    },
+    {
+      "name": "fence: examples marker is not example",
+      "body": "\u5167\u6587\n\n```examples\nnot one\n```",
+      "words": 5,
+      "examples": [],
+      "covers": [
+        "fence-examples-marker"
+      ],
+      "basis": "s2-definition",
+      "why": "only the exact marker example opens an example fence: two Han, examples, not, one"
+    },
+    {
+      "name": "fence: two backticks are not a fence",
+      "body": "\u524d\n``example\nab\n``\n\u5f8c",
+      "words": 4,
+      "examples": [],
+      "covers": [
+        "fence-two-backticks"
+      ],
+      "basis": "s2-definition",
+      "why": "a fence needs three or more backticks: two Han, example, ab"
+    },
+    {
+      "name": "fence: text before and after only",
+      "body": "\u6b63\u6587\u56db\u500b\u5b57\n```example\n\u9019\u88e1\u6709\u5f88\u591a\n```",
+      "words": 5,
+      "examples": [
+        "\u9019\u88e1\u6709\u5f88\u591a"
+      ],
+      "covers": [
+        "fence-3"
+      ],
+      "basis": "s2-definition",
+      "why": "fence content never counts"
+    },
+    {
+      "name": "fence: text on both sides",
+      "body": "\u6b63\u6587\u958b\u982d\n```example\n\u7bc4\u4f8b\u5167\u5bb9\n```\n\u6b63\u6587\u7d50\u5c3e",
+      "words": 8,
+      "examples": [
+        "\u7bc4\u4f8b\u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-3"
+      ],
+      "basis": "s2-definition",
+      "why": "four plus four outside the fence"
+    },
+    {
+      "name": "fence: only a fence",
+      "body": "```example\nx\n```",
+      "words": 0,
+      "examples": [
+        "x"
+      ],
+      "covers": [
+        "fence-3",
+        "empty"
+      ],
+      "basis": "s2-definition",
+      "why": "nothing outside the fence"
+    },
+    {
+      "name": "fence: five backticks around four",
+      "body": "\u524d\n`````example\n````example\n\u5de2\u72c0\n````\n`````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "````example\n\u5de2\u72c0\n````"
+      ],
+      "covers": [
+        "fence-5-nested4"
+      ],
+      "basis": "s2-definition",
+      "why": "the closing line needs exactly five backticks; the inner four do not close it"
+    },
+    {
+      "name": "fence: four around three then a three example",
+      "body": "\u524d\n````example\n```ts\nA\n```\n````\n\u4e2d\n```example\nB\n```\n\u5f8c",
+      "words": 3,
+      "examples": [
+        "```ts\nA\n```",
+        "B"
+      ],
+      "covers": [
+        "fence-4-nested",
+        "fence-multi"
+      ],
+      "basis": "s2-definition",
+      "why": "two examples; front, middle and back remain"
+    },
+    {
+      "name": "fence: js fence after a four-backtick example",
+      "body": "````example\n```js\nconst x = 1;\n```\n\u5167\u5c64\n````\n```js\nab\n```",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5c64"
+      ],
+      "covers": [
+        "fence-4-nested",
+        "fence-non-example"
+      ],
+      "basis": "s2-definition",
+      "why": "the js fence is not removed: js and ab"
+    },
+    {
+      "name": "fence: crlf with four backticks",
+      "body": "\u524d\r\n````example\r\n```js\r\nconst x = 1;\r\n```\r\n\u5185\u5c64\u6587\u5b57\r\n````\r\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\r\nconst x = 1;\r\n```\r\n\u5185\u5c64\u6587\u5b57"
+      ],
+      "covers": [
+        "fence-crlf",
+        "fence-4-nested"
+      ],
+      "basis": "ruling-b",
+      "why": "CRLF line ends are line ends; the example keeps its inner CRLF"
+    },
+    {
+      "name": "fence: crlf with three backticks",
+      "body": "\u524d\r\n```example\r\n\u5167\u5bb9 \u5167\u5bb9\r\n```\r\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-crlf",
+        "fence-3"
+      ],
+      "basis": "ruling-b",
+      "why": "CRLF line ends are line ends"
+    },
+    {
+      "name": "fence: closing at end of text, three",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n```",
+      "words": 1,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-eof",
+        "fence-3"
+      ],
+      "basis": "ruling-b",
+      "why": "the closing line may end at the end of the text"
+    },
+    {
+      "name": "fence: closing at end of text, four",
+      "body": "\u524d\n````example\n```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9\n````",
+      "words": 1,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-eof",
+        "fence-4-nested"
+      ],
+      "basis": "ruling-b",
+      "why": "the closing line may end at the end of the text"
+    },
+    {
+      "name": "fence: closing with trailing space (three)",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n``` \n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space",
+        "fence-3"
+      ],
+      "basis": "ruling-b",
+      "why": "spaces after the closing backticks are allowed"
+    },
+    {
+      "name": "fence: closing with trailing space and tab (four)",
+      "body": "\u524d\n````example\n```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9\n```` \t\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space",
+        "fence-close-trailing-tab",
+        "fence-4-nested"
+      ],
+      "basis": "ruling-b",
+      "why": "spaces and tabs after the closing backticks are allowed"
+    },
+    {
+      "name": "fence: closing indented by one space",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n ```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-indent",
+        "fence-3"
+      ],
+      "basis": "ruling-b",
+      "why": "a closing line may be indented 0 to 3 spaces"
+    },
+    {
+      "name": "fence: closing indented by three spaces (four)",
+      "body": "\u524d\n````example\n```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9\n   ````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-indent",
+        "fence-4-nested"
+      ],
+      "basis": "ruling-b",
+      "why": "a closing line may be indented 0 to 3 spaces"
+    },
+    {
+      "name": "fence: opening with trailing space",
+      "body": "\u524d\n```example \n\u5167\u5bb9 \u5167\u5bb9\n```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-open-trailing-ws",
+        "fence-3"
+      ],
+      "basis": "ruling-b",
+      "why": "spaces after the opening example marker are allowed"
+    },
+    {
+      "name": "fence: opening with trailing tab (four)",
+      "body": "\u524d\n````example\t\n```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-open-trailing-ws",
+        "fence-4-nested"
+      ],
+      "basis": "ruling-b",
+      "why": "a tab after the opening example marker is allowed"
+    },
+    {
+      "name": "fence: closing backticks followed by a word do not close",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n```\u5f8c\u9762\u6709\u5b57\n```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9\n```\u5f8c\u9762\u6709\u5b57"
+      ],
+      "covers": [
+        "fence-close-followed-by-word",
+        "fence-3"
+      ],
+      "basis": "ruling-b",
+      "why": "a line of backticks followed by a word is content, so the real closing line is the next one"
+    },
+    {
+      "name": "fence: backticks glued to the end of a content line do not close",
+      "body": "\u524d\n````example\n```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9````\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9````"
+      ],
+      "covers": [
+        "fence-close-glued",
+        "fence-4-nested"
+      ],
+      "basis": "ruling-b",
+      "why": "the closing backticks must start their own line"
+    },
+    {
+      "name": "fence: fewer closing backticks do not close",
+      "body": "\u524d\n````example\nA\n```\nB\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "A\n```\nB"
+      ],
+      "covers": [
+        "fence-4-nested"
+      ],
+      "basis": "s2-definition",
+      "why": "closing needs the same number: three do not close four"
+    },
+    {
+      "name": "fixture: wordcount-cases.md",
+      "fixture": "cards/wordcount-cases.md",
+      "words": 23,
+      "examples": [],
+      "covers": [
+        "fixture",
+        "cjk-han",
+        "cut-hyphen",
+        "cut-period",
+        "cut-apostrophe",
+        "cut-space"
+      ],
+      "basis": "fixture",
+      "why": "the fixture README table and four existing tests pin 23"
+    },
+    {
+      "name": "fixture: valid-example-with-nested-content.md",
+      "fixture": "cards/valid-example-with-nested-content.md",
+      "words": 27,
+      "examples": [
+        "\u5141\u8a31\u7684\u4f86\u6e90\u53ef\u4ee5\u7528\u6e05\u55ae\u5217\u51fa:\n\n- **script-src**:\u9650\u5236\u8173\u672c\u4f86\u6e90\n- **style-src**:\u9650\u5236\u6a23\u5f0f\u4f86\u6e90\n\n\u8a2d\u5b9a\u7bc4\u4f8b:\n\n```ts\nconst csp = \"script-src 'self'\";\n```"
+      ],
+      "covers": [
+        "fixture",
+        "fence-4-nested"
+      ],
+      "basis": "fixture",
+      "why": "one four-backtick example holding a list and a ts code block; 27 words outside it"
+    },
+    {
+      "name": "t20: four han before a fence",
+      "body": "\u6b63\u6587\u56db\u500b\u5b57\n```example\n\u9019\u88e1\u6709\u5f88\u591a\u4e0d\u8a72\u88ab\u7b97\u9032\u53bb\u7684\u5b57\n```",
+      "words": 5,
+      "examples": [
+        "\u9019\u88e1\u6709\u5f88\u591a\u4e0d\u8a72\u88ab\u7b97\u9032\u53bb\u7684\u5b57"
+      ],
+      "covers": [
+        "fence-3"
+      ],
+      "basis": "s2-definition",
+      "why": "five Han outside the fence"
+    }
+  ]
+}

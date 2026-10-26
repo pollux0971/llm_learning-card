@@ -10,6 +10,7 @@ learning-minimal/     一個合法的最小 learning/,3 張卡、1 個類別。l
 learning-broken/      刻意壞掉的,附 EXPECTED.md 列出每一個問題
 path-segment-vectors.json   路徑段向量(契約 §13、§1 CategoryId),TS 與 Rust 共用
 vault-pointer-vectors.json  使用者層指標檔與帳本身分標記的向量(契約 §12),TS(T5)與 Rust(桌面程式)共用;47 列:路徑 3、標記比對 19、指標內容 11、解析狀態 14
+word-count-vectors.json     教學卡 body 字數與 example 圍欄的向量(契約 §2、ADR-060、T52);85 列,全 ASCII(非 ASCII 用 \u 跳脫)、每列有 covers 與 basis;每一份讀 §2 規則的實作都要跑每一列(features/support/word-count-vectors.test.ts)
 learning-broken-category/  不合法的分類名(契約 1.4.0 §1),附 EXPECTED.md;lint 應回報恰好 3 個 invalid_category
 cards/                單張卡的合法與非法樣本,檔名說明錯在哪
 reviews/              各種複習狀態
