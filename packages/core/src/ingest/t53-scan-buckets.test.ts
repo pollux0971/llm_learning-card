@@ -9,9 +9,12 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ensureInitialized, setCategory } from './init.js';
 import { REPO_ROOT, countingRouter, ingestOne, loadScan, makeLearning, rawText, readCard, writeRaw } from './t53-test-support.js';
+
+// 有的條目會用 spawnSync 起 tsx 子行程(scripts/ingest.ts),機器忙時超過 vitest 預設的 5 秒;逐檔放寬逾時(不動全域設定,同 T47/T49/T50 渲染測試的做法)
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
 const TODAY = '2026-09-10';
 const quiet = (offline = false) => countingRouter({}, { offline });
