@@ -9,7 +9,7 @@
  *     - 已存在但內容不同 → 拒絕,退出碼 1,印出是哪個檔,原檔位元組不變,不呼叫 LLM、不寫卡。
  *   掃描 / 主題(不給 --file;--topic <文字>、--category <id>):
  *     - 分類沒有設定 → 退出碼 1,印「沒有定義」,輸出目錄前後完全相同;
- *     - 要求 raw 的分類沒有 raw 卻給了主題 → 退出碼 1,印「要求 raw」;
+ *     - 要求 raw 的分類沒有 raw 卻給了主題 → 退出碼 1,印「要求 raw」;(不要求 raw 的分類沒有 raw 給主題,T55 接手,見 t55-topic-cli.test.ts)
  *     - 有 raw 又給主題 → 退出碼 0,印「被略過」;
  *     - 來源改了 → 退出碼 0(有 stale 不是失敗)。
  * 子行程用 `node --import tsx scripts/ingest.ts --fake`(離線、確定性)。
@@ -113,15 +113,6 @@ describe('T53 E. 掃描 / 主題跑法的退出碼與訊息', () => {
     expect(r.status, r.out).toBe(1);
     expect(r.out).toMatch(/要求 raw/);
     expect(existsSync(join(dir, 'cards/security')) ? readdirSync(join(dir, 'cards/security')) : []).toEqual([]);
-  });
-
-  it('不要求 raw、沒有 raw、給了主題 → 退出碼 1、印「還沒做」', () => {
-    const dir = freshDir();
-    ensureInitialized(dir);
-    setCategory(dir, { id: 'peach', name: '桃子', require_raw: false });
-    const r = run(['--out', dir, '--category', 'peach', '--topic', '桃子的種法']);
-    expect(r.status, r.out).toBe(1);
-    expect(r.out).toMatch(/還沒做/);
   });
 
   it('有 raw 又給主題 → 退出碼 0、印「被略過」、卡的 source 是 raw', () => {

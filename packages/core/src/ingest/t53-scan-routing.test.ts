@@ -5,7 +5,6 @@
  *   - 分類沒有設定(掃描與主題兩種跑法):拒絕 category_undefined,輸出目錄前後完全相同(不建骨架、不建 raw/<分類>、cards/<分類>、不寫設定),LLM 呼叫數 0。
  *   - 分類要求 raw、沒有可處理的 raw、給了主題:拒絕 requires_raw,不寫卡,LLM 呼叫數 0。
  *   - 分類有 raw、又給主題:照 raw 跑(卡的 source 是 raw),topicIgnored 為 true,沒有拒絕。
- *   - 分類不要求 raw、沒有 raw、給了主題:拒絕 topic_not_implemented,LLM 呼叫數 0,什麼都不寫(T55 接手時這一條會被換掉)。
  *   - 掃描沒給主題:topicIgnored 不為 true。
  * 不比對訊息原文(message 只要是非空字串)。
  */
@@ -106,15 +105,4 @@ describe('T53 A. 分類有 raw、又給了主題 → 照 raw 跑(場景 3)', () 
   });
 });
 
-describe('T53 A. 分類不要求 raw、沒有 raw、給了主題 → 還沒做(T55 接手)', () => {
-  it('topic_not_implemented、LLM 呼叫數 0、什麼都不寫', async () => {
-    const scan = await loadScan();
-    const dir = makeLearning([{ id: 'peach', name: '桃子', require_raw: false }]);
-    const before = treeHash(dir);
-    const { router, calls } = countingRouter({});
-    const result = await scan({ outDir: dir, router, category: 'peach', topic: '桃子的種法', today: '2026-09-10', levelZeroOnly: true });
-    expect(result.refused).toBe('topic_not_implemented');
-    expect(calls).toHaveLength(0);
-    expect(treeHash(dir), '什麼都不寫').toBe(before);
-  });
-});
+// 「分類不要求 raw、沒有 raw、給了主題」原本是 topic_not_implemented(T53);T55 接手成真的主題生成,測試搬到 t55-topic-generation.test.ts。

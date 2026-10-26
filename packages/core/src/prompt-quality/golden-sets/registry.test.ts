@@ -66,13 +66,15 @@ describe('prompt 檔的守門', () => {
     }
   });
 
-  it('掃描器找得到 ingest 底下那五個檔,而且路徑是 repo 相對、用 / 分隔', () => {
+  // T55:多一個 topic.md(ingest.topic),五 → 六。
+  it('掃描器找得到 ingest 底下那六個檔,而且路徑是 repo 相對、用 / 分隔', () => {
     expect(scanPromptFiles()).toEqual([
       `${PROMPTS_DIR}/ingest/cards.md`,
       `${PROMPTS_DIR}/ingest/children.md`,
       `${PROMPTS_DIR}/ingest/deps.md`,
       `${PROMPTS_DIR}/ingest/questions.md`,
       `${PROMPTS_DIR}/ingest/regenerate.md`,
+      `${PROMPTS_DIR}/ingest/topic.md`,
     ]);
   });
 
@@ -214,13 +216,15 @@ describe('GoldenSetId 與 LlmTask 在型別上分得開', () => {
 });
 
 describe('登記表本身', () => {
-  it('五個真的 ingest 任務加一組自我測試', () => {
+  // T55:多一組 ingest.topic,五 → 六個真任務。
+  it('六個真的 ingest 任務加一組自我測試', () => {
     expect(listGoldenSets().sort()).toEqual([
       'ingest.cards',
       'ingest.children',
       'ingest.deps',
       'ingest.questions',
       'ingest.regenerate',
+      'ingest.topic',
       'selftest',
     ]);
     expect([...REAL_TASK_GOLDEN_SET_IDS].sort()).toEqual([
@@ -229,6 +233,7 @@ describe('登記表本身', () => {
       'ingest.deps',
       'ingest.questions',
       'ingest.regenerate',
+      'ingest.topic',
     ]);
   });
 
@@ -270,6 +275,7 @@ describe('登記表本身', () => {
       'ingest.regenerate': 3,
       'ingest.questions': 3,
       'ingest.deps': 3,
+      'ingest.topic': 3,
       selftest: 3,
     });
   });
@@ -309,8 +315,9 @@ describe('登記表本身', () => {
     }
   });
 
-  it('五組真任務的輸入全部來自 raw fixture 的三個切片,沒有自己編的例子', () => {
-    for (const id of REAL_TASK_GOLDEN_SET_IDS) {
+  // T55:ingest.topic 沒有 raw 素材(輸入是一行主題,內容在 fixtures/golden-topic/,見 registry-t55.test.ts),不在這條裡。
+  it('五組吃 raw 的真任務,輸入全部來自 raw fixture 的三個切片,沒有自己編的例子', () => {
+    for (const id of REAL_TASK_GOLDEN_SET_IDS.filter((x) => x !== ('ingest.topic' as string))) {
       const set = getGoldenSet(id)!;
       // deps 吃的是卡片清單,形狀跟另外四組不同,所以比對的是切片標題
       const needles = RAW_SLICES.map((s) => (id === 'ingest.deps' ? s.heading : s.key));
