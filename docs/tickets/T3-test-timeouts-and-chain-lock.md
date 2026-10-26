@@ -4,7 +4,7 @@ deps: [T5]                          # T5 把 .stryker.lock 改成機器範圍,�
 touches: [scripts/, package.json]
 cpu: light                             # 2026-10-26 縮小後只剩 B3'(一支 wrapper + 測試);整鏈計時已在 i9 常態量測
 budget_usd: 2                          # 縮小後的估計
-status: todo                           # 階段 A 已合併(docs/reviews/T3-phase-a-2026-10-14.md);階段 B 縮小為 B3'(顧問 2026-10-26),未派
+status: dispatched                           # 階段 A 已合併(docs/reviews/T3-phase-a-2026-10-14.md);階段 B 縮小為 B3'(顧問 2026-10-26),未派
 owner: worker-grok                     # 預設值,派工時由協調者確認
 must_catch:
   - wrapper 沒印 host / 核數 / worker 數 / 1-5-15 分 load(起跑與結束各一次):B3' 測試 a 必須紅
