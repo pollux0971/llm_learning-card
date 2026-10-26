@@ -1,0 +1,32 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='scripts/check-all-wrapped.test.ts' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": [
+    "clear-text",
+    "progress-append-only",
+    "json"
+  ],
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "coverageAnalysis": "off",
+  "concurrency": 3,
+  "timeoutMS": 180000,
+  "mutate": [
+    "scripts/check-all-wrapped.ts"
+  ],
+  "thresholds": {
+    "high": 90,
+    "low": 80,
+    "break": 0
+  },
+  "ignorePatterns": [
+    "reports",
+    "dist",
+    "apps/desktop/src-tauri/target"
+  ],
+  "disableTypeChecks": false
+}
