@@ -1,7 +1,7 @@
 ---
 id: T3
 deps: [T5]                          # T5 把 .stryker.lock 改成機器範圍,直接回答 B2 的跨 clone 問題;兩張都動 scripts/mutate.ts、scripts/run-tests.ts
-touches: [scripts/]
+touches: [scripts/, package.json]
 cpu: light                             # 2026-10-26 縮小後只剩 B3'(一支 wrapper + 測試);整鏈計時已在 i9 常態量測
 budget_usd: 2                          # 縮小後的估計
 status: todo                           # 階段 A 已合併(docs/reviews/T3-phase-a-2026-10-14.md);階段 B 縮小為 B3'(顧問 2026-10-26),未派
@@ -10,6 +10,7 @@ must_catch:
   - wrapper 沒印 host / 核數 / worker 數 / 1-5-15 分 load(起跑與結束各一次):B3' 測試 a 必須紅
   - 失敗那一步的輸出被吞掉或改寫,或 wrapper 的退出碼與 check-all 不同:B3' 測試 c 必須紅
   - 每 30 秒取樣不見了:B3' 測試 b 必須紅
+  - 子行程被訊號殺掉時 wrapper 回 0(或收到 SIGINT/SIGTERM 沒轉給子行程):B3' 測試 e 必須紅
 ---
 
 # 工單 T3:測試逾時、自我競爭與整鏈鎖
@@ -107,16 +108,15 @@ gherkin 的價值是用使用者的語言表達產品行為,一把跨 worktree �
 
 讓 `npm run check:all` 在每次整鏈前後多印機器狀態,事後分得出「程式變慢」和「機器變忙」(§4e「回報要帶」那五個欄位)。
 
-- 新增 consumer 自己的 wrapper 腳本(`scripts/` 底下),`package.json` 的 `check:all` 改成呼叫它,它再啟動原本的 `scripts/check-all.ts`。**不得修改 `scripts/check-all.ts`**(檔頭有 `SOURCE: template` 標頭,勿手改)。
-- 起跑與結束各印一行:`host`、核數、worker 數(讀 `VITEST_MAX_WORKERS`;沒設就印 `default`,**不猜數字**)、1/5/15 分 load、時間戳。
-- 執行期間每 30 秒印一行 load 取樣(間隔用環境變數可調,測試用短間隔;預設 30 秒)。取樣行要有可辨識的前綴,不與 `gate=` / `result=` 的輸出混淆。
-- 失敗那一步的輸出**逐字**保留(wrapper 只在前後與取樣行加內容,不改寫、不吞、不重排子行程的輸出);退出碼與 check-all 相同;最後一行仍是 check-all 自己印的 `gate=all result=...`(技術文件與 skill 引用這個字面)。
-- 新增的 `.ts` 要登記 `scripts/boundaries.owners.json`,並讓 `scripts/zero-input-guard.test.ts` 通過(名冊 `scripts/zero-input-roster.ts`,§4c 第 4 條)。
-- `npm run check:all` 之後的使用者(i9 的 `run-sha.sh`、驗證鏈指令)不需要改。
-
-## 階段 B
-
-**優先順序:B1 比 B2 重要,B1a 最重要。** 若時間只夠一件,先做 B1a。
+- 新增 consumer 自己的 wrapper 腳本(`scripts/` 底下),`package.json` 的 `check:all` 改成呼叫它(所以 `touches` 含 `package.json`),它再啟動原本的 `scripts/check-all.ts`。**不得修改 `scripts/check-all.ts`**(檔頭有 `SOURCE: template` 標頭,勿手改)。
+- **輸出通道(顧問裁)**:wrapper 自己印的行(起跑、取樣、結束)**全部寫 stderr,加固定前綴 `[chain-env]`**;子行程的 stdio 用 `inherit`,wrapper 一個位元組都不經手。所以 stdout 的最後一行仍是 check-all 自己印的 `gate=all result=...`(合併 2>&1 後,結束行會排在 gate 行後面,可接受)。
+- 起跑與結束各印一行,欄位:`host`(os.hostname())、核數(`os.availableParallelism()`)、worker 數(讀 `VITEST_MAX_WORKERS`;沒設就印 `default`,**不猜數字**)、1/5/15 分 load、時間戳(ISO 8601 含時區)。
+- 執行期間每 `CHAIN_ENV_SAMPLE_MS` 毫秒印一行 load 取樣(預設 30000)。**壞輸入不准安靜照跑**:值不是正整數、或小於 100,在啟動 check-all 之前就以**退出碼 2** 結束,訊息點名 `CHAIN_ENV_SAMPLE_MS`。取樣計時器在子行程結束時要清掉,且不能讓 wrapper 卡著不退出。
+- **參數原樣轉發**:wrapper 把 `process.argv` 的使用者參數全部傳給 `check-all.ts`。
+- **退出碼與訊號**:退出碼與 check-all 相同;子行程被訊號殺掉時,退出碼 = 128 + 訊號編號,**不准回 0**;wrapper 自己收到 SIGINT / SIGTERM 要轉給子行程。
+- **零輸入守門**:新增的 `.ts` 要登記 `scripts/boundaries.owners.json`,並在 `scripts/zero-input-roster.ts` 登記成 entry,沿用 check-all 那四個 `--root` 假 consumer 探針(builder 共用,不要複製一份),讓零輸入守門跑它時不起真的整鏈、不遞迴;`scripts/zero-input-guard.test.ts` 要通過(§4c 第 4 條)。
+- **測試注入**:要換掉被包的指令只能用匯出的函式(例如 `runWrapped({ command, args, intervalMs })`),CLI 不開這個口。
+- `npm run check:all` 之後的使用者(i9 的 `run-sha.sh`/`run-chain.sh`、驗證鏈指令)不需要改。
 
 ### B1 自我競爭與逾時(兩件一起量、分開記)
 
@@ -182,11 +182,12 @@ gherkin 的價值是用使用者的語言表達產品行為,一把跨 worktree �
 
 ## 驗收條件
 
-**2026-10-26 縮小後只有下面 B3' 的 a–d 與 A 報告(條件 1,已完成)有效;條件 2–7 對應 B1/B2,不做。**
+**2026-10-26 縮小後只有下面 B3' 的 a–e 與 A 報告(條件 1,已完成)有效;條件 2–7 對應 B1/B2,不做。**
 
-- B3' a:wrapper 的起跑與結束各印出 host、核數、worker 數(有設 `VITEST_MAX_WORKERS` 印數字,沒設印 `default`)、1/5/15 分 load。
-- B3' b:執行期間按間隔印 load 取樣行(測試用短間隔,斷言行數 ≥ 預期;子行程結束後不再印)。
-- B3' c:被包的指令失敗時,wrapper 退出碼相同、失敗輸出逐字出現(用會印特定字串並以非零退出的假指令驗證);成功時退出 0 且最後一行是被包指令自己的最後一行。
+- B3' a:wrapper 的起跑與結束各在 stderr 印出 `[chain-env]` 行,含 host、核數、worker 數(有設 `VITEST_MAX_WORKERS` 印數字,沒設印 `default`)、1/5/15 分 load、ISO 8601 含時區時間戳;子行程 stdout 不含這些行。
+- B3' b:執行期間按 `CHAIN_ENV_SAMPLE_MS` 間隔印 load 取樣行(測試用短間隔,斷言行數 ≥ 預期;子行程結束後不再印、wrapper 不卡住);`CHAIN_ENV_SAMPLE_MS` 為非正整數或小於 100 時,在啟動被包指令之前退出碼 2 且訊息點名該變數、被包指令一次都沒跑。
+- B3' c:被包的指令失敗時,wrapper 退出碼相同、失敗輸出逐字出現在 stdout/stderr 原通道(用會印特定字串並以非零退出的假指令驗證);成功時退出 0 且 **stdout 的最後一行**是被包指令自己的最後一行;參數原樣轉發。
+- B3' e:被包的指令被訊號殺掉 → wrapper 退出碼 = 128 + 訊號編號(不是 0);wrapper 收到 SIGINT / SIGTERM 時子行程也收到。
 - B3' d:`scripts/check-all.ts` 一個位元組都沒動(`git diff` 為空);`npm run check:all` 的行為對其他使用者不變。
 
 1. A 報告存在:母體大小在最前;每列有 a/b/c 與證據;A1 有「會編譯」欄;方法說明有 `grep 'timeout'`
@@ -203,7 +204,7 @@ gherkin 的價值是用使用者的語言表達產品行為,一把跨 worktree �
 
 ## 測試誰寫
 
-- 測試 agent 寫 B3' a–d 的測試(原 4–7 不做)(用 `scripts/*.test.ts`,不寫 `.feature`)。
+- 測試 agent 寫 B3' a–e 的測試(原 4–7 不做;用 `scripts/*.test.ts`,不寫 `.feature`)。
 - 開發 agent 只寫實作,不改測試。
 - 審核 agent 做 A 的抽樣獨立重量、驗收 2 的對照、鎖測試的變異。
   A 的報告不是審核 agent 自己產出的證據,審核 agent 要自己重量其中抽樣的列,不收轉述。
