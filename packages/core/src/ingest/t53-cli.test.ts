@@ -19,9 +19,12 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as yamlParse } from 'yaml';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ensureInitialized, setCategory } from './init.js';
 import { REPO_ROOT, mtimeOf, rawText, treeHash, writeRaw } from './t53-test-support.js';
+
+// 有的條目會用 spawnSync 起 tsx 子行程(scripts/ingest.ts),機器忙時超過 vitest 預設的 5 秒;逐檔放寬逾時(不動全域設定,同 T47/T49/T50 渲染測試的做法)
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
 const SCRIPT = join(REPO_ROOT, 'scripts/ingest.ts');
 const SAMPLE = join(REPO_ROOT, 'contracts/fixtures/raw/security-basics.md'); // fixtures 錄了它的回應(--fake 讀得到)
