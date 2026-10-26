@@ -32,8 +32,6 @@ export interface ScanResult {
   staleCards: string[];
   missingSourceCards: string[];
   unreadableFlags: string[];
-  /** raw/ 底下不在 categories.yaml 裡的資料夾名字(只報出來、不處理;工單 D4) */
-  unconfiguredFolders: string[];
   message: string;
 }
 
@@ -90,17 +88,6 @@ export function rawText(tag: string, lines = 12): string {
 export interface Counting {
   router: FakeLlmRouter;
   calls: { task: string; prompt: string }[];
-  /** 雲端探測(probeOnline)被叫了幾次 */
-  probes: () => number;
-}
-
-/** 數 probeOnline 次數的 FakeLlmRouter */
-class ProbeCountingRouter extends FakeLlmRouter {
-  probeCount = 0;
-  override async probeOnline(): Promise<boolean> {
-    this.probeCount += 1;
-    return super.probeOnline();
-  }
 }
 
 /** 每個 raw 檔名對應 `cards` 張短卡(三張時行號 [1,2]、[3,4]、[5,6])。marker 是檔名,互斥。 */
@@ -114,15 +101,12 @@ export function cardsFixture(fileName: string, titles: string[]): FakeFixtureRec
   };
 }
 
-/**
- * files:檔名 → 卡的標題。數呼叫次數與探測次數;沒有預錄回應的檔被拿去生成會丟錯(FakeLlmRouter 不靜默)。
- * offline:true = 離線(probeOnline 回 false、call 丟 CloudRequiredError)。
- */
-export function countingRouter(files: Record<string, string[]>, opts: { offline?: boolean } = {}): Counting {
+/** files:檔名 → 卡的標題。數呼叫次數;沒有預錄回應的檔被拿去生成會丟錯(FakeLlmRouter 不靜默) */
+export function countingRouter(files: Record<string, string[]>): Counting {
   const calls: { task: string; prompt: string }[] = [];
   const extra = Object.entries(files).map(([name, titles]) => cardsFixture(name, titles));
-  const router = new ProbeCountingRouter({ extra, onCall: (c) => calls.push(c), cloudUnavailable: opts.offline ?? false });
-  return { router, calls, probes: () => router.probeCount };
+  const router = new FakeLlmRouter({ extra, onCall: (c) => calls.push(c) });
+  return { router, calls };
 }
 
 /** 先用既有的 runIngest 把一個 raw 檔處理掉(產生卡、ingested.json 的鍵),回傳卡 id */
