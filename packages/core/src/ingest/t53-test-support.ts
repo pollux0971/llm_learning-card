@@ -20,7 +20,7 @@ import { ensureInitialized, setCategory } from './init.js';
 export const REPO_ROOT = join(import.meta.dirname, '../../../..');
 export const INGEST_BARREL = join(import.meta.dirname, 'index.ts');
 
-export type Refusal = 'category_undefined' | 'requires_raw' | 'raw_conflict' | 'topic_not_implemented';
+export type Refusal = 'category_undefined' | 'requires_raw' | 'raw_conflict' | 'topic_not_implemented' | 'topic_invalid' | 'topic_failed';
 
 export interface ScanResult {
   refused?: Refusal;
@@ -37,6 +37,10 @@ export interface ScanResult {
   message: string;
   /** 有新檔要生成但雲端探測失敗(實作加的欄位;CLI 用它決定退出碼 1) */
   cloudBlocked?: boolean;
+  /** T55:這一次主題生成寫出的 level 0 卡 id(沒有主題生成就沒有這個欄位或是空陣列) */
+  topicGenerated?: string[];
+  /** T55:同一個分類、同一個(正規化後)主題已經生成過:那幾張卡的 id;沒生成過是沒有或空陣列 */
+  topicAlready?: string[];
 }
 
 export interface ScanOptions {

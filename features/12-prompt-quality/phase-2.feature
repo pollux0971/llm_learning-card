@@ -136,7 +136,7 @@ Feature: Golden runs against a real model
   Scenario: Every real ingest prompt file has a golden set
     When the registration gate runs
     Then the gate passes
-    And each of the five ingest prompt files is named by exactly one golden set
+    And each of the six ingest prompt files is named by exactly one golden set
 
   Scenario: A prompt file nobody registered is reported
     Given a prompt file that no golden set names

@@ -11,3 +11,4 @@ export * from './children.js';
 export * from './siblings.js';
 export * from './deps.js';
 export * from './scan.js';
+export * from './topic.js';

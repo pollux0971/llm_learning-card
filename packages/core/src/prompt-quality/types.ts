@@ -56,15 +56,16 @@ export interface GoldenInput {
  * golden set 的識別碼。**不是** `LlmTask`(契約 §7)。
  *
  * 為什麼要分開:契約 §7 的權威清單只有 7 個任務,而 `packages/core/prompts/ingest/`
- * 底下的三個檔 `cards.md` / `children.md` / `regenerate.md` 都是用同一個任務
- * `'ingest.cards'` 呼叫 router(generate-cards.ts、children.ts)。一個 prompt 檔一組
- * golden set,所以「跑哪一組」必須有自己的 key;用任務名當 key 的話那三個檔最多只能
- * 登記一個,另外兩個會靜靜地沒有基準——那正是這個資料夾要防的事。
+ * 底下的 `cards.md` / `children.md` / `regenerate.md` / `topic.md` 都是用同一個任務
+ * `'ingest.cards'` 呼叫 router(generate-cards.ts、children.ts、topic.ts)。一個 prompt 檔一組
+ * golden set,所以「跑哪一組」必須有自己的 key;用任務名當 key 的話那幾個檔最多只能
+ * 登記一個,另外的會靜靜地沒有基準——那正是這個資料夾要防的事。
  *
  * 契約 §7 的 LlmTask 一個字都沒有改;`GoldenSet.task` 仍然只放契約裡的值。
  */
 export type GoldenSetId =
   | 'ingest.cards'
+  | 'ingest.topic'
   | 'ingest.children'
   | 'ingest.regenerate'
   | 'ingest.questions'

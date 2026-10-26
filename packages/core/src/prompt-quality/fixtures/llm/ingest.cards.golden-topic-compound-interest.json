@@ -1,0 +1,12 @@
+{
+  "task": "ingest.cards",
+  "prompt_contains": "golden: topic-compound-interest",
+  "attempt": 1,
+  "response": {
+    "text": "[{\"title\": \"複利的意思\", \"body\": \"複利是把賺到的利息再加進本金,下一期連利息一起計算,所以資產越滾越大;單利則只對原本的本金計息。\", \"examples\": []}, {\"title\": \"時間對複利的影響\", \"body\": \"複利的成長是指數型的:時間越長,增加得越快。同樣的年報酬率,提早開始投資的人,最後累積的金額通常遠高於晚開始的人。\", \"examples\": []}, {\"title\": \"72 法則\", \"body\": \"72 法則是估算本金翻倍所需年數的簡便算法:用 72 除以年報酬率。年報酬率 6% 時,大約 12 年翻倍。\", \"examples\": [\"72 ÷ 6 = 12 年\"]}]",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

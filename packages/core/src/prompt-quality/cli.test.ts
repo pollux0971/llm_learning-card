@@ -171,12 +171,12 @@ describe('cli main', () => {
     for (const id of listGoldenSets()) expect(existsSync(join(out, id))).toBe(true);
   });
 
-  // T18 (d2) 改了這條:ingest.children 多三個泛化輸入,18 → 21。
-  it('--golden --fake 五組真任務加自我測試,一共 21 個輸入都跑得起來', async () => {
+  // T18 (d2) 改了這條:ingest.children 多三個泛化輸入,18 → 21。T55:多一組 ingest.topic(3 個輸入),21 → 24。
+  it('--golden --fake 六組真任務加自我測試,一共 24 個輸入都跑得起來', async () => {
     const out = tmpOutDir();
     const result = await main(['--golden', '--fake', '--out', out]);
     expect(result.code).toBe(0);
-    expect(result.output).toContain('處理了 21 個 golden 輸入');
+    expect(result.output).toContain('處理了 24 個 golden 輸入');
     for (const id of REAL_TASK_GOLDEN_SET_IDS) {
       expect(result.output).toContain(`✓ golden run ${id} →`);
     }
@@ -260,13 +260,15 @@ describe('cli main', () => {
    * 逐行比對而不是 `toContain`:輸出是**用換行接起來的**,`join('')` 這種
    * 「全部黏成一行」的壞法在 `toContain` 底下完全看不出來,但人讀起來是一坨。
    */
-  it('--list 逐行印出六組,每行是「id → LlmTask、prompt 檔、輸入數」', async () => {
+  // T55:多一行 ingest.topic(在 ingest.cards 後面),六 → 七組。
+  it('--list 逐行印出七組,每行是「id → LlmTask、prompt 檔、輸入數」', async () => {
     const result = await main(['--list']);
     expect(result.code).toBe(0);
     const lines = result.output.split('\n');
     expect(lines[0]).toBe('登記的 golden set:');
-    expect(lines.slice(1, 7)).toEqual([
+    expect(lines.slice(1, 8)).toEqual([
       `- ingest.cards → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/cards.md,3 個輸入`,
+      `- ingest.topic → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/topic.md,3 個輸入`,
       // T18 (d2):ingest.children 多三個泛化輸入,3 → 6。
       `- ingest.children → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/children.md,6 個輸入`,
       `- ingest.regenerate → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/regenerate.md,3 個輸入`,
@@ -276,7 +278,7 @@ describe('cli main', () => {
     ]);
   });
 
-  it('只有 selftest 那行帶「自我測試」註記,五組真任務的行沒有', async () => {
+  it('只有 selftest 那行帶「自我測試」註記,六組真任務的行沒有', async () => {
     const lines = (await main(['--list'])).output.split('\n');
     for (const id of REAL_TASK_GOLDEN_SET_IDS) {
       const line = lines.find((l) => l.startsWith(`- ${id} →`))!;
@@ -289,10 +291,10 @@ describe('cli main', () => {
     const result = await main(['--list']);
     expect(result.code).toBe(0);
     const lines = result.output.split('\n');
-    expect(lines[7]).toBe('');
-    expect(lines[8]).toBe(`${PROMPTS_DIR}/ 底下掃到 ${scanPromptFiles().length} 個 prompt 檔。`);
-    expect(lines[9]).toBe('✓ 每個 prompt 檔都恰好被一組 golden set 登記。');
-    expect(lines.length).toBe(10);
+    expect(lines[8]).toBe('');
+    expect(lines[9]).toBe(`${PROMPTS_DIR}/ 底下掃到 ${scanPromptFiles().length} 個 prompt 檔。`);
+    expect(lines[10]).toBe('✓ 每個 prompt 檔都恰好被一組 golden set 登記。');
+    expect(lines.length).toBe(11);
   });
 
   it('有 prompt 檔沒被登記時退出碼 1,而且指名是哪一個', () => {

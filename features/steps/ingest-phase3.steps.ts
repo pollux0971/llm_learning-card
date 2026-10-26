@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import matter from 'gray-matter';
 import type { LearningWorld } from './_world.js';
+import { topicRouter } from '../../packages/core/src/ingest/t55-test-support.js';
 import { ensureInitialized, setCategory } from '../../packages/core/src/ingest/init.js';
 import { validateCard } from '../../packages/core/src/schema/validate-card.js';
 import { buildDueList } from '../../packages/core/src/scheduler/index.js';
@@ -19,6 +20,8 @@ import {
 
 interface P3 {
   files: Record<string, string[]>;
+  /** T55 場景 2:主題生成(沒有 raw),用完整管線與 topicRouter */
+  topicPipeline?: boolean;
   category: string;
   rawRel?: string;
   oldCardIds?: string[];
@@ -50,8 +53,18 @@ function freshDir(w: LearningWorld): string {
 }
 
 async function scan(w: LearningWorld, extra: { category?: string; topic?: string }): Promise<ScanResult> {
+  const s = p3(w);
   const run = await loadScan();
-  const { router, calls } = countingRouter(p3(w).files);
+  if (s.topicPipeline) {
+    // 場景 2:主題生成走完整管線(考題、子卡、依賴圖),假 router 照 task 回應
+    const t = topicRouter();
+    try {
+      return await run({ outDir: w.dir!, router: t.router, today: TODAY, ...extra });
+    } finally {
+      w.llmCalls.push(...t.calls);
+    }
+  }
+  const { router, calls } = countingRouter(s.files);
   try {
     return await run({ outDir: w.dir!, router, today: TODAY, levelZeroOnly: true, ...extra });
   } finally {
@@ -88,6 +101,40 @@ Then('it reports that the category requires raw material', function (this: Learn
   assert.equal(s.result?.refused, 'requires_raw', JSON.stringify(s.result));
   assert.ok((s.result?.message ?? '').length > 0);
   assert.equal(this.llmCalls.length, 0, `LLM 呼叫數要是 0,實際 ${JSON.stringify(this.llmCalls)}`);
+});
+
+// ---------------------------------------------------------------- 場景 2:沒有 raw 時從主題生成(T55)
+
+Given('the category peach does not require raw and has none', function (this: LearningWorld) {
+  const dir = freshDir(this);
+  const s = p3(this);
+  s.category = 'peach';
+  s.topicPipeline = true;
+  setCategory(dir, { id: 'peach', name: '桃子', require_raw: false });
+});
+
+const levelZeroCards = (w: LearningWorld): { id: string; data: Record<string, unknown> }[] =>
+  cardsIn(w.dir!, p3(w).category)
+    .map((f) => ({ id: f.replace(/\.md$/, ''), data: matter(readFileSync(join(w.dir!, 'cards', p3(w).category, f), 'utf8')).data as Record<string, unknown> }))
+    .filter((c) => c.data['level'] === 0);
+
+Then('between {int} and {int} level zero cards are written', function (this: LearningWorld, min: number, max: number) {
+  const n = levelZeroCards(this).length;
+  assert.ok(n >= min && n <= max, `level 0 的卡要 ${min}–${max} 張,實際 ${n};結果:${JSON.stringify(p3(this).result)}`);
+  assert.equal(p3(this).result?.refused, undefined);
+});
+
+Then('each has source llm and no source reference', function (this: LearningWorld) {
+  const cards = levelZeroCards(this);
+  assert.ok(cards.length >= 1);
+  for (const c of cards) {
+    assert.equal(c.data['source'], 'llm', c.id);
+    assert.ok(!('source_ref' in c.data), `${c.id} 不該有 source_ref`);
+  }
+});
+
+Then('each has a question file', function (this: LearningWorld) {
+  for (const c of levelZeroCards(this)) assert.ok(existsSync(join(this.dir!, 'questions', `${c.id}.yaml`)), `${c.id} 要有考題檔`);
 });
 
 // ---------------------------------------------------------------- 場景 3:raw 優先
