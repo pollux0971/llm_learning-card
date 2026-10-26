@@ -35,6 +35,8 @@ export interface ScanResult {
   /** raw/ 底下不在 categories.yaml 裡的資料夾名字(只報出來、不處理;工單 D4) */
   unconfiguredFolders: string[];
   message: string;
+  /** 有新檔要生成但雲端探測失敗(實作加的欄位;CLI 用它決定退出碼 1) */
+  cloudBlocked?: boolean;
 }
 
 export interface ScanOptions {
@@ -208,4 +210,16 @@ export function trickyCards(category: string, ids: string[], source: string): st
 
 export function overwriteCards(dir: string, category: string, ids: string[], texts: string[]): void {
   ids.forEach((id, i) => writeFileSync(cardPath(dir, category, id), texts[i]!, 'utf8'));
+}
+
+/** state/log.jsonl 的事件(沒有檔就是空陣列) */
+export function readLog(dir: string): Record<string, unknown>[] {
+  const p = join(dir, 'state/log.jsonl');
+  if (!existsSync(p)) return [];
+  return readFileSync(p, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l) as Record<string, unknown>);
+}
+
+/** 檔案位元組(沒有檔回 null) */
+export function bytesOrNull(path: string): string | null {
+  return existsSync(path) ? readFileSync(path, 'utf8') : null;
 }
