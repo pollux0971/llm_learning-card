@@ -91,3 +91,80 @@ gate=doc-links result=PASS scanned=154
 - topic.md 是新 prompt,硬規則 4 的 golden 真呼叫沒跑。依工單,只由協調者在主簽出跑,這份工作一次都沒跑、沒碰金鑰。
 - 全部暫緩時仍寫 state/needs-review.json(工單說暫緩照舊寫),但不寫卡、不記主題鍵。若全部失敗時連 needs-review 都不該留,再說。
 - 沒跑 cucumber(留給驗收)。沒跑變異。沒跑 check:all。
+
+## 第二輪
+
+協調者轉來顧問裁定:前半失敗要收成結果,不要把例外丟出去。先 `git merge --ff-only t55-round2`(8b2bc6f,帶入補測與驗收證據)。只改了 packages/core/src/ingest/topic.ts。scan.ts 與 scripts/ingest.ts 沒改:CLI 本來就在 refused 或 cloudBlocked 時印 message、退出碼 1,不印堆疊。
+
+- 第一段(router.call、parseTopicCards、enforceWordLimit 的重生呼叫)包 try/catch,在 packages/core/src/ingest/topic.ts 第 285 行起,catch 在第 316 行。失敗在寫任何東西之前返回。
+- 一般錯與解析錯:refused topic_failed,說明是「主題生成失敗:」加上錯誤訊息第一行(第 252 行只取第一行,不含堆疊)。
+- code 為 CLOUD_REQUIRED 的錯(不看 class name,第 248 行):跟離線同一條,cloudBlocked 加同一個 CLOUD_MESSAGE。
+- 只包第一段。GraphFileCorruptError、寫卡的 fs 錯誤、validateCard 失敗仍在這段外面,照丟。
+
+### 指令與輸出原文
+
+```
+git merge --ff-only t55-round2
+```
+
+```
+Updating d2bb519..8b2bc6f
+Fast-forward
+```
+
+```
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 npx vitest run packages/core/src/ingest/t55-topic-generation.test.ts packages/core/src/ingest/t55-topic-cli.test.ts packages/core/src/ingest/t55-topic-failures.test.ts
+```
+
+```
+ Test Files  3 passed (3)
+      Tests  63 passed (63)
+   Start at  19:23:02
+   Duration  4.80s (transform 387ms, setup 73ms, import 969ms, tests 3.45s, environment 0ms)
+```
+
+```
+CARGO_BUILD_JOBS=2 VITEST_MAX_WORKERS=1 npx vitest run packages/core/src/ingest/
+```
+
+```
+ Test Files  34 passed (34)
+      Tests  604 passed (604)
+   Start at  19:23:11
+   Duration  26.47s (transform 655ms, setup 309ms, import 5.33s, tests 17.55s, environment 3ms)
+```
+
+```
+npx tsc --noEmit
+```
+
+沒有輸出,退出碼 0。
+
+```
+npm run boundaries
+```
+
+```
+boundaries: 掃描 398 個檔案,允許例外 24 條
+涵蓋:納管 454 / 掃描 454 檔(100.0%),未納管目錄:
+  (無)
+✓ 無違規
+gate=boundaries result=PASS scanned=398
+```
+
+```
+npx tsx scripts/check-doc-links.ts
+```
+
+```
+doc-links: 排除片段 [node_modules, .git, .next, .nuxt, .svelte-kit, dist, build, out, coverage, .turbo, .cache, target, .stryker-tmp, __pycache__, .venv, venv, reports, archive, tmp-learning, learning]、排除前綴 [.claude/worktrees, contracts/fixtures]
+doc-links: 掃描 298 個 markdown 檔,154 條相對連結
+✓ 無壞掉的連結
+gate=doc-links result=PASS scanned=154
+```
+
+沒跑 cucumber,沒跑變異,沒跑任何真呼叫。
+
+### 待協調
+
+- 沒有。CLI 不用改就過了補測的 X 組。

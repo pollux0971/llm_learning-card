@@ -244,6 +244,23 @@ async function probeOnline(router: LlmRouter): Promise<boolean> {
   }
 }
 
+/** 跟 raw 路徑一樣看 code,不看 class name(ingest.ts 的 isCloudRequiredError)。 */
+function isCloudRequiredError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'CLOUD_REQUIRED';
+}
+
+function errorFirstLine(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  return (text.split('\n')[0] ?? '').trim();
+}
+
+/** 前半失敗:一句說明,只留錯誤訊息第一行,不帶堆疊。雲端錯走離線那條。 */
+function topicCallFailed(err: unknown): TopicGenerationResult {
+  if (isCloudRequiredError(err)) return emptyTopic(CLOUD_MESSAGE, { cloudBlocked: true });
+  const line = errorFirstLine(err);
+  return emptyTopic(line.length > 0 ? `主題生成失敗: ${line}` : '主題生成失敗', { refused: 'topic_failed' });
+}
+
 export async function generateFromTopic(opts: TopicGenerationInput): Promise<TopicGenerationResult> {
   const normalized = normalizeTopic(opts.topic);
   const length = codePointLength(normalized);
@@ -265,29 +282,39 @@ export async function generateFromTopic(opts: TopicGenerationInput): Promise<Top
     return emptyTopic(CLOUD_MESSAGE, { cloudBlocked: true });
   }
 
-  const result = await opts.router.call('ingest.cards', buildTopicPrompt(opts.category, normalized));
-  const drafts = parseTopicCards(result.text);
-  const kept = drafts.length > TOPIC_CARD_CAP ? drafts.slice(0, TOPIC_CARD_CAP) : drafts;
-
-  const accepted: TopicDraft[] = [];
-  const parked: ParkedTopic[] = [];
-  const warnings: string[] = [];
-  let regenerateEvents = 0;
-  for (const draft of kept) {
-    const limited = await enforceWordLimit(
-      (task, prompt) => opts.router.call(task, prompt),
-      'ingest.cards',
-      opts.category,
-      'topic',
-      draft,
-    );
-    warnings.push(...limited.warnings);
-    if (limited.accepted) {
-      accepted.push({ title: limited.title, body: limited.body, examples: limited.examples });
-      if (limited.attempts.length > 1) regenerateEvents += 1;
-    } else {
-      parked.push({ title: limited.title, attempts: limited.attempts });
+  // 只包第一段(呼叫、解析、字數重試)。失敗在寫任何東西之前返回。
+  // 後半的 GraphFileCorruptError、寫檔的 fs 錯誤、validateCard 失敗都在這段外面,照丟。
+  let drafts: TopicDraft[];
+  let accepted: TopicDraft[];
+  let parked: ParkedTopic[];
+  let warnings: string[];
+  let regenerateEvents: number;
+  try {
+    const result = await opts.router.call('ingest.cards', buildTopicPrompt(opts.category, normalized));
+    drafts = parseTopicCards(result.text);
+    const kept = drafts.length > TOPIC_CARD_CAP ? drafts.slice(0, TOPIC_CARD_CAP) : drafts;
+    accepted = [];
+    parked = [];
+    warnings = [];
+    regenerateEvents = 0;
+    for (const draft of kept) {
+      const limited = await enforceWordLimit(
+        (task, prompt) => opts.router.call(task, prompt),
+        'ingest.cards',
+        opts.category,
+        'topic',
+        draft,
+      );
+      warnings.push(...limited.warnings);
+      if (limited.accepted) {
+        accepted.push({ title: limited.title, body: limited.body, examples: limited.examples });
+        if (limited.attempts.length > 1) regenerateEvents += 1;
+      } else {
+        parked.push({ title: limited.title, attempts: limited.attempts });
+      }
     }
+  } catch (err) {
+    return topicCallFailed(err);
   }
 
   if (drafts.length > TOPIC_CARD_CAP) {
