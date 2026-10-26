@@ -11,7 +11,6 @@ import { runIngest, type RunIngestResult } from '../../packages/core/src/ingest/
 import { ensureInitialized, setCategory } from '../../packages/core/src/ingest/init.js';
 import { enforceWordLimit } from '../../packages/core/src/ingest/generate-cards.js';
 import { readJsonOr, readLogEvents } from '../../packages/core/src/ingest/state.js';
-import { runPhase3IfActive } from './ingest-phase3.steps.js';
 
 // ---------------------------------------------------------------- 場景內狀態
 
@@ -207,8 +206,6 @@ When('ingest runs for that file', async function (this: LearningWorld) {
 });
 
 When('ingest runs', async function (this: LearningWorld) {
-  // phase-3 的場景(有掃描情境)改走掃描跑法;phase-1 / phase-2 照舊跑單一檔
-  if (await runPhase3IfActive(this)) return;
   await doIngestRun(this);
 });
 

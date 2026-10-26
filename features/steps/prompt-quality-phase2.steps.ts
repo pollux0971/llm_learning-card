@@ -13,8 +13,6 @@ import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { LearningWorld } from './_world.js';
-import { checkPhase3NoDirectory } from './ingest-phase3.steps.js';
 import { LlmRouterImpl } from '../../packages/core/src/llm/index.js';
 import type { LogEvent } from '../../packages/contracts/src/index.js';
 import {
@@ -314,9 +312,7 @@ Then('it reports that a live run needs the cloud', function () {
   assert.ok(p2.liveError instanceof LiveRunOfflineError, String(p2.liveError));
 });
 
-Then('no directory is created', function (this: LearningWorld) {
-  // 同一句也是 02-ingest-pipeline phase-3 場景 7 的步驟:那邊有情境就在那邊驗(cucumber 不准兩份定義)
-  if (checkPhase3NoDirectory(this)) return;
+Then('no directory is created', function () {
   assert.ok(p2.baseDir);
   assert.deepEqual(readdirSync(p2.baseDir), []);
 });
