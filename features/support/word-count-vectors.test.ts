@@ -1,9 +1,12 @@
 /**
  * T52 紅測試:契約 §2 的字數與圍欄規則只留一份實作,所有讀這條規則的實作都跑同一份向量檔。
- * 工單:docs/tickets/T52-word-count-single-source-vectors.md。ADR-060 第 3 點與它的 Consequences。測試 agent 寫;開發 worker 不改。
+ * T57(契約 1.5.0、ADR-081)改寫:example 圍欄以教學卡畫面的區塊解析(markdown-it 15.0.1)為準;向量檔多了怪寫法、波浪號、清單與引用、
+ * 只有 CR 的換行、資訊字串逐字等列;「畫面」那一列改走真的路(card.ts parseCard → bodyMarkdown → renderMarkdown);指紋掃描的登記檔改成
+ * card-markdown.ts(比 'example')與 word-count.ts(Script)。
+ * 工單:docs/tickets/T52-word-count-single-source-vectors.md、T57-example-fence-follows-screen.md。ADR-060 第 3 點、ADR-081。測試 agent 寫;開發 worker 不改。
  *
  * 這個檔四件事:
- *   1. 向量檔 `contracts/fixtures/word-count-vectors.json` 的結構檢查(全 ASCII、欄位、basis 合法、covers 涵蓋 §2 每個類別、
+ *   1. 向量檔 `contracts/fixtures/word-count-vectors.json` 的結構檢查(全 ASCII、欄位、basis 合法、strippedBody 選填、covers 涵蓋 §2 每個類別、
  *      U+F900 那一列真的是 U+F900、fixture 檔存在、01 phase-1 gherkin 表的九列都在、列數釘死)。
  *   2. 登記表:每一份讀 §2 規則的實作各跑向量檔的**每一列**(字數與 example 內容或個數),並斷言跑過的列數 = 向量檔列數。
  *   3. 指紋掃描:只認「讀」§2 規則的寫法,擋第五份。命中的檔要在登記表或例外表(附理由),否則紅。
@@ -12,8 +15,8 @@
  * 載入方式:所有被測模組都用動態 import 算出來的 file URL(紅測試在 base 上要 tsc 乾淨,而新匯出在 base 上還不存在)。
  * 新匯出:`@core/schema/index.js` 的 `stripExampleFences(text) → { body, examples }` 與 `countBodyWords(text)`(ADR-060 第 3 點的名字)。
  *
- * 範圍:不測契約沒定義的圍欄寫法(開閉同一行、未閉合、結束比開始多、example 後面還有字、縮排 4 格以上、開始行前面有字;T57 才定義)
- * 與沒列名的字元類別(M*、Cf;F2)。向量檔裡也沒有這些。
+ * 範圍:契約 §2 的每一種圍欄寫法都有向量(1.5.0 起);沒列名的字元類別(M*、Cf)除了「其他」的完整寫法外不單獨測。
+ * 舊六個向量測試檔的字面向量都收進向量檔(對照表 docs/reviews/T57-old-vectors-map.md,由 t57-example-fence-guards.test.ts 核對)。
  */
 import { existsSync, readFileSync, readdirSync, statSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,9 +33,9 @@ const FIXTURES_DIR = join(ROOT, 'contracts/fixtures');
 const GHERKIN_PATH = join(ROOT, 'features/01-data-layer/phase-1.feature');
 
 /** 向量檔的列數。刪一列、或測試少跑,這個數字就對不上。加列時由測試 agent 改這裡。 */
-const EXPECTED_ROWS = 85;
+const EXPECTED_ROWS = 170;
 
-const BASES = ['s2-key-table', 's2-vector-table', 's2-definition', 'ruling-b', 'fixture', 'gherkin-p1'] as const;
+const BASES = ['s2-key-table', 's2-vector-table', 's2-definition', 'ruling-b', 'fixture', 'gherkin-p1', 's2-fence-1.5.0'] as const;
 
 /** 契約 §2 定義裡的每一個類別(ADR-060:向量要涵蓋類別,不是只涵蓋例子)。向量檔的 covers 聯集必須包含這些。 */
 const REQUIRED_COVERS = [
@@ -49,6 +52,12 @@ const REQUIRED_COVERS = [
   'fence-3', 'fence-4-nested', 'fence-5-nested4', 'fence-multi', 'fence-non-example', 'fence-examples-marker', 'fence-two-backticks',
   'fence-crlf', 'fence-close-eof', 'fence-close-trailing-space', 'fence-close-trailing-tab', 'fence-close-indent',
   'fence-open-trailing-ws', 'fence-close-followed-by-word', 'fence-close-glued',
+  // 圍欄(契約 1.5.0、ADR-081:以畫面的區塊解析為準)
+  'fence-same-line', 'fence-unclosed', 'fence-close-longer', 'fence-info-trailing-text', 'fence-info-tab', 'fence-close-indent-4',
+  'fence-open-indent-4', 'fence-open-indent-3', 'fence-lazy-continuation', 'fence-trim-first', 'fence-open-after-text',
+  'fence-tilde', 'fence-tilde-wraps-backticks', 'fence-mixed-marker', 'fence-tilde-info-backtick',
+  'fence-list', 'fence-blockquote', 'fence-list-quote', 'fence-container-marker', 'fence-empty-example',
+  'fence-tab-indent', 'fence-cr-only', 'fence-info-entity', 'fence-info-case', 'fence-info-ideographic-space', 'fence-body-bytes',
   // fixture 與 gherkin
   'fixture', 'gherkin',
 ] as const;
@@ -62,6 +71,8 @@ interface VectorRow {
   covers: string[];
   basis: string;
   why: string;
+  /** 選填:移除 example 圍欄之後、整段 trim 的 body 原文(逐位元組比,CRLF 與容器記號都在) */
+  strippedBody?: string;
 }
 interface VectorDoc {
   description: string;
@@ -128,6 +139,45 @@ describe('T52 向量檔 contracts/fixtures/word-count-vectors.json:結構', () =
     expect(unknown, `向量檔有不認識的 covers:${unknown.join(', ')}`).toEqual([]);
   });
 
+  it('契約 1.5.0 的關鍵列都在、數字是顧問要的那幾個(清單留 1. 是 3、裸引用是 0、實體不解 8、Example 7、U+3000 切開 2、空例子框、CRLF)', () => {
+    const T = '`'.repeat(3);
+    const C = '\u5167\u5bb9 \u5167\u5bb9';
+    const F = '\u524d';
+    const B = '\u5f8c';
+    const find = (body: string): VectorRow | undefined => rows.find((r) => r.body === body);
+    const want: [string, string, number, string[]][] = [
+      ['清單 1. 留下', `${F}\n\n1. ${T}example\n   ${C}\n   ${T}\n\n${B}`, 3, [C]],
+      ['裸引用', `> ${T}example\n> ${C}\n> ${T}`, 0, [C]],
+      ['HTML 實體不解', `${F}\n\n${T}&#101;xample\n${C}\n${T}\n\n${B}`, 8, []],
+      ['Example 大寫', `${F}\n\n${T}Example\n${C}\n${T}\n\n${B}`, 7, []],
+      ['U+3000 切開', `${F}\n\n${T}example\u3000x\n${C}\n${T}\n\n${B}`, 2, [C]],
+      ['清單續行沒縮排:空例子框', `${F}\n\n- ${T}example\n${C}\n${T}\n\n${B}`, 6, ['']],
+      ['引用只有開始行有 >:空例子框', `${F}\n\n> ${T}example\n${C}\n${T}\n\n${B}`, 6, ['']],
+      ['沒關到卡片結尾', `${F}\n\n${T}example\n${C}\n\n${B}`, 1, [`${C}\n\n${B}`]],
+      ['只有 CR 的換行', `${F}\r\r${T}example\r${C}\r${T}\r\r${B}`, 2, [C]],
+      ['body 第一行縮排 4 要先 trim', `    ${T}example\n${C}\n${T}\n\n${B}`, 1, [C]],
+    ];
+    for (const [what, body, words, examples] of want) {
+      const hit = find(body);
+      expect(hit, `向量檔缺這一列:${what}`).toBeDefined();
+      expect(hit?.words, `${what} 的字數`).toBe(words);
+      expect(hit?.examples, `${what} 的 examples`).toEqual(examples);
+      expect(hit?.basis).toBe('s2-fence-1.5.0');
+    }
+    expect(rows.filter((r) => r.basis === 's2-fence-1.5.0').length, '1.5.0 的列數').toBe(31);
+  });
+
+  it('strippedBody(選填)至少 8 列有:其中有 CRLF 原樣保留的一列、清單留下 "1. " 的一列;型別是字串', () => {
+    const withStripped = rows.filter((r) => r.strippedBody !== undefined);
+    expect(withStripped.length).toBeGreaterThanOrEqual(8);
+    for (const r of withStripped) {
+      expect(typeof r.strippedBody, r.name).toBe('string');
+      expect(r.strippedBody, `${r.name} 的 strippedBody 要 trim 過`).toBe(r.strippedBody!.trim());
+    }
+    expect(withStripped.some((r) => r.strippedBody!.includes('\r\n') && r.strippedBody!.includes('\u524d')), '有一列 CRLF 原樣留著').toBe(true);
+    expect(withStripped.some((r) => r.strippedBody!.includes('1. \n')), '有一列留下 "1. " 自成一行').toBe(true);
+  });
+
   it('相容區的列真的是 U+F900(不是被 NFC 換成 U+8C48),Hangul Jamo 與 Hangul 相容字母、擴充 A、擴充 B 也都是原碼位', () => {
     const body = (name: string): string => rows.find((r) => r.name === name)?.body ?? '';
     expect([...body('vec: han compat')].map((c) => c.codePointAt(0))).toEqual([0xf900, 0xf900]);
@@ -180,7 +230,7 @@ describe('T52 向量檔 contracts/fixtures/word-count-vectors.json:結構', () =
 interface Impl {
   /** 登記表上的名字(守門:少一份就紅) */
   name: string;
-  /** 這份實作比什麼 */
+  /** 這份實作比什麼('body' = trim 過,而且有 strippedBody 的列要逐位元組一樣) */
   checks: ('words' | 'examples' | 'exampleCount' | 'body')[];
   /** 傳 body 文字,回傳它算出的東西。拿不到的欄位不要填。 */
   run(body: string): Promise<{ words?: number; examples?: string[]; exampleCount?: number; body?: string }>;
@@ -234,11 +284,11 @@ const REGISTRY: Impl[] = [
   },
   {
     name: '09-lint parseCard(examples)',
-    checks: ['examples'],
+    checks: ['examples', 'body'],
     async run(body) {
       const m = await load('packages/core/src/lint/index.ts');
-      const p = fn<(raw: string) => { examples: string[] }>(m, 'parseCard', '@core/lint')(asCard(body));
-      return { examples: p.examples };
+      const p = fn<(raw: string) => { body: string; examples: string[] }>(m, 'parseCard', '@core/lint')(asCard(body));
+      return { examples: p.examples, body: p.body };
     },
   },
   {
@@ -247,8 +297,9 @@ const REGISTRY: Impl[] = [
     async run(body) {
       const m = await load('packages/core/src/lint/index.ts');
       // checkBodyLimit 只在超過 100 字時回報字數。前面墊 101 個字,讀回報的數字再減 101。
+      // 墊在前面之後,body 第一行的縮排不再是整段的開頭,所以先 trimStart(「解析前先 trim」由其他路徑管:向量檔「body first line indented four」那一列)。
       const PAD = 101;
-      const parsed = fn<(raw: string) => unknown>(m, 'parseCard', '@core/lint')(asCard(`${'\u540c'.repeat(PAD)}\n\n${body}`));
+      const parsed = fn<(raw: string) => unknown>(m, 'parseCard', '@core/lint')(asCard(`${'\u540c'.repeat(PAD)}\n\n${body.trimStart()}`));
       const problems = fn<(s: unknown) => { type: string; detail: string }[]>(m, 'checkBodyLimit', '@core/lint')({
         cards: [{ id: 'x', category: 'c', path: 'cards/c/x.md', parsed }],
       });
@@ -291,12 +342,15 @@ const REGISTRY: Impl[] = [
     },
   },
   {
-    name: '07 畫面 renderMarkdown(最外層 lc-example 容器個數)',
+    name: '07 畫面 parseCard → bodyMarkdown → renderMarkdown(最外層 lc-example 容器個數)',
     checks: ['exampleCount'],
     async run(body) {
-      // 真的走 ui-shared 的渲染(markdown-it + exampleFencePlugin,含它自己的 fenceLang 判斷),不在這裡自己判斷「是不是 example」。
+      // 真的走畫面的路(App.svelte 的 parsed()):teach-card 的 parseCard 先 trim、拿 bodyMarkdown,再交給 ui-shared 的 renderMarkdown。
+      // 不在這裡自己判斷「是不是 example」。
       const m = await load('packages/ui-shared/src/example-fence.ts');
-      const html = fn<(src: string) => string>(m, 'renderMarkdown', 'ui-shared/example-fence')(body);
+      const c = await load('apps/teach-card/src/lib/card.ts');
+      const parsed = fn<(raw: string) => { bodyMarkdown: string }>(c, 'parseCard', 'teach-card/lib/card')(`---\nid: x\n---\n${body}`);
+      const html = fn<(src: string) => string>(m, 'renderMarkdown', 'ui-shared/example-fence')(parsed.bodyMarkdown);
       const cls = m['EXAMPLE_CLASS'];
       if (typeof cls !== 'string') throw new Error('ui-shared/example-fence 要匯出 EXAMPLE_CLASS');
       // example 裡面的 example 會被遞迴渲染成巢狀的 <details>,只數最外層(= 卡片自己的 example 圍欄個數)。
@@ -326,7 +380,7 @@ describe('T52 登記表:每一份讀 §2 規則的實作都跑向量檔的每一
       '09-lint 回報字數的那條路(parseCard → checkBodyLimit 的 body_over_limit)',
       '12-prompt-quality countBodyWords',
       '02-ingest enforceWordLimit(第一次嘗試的字數)',
-      '07 畫面 renderMarkdown(最外層 lc-example 容器個數)',
+      '07 畫面 parseCard → bodyMarkdown → renderMarkdown(最外層 lc-example 容器個數)',
     ]);
   });
 
@@ -346,7 +400,12 @@ describe('T52 登記表:每一份讀 §2 規則的實作都跑向量檔的每一
           const n = got.exampleCount ?? got.examples?.length;
           if (n !== row.examples.length) wrong.push(`「${row.name}」example 個數 ${String(n)},該是 ${row.examples.length}`);
         }
-        if (impl.checks.includes('body') && got.body !== undefined && got.body !== got.body.trim()) wrong.push(`「${row.name}」body 沒 trim`);
+        if (impl.checks.includes('body') && got.body !== undefined) {
+          if (got.body !== got.body.trim()) wrong.push(`「${row.name}」body 沒 trim`);
+          if (row.strippedBody !== undefined && got.body !== row.strippedBody) {
+            wrong.push(`「${row.name}」body ${JSON.stringify(got.body)},該是 ${JSON.stringify(row.strippedBody)}`);
+          }
+        }
       }
       expect(ran, '這份實作跑過的列數要等於向量檔列數(不准少跑)').toBe(rows.length);
       expect(ran).toBe(EXPECTED_ROWS);
@@ -416,10 +475,12 @@ describe('T52 周邊護欄', () => {
  *   script:   \p{Script=Han} / \p{sc=Han} 這類(Han、Hiragana、Katakana、Hangul;Rust 的 \p{Han} 也算)
  *   codepoint:CJK 碼位範圍的起訖(0x4e00、\u4e00、U+4E00 這類,或正則裡以 CJK 字元當範圍端點的 [一-龥])
  *   fence-regex:regex 字面值 / new RegExp(...) 的引數裡,同時有反引號的量詞(`{3,} 或連續三個反引號)與 example
+ *   example-literal(T57,顧問 2026-10-27):字串字面值 'example' 當比較的一邊(===、!==、==、!=、switch 的 case),
+ *                   或當 startsWith、includes、indexOf、match、test 的引數。T57 起只有 packages/contracts/src/card-markdown.ts 可以有。
  * 不算:純字串拼接(寫卡片)、斷言或 fixture 裡的字串、註解。
  */
 export interface Hit {
-  kind: 'script' | 'codepoint' | 'fence-regex';
+  kind: 'script' | 'codepoint' | 'fence-regex' | 'example-literal';
   line: number;
   text: string;
 }
@@ -435,6 +496,16 @@ const LITERAL_RANGE_RE = new RegExp(`[${CJK_CHARS}]-[${CJK_CHARS}]`);
 
 /** \x60 \u0060 \u{60} 換回反引號,才看得出量詞 */
 const unescapeTicks = (s: string): string => s.replace(/\\x60|\\u0060|\\u\{0*60\}/gi, '`');
+/** 字串字面值(或沒有代換的樣板字串),內容恰好是 example */
+const isExampleString = (n: ts.Node): boolean =>
+  (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && n.text === 'example';
+const COMPARE_OPS = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
+const EXAMPLE_ARG_METHODS = new Set(['startsWith', 'includes', 'indexOf', 'match', 'test']);
 const hasTickQuantifier = (s: string): boolean => /`{3,}|`\{\s*\d/.test(s);
 const fenceRegexText = (s: string): boolean => {
   const u = unescapeTicks(s);
@@ -475,6 +546,17 @@ export function scanScript(text: string, fileName = 'x.ts'): Hit[] {
     } else if ((ts.isNewExpression(node) || ts.isCallExpression(node)) && ts.isIdentifier(node.expression) && node.expression.text === 'RegExp') {
       const first = node.arguments?.[0];
       if (first) checkPattern(stringParts(first), node);
+    } else if (ts.isBinaryExpression(node) && COMPARE_OPS.has(node.operatorToken.kind) && (isExampleString(node.left) || isExampleString(node.right))) {
+      push('example-literal', node);
+    } else if (ts.isCaseClause(node) && isExampleString(node.expression)) {
+      push('example-literal', node);
+    } else if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      EXAMPLE_ARG_METHODS.has(node.expression.name.text) &&
+      node.arguments.some(isExampleString)
+    ) {
+      push('example-literal', node);
     } else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       // 一般字串裡的 Script 屬性寫法(pattern 先放進變數再 new RegExp)與 U+4E00 碼位字樣
       const raw = node.getText(sf);
@@ -501,6 +583,9 @@ export function scanText(text: string): Hit[] {
       hits.push({ kind: 'codepoint', line: i + 1, text: line.trim().slice(0, 80) });
     }
     if (/`\{\s*\d/.test(u) && /example/.test(u)) hits.push({ kind: 'fence-regex', line: i + 1, text: line.trim().slice(0, 80) });
+    if (/(?:===|!==|==|!=)\s*['"]example['"]|['"]example['"]\s*(?:===|!==|==|!=)|\bcase\s+['"]example['"]|\.(?:startsWith|includes|indexOf|match|test)\(\s*['"]example['"]\s*\)/.test(line)) {
+      hits.push({ kind: 'example-literal', line: i + 1, text: line.trim().slice(0, 80) });
+    }
   });
   return hits;
 }
@@ -528,8 +613,11 @@ export function scanFile(root: string, rel: string): Hit[] {
   return SCRIPT_EXT.test(rel) ? scanScript(text, rel) : scanText(text);
 }
 
-/** 登記的實作:只有這兩個檔可以讀 §2 規則(T52 之後:圍欄在 example-fence.ts,CJK 與字母數字在 word-count.ts) */
-const REGISTERED_HOMES = ['packages/core/src/schema/example-fence.ts', 'packages/core/src/schema/word-count.ts'];
+/**
+ * 登記的實作:只有這兩個檔可以讀 §2 規則。T57 起:example 的判斷在 contracts 的 card-markdown.ts(比字串 'example'),
+ * CJK 與字母數字在 core 的 word-count.ts(Script)。core 的 example-fence.ts 與畫面的 example-fence.ts 一個指紋都不准有。
+ */
+const REGISTERED_HOMES = ['packages/contracts/src/card-markdown.ts', 'packages/core/src/schema/word-count.ts'];
 
 /**
  * 例外表:命中指紋、但不是在「讀」§2 規則的檔。每條附理由。
@@ -580,7 +668,7 @@ describe('T52 指紋掃描:真的 repo——沒登記的檔不能讀 §2 規則'
       expect(scanFile(ROOT, rel).length, `${rel} 應該被指紋掃到(它就是讀規則的那份)`).toBeGreaterThan(0);
     }
     const kinds = new Set(REGISTERED_HOMES.flatMap((rel) => scanFile(ROOT, rel).map((h) => h.kind)));
-    expect([...kinds].sort()).toEqual(['fence-regex', 'script']);
+    expect([...kinds].sort()).toEqual(['example-literal', 'script']);
   });
 
   it('沒登記、也不在例外表的檔,一個讀 §2 規則的指紋都沒有', () => {
@@ -605,6 +693,7 @@ describe('T52 指紋掃描:真的 repo——沒登記的檔不能讀 §2 規則'
       'packages/core/src/ingest/ingest.ts',
       'packages/core/src/ingest/children.ts',
       'packages/core/src/ingest/deps.ts',
+      'packages/core/src/schema/example-fence.ts',
       'packages/ui-shared/src/example-fence.ts',
     ];
     for (const rel of must) {
@@ -650,8 +739,34 @@ describe('T52 指紋掃描:掃描器本身(合成的檔)', () => {
     ]) expect(run(PLACE, src), src).toEqual([PLACE]);
   });
 
+  it('沒登記的檔拿字串 example 去比 → 紅(各種寫法;core 與畫面也一樣)', () => {
+    for (const src of [
+      "export const f = (info: string) => info.trim() === 'example';",
+      "export const f = (info: string) => info !== 'example';",
+      'export const f = (info: string) => info == "example";',
+      "export const f = (info: string) => 'example' === info;",
+      'export const f = (info: string) => info != `example`;',
+      "export function f(info: string) { switch (info) { case 'example': return 1; default: return 0; } }",
+      "export const f = (info: string) => info.startsWith('example');",
+      "export const f = (info: string) => info.includes('example');",
+      "export const f = (info: string) => info.indexOf('example') === 0;",
+      "export const f = (info: string) => info.match('example');",
+      "export const f = (re: RegExp) => re.test('example');",
+    ]) {
+      expect(run(PLACE, src), src).toEqual([PLACE]);
+      expect(run('packages/core/src/schema/example-fence.ts', src), `core ${src}`).toEqual(['packages/core/src/schema/example-fence.ts']);
+      expect(run('packages/ui-shared/src/example-fence.ts', src), `畫面 ${src}`).toEqual(['packages/ui-shared/src/example-fence.ts']);
+    }
+  });
+
+  it('沒登記的檔仍然不能有圍欄 regex(登記的檔裡也不再有,所以任何命中都紅)', () => {
+    const src = 'export const F = /(`{3,})example/g;';
+    expect(run('packages/core/src/schema/example-fence.ts', src)).toEqual(['packages/core/src/schema/example-fence.ts']);
+    expect(run('packages/ui-shared/src/example-fence.ts', src)).toEqual(['packages/ui-shared/src/example-fence.ts']);
+  });
+
   it('同樣的內容放在登記的檔、或例外表的檔 → 不紅', () => {
-    const src = 'export const R = /\\p{Script=Han}/u; export const F = /(`{3,})example/g;';
+    const src = "export const R = /\\p{Script=Han}/u; export const F = /(`{3,})example/g; export const E = (i: string) => i === 'example';";
     expect(run(REGISTERED_HOMES[0]!, src)).toEqual([]);
     expect(run(PLACE, src, REGISTERED_HOMES, { [PLACE]: '測試用的例外,理由寫在這裡' })).toEqual([]);
   });
@@ -665,6 +780,13 @@ describe('T52 指紋掃描:掃描器本身(合成的檔)', () => {
       `expect(out).not.toContain('${T3}example');`,
       "export const re = /(`{3,})js/g;",
       'export const re = /^example$/;',
+      "export const a = ['example', 'examples'];",
+      "export const o = { kind: 'example' };",
+      "export const f = (info: string) => info === 'examples';",
+      "export const f = (info: string) => info.startsWith('example-x');",
+      "export const f = (info: string) => info === `example${info}`;",
+      "export const f = (x: string) => `${x}` + 'example';",
+      "// info === 'example' 只是註解\nexport const x = 1;",
       "export const s = 'plain text with 4e00 but no marker';",
       'export const n = 0x41;',
     ]) expect(run(PLACE, src), src).toEqual([]);
@@ -679,6 +801,8 @@ describe('T52 指紋掃描:掃描器本身(合成的檔)', () => {
     expect(run('apps/desktop/src-tauri/src/cnt.rs', 'let re = Regex::new(r"\\p{Han}").unwrap();')).toEqual(['apps/desktop/src-tauri/src/cnt.rs']);
     expect(run('apps/desktop/src-tauri/src/cnt.rs', 'let re = Regex::new(r"(`{3,})example").unwrap();')).toEqual(['apps/desktop/src-tauri/src/cnt.rs']);
     expect(run('apps/desktop/src-tauri/src/cnt.rs', 'let ok = c >= 0x4E00 && c <= 0x9FFF;')).toEqual(['apps/desktop/src-tauri/src/cnt.rs']);
+    expect(run('apps/desktop/src-tauri/src/cnt.rs', 'let ok = info == "example";')).toEqual(['apps/desktop/src-tauri/src/cnt.rs']);
+    expect(run('apps/desktop/src/App.svelte', "<script>const ok = info === 'example';</script>")).toEqual(['apps/desktop/src/App.svelte']);
     expect(run('apps/desktop/src-tauri/src/cnt.rs', '// \\p{Han} 只是註解\nlet card = "```example\\n";')).toEqual([]);
   });
 });

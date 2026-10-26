@@ -1,5 +1,5 @@
 {
-  "description": "Vectors for contracts/types.md section 2 (body word count and example fences). EVERY implementation that reads the section 2 rule must run every row (ADR-060, ticket T52). Each row is derived from the section 2 definition, not copied from any implementation output. Everything is ASCII: non-ASCII characters are JSON unicode escapes so no editor can normalise them (U+F900 must stay U+F900). body is the raw text to count; fixture (instead of body) is a path under contracts/fixtures/ whose frontmatter is dropped. words is the section 2 count of the body after example fences are removed; examples is the trimmed content of each example fence, in order. covers lists the categories a row exercises; basis says where the number comes from (s2-key-table, s2-vector-table, s2-definition, ruling-b, fixture, gherkin-p1); why is the derivation in one sentence. Fence shapes that section 2 does not define are NOT in this file (ticket T57).",
+  "description": "Vectors for contracts/types.md section 2 (body word count and example fences). EVERY implementation that reads the section 2 rule must run every row (ADR-060, ticket T52). Each row is derived from the section 2 definition, not copied from any implementation output. Everything is ASCII: non-ASCII characters are JSON unicode escapes so no editor can normalise them (U+F900 must stay U+F900). body is the raw text to count; fixture (instead of body) is a path under contracts/fixtures/ whose frontmatter is dropped. words is the section 2 count of the body after example fences are removed; examples is the trimmed content of each example fence, in order. covers lists the categories a row exercises; basis says where the number comes from (s2-key-table, s2-vector-table, s2-definition, ruling-b, fixture, gherkin-p1); why is the derivation in one sentence. Since contracts 1.5.0 (ADR-081, ticket T57) which fences count as example fences is defined by the card screen block parser (markdown-it 15.0.1), and the rows with basis s2-fence-1.5.0 hold those fence shapes. Optional strippedBody is the exact body after the example fences are removed and the whole is trimmed; it is checked byte for byte when present.",
   "rows": [
     {
       "name": "key: same-origin",
@@ -157,6 +157,7 @@
       "examples": [
         "\u5167\u5bb9 \u5167\u5bb9"
       ],
+      "strippedBody": "\u524d\n\n\u5f8c",
       "covers": [
         "fence-3"
       ],
@@ -170,11 +171,12 @@
       "examples": [
         "```js\nconst x = 1;\n```\n\u5185\u5c64\u6587\u5b57"
       ],
+      "strippedBody": "\u524d\n\n\u5f8c",
       "covers": [
         "fence-4-nested"
       ],
       "basis": "s2-vector-table",
-      "why": "closing needs the same number of backticks, the inner three do not close the outer"
+      "why": "closing needs at least as many backticks as the opening, the inner three do not close the outer"
     },
     {
       "name": "vec: js fence is not removed",
@@ -809,14 +811,14 @@
       "body": "\u524d\r\n````example\r\n```js\r\nconst x = 1;\r\n```\r\n\u5185\u5c64\u6587\u5b57\r\n````\r\n\u5f8c",
       "words": 2,
       "examples": [
-        "```js\r\nconst x = 1;\r\n```\r\n\u5185\u5c64\u6587\u5b57"
+        "```js\nconst x = 1;\n```\n\u5185\u5c64\u6587\u5b57"
       ],
       "covers": [
         "fence-crlf",
         "fence-4-nested"
       ],
       "basis": "ruling-b",
-      "why": "CRLF line ends are line ends; the example keeps its inner CRLF"
+      "why": "CRLF line ends are line ends; example content line ends are \\n (contract 1.5.0, ADR-081)"
     },
     {
       "name": "fence: crlf with three backticks",
@@ -1028,6 +1030,1071 @@
       ],
       "basis": "s2-definition",
       "why": "five Han outside the fence"
+    },
+    {
+      "name": "fence: open and close on one line",
+      "body": "\u524d\n\n```example \u5167\u5bb9 \u5167\u5bb9```\n\n\u5f8c",
+      "words": 7,
+      "examples": [],
+      "covers": [
+        "fence-same-line"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a line holding both open and close is not a fence (backtick in the info string); the whole line counts"
+    },
+    {
+      "name": "fence: unclosed runs to the end of the card",
+      "body": "\u524d\n\n```example\n\u5167\u5bb9 \u5167\u5bb9\n\n\u5f8c",
+      "words": 1,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9\n\n\u5f8c"
+      ],
+      "strippedBody": "\u524d",
+      "covers": [
+        "fence-unclosed"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "no closing line: the fence runs to the end of the card, so only the text before it counts"
+    },
+    {
+      "name": "fence: unclosed, no newline at the end",
+      "body": "\u524d\n\n```example\n\u5167\u5bb9 \u5167\u5bb9",
+      "words": 1,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-unclosed"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "unclosed at end of text: same as above, content is the rest"
+    },
+    {
+      "name": "fence: close longer than open",
+      "body": "\u524d\n\n```example\n\u5167\u5bb9 \u5167\u5bb9\n````\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-longer"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "closing needs at least as many backticks as the opening; four close three"
+    },
+    {
+      "name": "fence: text after example in the info string",
+      "body": "\u524d\n\n```example \u6a19\u984c\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-info-trailing-text"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "first word of the info string is example, the rest is ignored"
+    },
+    {
+      "name": "fence: tab then text after example",
+      "body": "\u524d\n\n```example\tx\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-info-trailing-text",
+        "fence-info-tab"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a tab splits the info string, first word is example"
+    },
+    {
+      "name": "fence: close indented four does not close",
+      "body": "\u524d\n\n```example\n\u5167\u5bb9 \u5167\u5bb9\n    ```\n\n\u5f8c",
+      "words": 1,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9\n    ```\n\n\u5f8c"
+      ],
+      "covers": [
+        "fence-close-indent-4",
+        "fence-unclosed"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a closing line indented 4 columns is content, so the fence is unclosed"
+    },
+    {
+      "name": "fence: open indented four after a blank line is code",
+      "body": "\u524d\n\n    ```example\n    \u5167\u5bb9 \u5167\u5bb9\n    ```\n\n\u5f8c",
+      "words": 7,
+      "examples": [],
+      "covers": [
+        "fence-open-indent-4"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "four spaces after a blank line is an indented code block, nothing is removed"
+    },
+    {
+      "name": "fence: open indented four right after a paragraph line",
+      "body": "\u524d\n    ```example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 7,
+      "examples": [],
+      "covers": [
+        "fence-open-indent-4",
+        "fence-lazy-continuation"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "four spaces directly after a paragraph line continues the paragraph; the later three backticks open an ordinary fence"
+    },
+    {
+      "name": "fence: open indented three is a fence",
+      "body": "\u524d\n\n   ```example\n   \u5167\u5bb9 \u5167\u5bb9\n   ```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-open-indent-3"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "up to three spaces of indent still open a fence"
+    },
+    {
+      "name": "fence: body first line indented four is trimmed first",
+      "body": "    ```example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 1,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-trim-first"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "the body is trimmed before parsing, so the four leading spaces are gone and the fence opens"
+    },
+    {
+      "name": "fence: text before the opening on the same line",
+      "body": "\u524d ```example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 7,
+      "examples": [],
+      "covers": [
+        "fence-open-after-text"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "text before the backticks on the same line: not a fence start"
+    },
+    {
+      "name": "fence: tilde fence",
+      "body": "\u524d\n\n~~~example\n\u5167\u5bb9 \u5167\u5bb9\n~~~\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-tilde"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "three tildes open and close a fence like backticks"
+    },
+    {
+      "name": "fence: four tildes wrapping a backtick code fence",
+      "body": "\u524d\n\n~~~~example\n```js\nx\n```\n~~~~\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nx\n```"
+      ],
+      "covers": [
+        "fence-tilde",
+        "fence-tilde-wraps-backticks"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "backtick lines do not close a tilde fence"
+    },
+    {
+      "name": "fence: tilde open, backtick does not close",
+      "body": "\u524d\n\n~~~example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 1,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c"
+      ],
+      "covers": [
+        "fence-tilde",
+        "fence-mixed-marker",
+        "fence-unclosed"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a backtick line does not close a tilde fence"
+    },
+    {
+      "name": "fence: backtick open, tilde does not close",
+      "body": "\u524d\n\n```example\n\u5167\u5bb9 \u5167\u5bb9\n~~~\n\n\u5f8c",
+      "words": 1,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9\n~~~\n\n\u5f8c"
+      ],
+      "covers": [
+        "fence-tilde",
+        "fence-mixed-marker",
+        "fence-unclosed"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a tilde line does not close a backtick fence"
+    },
+    {
+      "name": "fence: tilde info string may hold a backtick",
+      "body": "\u524d\n\n~~~example `x`\n\u5167\u5bb9 \u5167\u5bb9\n~~~\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-tilde",
+        "fence-tilde-info-backtick"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "only backtick fences forbid backticks in the info string"
+    },
+    {
+      "name": "fence: inside a bullet list",
+      "body": "\u524d\n\n- ```example\n  \u5167\u5bb9 \u5167\u5bb9\n  ```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-list"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a fence inside a list item is a fence; the list marker line is kept and counts nothing"
+    },
+    {
+      "name": "fence: inside an ordered list keeps the marker",
+      "body": "\u524d\n\n1. ```example\n   \u5167\u5bb9 \u5167\u5bb9\n   ```\n\n\u5f8c",
+      "words": 3,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "strippedBody": "\u524d\n\n1. \n\n\u5f8c",
+      "covers": [
+        "fence-list",
+        "fence-container-marker"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "the opening line keeps \"1. \" and the 1 counts as one word"
+    },
+    {
+      "name": "fence: list item without indented continuation",
+      "body": "\u524d\n\n- ```example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 6,
+      "examples": [
+        ""
+      ],
+      "strippedBody": "\u524d\n\n- \n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "covers": [
+        "fence-list",
+        "fence-empty-example"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "the lines are not part of the list item: an empty example fence, the rest counts"
+    },
+    {
+      "name": "fence: inside a blockquote",
+      "body": "\u524d\n\n> ```example\n> \u5167\u5bb9 \u5167\u5bb9\n> ```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-blockquote"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a fence in a blockquote is a fence; the marker on the opening line is kept and counts nothing"
+    },
+    {
+      "name": "fence: bare blockquote, nothing else",
+      "body": "> ```example\n> \u5167\u5bb9 \u5167\u5bb9\n> ```",
+      "words": 0,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "strippedBody": ">",
+      "covers": [
+        "fence-blockquote",
+        "fence-container-marker"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "only the blockquote marker is left, and it counts nothing"
+    },
+    {
+      "name": "fence: blockquote marker only on the opening line",
+      "body": "\u524d\n\n> ```example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 6,
+      "examples": [
+        ""
+      ],
+      "strippedBody": "\u524d\n\n> \n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "covers": [
+        "fence-blockquote",
+        "fence-empty-example"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "the next lines leave the quote: an empty example fence, the rest counts"
+    },
+    {
+      "name": "fence: blockquote inside a list",
+      "body": "\u524d\n\n- > ```example\n  > \u5167\u5bb9 \u5167\u5bb9\n  > ```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-list-quote"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "nested containers: still a fence"
+    },
+    {
+      "name": "fence: tab indented opening is code",
+      "body": "\u524d\n\n\t```example\n\t\u5167\u5bb9 \u5167\u5bb9\n\t```\n\n\u5f8c",
+      "words": 7,
+      "examples": [],
+      "covers": [
+        "fence-tab-indent",
+        "fence-open-indent-4"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a tab is four columns: indented code, nothing is removed"
+    },
+    {
+      "name": "fence: crlf, text on both sides",
+      "body": "\u524d\r\n\r\n```example\r\n\u5167\u5bb9 \u5167\u5bb9\r\n```\r\n\r\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-crlf"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "CRLF line ends; example content line ends are \\n (contract 1.5.0, ADR-081)"
+    },
+    {
+      "name": "fence: cr-only line ends",
+      "body": "\u524d\r\r```example\r\u5167\u5bb9 \u5167\u5bb9\r```\r\r\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-cr-only"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "a lone CR is a line end for the parser"
+    },
+    {
+      "name": "fence: html entity in the info string is not decoded",
+      "body": "\u524d\n\n```&#101;xample\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 8,
+      "examples": [],
+      "covers": [
+        "fence-info-entity"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "the info string is compared as written: &#101;xample is not example"
+    },
+    {
+      "name": "fence: info string case matters",
+      "body": "\u524d\n\n```Example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 7,
+      "examples": [],
+      "covers": [
+        "fence-info-case"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "Example is not example"
+    },
+    {
+      "name": "fence: ideographic space splits the info string",
+      "body": "\u524d\n\n```example\u3000x\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-info-ideographic-space"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "U+3000 is whitespace for the split, so the first word is example"
+    },
+    {
+      "name": "fence: crlf keeps every other line end of the body",
+      "body": "\u524d\r\n\u5f8c\r\n\r\n```example\r\n\u5167\u5bb9 \u5167\u5bb9\r\n```\r\n\r\n\u5c3e",
+      "words": 3,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "strippedBody": "\u524d\r\n\u5f8c\r\n\r\n\r\n\r\n\u5c3e",
+      "covers": [
+        "fence-crlf",
+        "fence-body-bytes"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "outside the fence the trimmed body is byte for byte the input, CRLF included"
+    },
+    {
+      "name": "legacy word-count #001",
+      "body": "\u540c\u6e90\u653f\u7b56(same-origin policy)\u5728 TLS 1.3 \u4e0b\u4e0d\u8b8a\u3002don't \u7b97\u5169\u500b\u3002RFC 6265 \u4e5f\u662f\u3002",
+      "words": 23,
+      "examples": [],
+      "covers": [
+        "fixture"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): shipped word count fixture card (23)"
+    },
+    {
+      "name": "legacy word-count #002",
+      "body": "\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57",
+      "words": 100,
+      "examples": [],
+      "covers": [
+        "limit-100"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): 100 CJK = 100"
+    },
+    {
+      "name": "legacy word-count #003",
+      "body": "\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57",
+      "words": 101,
+      "examples": [],
+      "covers": [
+        "limit-101"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): 101 CJK = 101"
+    },
+    {
+      "name": "legacy word-count #004",
+      "body": "a\u5b57",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): CJK adjacent to letters/digits \"a?\""
+    },
+    {
+      "name": "legacy word-count #005",
+      "body": "1\u5b572",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): CJK adjacent to letters/digits \"1?2\""
+    },
+    {
+      "name": "legacy word-count #006",
+      "body": "\u5b57a\u5b57a",
+      "words": 4,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): CJK adjacent to letters/digits \"?a?a\""
+    },
+    {
+      "name": "legacy word-count #007",
+      "body": "TLS1.3\u5728",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): CJK adjacent to letters/digits \"TLS1.3?\""
+    },
+    {
+      "name": "legacy word-count #008",
+      "body": "\u540c\u6e90\u653f\u7b56same-origin",
+      "words": 6,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): CJK adjacent to letters/digits \"????same-origin\""
+    },
+    {
+      "name": "legacy word-count #009",
+      "body": "\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57ab",
+      "words": 101,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum",
+        "limit-101"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): 100 CJK then ab = 101"
+    },
+    {
+      "name": "legacy word-count #010",
+      "body": "ab\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57\u5b57",
+      "words": 101,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum",
+        "limit-101"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): ab then 100 CJK = 101"
+    },
+    {
+      "name": "legacy word-count #011",
+      "body": "\u3072\u3089\u304c\u306a",
+      "words": 4,
+      "examples": [],
+      "covers": [
+        "cjk-hiragana"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"????\""
+    },
+    {
+      "name": "legacy word-count #012",
+      "body": "\u30ab\u30bf\u30ab\u30ca",
+      "words": 4,
+      "examples": [],
+      "covers": [
+        "cjk-katakana"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"????\""
+    },
+    {
+      "name": "legacy word-count #013",
+      "body": "\ud55c\uae00",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cjk-hangul-syllable"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"??\""
+    },
+    {
+      "name": "legacy word-count #014",
+      "body": "\u6f22\u5b57\u304b\u306a\u30ab\u30ca\ud55c\uae00",
+      "words": 8,
+      "examples": [],
+      "covers": [
+        "cjk-han"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"????????\""
+    },
+    {
+      "name": "legacy word-count #015",
+      "body": "\u3072\u3089\u304c\u306aabc",
+      "words": 5,
+      "examples": [],
+      "covers": [
+        "cjk-cuts-alnum"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"????abc\""
+    },
+    {
+      "name": "legacy word-count #016",
+      "body": "r\u00e9sum\u00e9",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-latin"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"r?sum?\""
+    },
+    {
+      "name": "legacy word-count #017",
+      "body": "na\u00efve",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-latin"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"na?ve\""
+    },
+    {
+      "name": "legacy word-count #018",
+      "body": "\u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-non-latin-letter"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"????????\""
+    },
+    {
+      "name": "legacy word-count #019",
+      "body": "\u0661\u0662\u0663",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-digit"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): scripts \"???\""
+    },
+    {
+      "name": "legacy word-count #020",
+      "body": "abc123def456",
+      "words": 1,
+      "examples": [],
+      "covers": [
+        "alnum-latin",
+        "alnum-digit"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): long alphanumeric run"
+    },
+    {
+      "name": "legacy word-count #021",
+      "body": "a---   ...b",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-hyphen",
+        "cut-space",
+        "cut-period"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): repeated separators between words"
+    },
+    {
+      "name": "legacy word-count #022",
+      "body": "   \n\t  ",
+      "words": 0,
+      "examples": [],
+      "covers": [
+        "empty",
+        "cut-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): whitespace only"
+    },
+    {
+      "name": "legacy word-count #023",
+      "body": "()!?\u3002\u3001\u300c\u300d\u2026\u2014+=<>",
+      "words": 0,
+      "examples": [],
+      "covers": [
+        "cut-symbol",
+        "cut-cjk-punct"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): punctuation and symbols"
+    },
+    {
+      "name": "legacy word-count #024",
+      "body": "one\ntwo\n\nthree",
+      "words": 3,
+      "examples": [],
+      "covers": [
+        "cut-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/word-count.test.ts (T57 convergence): words separated by newlines"
+    },
+    {
+      "name": "legacy validate-card.contract-vectors #025",
+      "body": "\u524d\n````example\n```js\nconst x = 1;\n```\n\u5167\u5c64\u6587\u5b57\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5c64\u6587\u5b57"
+      ],
+      "covers": [
+        "fence-4-nested"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.contract-vectors.test.ts (T57 convergence): four-backtick fence"
+    },
+    {
+      "name": "legacy validate-card.contract-vectors #026",
+      "body": "\u524d\r\n````example\r\n```js\r\nconst x = 1;\r\n```\r\n\u5167\u5c64\u6587\u5b57\r\n````\r\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5c64\u6587\u5b57"
+      ],
+      "covers": [
+        "fence-crlf",
+        "fence-4-nested"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.contract-vectors.test.ts (T57 convergence): four-backtick CRLF"
+    },
+    {
+      "name": "legacy validate-card.contract-vectors #027",
+      "body": "````example\n```js\nconst x = 1;\n```\n\u5167\u5c64\u6587\u5b57\n````\n```js\nab\n```",
+      "words": 2,
+      "examples": [
+        "```js\nconst x = 1;\n```\n\u5167\u5c64\u6587\u5b57"
+      ],
+      "covers": [
+        "fence-non-example",
+        "fence-4-nested"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.contract-vectors.test.ts (T57 convergence): js fence after four-backtick example"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #028",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n````",
+      "words": 1,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-eof"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): A. closing line at end of text, 4 backticks"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #029",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n```  \n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C1. 3 backticks, closing tail two spaces"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #030",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n```\t\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C1. 3 backticks, closing tail one tab"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #031",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n``` \t\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C1. 3 backticks, closing tail space and tab"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #032",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n```` \n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C1. 4 backticks, closing tail one space"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #033",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n````  \n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C1. 4 backticks, closing tail two spaces"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #034",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n````\t\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C1. 4 backticks, closing tail one tab"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #035",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n```` \t\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-trailing-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C1. 4 backticks, closing tail space and tab"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #036",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n   ```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-indent"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C2. 3 backticks, closing indent 3"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #037",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n ````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-indent"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C2. 4 backticks, closing indent 1"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #038",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n   ````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-close-indent"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C2. 4 backticks, closing indent 3"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #039",
+      "body": "\u524d\n```example  \n\u5167\u5bb9 \u5167\u5bb9\n```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-open-trailing-ws"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C3. 3 backticks, opening tail two spaces"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #040",
+      "body": "\u524d\n```example\t\n\u5167\u5bb9 \u5167\u5bb9\n```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-open-trailing-ws"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C3. 3 backticks, opening tail one tab"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #041",
+      "body": "\u524d\n````example \n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-open-trailing-ws"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C3. 4 backticks, opening tail one space"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #042",
+      "body": "\u524d\n````example  \n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-open-trailing-ws"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C3. 4 backticks, opening tail two spaces"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #043",
+      "body": "\u524d\n````example\t\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-open-trailing-ws"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): C3. 4 backticks, opening tail one tab"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #044",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9```\n```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9```"
+      ],
+      "covers": [
+        "fence-close-glued"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): D. 3 backticks, trap glued to content"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #045",
+      "body": "\u524d\n```example\n\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9```\n```\u5f8c\u9762\u6709\u5b57\n```\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9```\n```\u5f8c\u9762\u6709\u5b57"
+      ],
+      "covers": [
+        "fence-close-glued"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): D. 3 backticks, trap both"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #046",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n````\u5f8c\u9762\u6709\u5b57\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n````\u5f8c\u9762\u6709\u5b57"
+      ],
+      "covers": [
+        "fence-close-followed-by-word"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): D. 4 backticks, trap followed by word"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #047",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9````\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9````"
+      ],
+      "covers": [
+        "fence-close-glued"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): D. 4 backticks, trap glued to content"
+    },
+    {
+      "name": "legacy validate-card.fence-whitespace #048",
+      "body": "\u524d\n````example\n```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9````\n````\u5f8c\u9762\u6709\u5b57\n````\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "```js\nab\n```\n\u5167\u5bb9 \u5167\u5bb9\n\u8cbc\u8457\u7d50\u5c3e\u7684\u5167\u5bb9````\n````\u5f8c\u9762\u6709\u5b57"
+      ],
+      "covers": [
+        "fence-close-glued"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test schema/validate-card.fence-whitespace.test.ts (T57 convergence): D. 4 backticks, trap both"
+    },
+    {
+      "name": "legacy example-fence-word-count #049",
+      "body": "\u3002\u3001!?",
+      "words": 0,
+      "examples": [],
+      "covers": [
+        "alnum-latin"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test ingest/example-fence-word-count.test.ts (T57 convergence): COUNT_CASES \"??!?\""
+    },
+    {
+      "name": "legacy example-fence-word-count #050",
+      "body": "\u6b63\u6587\n```js\n\u56db\u500b\u5b57\u5440\n```",
+      "words": 7,
+      "examples": [],
+      "covers": [
+        "fence-non-example"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test ingest/example-fence-word-count.test.ts (T57 convergence): FENCE_CASES js fence counts"
+    },
+    {
+      "name": "legacy example-fence-word-count #051",
+      "body": "\u53ea\u662f\u4e00\u6bb5\u6587\u5b57",
+      "words": 6,
+      "examples": [],
+      "covers": [
+        "cjk-han"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test ingest/example-fence-word-count.test.ts (T57 convergence): parse: no fence"
+    },
+    {
+      "name": "legacy validator-min #052",
+      "body": "\u6b63\u6587\u56db\u500b\u5b57\n\n```example\n\u9019\u88e1\u6709\u4e00\u5927\u5806\u4e0d\u8a72\u88ab\u7b97\u9032\u53bb\u7684\u5167\u5bb9 same-origin TLS\n```\n",
+      "words": 5,
+      "examples": [
+        "\u9019\u88e1\u6709\u4e00\u5927\u5806\u4e0d\u8a72\u88ab\u7b97\u9032\u53bb\u7684\u5167\u5bb9 same-origin TLS"
+      ],
+      "covers": [
+        "fence-3"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test lint/validator-min.test.ts (T57 convergence): strip fence then count"
+    },
+    {
+      "name": "legacy validator-min #053",
+      "body": "a   b",
+      "words": 2,
+      "examples": [],
+      "covers": [
+        "cut-space"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test lint/validator-min.test.ts (T57 convergence): whitespace between letters"
+    },
+    {
+      "name": "legacy word-count #054",
+      "body": "\u540c\u6e90\u653f\u7b56\u5f88\u91cd\u8981\n```example\na.com \u8207 a.com \u540c\u6e90,\u9019\u4e00\u6bb5\u5b8c\u5168\u4e0d\u8a72\u88ab\u7b97\u9032\u53bb\n```",
+      "words": 7,
+      "examples": [
+        "a.com \u8207 a.com \u540c\u6e90,\u9019\u4e00\u6bb5\u5b8c\u5168\u4e0d\u8a72\u88ab\u7b97\u9032\u53bb"
+      ],
+      "covers": [
+        "fence-3"
+      ],
+      "basis": "s2-definition",
+      "why": "moved from the legacy test prompt-quality/word-count.test.ts (T57 convergence): strip fence then count"
     }
   ]
 }
