@@ -2095,6 +2095,36 @@
       ],
       "basis": "s2-definition",
       "why": "moved from the legacy test prompt-quality/word-count.test.ts (T57 convergence): strip fence then count"
+    },
+    {
+      "name": "fence: two identical examples are both kept",
+      "body": "\u524d\n\n```example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u4e2d\n\n```example\n\u5167\u5bb9 \u5167\u5bb9\n```\n\n\u5f8c",
+      "words": 3,
+      "examples": [
+        "\u5167\u5bb9 \u5167\u5bb9",
+        "\u5167\u5bb9 \u5167\u5bb9"
+      ],
+      "covers": [
+        "fence-multi",
+        "fence-3"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "examples lists every example fence in order; equal contents are not merged"
+    },
+    {
+      "name": "fence: two empty examples are both kept",
+      "body": "\u524d\n\n```example\n```\n\n```example\n```\n\n\u5f8c",
+      "words": 2,
+      "examples": [
+        "",
+        ""
+      ],
+      "covers": [
+        "fence-multi",
+        "fence-empty-example"
+      ],
+      "basis": "s2-fence-1.5.0",
+      "why": "an empty example fence is still one example (an empty string); two of them give two"
     }
   ]
 }

@@ -33,7 +33,7 @@ const FIXTURES_DIR = join(ROOT, 'contracts/fixtures');
 const GHERKIN_PATH = join(ROOT, 'features/01-data-layer/phase-1.feature');
 
 /** 向量檔的列數。刪一列、或測試少跑,這個數字就對不上。加列時由測試 agent 改這裡。 */
-const EXPECTED_ROWS = 170;
+const EXPECTED_ROWS = 172;
 
 const BASES = ['s2-key-table', 's2-vector-table', 's2-definition', 'ruling-b', 'fixture', 'gherkin-p1', 's2-fence-1.5.0'] as const;
 
@@ -164,7 +164,7 @@ describe('T52 向量檔 contracts/fixtures/word-count-vectors.json:結構', () =
       expect(hit?.examples, `${what} 的 examples`).toEqual(examples);
       expect(hit?.basis).toBe('s2-fence-1.5.0');
     }
-    expect(rows.filter((r) => r.basis === 's2-fence-1.5.0').length, '1.5.0 的列數').toBe(31);
+    expect(rows.filter((r) => r.basis === 's2-fence-1.5.0').length, '1.5.0 的列數').toBe(33);
   });
 
   it('strippedBody(選填)至少 8 列有:其中有 CRLF 原樣保留的一列、清單留下 "1. " 的一列;型別是字串', () => {
