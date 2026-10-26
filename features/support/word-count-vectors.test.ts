@@ -291,12 +291,24 @@ const REGISTRY: Impl[] = [
     },
   },
   {
-    name: '07 畫面 markdown-it(只比 example 個數)',
+    name: '07 畫面 renderMarkdown(最外層 lc-example 容器個數)',
     checks: ['exampleCount'],
     async run(body) {
+      // 真的走 ui-shared 的渲染(markdown-it + exampleFencePlugin,含它自己的 fenceLang 判斷),不在這裡自己判斷「是不是 example」。
       const m = await load('packages/ui-shared/src/example-fence.ts');
-      const md = fn<() => { parse(src: string, env: object): { type: string; info: string }[] }>(m, 'createMarkdownRenderer', 'ui-shared/example-fence')();
-      const n = md.parse(body, {}).filter((t) => t.type === 'fence' && (t.info.trim().split(/\s+/)[0] ?? '') === 'example').length;
+      const html = fn<(src: string) => string>(m, 'renderMarkdown', 'ui-shared/example-fence')(body);
+      const cls = m['EXAMPLE_CLASS'];
+      if (typeof cls !== 'string') throw new Error('ui-shared/example-fence 要匯出 EXAMPLE_CLASS');
+      // example 裡面的 example 會被遞迴渲染成巢狀的 <details>,只數最外層(= 卡片自己的 example 圍欄個數)。
+      let depth = 0;
+      let n = 0;
+      for (const tag of html.matchAll(/<details\b[^>]*>|<\/details>/g)) {
+        if (tag[0] === '</details>') depth -= 1;
+        else {
+          if (depth === 0 && new RegExp(`class="${cls}"`).test(tag[0])) n += 1;
+          depth += 1;
+        }
+      }
       return { exampleCount: n };
     },
   },
@@ -314,7 +326,7 @@ describe('T52 登記表:每一份讀 §2 規則的實作都跑向量檔的每一
       '09-lint 回報字數的那條路(parseCard → checkBodyLimit 的 body_over_limit)',
       '12-prompt-quality countBodyWords',
       '02-ingest enforceWordLimit(第一次嘗試的字數)',
-      '07 畫面 markdown-it(只比 example 個數)',
+      '07 畫面 renderMarkdown(最外層 lc-example 容器個數)',
     ]);
   });
 
