@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import type { MarkdownIt as MarkdownItInstance, RendererRule, StateInline, Token } from 'markdown-it';
+import { CARD_MARKDOWN_OPTIONS, isExampleFence } from '@contracts/card-markdown.js';
 import { resolveImagePath } from './image-path.js';
 
 /** class 掛在渲染出來的 example 容器上,教學卡與考試卡共用同一個名字。 */
@@ -22,17 +23,13 @@ interface MarkdownEnv {
   [key: string | symbol]: unknown;
 }
 
-function fenceLang(info: string): string {
-  return info.trim().split(/\s+/)[0] ?? '';
-}
-
 /** 這一輪 token 裡,第 idx 個 example 圍欄的標題。一個寫「例子」,多個寫「例子 N」。編號不跨次累加。 */
 function exampleLabel(tokens: Token[], idx: number): string {
   let total = 0;
   let index = 0;
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i];
-    if (!token || token.type !== 'fence' || fenceLang(token.info) !== 'example') continue;
+    if (!token || token.type !== 'fence' || !isExampleFence(token.info)) continue;
     total += 1;
     if (i === idx) index = total;
   }
@@ -155,7 +152,7 @@ export function exampleFencePlugin(md: MarkdownItInstance): void {
 
   md.renderer.rules.fence = (tokens, idx, options, env, self) => {
     const token = tokens[idx]!;
-    if (fenceLang(token.info) !== 'example') return defaultFence(tokens, idx, options, env, self);
+    if (!isExampleFence(token.info)) return defaultFence(tokens, idx, options, env, self);
     const open = examplesOpen(env) ? ' open' : '';
     const inner = md.render(token.content, env);
     return `<details class="${EXAMPLE_CLASS}"${open}><summary>${exampleLabel(tokens, idx)}</summary>\n${inner}</details>\n`;
@@ -164,7 +161,7 @@ export function exampleFencePlugin(md: MarkdownItInstance): void {
 
 /** 建立一個已裝好 example 圍欄插件的 markdown-it 實例。 */
 export function createMarkdownRenderer(): MarkdownItInstance {
-  const md = new MarkdownIt({ html: false, linkify: true });
+  const md = new MarkdownIt(CARD_MARKDOWN_OPTIONS);
   md.use(exampleFencePlugin);
   return md;
 }

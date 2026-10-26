@@ -300,8 +300,8 @@ describe('checkParentChildOverlap:body 的正規化跟 checkDuplicates 同一條
     const { checkParentChildOverlap } = await mod();
     const fence = '```example\nabcdefghijklmnopqrstuvwxyz\n```';
     const r = checkParentChildOverlap(
-      [card('p0', '父', `parentonlytext ${fence}`)],
-      [card('c0', '子', `childonlywords ${fence}`)],
+      [card('p0', '父', `parentonlytext\n\n${fence}`)],
+      [card('c0', '子', `childonlywords\n\n${fence}`)],
     );
     expect(r.pairs).toEqual([]);
   });

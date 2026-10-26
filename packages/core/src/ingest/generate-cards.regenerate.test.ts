@@ -469,9 +469,8 @@ describe('要求 4:字數用契約 §2 判斷(100 通過、101 不通過)', () =
  * 要求 4(顧問 Q3):字數判斷和寫檔前後把關的 validateCard 是同一條路。
  * 參考答案 = validateCard(照 writeCardFile 組的卡檔文字).bodyWordCount;這裡只比「兩邊一樣」,不替契約 §2 定義新的數字。
  *
- * 不測「開閉在同一行的圍欄」(例如 前```example 內容```後):契約 §2 把它列為「尚未定義(不要自行假設)」,
- * 現在 word-count-min.ts 與 parse-card.ts 的圍欄正則對它算出不同數字,只是巧合;要定義是另一次硬約定的修改(T20)。
- * 未閉合的圍欄同理,也不測。
+ * 契約 1.5.0(ADR-081、T57)起,圍欄的每一種寫法都有定義(同一行開閉不是圍欄、沒關就到卡片結尾、example 後面可以再有字…),
+ * 逐列的期望值在 contracts/fixtures/word-count-vectors.json;這裡只比「兩邊一樣」,不替契約 §2 定義數字。
  */
 describe('要求 4(Q3):字數判斷與 validateCard 一模一樣', () => {
   const F = '```';
@@ -485,9 +484,7 @@ describe('要求 4(Q3):字數判斷與 validateCard 一模一樣', () => {
     ['CRLF 圍欄', '同'.repeat(101) + `\r\n${F}example\r\n內容內容\r\n${F}`],
     ['非 example 圍欄照算', '同'.repeat(99) + `\n${F}js\nab\n${F}`],
     ['body 以 --- 開頭(不能被當成 front matter 吃掉)', '---\nfoo: bar\n---\n' + '同'.repeat(99)],
-    // 下面兩列是 word-count-min.ts 的圍欄正則(\n 可有可無)和 parse-card.ts 的(\n 必須緊接 example)算法不同的地方,
-    // 都不是同一行開閉。這裡只要求和 validateCard 一樣;§2 對它們應該算多少是 T20 的事。
-    // (T51 補測之後:example 後面只有空白是圍欄開始行;example 後面還有字仍不是圍欄,契約沒定義,維持現狀。)
+    // 下面兩列:example 後面只有空白,或空白後再有字(契約 1.5.0:資訊字串第一段是 example 就是圍欄),整段圍欄都不算字。
     ['example 後面有空白再換行', '同'.repeat(120) + `\n${F}example \n內容\n${F}`],
     ['example 後面還有字', '同'.repeat(120) + `\n${F}example js\n內容\n${F}`],
   ];
@@ -506,11 +503,11 @@ describe('要求 4(Q3):字數判斷與 validateCard 一模一樣', () => {
     ['--- 開頭 99', '---\nfoo: bar\n---\n' + '同'.repeat(99), 101],
     ['多個圍欄 50+50', '同'.repeat(50) + `\n${F}example\n很多字很多字\n${F}\n` + '同'.repeat(50) + `\n${F}example\n又是很多字\n${F}`, 100],
     ['多個圍欄 51+50', '同'.repeat(51) + `\n${F}example\n很多字很多字\n${F}\n` + '同'.repeat(50) + `\n${F}example\n又是很多字\n${F}`, 101],
-    // T51 補測(顧問 2026-10-25 乙):example 後面只有空白/Tab 再換行,是 CommonMark 的圍欄開始行,整段圍欄不算字(原本這兩列把它當一般文字,97 → 100)
+    // example 後面只有空白/Tab 再換行,或後面還有字,都是圍欄開始行,整段圍欄不算字(T51 補測、T57:契約 1.5.0 起後面有字也是圍欄)
     ['example 後面有空白(是圍欄)100', '同'.repeat(100) + `\n${F}example \n內容\n${F}`, 100],
     ['example 後面有空白(是圍欄)101', '同'.repeat(101) + `\n${F}example \n內容\n${F}`, 101],
-    ['example 後面還有字 96', '同'.repeat(96) + `\n${F}example js\n內容\n${F}`, 100],
-    ['example 後面還有字 97', '同'.repeat(97) + `\n${F}example js\n內容\n${F}`, 101],
+    ['example 後面還有字(是圍欄)100', '同'.repeat(100) + `\n${F}example js\n內容\n${F}`, 100],
+    ['example 後面還有字(是圍欄)101', '同'.repeat(101) + `\n${F}example js\n內容\n${F}`, 101],
   ];
 
   it.each(boundary.map(([name, body, words]) => ({ name, body, words })))('測試資料核對:$name → validateCard 算 $words 字', ({ body, words }) => {
