@@ -229,6 +229,10 @@
       "infra"
     ],
     [
+      "scripts/check-all-wrapped.test.ts",
+      "infra"
+    ],
+    [
       "scripts/dag.ts",
       "13-work-dag"
     ],
