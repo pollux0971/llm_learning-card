@@ -15,8 +15,8 @@ must_catch:
   - examples 的換行沒換成 LF,或 body 裡圍欄以外的 CRLF 被改成 LF CRLF 那幾列必須紅
   - 解析前沒先 trim(body 第一行縮排 4 格的開始行) 那一列必須紅
   - core 的 example-fence.ts 對 markdown-it 實例用了 parse 以外的成員,或讀了 type、info、map、content 以外的 token 欄位 白名單守門必須紅
-  - 畫面的 markdown-it 規則跟全新預設實例不同(block 的每一條鏈、core 的鏈;含 paragraph 少了 fence) 規則鏈護欄必須紅
-  - 畫面的 example-fence.ts 出現 block 或 core 的成員存取 靜態守門必須紅
+  - 畫面的 markdown-it 跟全新預設實例不同(block 的每一條鏈、core 的鏈、options 深度相等;含 paragraph 少了 fence、set 改了 maxNesting) 執行時護欄必須紅
+  - 畫面的 example-fence.ts 出現 block 或 core 的成員存取,或呼叫 set、configure,或寫入 options 靜態守門必須紅
   - markdown-it 不是剛好 15.0.1(package.json 寫成範圍、node_modules 或 lockfile 的版本不同) 釘版測試必須紅
   - card-markdown.ts 有任何 import、require、export from、動態 import 零 import 守門必須紅
   - core 或畫面自己寫一份選項或 example 判斷,不用 CARD_MARKDOWN_OPTIONS 與 isExampleFence 守門必須紅
@@ -31,7 +31,7 @@ must_catch:
 > 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(T52 已合 main `964502b`);顧問 2026-10-27 審過,改了 14 處(見最後「顧問裁定」)。規格:UI/Tauri 負責人(代筆)。編號 T57:協調者配的。
 > 實作:worker(opencode + grok-4.7);紅測試與向量檔:測試 agent(不是起草的人);驗收(含變異):驗收 agent。
 > 依據:**使用者 2026-10-27 選 A**(跟畫面一樣,見 `T52-word-count-single-source-vectors.md` 最後一節);顧問 2026-10-27 對 T57 的裁定;`../02-decision-map.md` 的 ADR-060 與 ADR-081。
-> **這張改契約 §2(硬約定)。** 條文與 ADR 已寫進起點分支最底下的 commit:`pollux0971/t57-contract` `7164815`(基底 main `964502b`)。顧問讀過那個 commit 的 `contracts/types.md` diff,測試 agent 才開始寫紅測試;推 main 時顧問再看一次。LLM 真呼叫 0。落點含 `packages/contracts`:依 R2 不能跟別的含這個路徑的工單並行。
+> **這張改契約 §2(硬約定)。** 條文與 ADR 已寫進起點分支最底下的兩個 commit:`pollux0971/t57-contract` `7164815` + `bfb62db`(基底 main `964502b`)。顧問讀過 `contracts/types.md` 的 diff、准了(補 `bfb62db` 那一句);推 main 時顧問再看一次。LLM 真呼叫 0。落點含 `packages/contracts`:依 R2 不能跟別的含這個路徑的工單並行。
 
 ## 為什麼有這張
 
@@ -50,7 +50,7 @@ must_catch:
 
 ### 1. 契約 §2 條文(已寫進起點分支)
 
-原文在 `pollux0971/t57-contract` `7164815` 的 `contracts/types.md`,**以那個檔為準**,這裡不再抄一份。改的地方:
+原文在 `pollux0971/t57-contract` 的 `contracts/types.md`(`7164815`,加上 `bfb62db` 補的一句),**以那個檔為準**,這裡不再抄一份。改的地方:
 
 - 檔頭版本 1.4.0 → 1.5.0,加一行 1.5.0 的說明(ADR-081)。
 - `Card.examples` 的註解:解析器給的內容、已 trim、換行一律 `\n`。
@@ -62,7 +62,7 @@ must_catch:
   - 判斷用資訊字串原文(`token.info`,不處理跳脫與 HTML 實體):trim 後用 `/\s+/` 切,第一段逐字等於 `example`。
   - 判斷寫在 `packages/contracts/src/card-markdown.ts`,這個檔是 §2 的一部分。
   - 縮排 4 欄以上不是圍欄(前面空一行時是縮排程式碼,緊接在段落後面時是段落的續行)。
-  - 「移除」用 `token.map` 的行範圍寫;trim 過的 body 裡圍欄以外逐位元組不變;examples 用 `token.content`、空的也算一個。
+  - 「移除」用 `token.map` 的行範圍寫;trim 過的 body 裡圍欄以外逐位元組不變;移除之後再 `trim()` 就是 `Card.body`(`bfb62db`);examples 用 `token.content`、空的也算一個。
   - 7 列小表。
   - 版本政策:任何升版都是改 §2,先問使用者並附向量檔前後差異。
 
@@ -70,7 +70,7 @@ must_catch:
 
 ### 2. ADR-081(已寫進起點分支)
 
-原文在同一個 commit 的 `../02-decision-map.md`:新增 ADR-081(補充 ADR-060,不推翻),ADR-060 底下加一行 `refined by ADR-081`。
+原文在同一條分支的 `../02-decision-map.md`:新增 ADR-081(補充 ADR-060,不推翻;決定第 2 點結尾的「結果再 trim 就是 `Card.body`」是 `bfb62db` 補的),ADR-060 底下加一行 `refined by ADR-081`。
 
 ### 3. 新檔 `packages/contracts/src/card-markdown.ts`(顧問裁)
 
@@ -181,10 +181,11 @@ must_catch:
 **新的守門測試**(放 `features/support/` 或 `packages/contracts/src/`,測試 agent 定):
 
 - **零 import**:讀 `packages/contracts/src/card-markdown.ts`,用語法樹找 `import`、`import x = require`、`export … from`、`import()`、`require()`:0 個。只有那兩個 export。`CARD_MARKDOWN_OPTIONS` 是凍結的、剛好 `{ html: false, linkify: true }`。
-- **規則鏈護欄**(顧問確認 G1,再多比):`createMarkdownRenderer()` 跟 `new MarkdownIt(CARD_MARKDOWN_OPTIONS)` 比函式身分與順序:
-  - `block.ruler.getRules(鏈)`,**每一條鏈都比**:`''` 加上兩邊實例所有規則 `alt` 名字的聯集(今天兩邊都是 `paragraph`、`reference`、`blockquote`、`list`)。**只比 `''` 不夠**:起草時量的,`ruler.at('fence', 同一個函式)` 不帶 `alt` 之後,`''` 鏈的身分完全一樣,`paragraph` 鏈從 7 條變 6 條。
-  - `core.ruler.getRules('')`(normalize 與 block 在那裡;今天 8 條,兩邊一樣)。
-- **畫面的靜態守門**:`packages/ui-shared/src/example-fence.ts` 的語法樹裡,markdown-it 實例**不准出現 `block` 或 `core` 的成員存取**。理由:`renderMarkdown` 帶選項時走 `installAssetImages`,執行時的護欄只檢查 `createMarkdownRenderer()`,蓋不到那條路。今天這個檔對實例用到的是 `inline.ruler`、`inline.parse`、`renderer.rules`、`normalizeLink`、`helpers.parseLinkLabel`、`render`、`use`。所以「只准 `inline.ruler` 與 `renderer.rules`」照字面寫會讓現在的程式就紅;守門只禁 `block` 與 `core`(見「顧問裁定」第 11 點的註)。
+- **執行時護欄**(顧問確認 G1,再多比):`createMarkdownRenderer()` 跟 `new MarkdownIt(CARD_MARKDOWN_OPTIONS)` 比:
+  - `block.ruler.getRules(鏈)` 的函式身分與順序,**每一條鏈都比**:`''` 加上兩邊實例所有規則 `alt` 名字的聯集(今天兩邊都是 `paragraph`、`reference`、`blockquote`、`list`)。**只比 `''` 不夠**:起草時量的,`ruler.at('fence', 同一個函式)` 不帶 `alt` 之後,`''` 鏈的身分完全一樣,`paragraph` 鏈從 7 條變 6 條。
+  - `core.ruler.getRules('')` 的函式身分與順序(normalize 與 block 在那裡;今天 8 條,兩邊一樣)。
+  - **`options` 深度相等**(顧問第二輪):比規則鏈抓不到 `md.set(...)` 或直接改 `md.options.maxNesting`,而 `maxNesting` 會改區塊解析。起草時量的:今天兩邊深度相等(9 個鍵);`md.set({ maxNesting: 5 })` 之後不相等,而且包在 8 層引用裡的 example 圍欄從 1 個變 0 個。
+- **畫面的靜態守門**:`packages/ui-shared/src/example-fence.ts` 的語法樹裡,markdown-it 實例**不准出現 `block` 或 `core` 的成員存取,不准呼叫 `set`、`configure`,不准寫入 `options`**(`md.options = …`、`md.options.x = …`、`Object.assign(md.options, …)` 這類)。理由:`renderMarkdown` 帶選項時走 `installAssetImages`,執行時的護欄只檢查 `createMarkdownRenderer()`,蓋不到那條路。今天這個檔對實例用到的是 `inline.ruler`、`inline.parse`、`renderer.rules`、`normalizeLink`、`helpers.parseLinkLabel`、`render`、`use`。所以「只准 `inline.ruler` 與 `renderer.rules`」照字面寫會讓現在的程式就紅;守門禁的是上面列的那幾種(見「顧問裁定」第 11 點的註與第二輪 b)。
 - **core 白名單**:`packages/core/src/schema/example-fence.ts` 的語法樹裡,markdown-it 實例的成員存取只有 `parse`,token 的成員存取只有 `type`、`info`、`map`、`content`。它從 `@contracts/card-markdown.js` import 了 `CARD_MARKDOWN_OPTIONS` 與 `isExampleFence`,`new MarkdownIt(...)` 的引數就是 `CARD_MARKDOWN_OPTIONS`。畫面那份同樣要 import 這兩個,不能再有自己的 `fenceLang`。
 - **釘版**:根 `package.json` 的 `dependencies["markdown-it"]` 剛好是 `15.0.1`;`node_modules/markdown-it/package.json` 的 `version` 是 `15.0.1`;`package-lock.json` 的 `packages["node_modules/markdown-it"].version` 是 `15.0.1`,而且 lockfile 裡沒有第二份 markdown-it。
 
@@ -230,7 +231,8 @@ must_catch:
 - body 用 `\n` 接回去(不保留原本的換行) → CRLF body 那列紅;
 - 只認反引號(不認波浪號) → 波浪號那幾列紅;
 - `isExampleFence` 先轉小寫、或先解 HTML 實體、或只用半形空白切 → 第 28、29、30 列各自紅;
-- core 的 `md` 加 `md.block.ruler.at('fence', 原函式)`(不帶 `alt`),或加 `md.options.maxNesting = 1` → core 白名單守門紅;同一行加在畫面的 `createMarkdownRenderer` → 規則鏈護欄紅(`paragraph` 鏈);加在畫面的 `installAssetImages` → 畫面的靜態守門紅;
+- core 的 `md` 加 `md.block.ruler.at('fence', 原函式)`(不帶 `alt`),或加 `md.options.maxNesting = 1` → core 白名單守門紅;同一行加在畫面的 `createMarkdownRenderer` → 執行時護欄紅(`paragraph` 鏈);加在畫面的 `installAssetImages` → 畫面的靜態守門紅;
+- 畫面的 `createMarkdownRenderer` 裡加 `md.set({ maxNesting: 5 })` → 執行時護欄紅(`options` 不相等);同一行加在 `installAssetImages` → 畫面的靜態守門紅;
 - `package.json` 改回 `^15.0.1` → 釘版測試紅;
 - `card-markdown.ts` 加一行 `import { z } from 'zod'` → 零 import 守門紅;
 - 在 core 或畫面或任何沒登記的檔加 `if (info.trim() === 'example')` → 指紋掃描紅;
@@ -267,7 +269,7 @@ must_catch:
 ## worktree
 
 - 一個 worktree,從 `/data/python/llm_learning-cards-workers` 開,基底是紅測試分支的 tip,同一時間只給一個 agent。派工歸協調者。
-- 分支順序(由下往上):main `964502b` → 契約與 ADR `7164815`(`pollux0971/t57-contract`)→ 測試 agent 的紅測試 → 開發 worker 的實作。
+- 分支順序(由下往上):main `964502b` → 契約與 ADR `7164815`、`bfb62db`(`pollux0971/t57-contract`)→ 測試 agent 的紅測試 → 開發 worker 的實作。
 
 ## 顧問裁定(2026-10-27)
 
@@ -290,6 +292,13 @@ must_catch:
 
 - **D1 同意**:起草者照改好的條文寫進 `contracts/types.md`、`docs/02-decision-map.md`、`docs/01-roadmap.md` 第 15 行,做成一個 docs commit,放在 T57 起點分支最底下(基底 main `964502b`)→ `7164815`。ADR 號碼寫入當下取:最大 080,所以是 ADR-081。
 
+**第二輪(顧問讀 `7164815` 的真檔之後,2026-10-27)**:
+
+- (a) 契約准,補一句(不改任何數字):「移除之後的結果再用 `trim()` 去掉頭尾空白,就是 `Card.body`。」ADR-081 決定第 2 點同步。理由:向量檔要比 body 原文,body 最後有沒有 trim 要寫在契約裡。→ `bfb62db`(新 commit,不 amend:測試 agent 可能已經從 `7164815` 起跑)。
+- (b) 畫面靜態守門寫成「不准 `block` 或 `core`」可以,不用改成七項白名單。補一個洞:執行時護欄加 `options` 深度相等;畫面的靜態守門也禁 `set`、`configure` 與寫入 `options`;改壞證明加 `md.set({ maxNesting: 5 })`(第 8 節、改壞證明)。
+- (c) 登記表改成 `card-markdown.ts` + `word-count.ts`、core 的 `example-fence.ts` 移到「不能被抓」名單:同意。
+- 測試 agent 的起點:`pollux0971/t57-contract`(含 `bfb62db`)+ 這張工單的最新版。
+
 ## 起草時量的(只讀;丟棄式雛形在前端的暫存區,不進 git)
 
 - **雛形**:第 4 節的做法(公開 API、先 trim、圍欄以外逐位元組保留)。
@@ -297,5 +306,5 @@ must_catch:
 - **新列**:第 7 節 30 列,雛形的 examples 個數跟畫面的例子框個數全部一樣;其中 20 列跟今天的 `validateCard` 字數不同(怪寫法、波浪號、清單引用、只有 CR、全形空白)。第 28、29 列今天也不算 example(8、7),字數不變。
 - **既有測試**:第 8 節(`packages/core/src/` + `packages/contracts/src/` 3053 條紅 3 條;跨實作測試紅 4 條)。量完 `git checkout` 還原、新檔刪掉,工作樹乾淨。
 - **真資料**:25 張卡、30 個圍欄、0 張含 CR;字數、examples、body 0 張不同。**golden**:63 筆輸出、117 個 body,0 筆不同。`learning/` 前後都是 64 個檔、`01d84e9c918e1cf4`、帳本 111 行(2026-10-27 03:48)。
-- **規則鏈**:`createMarkdownRenderer()` 與全新 `new MarkdownIt(CARD_MARKDOWN_OPTIONS)` 的 block 五條鏈(`''` 11、`paragraph` 7、`reference` 7、`blockquote` 6、`list` 3)與 core 鏈(8)函式身分與順序都一樣;兩邊的 `alt` 名字一樣。`ruler.at('fence', 同一個函式)` 不帶 `alt`:`''` 鏈仍一樣,`paragraph` 鏈 7 → 6。
+- **規則鏈與選項**:`createMarkdownRenderer()` 與全新 `new MarkdownIt(CARD_MARKDOWN_OPTIONS)` 的 block 五條鏈(`''` 11、`paragraph` 7、`reference` 7、`blockquote` 6、`list` 3)與 core 鏈(8)函式身分與順序都一樣;兩邊的 `alt` 名字一樣;`options` 深度相等(9 個鍵)。`ruler.at('fence', 同一個函式)` 不帶 `alt`:`''` 鏈仍一樣,`paragraph` 鏈 7 → 6。`md.set({ maxNesting: 5 })`:`options` 不再相等,8 層引用裡的 example 圍欄 1 → 0。
 - **lockfile**:markdown-it 只有一份(15.0.1);根套件宣告在 `package-lock.json` 第 18 行。markdown-it 15.0.1 吃 `Object.freeze` 過的選項沒問題。
