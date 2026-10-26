@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-4(2026-10-17:子卡生成時看得到同分類其他卡 `already_covered`、`--overlap-siblings`、非資安泛化 golden 輸入;工單 T18,-ed 驗收無阻擋項,真 cucumber @phase-4 5/5,Stryker 93.04%,golden 第 1 輪六個輸入技術顧問評 5/5,證據見 docs/reviews/acceptance-T18.md 與 T18-2026-10-17.md)。phase-1(2026-09-03)、phase-2(2026-09-03) |
+| 已完成 | phase-3(2026-10-26:require_raw 拒絕、掃描與增量、stale / source_missing 旗標、`--file` 不覆寫、無 raw 時從主題生成;工單 T53 與 T55,-5b 驗收,變異 T53 87.48%、T55 85.01%〔全分母〕,真 cucumber phase-3 8/8,golden ingest.topic 顧問評 5/5、5/4、4/5;證據見 docs/reviews/acceptance-T53.md 與 acceptance-T55.md)。phase-4(2026-10-17:子卡生成時看得到同分類其他卡 `already_covered`、`--overlap-siblings`、非資安泛化 golden 輸入;工單 T18,-ed 驗收無阻擋項,真 cucumber @phase-4 5/5,Stryker 93.04%,golden 第 1 輪六個輸入技術顧問評 5/5,證據見 docs/reviews/acceptance-T18.md 與 T18-2026-10-17.md)。phase-1(2026-09-03)、phase-2(2026-09-03) |
 | 進行中 | 無 |
-| 下一個 | phase-3(屬 I4 那批;gate 已滿足,還沒排) |
+| 下一個 | 無(02 全部 phase done) |
 
 ## Gate
 
