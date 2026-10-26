@@ -216,6 +216,37 @@ const INGEST_CARDS: GoldenSet = {
   inputs: RAW_SLICES.map(cardsInput),
 };
 
+/**
+ * T55:從主題生成。輸入是測試 agent 寫的一行主題(fixtures/golden-topic/topics.json),
+ * 不取自 raw/。header 自己組,不 import ingest/。
+ */
+interface TopicFixture {
+  key: string;
+  category: string;
+  topic: string;
+}
+
+function loadTopicFixtures(): TopicFixture[] {
+  const path = join(ROOT, 'packages/core/src/prompt-quality/fixtures/golden-topic/topics.json');
+  return JSON.parse(readFileSync(path, 'utf8')) as TopicFixture[];
+}
+
+function topicInput(item: TopicFixture): GoldenInput {
+  const id = `topic-${item.key}`;
+  return {
+    id,
+    prompt: block([`golden: ${id}`, `category: ${item.category}`, `topic: ${item.topic}`], item.topic),
+  };
+}
+
+const INGEST_TOPIC: GoldenSet = {
+  id: 'ingest.topic',
+  // 契約 §7 沒有新任務。主題生成跟拆卡一樣走 ingest.cards,模板是 topic.md。
+  task: 'ingest.cards',
+  promptFile: `${PROMPTS_DIR}/ingest/topic.md`,
+  inputs: loadTopicFixtures().map(topicInput),
+};
+
 const INGEST_CHILDREN: GoldenSet = {
   id: 'ingest.children',
   // generateChildren 用的是 'ingest.cards'——契約 §7 沒有 ingest.children 這個任務。
@@ -275,6 +306,7 @@ const SELFTEST: GoldenSet = {
 
 const REGISTRY: Partial<Record<GoldenSetId, GoldenSet>> = {
   'ingest.cards': INGEST_CARDS,
+  'ingest.topic': INGEST_TOPIC,
   'ingest.children': INGEST_CHILDREN,
   'ingest.regenerate': INGEST_REGENERATE,
   'ingest.questions': INGEST_QUESTIONS,
@@ -285,6 +317,7 @@ const REGISTRY: Partial<Record<GoldenSetId, GoldenSet>> = {
 /** 真的任務(對到 `packages/core/prompts/` 底下的檔)。`selftest` 不算。 */
 export const REAL_TASK_GOLDEN_SET_IDS: readonly GoldenSetId[] = [
   'ingest.cards',
+  'ingest.topic',
   'ingest.children',
   'ingest.regenerate',
   'ingest.questions',

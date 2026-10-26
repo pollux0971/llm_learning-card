@@ -8,7 +8,8 @@
  * 一個 raw 檔只落一個桶:skipped 只有「已處理且 sha 相同」;內容變了的只進
  * staleCards;刪了的只進 missingSourceCards。
  * 沒有新檔要生成時不呼叫 probeOnline、不呼叫 LLM(離線也能標旗標)。
- * 拒絕(分類沒定義、要求 raw、主題還沒做)也不探測。
+ * 拒絕(分類沒定義、要求 raw、主題正規化後無效)也不探測。
+ * `topic:` 開頭的鍵是主題生成的紀錄,不是 raw 路徑:掃描、stale、source_missing 都跳過。
  */
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
@@ -18,9 +19,10 @@ import { validateCategoryId } from '@core/schema/category-id.js';
 import { runIngest, runIngestPipeline, type RunIngestOptions } from './ingest.js';
 import { listCategories, type CategoryConfig } from './init.js';
 import { appendLogEvent, readJsonOr } from './state.js';
+import { generateFromTopic, isTopicKey } from './topic.js';
 import type { CardId, LlmRouter } from './types.js';
 
-export type ScanRefusal = 'category_undefined' | 'requires_raw' | 'raw_conflict' | 'topic_not_implemented';
+export type ScanRefusal = 'category_undefined' | 'requires_raw' | 'raw_conflict' | 'topic_invalid' | 'topic_failed';
 
 export interface ScanOptions {
   outDir: string;
@@ -47,6 +49,10 @@ export interface ScanResult {
   message: string;
   /** 有新檔要生成但雲端探測失敗。不是工單的 refused 種類;CLI 用它決定退出碼 1。 */
   cloudBlocked?: boolean;
+  /** 這一次主題生成寫出的 level 0 卡 id。沒有主題生成就沒有這個欄位或是空陣列。 */
+  topicGenerated?: string[];
+  /** 同一個分類、正規化後同一個主題已經生成過:那幾張卡的 id。 */
+  topicAlready?: string[];
 }
 
 interface IngestedEntry {
@@ -344,9 +350,23 @@ export async function runIngestScan(opts: ScanOptions): Promise<ScanResult> {
     if (!found) return refuse('category_undefined', `分類 ${opts.category} 沒有定義`);
 
     const listed = listCategoryRaw(opts.outDir, found.id);
-    if (topicGiven && listed.files.length === 0) {
+    if (opts.topic !== undefined && listed.files.length === 0) {
       if (found.require_raw) return refuse('requires_raw', '這個分類要求 raw 素材');
-      return refuse('topic_not_implemented', '從主題生成還沒做');
+      const generated = await generateFromTopic({
+        outDir: opts.outDir,
+        router: opts.router,
+        category: found.id,
+        topic: opts.topic,
+        ...(opts.today !== undefined ? { today: opts.today } : {}),
+        ...(opts.levelZeroOnly !== undefined ? { levelZeroOnly: opts.levelZeroOnly } : {}),
+      });
+      const extra: Partial<ScanResult> = {
+        topicGenerated: generated.topicGenerated,
+        topicAlready: generated.topicAlready,
+      };
+      if (generated.refused) extra.refused = generated.refused;
+      if (generated.cloudBlocked) extra.cloudBlocked = true;
+      return emptyResult(generated.message, extra);
     }
     selected = [found];
   }
@@ -377,6 +397,8 @@ export async function runIngestScan(opts: ScanOptions): Promise<ScanResult> {
     const byRel = new Map(listed.files.map((f) => [f.rel, f.abs]));
 
     for (const rel of Object.keys(state)) {
+      // 主題鍵不是 raw 路徑。isDirectRawKey 也會擋,這裡再明確跳過,兩道都要在。
+      if (isTopicKey(rel)) continue;
       if (!isDirectRawKey(rel, cat.id)) continue;
       const entry = state[rel];
       if (!entry) continue;
