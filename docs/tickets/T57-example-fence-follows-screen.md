@@ -4,7 +4,7 @@ deps: [T52]
 touches: [packages/contracts/src/card-markdown.ts, packages/core/src/schema/example-fence.ts, packages/ui-shared/src/example-fence.ts, apps/teach-card/vite.config.ts, apps/test-card/vite.config.ts, package.json]
 cpu: light
 budget_usd: 3
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 改用 markdown-it 之後舊的 85 列任何一列的字數或 body 變了(CRLF 四反引號那列的 examples 除外) 跨實作測試必須紅
