@@ -47,6 +47,6 @@ npx tsx scripts/llm.ts --probe     # 應該印出閘道上的模型清單
 phase-2 完成後 02 與 05 就能丟掉各自的 `FakeLlmRouter`。這是 I1 與 I2 的關鍵路徑,
 所以 phase-2 應該在 Wave 0 結束後**優先**做。
 
-phase-4 完成後,ADR-039 連帶解開的還有 `05-grading/phase-3`(離線審核)與 I6 涉及本機
+phase-4 完成後,ADR-039 連帶解開的還有 `05-grading/phase-4`(離線審核)與 I6 涉及本機
 推論的那一半——那兩個原本也掛在 ADR-037 的同一個 gate 下。另外 `scripts/llm-spend.ts`
 的退出碼讓 autopilot 可以在開始花錢的工作之前先問一句「今天還有預算嗎」。

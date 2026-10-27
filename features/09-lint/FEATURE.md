@@ -32,7 +32,7 @@ npx tsx scripts/lint.ts --dir contracts/fixtures/learning-broken
 
 | 後續 phase | 需要 | 原因 |
 |---|---|---|
-| phase-2 | 自身 phase-1、01 全部、03 phase-3、05 phase-3、I5 通過 | 複審與重生 |
+| phase-2 | 自身 phase-1、01 全部、03 phase-3、05 phase-4、I5 通過 | 複審與重生 |
 
 ## Wave 0 的重複
 

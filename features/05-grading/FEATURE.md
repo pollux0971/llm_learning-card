@@ -36,7 +36,8 @@ npx tsx scripts/grade.ts --apply --fake \
 | 後續 phase | 需要 | 原因 |
 |---|---|---|
 | phase-2 | 自身 phase-1、03 phase-2 | 應用題需要真的雲端路由 |
-| phase-3 | 自身 phase-2、04 phase-2、03 phase-3、I5 通過 | 複審要改 stage,縮短版要真的離線經驗 |
+| phase-3 | 自身 phase-2、03 phase-3 | 縮短版寫卡、離線時進 provisional 佇列 |
+| phase-4 | 自身 phase-3、04 phase-2、03 phase-3、I5 通過 | 複審要改 stage |
 
 ## Wave 0 的重複
 
@@ -60,7 +61,8 @@ npx tsx scripts/grade.ts --apply --fake \
 |---|---|---|---|---|
 | 1 | 填空三層審核 | Wave 0 | done | 2026-09-02 |
 | 2 | 應用題 rubric 雲端審核 | I2 | done | 2026-09-03 |
-| 3 | 離線審核、複審修正、縮短版生成 | I6 | todo | |
+| 3 | 縮短版生成 | I5 | ready | |
+| 4 | 離線審核、複審修正 | I6 | todo | |
 
 ## 驗收方式
 
