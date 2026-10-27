@@ -19,13 +19,21 @@ must_catch:
 
 # 工單 T62:`scripts/ingest.ts` 的真呼叫改走驗證過的帳本與當日上限
 
-> 狀態:起草 2026-10-27,依協調者 2026-10-27 轉顧問的交代:T61 的 F1 是**真的違反契約 §12(1.4.0)**,不是改契約,不用問使用者。規格:UI/Tauri 負責人(代筆)。編號 T62:協調者配的。
+> 狀態:起草 2026-10-27,依協調者 2026-10-27 轉顧問的交代:T61 的 F1 是**真的違反契約 §12(1.4.0)**,不是改契約,不用問使用者。顧問 2026-10-27 審過 `9b6b4a1`:准(D1–D3 照建議,D4 不記 ADR),改 3 處(見最後「顧問裁定」);改完由協調者直接合併,接在 T61 後面,不再送審。規格:UI/Tauri 負責人(代筆)。編號 T62:協調者配的。
 > 實作:worker(opencode + grok-4.7);紅測試與步驟改寫:測試 agent;驗收:驗收 agent。LLM 真呼叫 0。
-> **排序**:T59 + T61 先走;**T62 接 T61 的位子**(同落點 02,R2,所以 `deps: [T61]`);T60 最後。
+> **排序**:T59 + T61 → **T62(接 T61,同落點 02,R2,所以 `deps: [T61]`)** → T63 → T60。
 
 ## 煞車(顧問 2026-10-27)
 
-**T62 合併之前,所有 agent 一律不准跑不帶 `--fake` 的 `scripts/ingest.ts`。** 量測也一樣。這張的紅測試要起 CLI 的地方,見「紅測試」的第一條。
+**T62 合併之前,所有 agent 一律不准跑不帶 `--fake` 的 `scripts/ingest.ts`。** 量測也一樣。
+
+例外只有一種(顧問准):測試或 CLI 要起不帶 `--fake` 的 ingest 時,下面三件**同時**成立才可以:
+
+- (a) 帶 `features/steps/_fake-cloud.mjs`(換掉 `globalThis.fetch`);
+- (b) 那個 worktree 沒有 `.env`(跑之前 `ls .env` 確認是 No such file);
+- (c) 子行程的 `XDG_CONFIG_HOME` 與 `XDG_CACHE_HOME` 都指到暫存目錄。
+
+主簽出有 `.env`,一律不在那裡跑。
 
 ## 為什麼有這張
 
@@ -105,9 +113,13 @@ T5 工單把「`--out` 是使用者每次明講的必要參數」列為不在範
 ## 要的結果
 
 1. **`scripts/ingest.ts` 的 `--file`**:
-   - 驗完參數與分類名(今天第 144–148 行那段)之後,`ensureInitialized` 之前,用 `resolveVerifiedLedger(defaultVaultDeps())` 解析帳本。
-   - 沒驗證過 → 印 `resolved.message`(它本來就寫了 `npx tsx scripts/vault.ts init` 與 `show`)、退出碼 2。`--out` 一個位元組都不動(不建骨架、不建分類、不複製 raw)。
-   - 驗證過 → `createLiveGatewayRouter({ ledger: resolved.ledger, settings: readLlmSettings(absOut) })`。後面照舊:探測、`runIngestPipeline`。
+   - **順序**(顧問裁):
+     1. 驗完參數與分類名(今天第 144–148 行那段);
+     2. **`ensureInitialized` 之前**,用 `resolveVerifiedLedger(defaultVaultDeps())` 解析帳本;
+     3. 沒驗證過 → 印 `resolved.message`(它本來就寫了 `npx tsx scripts/vault.ts init` 與 `show`)、退出碼 2。`--out` 一個位元組都不動(不建骨架、不建分類、不複製 raw);
+     4. 驗證過 → **先把 `resolved.ledger` 留著**,照舊做 `ensureInitialized`、建分類、複製 raw;
+     5. **router 還是建在今天建的位置**(第 193 行,`ensureInitialized` 之後):`createLiveGatewayRouter({ ledger: <留著的 ledger>, settings: readLlmSettings(absOut) })`。理由:`readLlmSettings(absOut)` 讀的 `config/settings.yaml` 要 `ensureInitialized` 之後才有。
+   - 後面照舊:探測、`runIngestPipeline`。
 2. **掃描與 `--topic`**:照 `scripts/grade.ts` 第 42 行的 `lazyVerifiedRouter`,**第一次** `probeOnline` 或 `call` 時才解析帳本,失敗印訊息、退出碼 2。所以這些不花錢的路沒有帳本照樣能跑:
    - 只標 stale / source_missing 的掃描;
    - 已經生成過的主題(T55:LLM 0、探測 0)。
@@ -121,13 +133,10 @@ T5 工單把「`--out` 是使用者每次明講的必要參數」列為不在範
 
 ## 紅測試(測試 agent)
 
-- **煞車底下怎麼起 CLI**:紅測試是在**還沒修**的程式上跑。那時不帶 `--fake` 的 `scripts/ingest.ts` 還是 `LlmRouterImpl`,探測會真的打網路。所以每一個起 CLI 的測試:
-  - 一定要帶 `features/steps/_fake-cloud.mjs`(換掉 `globalThis.fetch`);
-  - 只在**沒有 `.env`** 的 worktree 跑(跑之前 `ls .env` 必須是 No such file);
-  - 子行程的 `XDG_CONFIG_HOME`、`XDG_CACHE_HOME` 指到暫存目錄。
+- **煞車底下怎麼起 CLI**:紅測試是在**還沒修**的程式上跑。那時不帶 `--fake` 的 `scripts/ingest.ts` 還是 `LlmRouterImpl`,探測會真的打網路。所以每一個起 CLI 的測試都照上面「煞車」的 (a)(b)(c) 三件同時做。
 - **靜態守門**(建議 `features/support/t62-live-router-guard.test.ts`):`scripts/` 與 `packages/` 的非測試檔,用語法樹找 `new LlmRouterImpl(` 與 `new CloudLlmRouter(`。只准出現在:
   - `packages/core/src/llm/router-gateway.ts`、`packages/core/src/llm/router-impl.ts`(組合);
-  - `packages/core/src/prompt-quality/golden-run.ts`(G1 修好之前的例外,附理由)。
+  - `packages/core/src/prompt-quality/golden-run.ts`:G1 的例外。守門裡的理由要寫「**T63 修好就拿掉**」(T63 把 golden 改走 `createLiveGatewayRouter`)。
   今天紅在 `scripts/ingest.ts` 的兩處。附合成的壞樣本。
 - **拒絕**(`--file`,空的 `XDG_CONFIG_HOME`):
   - 退出碼 2;
@@ -158,6 +167,8 @@ T5 工單把「`--out` 是使用者每次明講的必要參數」列為不在範
 | 場景 | `NODE_OPTIONS=--import=tsx npx cucumber-js --tags '@ingest-pipeline and not @manual and not @llm' --format summary`;`--tags '@i1 and not @manual and not @llm and not @e2e'`;`--tags '@integration and @i2 and not @manual and not @e2e'` | 全綠(重活,拿位子;在沒有 `.env` 的 worktree) |
 | 守門 | `npm run typecheck`、`npm run boundaries` | 全過;例外條數不變(02 → 03 本來就有) |
 | 變異 | `npm run mutate -- stryker.t62-ingest-ledger.json`(驗收 agent 加,`mutate` 放 `ingest.ts` 新加的那幾行) | ≥ 80%;`scripts/ingest.ts` 是 CLI 入口,由上面的 CLI 測試守,不跑變異 |
+| 不靠機器的指標檔 | **在 i9**,用 `XDG_CONFIG_HOME=$(mktemp -d)` 包住整個測試行程,跑:T62 的新測試;`packages/core/src/ingest/` 裡起 CLI 的測試;那兩個改寫過的步驟所在的 tag(`@ingest-pipeline and not @manual and not @llm`、`@integration and @i2 and not @manual and not @e2e`) | 全綠。外面的 `XDG_CONFIG_HOME` 是空的暫存目錄,忘了自己指 XDG 的測試就讀不到指標檔、會被拒絕而紅。所以全綠代表每一條都自己指了(重活,拿位子) |
+| 帳本沒被汙染 | 在 i9 照平常的環境跑 `npm run check:test-ledger`(`scripts/check-ledger-pollution.ts`:整套 vitest 前後比帳本行數) | `PASS`。`UNKNOWN` 不算過(重活,拿位子) |
 | 真資料 | `learning/` 前後量檔案數、整體雜湊、帳本行數 | 三項相同。帳本行數**一定**要相同:這張的測試一筆都不准寫進真的帳本 |
 | 不動的地方 | `git diff --stat <紅測試分支的 tip>..HEAD -- contracts docs prompts packages/core/prompts 'features/**/*.feature' packages/core/src/llm packages/core/src/prompt-quality packages/core/src/ingest/scan.ts packages/core/src/ingest/topic.ts scripts/grade.ts scripts/review.ts scripts/llm.ts` | 沒有輸出 |
 
@@ -179,22 +190,31 @@ T5 工單把「`--out` 是使用者每次明講的必要參數」列為不在範
 - import:`scripts/ingest.ts` 改 import `packages/core/src/llm/index.js` 的 `createLiveGatewayRouter`、`resolveVerifiedLedger`、`defaultVaultDeps`(02 → 03,`scripts/boundaries.allow.json` 本來就有)。
 - R2:跟 T61 同落點 02,所以 `deps: [T61]`,接在 T61 後面。跟 T59(03)、T60(11、infra)不相交。
 
-## 待顧問決定
+## 顧問裁定(2026-10-27)
 
-- **D1:`--file` 一開始就解析帳本,掃描與 `--topic` 用到才解析。** 理由:
+審 `9b6b4a1`:准。D1–D3 照建議,D4 不記 ADR。改 3 處:
+
+1. `--file` 的順序寫清楚:帳本在 `ensureInitialized` 之前解析(拒絕時 `--out` 不動);router 還是建在今天建的位置(`ensureInitialized` 之後,因為 `readLlmSettings(absOut)` 讀的 `settings.yaml` 要那之後才有)。→「要的結果」第 1 點、改壞證明。
+2. 防汙染真帳本:T62 之後,不帶 `--fake` 起 ingest 的測試只要忘了指 `XDG_CONFIG_HOME`,就會讀到那台機器的指標檔(筆電上是使用者的真帳本;i9 是空的 `~/lc-empty-learning`)。驗收加兩條:i9 用空的 `XDG_CONFIG_HOME` 包住整個測試行程跑一次;另跑一次 `scripts/check-ledger-pollution.ts`。→ 驗收條件。
+3. 靜態守門的例外 `golden-run.ts` 附註「T63 修好就拿掉」。→ 紅測試的靜態守門。
+
+煞車跑法也准了:(a)(b)(c) 三件同時成立;主簽出一律不跑。→「煞車」一節。
+
+原本的四個選項,留著當紀錄:
+
+- **D1(准)**:`--file` 一開始就解析帳本,掃描與 `--topic` 用到才解析。
   - `--file` 今天本來就一定會探測雲端,一開始解析可以做到「拒絕時 `--out` 一個位元組都不動」;
-  - 掃描與主題有不花錢的路(只標 stale、主題已經生成過)。§12 說不涉及花費的讀取不受影響,所以要等真的要呼叫模型才解析(`scripts/grade.ts` 同樣做法)。
-  - 另一種:三條都一開始就解析。比較簡單,但只標 stale 的掃描沒有帳本就跑不了(`t53-scan-buckets.test.ts` 第 144 行會紅)。建議前者。
-- **D2:帳本沒驗證過,退出碼 2**,跟 `scripts/llm.ts`、`scripts/grade.ts`、`scripts/review.ts` 一樣。ingest 其他失敗照舊是 1。
-- **D3:模型設定照舊讀 `--out` 的 `config/settings.yaml`**(環境變數優先)。跟 golden 的「`learningDir` 只決定讀哪裡的設定」一樣。帳本與設定可以來自不同資料夾。
-- **D4:不記 ADR。** 這張是照 §12 與 T5 已經定的做法補上漏掉的入口,沒有新的取捨。顧問要記的話,協調者配 ADR-083。
+  - 掃描與主題有不花錢的路(只標 stale、主題已經生成過)。§12 說不涉及花費的讀取不受影響,所以要等真的要呼叫模型才解析(`scripts/grade.ts` 同樣做法)。三條都一開始解析的話,只標 stale 的掃描沒有帳本就跑不了。
+- **D2(准)**:帳本沒驗證過,退出碼 2,跟 `scripts/llm.ts`、`scripts/grade.ts`、`scripts/review.ts` 一樣。ingest 其他失敗照舊是 1。
+- **D3(准)**:模型設定照舊讀 `--out` 的 `config/settings.yaml`(環境變數優先)。帳本與設定可以來自不同資料夾。
+- **D4(准,不記 ADR)**:照 §12 與 T5 已經定的做法補上漏掉的入口,沒有新的取捨。
 
 ## 另開(不在範圍)
 
 - **G1:live golden 沒有日上限。** `scripts/prompt-check.ts --live` 走 `createDefaultLiveRouter`(`golden-run.ts` 第 417 行)。帳本是驗證過的(T5 改過),但 router 是 `LlmRouterImpl`,`LLM_DAILY_CAP_USD` 擋不到。
   - **不能直接換成 `createLiveGatewayRouter`**:golden 有 `grade.apply`,預設的備援表會在雲端失敗時改走閘道,本機模型的輸出就混進 golden 了。
   - 做法候選:注入 `fallbackTable`,把 golden 用到的 task 都設成 `cloud-only`(golden 用到 `ingest.cards`、`ingest.questions`、`ingest.deps`、`grade.apply`,沒有 `grade.fill.llm`)。或跑之前先查 `budgetExhausted()`。
-  - 落點 12-prompt-quality,跟 T62 不同,可以並行。建議協調者另配號,排在下一次 live golden 之前。在那之前,live golden 跑之前先跑 `npx tsx scripts/llm-spend.ts --today`(退出碼 1 = 已達上限)。
+  - → **T63**(`T63-golden-live-daily-cap.md`,落點 12,可以跟 T62 並行,排在下一次 live golden 之前)。在 T63 之前,live golden 跑之前一律先跑 `npx tsx scripts/llm-spend.ts --today`,退出碼 1 就不跑。
 - **F1:管線跑到一半預算用完**。第 0 層的卡寫了,考題、子卡、依賴圖那幾次呼叫被拒(不花錢),各自記成失敗或 warning,CLI 照今天的規則以 1 結束(有卡沒考題)。這張不改這個行為。
 - **T5 工單**那句「`scripts/ingest.ts` 的 `--out` 不在範圍」:由這張取代。舊工單不改(歷史紀錄)。
 
