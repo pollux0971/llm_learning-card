@@ -1,10 +1,10 @@
 ---
 id: T65
 deps: []
-touches: [packages/core/src/grading/reteach-short.ts, packages/core/src/grading/index.ts, packages/core/prompts/grading/reteach-short.md, packages/core/src/prompt-quality/golden-sets/registry.ts]
+touches: [packages/core/src/grading/reteach-short.ts, packages/core/src/grading/index.ts, packages/core/prompts/grading/reteach-short.md, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/structural-checks.ts]
 cpu: light
 budget_usd: 2
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 縮短版的 body 超過 short_body_limit 還寫進檔(字數量的是讀回來的 body) 字數那條必須紅
@@ -87,7 +87,7 @@ generateShort(args: {
 3. **來回檢查**:
    - 用 `renderCardFile({ frontmatter, body, examples: [example] })` 組出要寫的檔;
    - 再用 01 的 §2 解析器(`parseCardText`)讀回來;
-   - 讀回的 `examples` 一定要剛好 1 個,不是也算**格式壞**。這是防模型在 body 裡自己放 example 圍欄;
+   - 讀回的 `examples` 一定要剛好 1 個,**而且那個 example 跟模型給的 `example` trim 之後一樣**,不是也算**格式壞**。這是防模型在 body 裡自己放 example 圍欄,也防 body 末尾沒關的圍欄吞掉真的 example(顧問同意,驗收缺口 G2);
    - 字數用 `countWords` 量**讀回來的 body**(跟教學卡同一把尺,契約 §2)。
 4. 格式好而且 `字數 ≤ shortLimit` → 停,不再試。
 5. 格式好但太長 → 記下來,再試(場景 2)。
@@ -135,7 +135,10 @@ generateShort(args: {
 ### 4. golden set(`packages/core/src/prompt-quality/golden-sets/registry.ts`)
 
 - 加一組 `reteach.short`:`task` 是 `reteach.short`,`promptFile` 是上面那個檔。
-- 三個輸入:非資安的公開常識卡,照 T55 的做法。輸入與 `--fake` 回應由測試 agent 寫。
+- 三個輸入:非資安的公開常識卡,照 T55 的做法。輸入與 `--fake` 回應由測試 agent 寫(已交:`fixtures/golden-short/inputs.json`、`fixtures/llm/reteach.short.golden-short-*.json`)。
+- 登記項的位置、輸入的 header 格式(`golden`/`category`/`title`/`limit: 50` 四行,後接原卡 body 與 examples)寫在 `golden-sets/registry-t65.test.ts` 的檔頭,照它做,不要自己發明。
+- `types.ts` 的 `GoldenSetId` 加 `'reteach.short'`(不加 registry.ts 過不了 tsc,T55 先例)。
+- `structural-checks.ts` 的 `checkCardShape`(顧問裁定):`typeof obj.example === 'string'` 就是縮短版形狀,不要求 title;縮短版形狀的 body 上限用 50(契約 §2 `short_body_limit` 預設),超過記 `body-too-long`、detail 寫上限 50。一般卡(要 title、上限 100)一個字都不變。測試在 `structural-checks-t65.test.ts`。
 
 **呼叫端不在這張**:06 phase-4 的「介面載入時沒有縮短版就生成」是 06 那張工單接。這張只交 `generateShort`。
 
