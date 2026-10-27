@@ -13,6 +13,7 @@ import { fakeOrder } from '../../apps/teach-card/src/stubs/order.js';
 import { phase2Active, phase2PressNext } from './teach-card-phase2.steps.js';
 import { phase3Active, phase3PressNext } from './teach-card-phase3.steps.js';
 import { phase4Active, phase4Render } from './teach-card-phase4.steps.js';
+import { phase5Active, phase5PressNext } from './teach-card-phase5.steps.js';
 
 // fixture-data.ts 用 Vite 的 `?raw` import 讀卡片內容,只在 Vite/vitest 底下能跑,
 // cucumber 用純 tsx(沒有 Vite 轉譯層)沒辦法載入它。這裡只需要卡片 id 順序,不需要內容,
@@ -68,6 +69,11 @@ When('a card is displayed', function (this: LearningWorld) {
 });
 
 When('the person presses next', async function (this: LearningWorld) {
+  // phase-5(今日負擔提示)的 Before 把 world 標成 phase-5,改派到 teach-card-phase5.steps.ts
+  if (phase5Active(this)) {
+    await phase5PressNext(this);
+    return;
+  }
   // phase-2 的 Background(真的側車)把 world 標成 phase-2 之後,改派到 teach-card-phase2.steps.ts
   if (phase3Active(this)) {
     await phase3PressNext(this);
