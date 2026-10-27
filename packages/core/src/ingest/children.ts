@@ -49,6 +49,7 @@ import { join } from 'node:path';
 import type { Card, CardFrontmatter } from '@contracts/index.js';
 import type { LlmRouter } from '@core/llm/index.js';
 import { renderCardFile } from './card-file.js';
+import { ModelResponseFormatError } from './errors.js';
 import { nextCardIds } from './ids.js';
 import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
 import { loadPromptTemplate } from './prompts.js';
@@ -99,22 +100,27 @@ function buildChildrenPrompt(parent: Card, siblings: { id: string; title: string
   ].join('\n');
 }
 
+/** examples 必須是陣列,而且每個元素都是字串。空陣列、空字串都算過。檢查在寫任何檔之前。 */
+function examplesAreAllStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
 function parseChildCandidates(text: string): ChildCandidate[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new Error(`ingest.cards(子卡)回應不是合法 JSON: ${(err as Error).message}`);
+    throw new ModelResponseFormatError(`ingest.cards(子卡)回應不是合法 JSON: ${(err as Error).message}`);
   }
-  if (!Array.isArray(parsed)) throw new Error('ingest.cards(子卡)回應必須是陣列');
+  if (!Array.isArray(parsed)) throw new ModelResponseFormatError('ingest.cards(子卡)回應必須是陣列');
   if (parsed.length < MIN_CHILDREN || parsed.length > MAX_CHILDREN) {
-    throw new Error(`ingest.cards(子卡)回應筆數必須介於 ${MIN_CHILDREN}..${MAX_CHILDREN},得到 ${parsed.length}`);
+    throw new ModelResponseFormatError(`ingest.cards(子卡)回應筆數必須介於 ${MIN_CHILDREN}..${MAX_CHILDREN},得到 ${parsed.length}`);
   }
 
   return parsed.map((raw, i) => {
     const r = raw as Record<string, unknown>;
-    if (typeof r.title !== 'string' || typeof r.body !== 'string' || !Array.isArray(r.examples)) {
-      throw new Error(`ingest.cards(子卡)回應第 ${i} 筆格式不正確: ${JSON.stringify(raw)}`);
+    if (typeof r.title !== 'string' || typeof r.body !== 'string' || !examplesAreAllStrings(r.examples)) {
+      throw new ModelResponseFormatError(`ingest.cards(子卡)回應第 ${i} 筆格式不正確: ${JSON.stringify(raw)}`);
     }
     return { title: r.title, body: r.body, examples: r.examples as string[] };
   });

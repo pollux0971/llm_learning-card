@@ -14,7 +14,7 @@ import { formatCategoryIdRefusal, validateCategoryId } from '@core/schema/catego
 import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
 import { generateChildrenForCards } from './children.js';
 import { analyzeDependencies } from './deps.js';
-import { GraphFileCorruptError } from './errors.js';
+import { GraphFileCorruptError, ModelResponseFormatError } from './errors.js';
 import { witness, witnessed } from '@contracts/witness.js';
 import type { LlmRouter as CoreLlmRouter } from '@core/llm/index.js';
 
@@ -87,6 +87,10 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
   } catch (err) {
     if (isCloudRequiredError(err)) {
       return fail('ingest 需要雲端模型,目前無法使用雲端,不會降級到本機模型', 1);
+    }
+    if (err instanceof ModelResponseFormatError) {
+      const firstLine = (err.message.split('\n')[0] ?? '').trim();
+      return fail('模型回應格式不對,沒有寫任何卡:' + firstLine, 1);
     }
     throw err;
   }
