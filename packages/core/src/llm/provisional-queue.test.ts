@@ -267,6 +267,19 @@ describe('T59 resolve', () => {
     expect(writeSpy).not.toHaveBeenCalled();
   });
 
+  it('同一張卡 deepen 與 grade.apply 各一筆:resolve deepen 只拿掉 deepen,grade.apply 那筆還在(鍵是 card + task,不是只有 card)', async () => {
+    const { q } = await make();
+    await add(q, { card: 'sec-0001', task: 'deepen', prompt: '深入' });
+    clock = '2026-10-27T09:31:00.000Z';
+    await add(q, { card: 'sec-0001', task: 'grade.apply', prompt: '批改' });
+    expect(await q.resolve({ card: 'sec-0001', task: 'deepen' }, { cloudText: 'c', changed: false })).toBe(true);
+    expect(entries().map((e) => `${e.card}/${e.task}`)).toEqual(['sec-0001/grade.apply']);
+    expect(entries()[0]!.prompt).toBe('批改');
+    expect(events.filter((e) => e['type'] === 'provisional_resolved')).toHaveLength(1);
+    expect(await q.resolve({ card: 'sec-0001', task: 'grade.apply' }, { cloudText: 'c', changed: true })).toBe(true);
+    expect(entries()).toEqual([]);
+  });
+
   it('resolve 掉最後一筆:檔案剩空陣列 [](不是被刪掉)', async () => {
     const { q } = await make();
     await add(q);
