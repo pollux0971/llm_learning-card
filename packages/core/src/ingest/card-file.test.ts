@@ -2,7 +2,7 @@
  * T58 紅測試(a):寫卡片時 example 圍欄的長度跟著內容走(ADR-082)。
  * 工單:docs/tickets/T58-card-writer-fence-length.md 第 4 節 (a)。測試 agent 寫;開發 worker 不改。
  *
- * 直接呼叫新檔 card-file.ts 的 renderCardFile,25 列表每一列斷言:
+ * 直接呼叫新檔 card-file.ts 的 renderCardFile,27 列表每一列斷言:
  *   1. 寫出的每個 example 圍欄,開始行與結束行剛好是表上那麼多個反引號(開始行是那串反引號接 `example`)。
  *      量法:用 markdown-it(跟 core 讀的同一組選項)解析寫出來的檔,讀頂層 fence token 的 markup 長度,
  *      再用 token.map 看開始行與結束行的原文。不用整份檔找「反引號接 example」的行
@@ -121,6 +121,20 @@ const ROWS: Row[] = [
     out: [`${T}\nq\n${T}`],
     bodyOut: 'a\n\n- p\n\n> q\n\n    code',
   },
+  {
+    n: 26,
+    note: '同一個 example 內兩串反引號,最長的在前(四個,之後再一串三個)',
+    examples: [`${Q}\nx\n${T}`],
+    fences: [5],
+    out: [`${Q}\nx\n${T}`],
+  },
+  {
+    n: 27,
+    note: '同一個 example 內兩串反引號,最長的在後(三個,之後再一串四個)',
+    examples: [`${T}\nx\n${Q}`],
+    fences: [5],
+    out: [`${T}\nx\n${Q}`],
+  },
 ];
 
 /** 寫出的檔裡,這次寫進去的 example 圍欄:取最後 n 個頂層 example fence(body 自己的在前面)。 */
@@ -139,7 +153,7 @@ function writtenFences(file: string, n: number): { markup: string; open: string;
   return all.slice(all.length - n);
 }
 
-describe('T58(a) card-file.ts 的 renderCardFile:25 列寫入 → 讀回', () => {
+describe('T58(a) card-file.ts 的 renderCardFile:27 列寫入 → 讀回', () => {
   for (const row of ROWS) {
     it(`第 ${row.n} 列 ${row.note}:圍欄 ${row.fences.join('、')} 個反引號;讀回的 body 與 examples 照表;再寫一次再讀回不變`, async () => {
       const render = await loadRender();
@@ -169,8 +183,8 @@ describe('T58(a) card-file.ts 的 renderCardFile:25 列寫入 → 讀回', () =>
     });
   }
 
-  it('表有 25 列、編號 1 到 25(沒有漏列)', () => {
-    expect(ROWS.map((r) => r.n)).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
+  it('表有 27 列、編號 1 到 27(沒有漏列)', () => {
+    expect(ROWS.map((r) => r.n)).toEqual(Array.from({ length: 27 }, (_, i) => i + 1));
   });
 });
 
