@@ -1,0 +1,12 @@
+{
+  "set": "reteach.short",
+  "task": "reteach.short",
+  "date": "2026-10-27",
+  "model": "gpt-5.6-luna",
+  "provider": "openai",
+  "promptFileGitCommit": "243da8d",
+  "mode": "live",
+  "tokens_in": 1502,
+  "tokens_out": 725,
+  "estimated_cost_usd": 0.011005
+}
