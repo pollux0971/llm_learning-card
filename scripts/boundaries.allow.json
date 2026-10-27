@@ -123,5 +123,10 @@
     "from": "11-review-cli",
     "to": "02-ingest-pipeline",
     "reason": "T43(ADR-079):桌面複習側車的「深入這個」要呼叫 02 的卡片生成(deepen/children/questions/generate-cards),11 是組合層,跟 11 → 04/05/07 同理由;不把生成搬進 11,免得 children.ts 與 questions.ts 多一份"
+  },
+  {
+    "from": "05-grading",
+    "to": "02-ingest-pipeline",
+    "reason": "T65(ADR-084):縮短版生成要寫 .short.md,只准 import 02 的 card-file.ts 的 renderCardFile(ADR-082 唯一的寫卡函式,純函式,只 import yaml),不另寫一份。不准 import ingest/ 底下別的檔;靜態測試守。只開這一條單向,沒有 02 → 05。"
   }
 ]
