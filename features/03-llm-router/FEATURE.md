@@ -82,7 +82,7 @@ npx tsx scripts/llm-spend.ts --today  # 今日 LLM 花費(排除 ollama);退出�
 |---|---|---|---|---|
 | 1 | 介面、雲端 adapter、log、逾時 | Wave 0 | done | 2026-09-02 |
 | 2 | 離線偵測、路由表(本機永遠回 unavailable) | I1 | done | 2026-09-03 |
-| 3 | provisional 標記與複審佇列 | I6 | todo(gate 已由 ADR-039 解除) | |
+| 3 | provisional 標記與複審佇列 | I6 | done | 2026-10-27 |
 | 4 | 閘道本機 adapter + 預算備援 | I6 | blocked | |
 
 ## 驗收方式

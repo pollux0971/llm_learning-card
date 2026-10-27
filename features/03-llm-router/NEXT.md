@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-1(2026-09-02)、phase-2(2026-09-03) |
+| 已完成 | phase-1(2026-09-02)、phase-2(2026-09-03)、phase-3(2026-10-27:provisional 佇列 `provisional-queue.ts` 與 `recordProvisional` 包裝,不改 router 既有檔;工單 T59,-5b 驗收,變異 91.89%,真 cucumber `@llm-router and @phase-3` 8/8;呼叫端不在這個 phase——`grade.apply`、`reteach.short` 歸 05-grading phase-3,deepen 另開小票) |
 | 進行中 | 無 |
-| 下一個 | phase-3(provisional 佇列)——gate 已由 ADR-039 解除,可以開工 |
+| 下一個 | phase-4 的真閘道 `@manual`(等使用者起閘道,見下方 blocked 說明) |
 
 ## Gate
 
