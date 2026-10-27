@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-1(2026-09-02)、phase-2(2026-09-03) |
+| 已完成 | phase-1(2026-09-02)、phase-2(2026-09-03)、phase-3(2026-10-27:縮短版生成 `generateShort`,`packages/core/src/grading/reteach-short.ts`,新 prompt `prompts/grading/reteach-short.md`;工單 T65,-5b 驗收,變異 89.14%,真 cucumber `@grading and @phase-3` 3/3;golden `reteach.short` 2026-10-27 顧問評 5/5、4/5、5/5;呼叫端〔06 phase-4 介面載入時生成〕與 `grade.apply` 的佇列包裝歸 05 phase-4 與 06 phase-4 的工單) |
 | 進行中 | 無 |
-| 下一個 | phase-3(縮短版生成,`ready`,工單 T65);之後 phase-4(卡在 I5,見 Gate) |
+| 下一個 | phase-4(離線審核、複審修正;卡在 I5,見 Gate) |
 
 ## Gate
 
