@@ -1717,3 +1717,23 @@ graph TD
   - 內容沒有三個以上連續反引號時,寫出來的檔跟以前一字不差(真資料 25 張、golden 114 張都量過)。
   - body 裡沒關的圍欄還是會吞掉後面的 example(T58 工單的 F1)。這不是圍欄長度的問題,沒處理,記著。
 - **Related**: ADR-081、T58、`contracts/types.md` §2、`docs/tickets/T58-card-writer-fence-length.md`
+
+## ADR-083 · live golden 走有日上限的 router,而且永遠只走雲端
+
+- **Status**: accepted · 2026-10-27(技術顧問裁;不改契約;前端起草)
+- **Context**:
+  1. live golden(`scripts/prompt-check.ts --live` → `createDefaultLiveRouter`)的帳本是驗證過的(T5),但 router 是 `LlmRouterImpl`,`LLM_DAILY_CAP_USD` 擋不到。日上限只在 `GatewayLlmRouter` 裡。
+  2. 直接換成 `createLiveGatewayRouter` 也不行:預設的備援表會讓 golden 用到的 `grade.apply` 在雲端失敗或預算用完時改走閘道,本機模型的輸出就混進 golden。T63 起草時量過:預設表下 `grade.apply` 在預算用完、5xx、逾時、離線四種情況都走閘道;七個 task 全部 `cloud-only` 時,閘道一次都沒被叫。
+- **Decision**:
+  1. golden 的 router 走 `createLiveGatewayRouter`(有日上限、帳本驗證過),注入 golden 專用的備援表:契約 §7 的七個 task **全部** `cloud-only`。
+  2. `probeLocal` 固定不可用、不碰閘道。golden 不用本機,探測也不該打到那台機器。
+  3. 預算在建任何輸出目錄**之前**查;用完就一句話失敗,不留空目錄。
+  4. 不是改契約:§7 的路由表一格都不動,這是 golden 這個入口自己的備援表。
+- **Alternatives**:
+  - **預設備援表** —— 不採用。`grade.apply` 會備援到閘道,golden 混進本機輸出。
+  - **只把 golden 現在用的四個 task 設成 `cloud-only`** —— 不採用。之後新增 `deepen` 或 `reteach.short` 的 golden set 會漏掉。
+  - **只靠跑之前先查 `scripts/llm-spend.ts --today`** —— 不採用。靠人記得,不是程式擋。T63 合併之前暫時這樣做。
+- **Consequences**:
+  - live golden 有日上限;雲端不能用時 golden 大聲失敗,不會偷偷走本機。
+  - 跑到一半預算用完,會留下沒有 `meta.json` 的半套輸出資料夾(跟今天任何一次中途失敗一樣)。記在 T63 工單的低優先小票清單。
+- **Related**: ADR-039、ADR-050、ADR-066、T62、T63、`packages/core/src/prompt-quality/golden-run.ts`、`docs/tickets/T63-golden-live-daily-cap.md`
