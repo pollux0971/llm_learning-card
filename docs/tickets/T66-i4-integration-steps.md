@@ -1,7 +1,7 @@
 ---
 id: T66
 deps: []
-touches: [features/steps/i4-two-card-system.steps.ts, features/support/i4-harness.ts, features/steps/teach-card-phase3.steps.ts, features/steps/ingest-phase3.steps.ts, features/steps/grading.steps.ts, apps/teach-card/src/t66-source-marker-render.test.ts]
+touches: [features/steps/i4-two-card-system.steps.ts, features/support/i4-harness.ts, features/steps/teach-card-phase3.steps.ts, features/steps/ingest-phase3.steps.ts, features/steps/grading.steps.ts, features/support/t66-source-marker-render.test.ts]
 cpu: heavy
 budget_usd: 2
 status: todo
@@ -139,7 +139,7 @@ i4 的背景是「什麼都還沒學」,沒有到期的卡,考試卡沒題可答
 
 `App.svelte` 的「原始 / 生成」標示是寫在模板裡的一行,沒有測試量過。整合步驟只能看側車回的內文。
 
-- **甲(建議)**:加一條渲染測試 `apps/teach-card/src/t66-source-marker-render.test.ts`(真 Chrome,`packages/ui-shared/src/hud/render-test-support.ts` 的 openApp,照 t45 的做法):`source: llm` 的卡,標示列是「生成」;`source: raw` 的是「原始」。只有測試,不改產品程式。cucumber 那一句看內文的 frontmatter,證據檔寫「標示由渲染測試量」。
+- **甲(建議)**:加一條渲染測試 `features/support/t66-source-marker-render.test.ts`(真 Chrome,`packages/ui-shared/src/hud/render-test-support.ts` 的 openApp,照 t45 的做法):`source: llm` 的卡,標示列是「生成」;`source: raw` 的是「原始」。只有測試,不改產品程式。cucumber 那一句看內文的 frontmatter,證據檔寫「標示由渲染測試量」。
 - 乙:照 07 phase-3 那條「the marker is visible in the interface」的先例,只看 frontmatter。少一支測試,但標示寫錯不會被抓到。
 
 ## 不改產品,發現產品有缺口時
@@ -159,7 +159,7 @@ i4 的背景是「什麼都還沒學」,沒有到期的卡,考試卡沒題可答
 ## 受保護的檔
 
 - 任何 `.feature`(i4、07、02、06 的都一樣)。
-- `packages/`、`apps/` 底下的產品程式(渲染測試檔除外)、`scripts/`。
+- `packages/`、`apps/`、`scripts/` 底下的任何檔。D3 的渲染測試也放 `features/support/`(vitest 的 include 有它,不用登記 owners),不放進 `apps/teach-card/`:那是 07 的落點,T67 正在用,放進去 dag 會把兩張卡判成同一個落點(R2)。
 - `features/steps/_fake-deepen-cloud.mjs`、`_fake-cloud.mjs`:照用。不夠用(例如要一個新的開關)就加環境變數,不改既有開關的行為,並在證據檔寫清楚。
 
 ## 怎麼跑
@@ -167,7 +167,7 @@ i4 的背景是「什麼都還沒學」,沒有到期的卡,考試卡沒題可答
 ```bash
 NODE_OPTIONS=--import=tsx npx cucumber-js --tags "@integration and @i4 and not @manual" --format summary
 NODE_OPTIONS=--import=tsx npx cucumber-js --tags "@i4 and not @manual" --format summary
-VITEST_MAX_WORKERS=1 npx vitest run apps/teach-card/src/t66-source-marker-render.test.ts
+VITEST_MAX_WORKERS=1 npx vitest run features/support/t66-source-marker-render.test.ts
 npm run check:steps
 ```
 
