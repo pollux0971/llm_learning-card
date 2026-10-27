@@ -1,0 +1,19 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='{packages/core/src/prompt-quality/t63-golden-cap.test.ts,packages/core/src/prompt-quality/live-run.test.ts}' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": ["clear-text", "progress-append-only", "json"],
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "coverageAnalysis": "off",
+  "concurrency": 2,
+  "timeoutMS": 120000,
+  "mutate": [
+    "packages/core/src/prompt-quality/golden-run.ts:70-76",
+    "packages/core/src/prompt-quality/golden-run.ts:342-348",
+    "packages/core/src/prompt-quality/golden-run.ts:416-483"
+  ],
+  "thresholds": { "high": 90, "low": 80, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "apps/desktop/src-tauri/target"]
+}
