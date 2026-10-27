@@ -19,11 +19,15 @@
  *   FAKE_CLOUD_LEVEL0_COUNT        level 0 卡片張數(預設 5)
  *   FAKE_CLOUD_CHILDREN_PER_PARENT 每張父卡的子卡數(預設 1)
  *   FAKE_CLOUD_QUESTIONS_FAIL_CARD 這張卡的 'ingest.questions' 每次都回不合法的回應
+ *   FAKE_CLOUD_REQUEST_LOG         設了就把每個請求的 URL 路徑(例如 /v1/messages)一行一行附加進這個檔(T62:數「雲端被叫幾次」)
  *   FAKE_CLOUD_LEVEL0_REPLY        設成 'not-json' 時,level 0 的 'ingest.cards' 回一段不是 JSON 的多行文字(T61:壞的模型回應)
  */
 
+import { appendFileSync } from 'node:fs';
+
 const LEVEL0_COUNT = Number(process.env.FAKE_CLOUD_LEVEL0_COUNT ?? '5');
 const CHILDREN_PER_PARENT = Number(process.env.FAKE_CLOUD_CHILDREN_PER_PARENT ?? '1');
+const REQUEST_LOG = process.env.FAKE_CLOUD_REQUEST_LOG ?? '';
 const LEVEL0_REPLY = process.env.FAKE_CLOUD_LEVEL0_REPLY ?? '';
 const FAIL_CARD = process.env.FAKE_CLOUD_QUESTIONS_FAIL_CARD ?? '';
 
@@ -94,6 +98,7 @@ function jsonResponse(body, status = 200) {
 
 globalThis.fetch = async function fakeCloudFetch(input, init) {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  if (REQUEST_LOG) appendFileSync(REQUEST_LOG, `${new URL(url).pathname}\n`);
 
   // CloudLlmRouter.probeOnline():GET /v1/models,只看 status < 500
   if (url.includes('/v1/models')) return jsonResponse({ data: [] });
