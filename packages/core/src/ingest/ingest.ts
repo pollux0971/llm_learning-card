@@ -2,8 +2,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { stringify } from 'yaml';
 import type { CardFrontmatter, CardId, LlmRouter } from './types.js';
+import { renderCardFile } from './card-file.js';
 import { generateCards, type CardCandidate, type ParkedCandidate } from './generate-cards.js';
 import { nextCardIds } from './ids.js';
 import { ensureInitialized } from './init.js';
@@ -211,10 +211,7 @@ function clampLines([start, end]: [number, number], totalLines: number): [number
 }
 
 function writeCardFile(cardsDir: string, id: CardId, fm: CardFrontmatter, body: string, examples: string[]): void {
-  const yamlFm = stringify(fm).trimEnd();
-  const exampleBlocks = examples.map((e) => '```example\n' + e.trim() + '\n```').join('\n\n');
-  const content = `---\n${yamlFm}\n---\n\n${body.trim()}\n${exampleBlocks ? '\n' + exampleBlocks + '\n' : ''}`;
-  writeFileSync(join(cardsDir, `${id}.md`), content, 'utf8');
+  writeFileSync(join(cardsDir, `${id}.md`), renderCardFile({ frontmatter: fm, body, examples }), 'utf8');
 }
 
 function sha256Of(content: string): string {
