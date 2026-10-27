@@ -1763,3 +1763,30 @@ graph TD
   - 05 phase-4 照舊等 I5,複審的難點等真實資料。
   - import 例外從 25 條變 26 條。
 - **Related**: ADR-032、ADR-039、ADR-082、ADR-083、T59、T65、`features/05-grading/`、`features/06-test-card/NEXT.md`、`features/09-lint/`、`docs/01-roadmap.md`
+
+## ADR-085 · 教學卡補 phase-5 顯示今日負擔;週目標的顯示位置留給 08 phase-2
+
+- **Status**: accepted · 2026-10-27(技術顧問判;計畫調整,不改契約;前端起草)
+- **Context**:
+  1. ADR-002 決定教學卡沒有每日上限,「只顯示『今天已學 N,明天約 M 題』」。07 FEATURE.md 的範圍也寫「今日負擔與週目標的顯示位置」。
+  2. 07 的 phase-1 到 phase-4 沒有一個認領它,`apps/teach-card/src` 裡也找不到。I4 盤點(`docs/reviews/I4-inventory.md` 的 G3)才發現:i4 驗收檔第 63 行的 `@manual` 要它。跟 ADR-084 同一類:規格裡有,計畫漏排。
+  3. 考試卡在一輪結束的小結裡報「明天預估幾張」(06 phase-3;算的是 `packages/core/src/session/engine.ts` 的 summarizeDay)。兩張卡各算一份,數字就可能不一樣。
+  4. 週目標的顯示是 08 phase-2(I5)的事,它的場景把數字放在教學卡的標題列。
+- **Decision**:
+  1. 07 加 **phase-5「今日負擔提示」**,屬 I4。gate 只有自身 phase-4 `done`,狀態 `ready`。工單 T67。
+  2. 這是計畫修正,不是新功能,不用問使用者:ADR-002 與 07 的範圍本來就寫了。
+  3. 要釘的行為:
+     - **今天學了幾張** = `state/reviews.json` 裡 `learned_at` 等於今天的紀錄數。`learned_at` 是契約 §4 的欄位;日期是契約 §1 的 `IsoDate`(當地日期),而且跟側車寫 `learned_at` 用的是同一個「今天」,不自己再算一次。
+     - 按「下一個」或「換類別」之後,同一次回應裡這個數就加 1,不用重開視窗。
+     - **明天大約幾張** = 考試卡小結的「明天預估」用的**同一個函式**算的(含每日上限)。同一個 learning 目錄狀態下,兩張卡顯示同一個數。
+     - learning/ 裡沒有卡、也沒有複習紀錄時,兩個數都顯示 0,不出錯。
+  4. 提示放在教學卡的**頁尾**(i4 第 67 行寫的是 footer)。**週目標的顯示位置留給 08 phase-2**(I5,標題列);07 FEATURE.md 的範圍那行指過去。
+- **Alternatives**:
+  - **從 I4 拿掉第 63 行** —— 不採用。等於改 feature 的範圍(要問使用者),而且規格本來就有它。
+  - **教學卡自己算明天的估計** —— 不採用。兩份算法遲早分歧,兩張卡會顯示不同的數字。
+  - **「今天學了幾張」數 `log.jsonl` 的 learned 事件,或用 `weekly.json` 的 learned** —— 不採用。帳本是事件紀錄,不是狀態;`weekly.json` 是一週的累計,而且歸 08。`reviews.json` 的 `learned_at` 才是「這張什麼時候學的」的唯一來源。
+- **Consequences**:
+  - I4 多一個 phase。I4 要等 T66(整合層步驟)與 T67 都合併、`@i4 and not @manual` 全綠,才把人工清單交使用者(I4 盤點第 6 節第 3 點)。
+  - 考試卡小結的明天估計要抽成兩邊共用的一個函式(T67 做,小結的數字不變)。
+  - i4 第 63 行的 `@manual` 由顧問用 07 phase-5 的 `@manual` 判,不交使用者。
+- **Related**: ADR-002、ADR-009、ADR-015、ADR-075、ADR-077、ADR-080、ADR-084、T66、T67、`features/07-teach-card/`、`features/08-weekly-goal/`、`docs/reviews/I4-inventory.md`
