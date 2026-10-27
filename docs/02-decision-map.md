@@ -1737,3 +1737,29 @@ graph TD
   - live golden 有日上限;雲端不能用時 golden 大聲失敗,不會偷偷走本機。
   - 跑到一半預算用完,會留下沒有 `meta.json` 的半套輸出資料夾(跟今天任何一次中途失敗一樣)。記在 T63 工單的低優先小票清單。
 - **Related**: ADR-039、ADR-050、ADR-066、T62、T63、`packages/core/src/prompt-quality/golden-run.ts`、`docs/tickets/T63-golden-live-daily-cap.md`
+
+## ADR-084 · 05-grading 的 phase-3 拆成兩個:縮短版生成先做,複審等 I5;05 → 02 只准 import 唯一的寫卡函式
+
+- **Status**: accepted · 2026-10-27(技術顧問裁;計畫調整,不改契約;前端起草)
+- **Context**:
+  1. 原本的 05-grading/phase-3 是「離線審核、複審修正、縮短版生成」三件事,gate 是 I5 通過。
+  2. 計畫裡有一個循環:I5 需要 06-test-card/phase-4(縮短版重教);06 phase-4 需要 05 phase-3 `done`(它的場景「A missing shortened version is generated」);05 phase-3 又要 I5 通過。照原本的寫法,05 phase-3、06 phase-4、I5 三個都永遠開不了工。
+  3. 原本卡在 I5 的理由(`features/05-grading/NEXT.md`:「複審要有真實資料才想得清楚」)只講到複審那一半。縮短版生成的三個場景,用到的東西(05 phase-2、03 phase-3 的佇列)都已經 `done`。
+  4. 縮短版要寫卡檔。ADR-082 定了只有一個寫卡片的函式(`packages/core/src/ingest/card-file.ts`),但 05 → 02 本來不准 import。
+- **Decision**:
+  1. **拆成兩個 phase**:
+     - 05 **phase-3** = 縮短版生成(原本的場景 7–9),gate:自身 phase-2、03 phase-3。tag `@i5 @grading @phase-3`。
+     - 05 **phase-4** = 離線審核、複審修正(原本的場景 1–6),gate:自身 phase-3、04 phase-2、03 phase-3、I5 通過。tag `@i6 @grading @phase-4`。
+     - 場景文字一個字都不改,只搬家。只有 Feature 的標題與描述各自改寫。
+  2. 依賴跟著改:06 phase-4 的「05 phase-3」不用改(意思剛好就是縮短版);09-lint phase-2 的依賴改成 05 phase-4;roadmap 的 I5 表加 05 phase-3,I6 表的 05 phase-3 改成 phase-4。
+  3. **開一條 05-grading → 02-ingest-pipeline 的 import 例外**,只准 import `card-file.ts` 的 `renderCardFile`(ADR-082 唯一的寫卡函式,純函式,只 import `yaml`)。用靜態測試守:`packages/core/src/grading/` 底下從 `ingest/` 只 import `card-file.js`,不准 `ingest/prompts.ts`、`ingest/errors.ts` 等。例外照 T43 的先例(`f6a9255`)在派工前做成一個 chore commit;`features/support/t31-static.test.ts` 釘的條數 25 → 26。
+- **Alternatives**:
+  - **整個 phase-3 現在就做**(不拆)—— 不採用。跟「複審要有真實資料」的原本理由衝突。
+  - **照舊等 I5** —— 不採用。循環,等不到。
+  - **把 `card-file.ts` 搬到 01** —— 不採用。架構上比較乾淨,但要動 T58 剛定的檔、ADR-082 的路徑與 T58 的指紋護欄名單。
+  - **05 自己寫一份卡檔** —— 不採用。違反 ADR-082。
+- **Consequences**:
+  - 05 phase-3 變成 `ready`(工單 T65),做完之後 06 phase-4 只剩 I4 一個 gate,I5 的循環解開。
+  - 05 phase-4 照舊等 I5,複審的難點等真實資料。
+  - import 例外從 25 條變 26 條。
+- **Related**: ADR-032、ADR-039、ADR-082、ADR-083、T59、T65、`features/05-grading/`、`features/06-test-card/NEXT.md`、`features/09-lint/`、`docs/01-roadmap.md`

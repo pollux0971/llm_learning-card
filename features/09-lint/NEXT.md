@@ -14,7 +14,7 @@
 
 **phase-2** 需要:
 - [ ] 自身:phase-1 `done`
-- [ ] 跨資料夾:01 三個 phase `done`、03 phase-3 `done`、05 phase-3 `done`
+- [ ] 跨資料夾:01 三個 phase `done`、03 phase-3 `done`、05 phase-4 `done`
 - [ ] 整合:**I5 通過**
 
 ## Gate 未滿足時
