@@ -5,8 +5,8 @@
  * I1 整合缺口(runIngestPipeline() 已實作,見 packages/core/src/ingest/ingest.ts
  * 與 packages/core/src/ingest/pipeline.test.ts、features/steps/i1-content-pipeline.steps.ts):
  * 過去 Wave 0 這裡硬寫死只認 --fake,遇到沒帶 --fake 就直接印訊息 exit 1,
- * 字面上就是在等 03-llm-router 整合完成——現在 LlmRouterImpl 已經做完,
- * 這個入口預設用真的 router,--fake 變成明確要求時才用的選項。
+ * 字面上就是在等 03-llm-router 整合完成——現在真呼叫走驗證過的帳本與
+ * createLiveGatewayRouter(有當日上限),--fake 變成明確要求時才用的選項。
  *
  * 用法:
  *   npx tsx scripts/ingest.ts --file <raw file> --out <learning dir> [--category <id>]
@@ -21,20 +21,30 @@
  *   只呼叫 runIngest()(level 0 卡片),不呼叫 runIngestPipeline()——fixtures 目錄
  *   目前只錄了 'ingest.cards' 的回應,沒有 'ingest.questions' / 'ingest.deps',
  *   接上完整管線前得先補這些 fixture,不是這輪的範圍。standalone.json 與很多
- *   測試靠這個路徑做確定性測試,行為不變。
+ *   測試靠這個路徑做確定性測試,行為不變。不碰指標檔。
  *
- * 不帶 --fake(預設):用 LlmRouterImpl(真的 CloudLlmRouter,讀 config/settings.yaml
- *   的 llm 設定,環境變數 LLM_CLOUD_PROVIDER / LLM_CLOUD_MODEL / LLM_LOCAL_MODEL
- *   覆蓋,契約 §11)。跑之前先 probeOnline() 探測:探測不到就照
+ * 不帶 --fake(預設):真呼叫只接受經指標檔與標記驗證過的帳本(契約 §12)。
+ *   --out 只決定卡片寫到哪,不能改帳本位置。llm_call 記在驗證過的那本;
+ *   ingested、warning 等 ingest 自己的事件仍記在 --out。兩者是同一個資料夾時,全在同一本。
+ *   模型設定照舊讀 --out 的 config/settings.yaml(環境變數 LLM_CLOUD_PROVIDER /
+ *   LLM_CLOUD_MODEL / LLM_LOCAL_MODEL 覆蓋,契約 §11)。帳本與設定可以來自不同資料夾。
+ *   --file:驗完參數與分類名之後、ensureInitialized 之前就用
+ *   resolveVerifiedLedger(defaultVaultDeps()) 解析帳本。沒驗證過就印 resolved.message
+ *   (它本來就寫了 npx tsx scripts/vault.ts init 與 show)、退出碼 2,--out 一個位元組都不動。
+ *   驗證過才建骨架、建分類、複製 raw,然後在 ensureInitialized 之後用
+ *   createLiveGatewayRouter({ ledger, settings }) 建 router(settings.yaml 要那之後才有)。
+ *   掃描與 --topic:照 scripts/grade.ts 的 lazyVerifiedRouter,第一次 probeOnline 或
+ *   call 才解析帳本。沒驗證過印訊息、退出碼 2。只標 stale / source_missing 的掃描、
+ *   已經生成過的主題不呼叫模型,沒有帳本也照常。
+ *   有新檔或新主題時先 probeOnline():探測不到就照
  *   「Offline ingest refuses rather than degrading」場景的字面行為——不寫任何
- *   卡片、印出需要雲端模型的訊息、exit 1,不透過 runIngest() 內部的
- *   CloudRequiredError catch(那條 catch 現在看契約 §7 路由表共用的
- *   code === 'CLOUD_REQUIRED',fake-llm.ts 與 @core/llm/errors.js 已經統一成
- *   同一個 class,見 ingest.ts 的 isCloudRequiredError() 註解)。探測到線上就呼叫
- *   runIngestPipeline(),接上 phase-2 的 questions/children/deps 三步。
+ *   卡片、印出需要雲端模型的訊息、exit 1。探測到線上就走 runIngestPipeline()
+ *   (--file)或掃描管線,接上 phase-2 的 questions/children/deps。
+ *   預算用完(code === 'BUDGET_EXCEEDED')由 runIngest 收成一句話、退出碼 1,不寫卡;
+ *   掃描因此照樣處理下一個檔。
  *
- * 退出碼:0 成功(含「已經處理過」);1 失敗(空檔案、找不到檔案、離線,或
- *   任何一張卡的考題產生失敗——見 hasQuestionFailures)。
+ * 退出碼:0 成功(含「已經處理過」);1 失敗(空檔案、找不到檔案、離線、預算用完,或
+ *   任何一張卡的考題產生失敗——見 hasQuestionFailures);2 帳本沒驗證過。
  */
 import './_env.js';
 import { mkdirSync, copyFileSync, existsSync, lstatSync, readFileSync } from 'node:fs';
@@ -44,7 +54,14 @@ import { FakeLlmRouter } from '../packages/core/src/ingest/fake-llm.js';
 import { runIngest, runIngestPipeline } from '../packages/core/src/ingest/ingest.js';
 import { ensureInitialized, listCategories, setCategory } from '../packages/core/src/ingest/init.js';
 import { runIngestScan, type ScanResult } from '../packages/core/src/ingest/scan.js';
-import { LlmRouterImpl, type RouterSettings } from '../packages/core/src/llm/router-impl.js';
+import type { LlmRouter } from '../packages/core/src/ingest/types.js';
+import {
+  createLiveGatewayRouter,
+  defaultVaultDeps,
+  resolveVerifiedLedger,
+  type RouterSettings,
+  type VerifiedLedger,
+} from '../packages/core/src/llm/index.js';
 import { formatCategoryIdRefusal, validateCategoryId } from '../packages/core/src/schema/category-id.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -54,12 +71,51 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-/** 讀 outDir/config/settings.yaml 的 llm 區塊,給 LlmRouterImpl 當 settings(契約 §11)。 */
+/** 讀 outDir/config/settings.yaml 的 llm 區塊,給 createLiveGatewayRouter 當 settings(契約 §11)。 */
 function readLlmSettings(outDir: string): RouterSettings {
   const settingsPath = join(outDir, 'config/settings.yaml');
   if (!existsSync(settingsPath)) return {};
   const parsed = yamlParse(readFileSync(settingsPath, 'utf8')) as { llm?: RouterSettings } | null;
   return parsed?.llm ?? {};
+}
+
+/** 真呼叫的帳本。沒驗證過就印訊息(含 vault.ts init / show)、退出碼 2,不返回。 */
+function requireVerifiedLedger(): VerifiedLedger {
+  const resolved = resolveVerifiedLedger(defaultVaultDeps());
+  if (!resolved.ok) {
+    console.error(resolved.message);
+    process.exit(2);
+  }
+  return resolved.ledger;
+}
+
+/**
+ * 掃描與 --topic 用。第一次 probeOnline 或 call 才解析帳本(照 scripts/grade.ts)。
+ * 失敗印訊息、退出碼 2,不丟錯——掃描與主題會把 probeOnline 的例外當成離線(退出碼 1)。
+ * 模型設定讀 --out 的 settings.yaml。opts 原樣轉交,deps 的 maxTokens 不會被丟掉。
+ */
+function lazyVerifiedRouter(absOut: string): LlmRouter {
+  let live: ReturnType<typeof createLiveGatewayRouter> | undefined;
+  const ensure = (): ReturnType<typeof createLiveGatewayRouter> => {
+    if (live !== undefined) return live;
+    live = createLiveGatewayRouter({
+      ledger: requireVerifiedLedger(),
+      settings: readLlmSettings(absOut),
+    });
+    return live;
+  };
+  return {
+    call(task, prompt, opts) {
+      const router = ensure();
+      return opts === undefined ? router.call(task, prompt) : router.call(task, prompt, opts);
+    },
+    probeOnline() {
+      return ensure().probeOnline();
+    },
+    probeLocal() {
+      return ensure().probeLocal();
+    },
+  };
 }
 
 function rawDestKind(path: string): 'missing' | 'file' | 'other' {
@@ -95,8 +151,8 @@ async function runScanCli(opts: { useFake: boolean; outDir: string; category?: s
     ...(opts.category !== undefined ? { category: opts.category } : {}),
     ...(opts.topic !== undefined ? { topic: opts.topic } : {}),
   };
-  // 掃描自己決定要不要探測:沒有新檔(只標 stale / source_missing、或拒絕)不碰網路。
-  // CLI 這裡不先 probeOnline,否則離線、沒有金鑰的「只標 stale」會被擋下。
+  // 掃描自己決定要不要探測:沒有新檔(只標 stale / source_missing、或拒絕)不碰網路,
+  // 也不解析帳本。CLI 這裡不先 probeOnline、不先解析帳本,否則沒有指標檔的「只標 stale」會被擋下。
   if (opts.useFake) {
     const fixturesDir = join(ROOT, 'contracts/fixtures/llm');
     const result = await runIngestScan({
@@ -109,10 +165,7 @@ async function runScanCli(opts: { useFake: boolean; outDir: string; category?: s
 
   const result = await runIngestScan({
     ...scanOpts,
-    router: new LlmRouterImpl({
-      settings: readLlmSettings(absOut),
-      logPath: join(absOut, 'state/log.jsonl'),
-    }),
+    router: lazyVerifiedRouter(absOut),
     levelZeroOnly: false,
   });
   finishScan(result);
@@ -148,6 +201,11 @@ async function main(): Promise<void> {
   }
 
   const absOut = resolve(outDir);
+
+  // 真路在碰 --out 之前解析帳本。沒驗證過印訊息、退出碼 2,骨架、分類、raw 複本都不建。
+  // --fake 不碰指標檔。
+  const verifiedLedger = useFake ? undefined : requireVerifiedLedger();
+
   ensureInitialized(absOut);
   const existingCategory = listCategories(absOut).find((c) => c.id === category);
   if (!existingCategory) {
@@ -190,9 +248,12 @@ async function main(): Promise<void> {
     process.exit(result.exitCode);
   }
 
-  const router = new LlmRouterImpl({
+  if (verifiedLedger === undefined) {
+    throw new Error('internal: 真路沒有驗證過的帳本');
+  }
+  const router = createLiveGatewayRouter({
+    ledger: verifiedLedger,
     settings: readLlmSettings(absOut),
-    logPath: join(absOut, 'state/log.jsonl'),
   });
 
   const online = await router.probeOnline();
