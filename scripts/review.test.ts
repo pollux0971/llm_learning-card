@@ -23,8 +23,12 @@
  *
  * 測法:一律臨時目錄,不碰 /data/python/llm_learning-cards/learning/
  * (CLAUDE.md 硬規則 2)。--dry-run 本身不寫檔,但受測的 vault 仍然全部是複本。
+ *
+ * T60:互動模式的子行程,XDG_CONFIG_HOME(指標檔)與 XDG_CACHE_HOME(session 快取)都指到暫存目錄,
+ * 不碰跑測試那台機器的 ~/.config 與 ~/.cache。
  */
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -104,6 +108,24 @@ function runDryRun(dir: string, today = TODAY): { code: number; output: string }
 }
 
 /**
+ * 指標檔 + 身分標記(對的),都在暫存目錄裡;再給一個空的快取目錄。
+ * 互動模式(scripts/review.ts liveRouterOrExit)只認指標檔,所以不能讀跑測試那個人的 ~/.config。
+ */
+function xdgFor(learningDir: string): { XDG_CONFIG_HOME: string; XDG_CACHE_HOME: string } {
+  const root = mkdtempSync(join(tmpdir(), 'lc-review-xdg-'));
+  tmpDirs.push(root);
+  const config = join(root, 'config');
+  const cache = join(root, 'cache');
+  const id = randomUUID();
+  mkdirSync(join(config, 'llm-learning-cards'), { recursive: true });
+  mkdirSync(cache, { recursive: true });
+  writeFileSync(join(config, 'llm-learning-cards/vault.json'), JSON.stringify({ learning_dir: learningDir, vault_id: id }));
+  mkdirSync(join(learningDir, 'config'), { recursive: true });
+  writeFileSync(join(learningDir, 'config/vault-id'), `${id}\n`);
+  return { XDG_CONFIG_HOME: config, XDG_CACHE_HOME: cache };
+}
+
+/**
  * 不帶 `--dry-run` 的那條路徑。stdin 直接關掉(`input: ''`),所以只在
  * 「今天沒有任何卡到期」的 vault 上用——那種情況根本不會進 readline 迴圈。
  * 用途是釘住 `if (dryRun)` 這個分支真的分得開兩條路,不是兩邊印一樣的東西。
@@ -114,7 +136,7 @@ function runInteractive(dir: string, today = TODAY): { code: number; output: str
     encoding: 'utf8',
     input: '',
     // T30:互動模式會先查批改要的金鑰;這支測的是「沒有到期」的輸出,給一組假鍵讓它過得去(不評分、不打網路)
-    env: { ...process.env, LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'fake-key' },
+    env: { ...process.env, ...xdgFor(dir), LLM_CLOUD_PROVIDER: 'openai', OPENAI_API_KEY: 'fake-key' },
     timeout: SPAWN_TIMEOUT_MS,
   });
   return { code: r.status ?? -1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };

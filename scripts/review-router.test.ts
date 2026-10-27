@@ -19,6 +19,7 @@
  *   兩支入口的原始碼不再引用 FakeLlmRouter、預錄 fixtures 目錄。
  *
  * 子程序的 XDG_CONFIG_HOME 一律指到暫存目錄,所以永遠讀不到真的指標檔、也碰不到真的 learning/。
+ * T60:XDG_CACHE_HOME 也指到暫存目錄,session 快取不會寫進跑測試那個人的 ~/.cache。
  * 沒有任何一個案例會打網路:要打網路的路在「指標檔不對」就被擋下,或根本不需要 router。
  */
 import { spawnSync } from 'node:child_process';
@@ -97,7 +98,7 @@ function run(script: string, args: string[], xdg: string, input = ''): { status:
     encoding: 'utf8',
     timeout: SPAWN_TIMEOUT_MS,
     input,
-    env: { ...rest, XDG_CONFIG_HOME: xdg, LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'fake-model', OPENAI_API_KEY: 'fake-key' },
+    env: { ...rest, XDG_CONFIG_HOME: xdg, XDG_CACHE_HOME: tmp('lc-cache-'), LLM_CLOUD_PROVIDER: 'openai', LLM_CLOUD_MODEL: 'fake-model', OPENAI_API_KEY: 'fake-key' },
   });
   return { status: r.error ? null : r.status, output: `${r.stdout ?? ''}${r.stderr ?? ''}`, stdout: r.stdout ?? '' };
 }
