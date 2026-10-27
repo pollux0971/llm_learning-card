@@ -14,6 +14,7 @@ import { Given, Then, When } from '@cucumber/cucumber';
 import { strict as assert } from 'node:assert';
 import { resolve } from 'node:path';
 import type { LearningWorld } from './_world.js';
+import { isLlmPhase3, phase3Hooks } from './_llm-phase3-shared.js';
 import { fixtureRouter, loadFixturesFromDir, noRecordingIsNoModel } from '../support/fixture-router.js';
 import { NoModelError } from '../../packages/core/src/llm/errors.js';
 import { gradeFillBlank, gradeFillQuestion } from '../../packages/core/src/grading/grade-fill.js';
@@ -333,6 +334,7 @@ Given('an apply question with three rubric criteria', function (this: LearningWo
 });
 
 Given('the network is available', function (this: LearningWorld) {
+  if (isLlmPhase3(this)) return void phase3Hooks.network?.(true); // 03-llm-router phase-3 共用這句(見 _llm-phase3-shared.ts)
   // 純敘述:grader 是 'cloud' 還是 'local-provisional' 由 LlmResult.provisional 決定
   // (見 grade-apply.ts 的說明),不是由這句話本身佈置狀態;fixtures 一律 provisional:false。
 });
