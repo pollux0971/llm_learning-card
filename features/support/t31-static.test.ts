@@ -24,9 +24,11 @@ const read = (rel: string): string => readFileSync(join(ROOT, rel), 'utf8');
  * 11-review-cli → 07-teach-card(3d471e4,B-lite:session/teach.ts 用 teach/ 的純函式)= 23;
  * 再加 T43 D8(ADR-079):11-review-cli → 02-ingest-pipeline(f6a9255,深入這個要叫匯入管線)= 24;
  * 再加 T52(ADR-060 第 3 點):12-prompt-quality → 01-data-layer(b515b2c,字數與 example 圍欄只留 01 一份)= 25。
+ * 再加 T65(ADR-084):05-grading → 02-ingest-pipeline(2ebc05b,只 import card-file.ts 的 renderCardFile,ADR-082 唯一寫卡函式;
+ * 另有 features/support/t65-grading-imports.test.ts 釘「grading/ 對 ingest/ 只准 card-file.js」)= 26。
  * 這個數字釘的是「T31 自己沒有多加一條」;別的工單加例外時,在這裡補上來源再改數字。
  */
-const BASE_ALLOW_ENTRIES = 25;
+const BASE_ALLOW_ENTRIES = 26;
 
 interface AllowEntry {
   from: string;

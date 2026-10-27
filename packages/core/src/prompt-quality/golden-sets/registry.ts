@@ -27,8 +27,8 @@
  *
  * ## 05 的 grade.apply
  *
- * **05 尚未提供 prompt 檔**(`packages/core/prompts/` 底下目前只有 `ingest/`),
- * 所以 `grade.apply` 的**真實登記待 05**。Wave 0 留下的那組 demo 改名成 `selftest`,
+ * `grade.apply` 的 prompt 仍寫在程式裡,真實登記待 05。`packages/core/prompts/grading/`
+ * 的 reteach-short.md 是 T65 的縮短版,不是 grade.apply。Wave 0 留下的那組 demo 改名成 `selftest`,
  * 它評的是 `golden-sets/` 自己的佔位 prompt 檔,不是真的任務,
  * 因此被 `REAL_TASK_GOLDEN_SET_IDS` 排除。
  */
@@ -290,6 +290,40 @@ const INGEST_DEPS: GoldenSet = {
 };
 
 /**
+ * T65:縮短版。輸入是測試 agent 寫的三張公開常識卡(fixtures/golden-short/inputs.json),
+ * 不取自 raw/。header 自己組,不 import ingest/。
+ * 四行:golden / category / title / limit: 50,後接原卡 body 與每一個 example。
+ */
+interface ShortCardFixture {
+  key: string;
+  category: string;
+  title: string;
+  body: string;
+  examples: string[];
+}
+
+function loadShortFixtures(): ShortCardFixture[] {
+  const path = join(ROOT, 'packages/core/src/prompt-quality/fixtures/golden-short/inputs.json');
+  return JSON.parse(readFileSync(path, 'utf8')) as ShortCardFixture[];
+}
+
+function shortInput(item: ShortCardFixture): GoldenInput {
+  const id = `short-${item.key}`;
+  const body = [item.body, ...item.examples].join('\n\n');
+  return {
+    id,
+    prompt: block([`golden: ${id}`, `category: ${item.category}`, `title: ${item.title}`, 'limit: 50'], body),
+  };
+}
+
+const RETEACH_SHORT: GoldenSet = {
+  id: 'reteach.short',
+  task: 'reteach.short',
+  promptFile: `${PROMPTS_DIR}/grading/reteach-short.md`,
+  inputs: loadShortFixtures().map(shortInput),
+};
+
+/**
  * Wave 0 留下的自我測試組(原名 `grade.apply`)。它評的是 `golden-sets/` 自己的佔位
  * prompt 檔,示範框架本身跑得起來;**05 尚未提供 prompt 檔,`grade.apply` 的真實登記待 05**。
  */
@@ -311,6 +345,7 @@ const REGISTRY: Partial<Record<GoldenSetId, GoldenSet>> = {
   'ingest.regenerate': INGEST_REGENERATE,
   'ingest.questions': INGEST_QUESTIONS,
   'ingest.deps': INGEST_DEPS,
+  'reteach.short': RETEACH_SHORT,
   selftest: SELFTEST,
 };
 
@@ -322,6 +357,7 @@ export const REAL_TASK_GOLDEN_SET_IDS: readonly GoldenSetId[] = [
   'ingest.regenerate',
   'ingest.questions',
   'ingest.deps',
+  'reteach.short',
 ];
 
 export const GOLDEN_SET_REGISTRY_FILE = 'packages/core/src/prompt-quality/golden-sets/registry.ts';

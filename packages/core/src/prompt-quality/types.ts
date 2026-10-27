@@ -70,6 +70,7 @@ export type GoldenSetId =
   | 'ingest.regenerate'
   | 'ingest.questions'
   | 'ingest.deps'
+  | 'reteach.short'
   | 'selftest';
 
 /** 一個 prompt 檔的 golden set:固定輸入 + 它評的是哪個 prompt 檔 + 送去哪個契約任務。 */

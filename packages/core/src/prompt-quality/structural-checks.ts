@@ -1,7 +1,8 @@
 /**
  * 結構性檢查:只驗格式,不判斷品質(FEATURE.md「不在範圍」)。
  * 對象是 LLM 任務輸出的原始文字,一律預期是 JSON。認得的形狀:
- *   - 教學卡陣列項目:有 `body` 欄位 → 檢查 title/body 存在、body 字數 <= 100
+ *   - 教學卡陣列項目:有 `body` 字串、example 不是字串 → 檢查 title 存在、body 字數 <= 100
+ *   - 縮短版:有 `body` 字串且 `example` 是字串 → 不要求 title,body 字數 <= 50(short_body_limit 預設)
  *   - apply 題目:有 `rubric` 陣列 → 檢查長度 2..4、prompt 存在
  *   - apply 評分結果:有 `criteria` 陣列 → 檢查長度 2..4(criteria.length === rubric.length,見契約 §5)
  *   - fill 題目:有 `prompt` 字串與 `answers` 陣列 → 檢查 `___` 數量與 answers 數量一致
@@ -20,10 +21,20 @@ import type {
 } from './types.js';
 
 const BODY_WORD_LIMIT = 100;
+/** 契約 §2 settings.short_body_limit 的預設。只用於 `{ body, example }` 縮短版形狀。 */
+const SHORT_BODY_WORD_LIMIT = 50;
 const BLANK_MARKER = /___/g;
 
 function checkCardShape(obj: Record<string, unknown>, issues: StructuralIssue[]): void {
   if (typeof obj.body !== 'string') return;
+  // example 是字串就是縮短版形狀:不要求 title,上限用 short_body_limit 預設 50。
+  if (typeof obj.example === 'string') {
+    const count = countBodyWords(obj.body);
+    if (count > SHORT_BODY_WORD_LIMIT) {
+      issues.push({ kind: 'body-too-long', detail: `body 字數 ${count} 超過上限 ${SHORT_BODY_WORD_LIMIT}` });
+    }
+    return;
+  }
   if (!obj.title || typeof obj.title !== 'string') {
     issues.push({ kind: 'missing-field', detail: 'card 缺少 title' });
   }

@@ -1,0 +1,12 @@
+{
+  "task": "reteach.short",
+  "prompt_contains": "golden: short-binary-search",
+  "attempt": 1,
+  "response": {
+    "text": "{\"body\":\"在排好順序的清單裡,先看中間那個:太大就往左半邊找,太小就往右半邊找,每次丟掉一半,很快就找到。\",\"example\":\"猜 1 到 100 的數字,先猜 50,說太大就猜 25,範圍每次砍半。\"}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

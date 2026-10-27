@@ -1,0 +1,12 @@
+{
+  "task": "reteach.short",
+  "prompt_contains": "golden: short-water-cycle",
+  "attempt": 1,
+  "response": {
+    "text": "{\"body\":\"太陽把海水曬成水蒸氣升空,遇冷變成雲,再變成雨雪落回地面,流回海裡後又被曬,這樣一直循環。\",\"example\":\"冷飲杯外面的水珠,就是空氣中的水蒸氣遇冷凝結出來的。\"}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}
