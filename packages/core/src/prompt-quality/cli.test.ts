@@ -292,10 +292,11 @@ describe('cli main', () => {
     const result = await main(['--list']);
     expect(result.code).toBe(0);
     const lines = result.output.split('\n');
-    expect(lines[8]).toBe('');
-    expect(lines[9]).toBe(`${PROMPTS_DIR}/ 底下掃到 ${scanPromptFiles().length} 個 prompt 檔。`);
-    expect(lines[10]).toBe('✓ 每個 prompt 檔都恰好被一組 golden set 登記。');
-    expect(lines.length).toBe(11);
+    // T65:清單多一行 reteach.short(七 → 八組),後面的行號各 +1。
+    expect(lines[9]).toBe('');
+    expect(lines[10]).toBe(`${PROMPTS_DIR}/ 底下掃到 ${scanPromptFiles().length} 個 prompt 檔。`);
+    expect(lines[11]).toBe('✓ 每個 prompt 檔都恰好被一組 golden set 登記。');
+    expect(lines.length).toBe(12);
   });
 
   it('有 prompt 檔沒被登記時退出碼 1,而且指名是哪一個', () => {
