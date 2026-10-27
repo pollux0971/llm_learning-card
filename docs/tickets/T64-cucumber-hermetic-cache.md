@@ -4,7 +4,7 @@ deps: []
 touches: [features/steps/_hermetic-cache.ts, features/support/hermetic-cache.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: merged
 owner: 測試
 must_catch:
   - BeforeAll 沒把 XDG_CACHE_HOME 指到暫存目錄 在 i9 用空 HOME 跑全套 cucumber 跑完 HOME 底下多出 .cache/llm-learning-cards 必須抓到
