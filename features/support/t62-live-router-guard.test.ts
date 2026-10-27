@@ -4,8 +4,7 @@
  *
  * 用語法樹找 `new LlmRouterImpl(` 與 `new CloudLlmRouter(`(含 `new ns.LlmRouterImpl(`),掃 scripts/、packages/、apps/ 的非測試檔。只准出現在:
  *   - packages/core/src/llm/router-gateway.ts、packages/core/src/llm/router-impl.ts(組合:閘道包 router-impl,router-impl 包 cloud router);
- *   - packages/core/src/prompt-quality/golden-run.ts:G1 的例外——live golden 的 createDefaultLiveRouter 還是 new LlmRouterImpl(沒有日上限)。
- *     **T63 修好(golden 改走 createLiveGatewayRouter)就拿掉這條例外**;例外表附這句話,而且守門檢查它不過期(那個檔真的還有命中)。
+ *   (golden-run.ts 原本有 G1 例外,T63 讓 live golden 改走 createLiveGatewayRouter 後已拿掉。)
  * 另外 scripts/ingest.ts 不准再 import LlmRouterImpl。今天紅在 scripts/ingest.ts 的兩處(--file 與掃描)。
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -27,7 +26,6 @@ const isTestFile = (rel: string): boolean =>
 const ALLOWED: Record<string, string> = {
   'packages/core/src/llm/router-gateway.ts': '組合:GatewayLlmRouter 把 LlmRouterImpl 當底層依賴(createLiveGatewayRouter 從這裡出來)',
   'packages/core/src/llm/router-impl.ts': '組合:LlmRouterImpl 把 CloudLlmRouter 當底層',
-  'packages/core/src/prompt-quality/golden-run.ts': 'G1 的例外:live golden 的 createDefaultLiveRouter 還是 new LlmRouterImpl(沒有日上限)。T63 修好就拿掉這條例外',
 };
 
 const BANNED = new Set(['LlmRouterImpl', 'CloudLlmRouter']);
@@ -101,16 +99,12 @@ describe('T62 靜態守門:真呼叫的 router 只從 createLiveGatewayRouter �
     expect(bad, '真呼叫要走 createLiveGatewayRouter({ ledger: <驗證過的帳本> })(契約 §12):\n' + bad.join('\n')).toEqual([]);
   });
 
-  it('允許表每一條附理由、檔真的存在、而且真的還有命中(沒有過期的例外;「T63 修好就拿掉」那條例外除外);golden-run.ts 的理由寫明「T63 修好就拿掉」', () => {
+  it('允許表每一條附理由、檔真的存在、而且真的還有命中(沒有過期的例外)', () => {
     for (const [rel, why] of Object.entries(ALLOWED)) {
       expect(why.length, `${rel} 要附理由`).toBeGreaterThan(10);
       expect(existsSync(join(ROOT, rel)), `${rel} 不存在,例外過期了`).toBe(true);
-      // 「T63 修好就拿掉」的那條:T63 合併之後它自然沒有命中,守門不能因此紅(T62 與 T63 的合併順序不固定);
-      // 之後把這條拿掉由驗收 agent 核對(T63 工單「T62 守門」那一列)。其他例外照舊:沒有命中就是過期。
-      if (why.includes('T63 修好就拿掉')) continue;
       expect(bannedNews(readFileSync(join(ROOT, rel), 'utf8'), rel).length, `${rel} 已經沒有 new LlmRouterImpl/CloudLlmRouter,不需要例外`).toBeGreaterThan(0);
     }
-    expect(ALLOWED['packages/core/src/prompt-quality/golden-run.ts']).toContain('T63 修好就拿掉');
   });
 
   it('scripts/ingest.ts 不再 import LlmRouterImpl(也不 import CloudLlmRouter)', () => {
