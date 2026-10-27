@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/prompt-quality/golden-run.ts, packages/core/src/prompt-quality/cli.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - golden 的預設 router 還是 LlmRouterImpl(沒有日上限) 預算那條必須紅
