@@ -19,10 +19,10 @@ must_catch:
 
 # 工單 T63:live golden 有日上限,而且永遠不改走本機
 
-> 狀態:起草 2026-10-27,依協調者 2026-10-27 轉顧問的交代(T62 起草時的 G1;做法照起草者第一個候選)。規格:UI/Tauri 負責人(代筆)。編號 T63:協調者配的。
+> 狀態:起草 2026-10-27,依協調者 2026-10-27 轉顧問的交代(T62 起草時的 G1;做法照起草者第一個候選)。顧問 2026-10-27 准 `ebcb9b0`:D1–D4 照建議,工單內容不改;ADR-083 已寫進 `../02-decision-map.md`(見最後「顧問裁定」)。協調者直接合併並派測試 agent。規格:UI/Tauri 負責人(代筆)。編號 T63:協調者配的。
 > 實作:worker(opencode + grok-4.7);紅測試:測試 agent;驗收:驗收 agent。LLM 真呼叫 0(不跑 live golden)。
 > **排序**:T59 + T61 → T62 → **T63** → T60。落點 12,跟 T62(02)不相交,可以並行。要排在**下一次 live golden 之前**。
-> **不改契約、不動 `prompts/`**(硬規則 4;這張只改 router 的接法,不改任何 prompt,所以不用 golden run)。
+> **不改契約、不動 `prompts/`**(硬規則 4;這張只改 router 的接法,不改任何 prompt,所以不用 golden run)。決定記在 ADR-083。
 
 ## 煞車(協調者 2026-10-27)
 
@@ -74,7 +74,7 @@ live golden 會真的花錢(每次都打 OpenAI)。使用者定的規矩是當�
 2. **`createDefaultLiveRouter` 改走 `createLiveGatewayRouter`**:
    - 帳本的解析與拒絕照舊(`resolveVerifiedLedger`,失敗丟錯、不建任何目錄)、照舊先建驗證過那本的 `state/`;
    - `createLiveGatewayRouter({ ledger, settings: readLlmSettings(settingsDir), fallbackTable: GOLDEN_FALLBACK_TABLE, localProber: 固定不可用 })`;
-   - **`probeLocal()` 固定回 `{ available: false, models: [] }`,不碰閘道**(D3)。今天的 `localProber` 就是這個意思(T8 F)。`GatewayLlmRouter` 的 `probeLocal` 會去探閘道,所以要包一層或換掉;
+   - **`probeLocal()` 固定回 `{ available: false, models: [] }`,不碰閘道**(D3)。今天的 `localProber` 就是這個意思(T8 F)。`GatewayLlmRouter` 的 `probeLocal` 會去探閘道,所以**只包 `probeLocal` 這一個**;`call`、`probeOnline`、`budgetExhausted` 直接委派(`probeOnline` 本來就委派給底層的雲端探測,不碰閘道);
    - 回傳的 router 要能問「今天的預算用完了沒」(例如帶 `budgetExhausted()`)。
 3. **`runGoldenLive` 在建任何目錄之前查預算**(D2):
    - 順序:`probeOnline()` 之後、讀 prompt 檔與 `mkdirSync` 之前;
@@ -107,9 +107,10 @@ live golden 會真的花錢(每次都打 OpenAI)。使用者定的規矩是當�
 - **既有測試要改的**(測試 agent 改,不是 worker):`live-run.test.ts` 第 526 行「ADR-066: 合成 worktree 的預設 router…」。
   - 它在子行程裡讀 `router.cloudRouter.log`,那是 `LlmRouterImpl` 的內部欄位。換成 `GatewayLlmRouter`(外面再包一層)之後讀不到,紅在「default router did not create a log appender」。
   - 改成走公開的路:子行程裡用假雲端真的 `call()` 一次,再看事件進了指標指向的那本、不在 worktree 也不在主簽出。斷言不放鬆。
-- **跟 T62 的守門**:T62 的靜態守門把 `golden-run.ts` 列為「T63 修好就拿掉」的例外。
-  - T62 已經合併:測試 agent 在這張的紅測試裡把那個例外拿掉。這張合併後,守門裡不再有 `golden-run.ts`。
-  - T62 還沒合併:協調者通知 T62 的測試 agent 不要加這個例外。
+- **拿掉 T62 守門的例外(測試 agent 做)**:T62 的工單(已在 main `aa33557`)規定,靜態守門(`scripts/` 與 `packages/` 的非測試檔不准直接 `new LlmRouterImpl(` 或 `new CloudLlmRouter(`)把 `packages/core/src/prompt-quality/golden-run.ts` 列為「T63 修好就拿掉」的例外。
+  - 這張的紅測試由**測試 agent** 把這個例外拿掉。拿掉之後,守門在基底上紅在 `golden-run.ts` 那一處,這張的實作讓它轉綠。
+  - 守門測試檔本身是 T62 的紅測試寫的。`aa33557` 只有工單,檔還沒進 main。測試 agent 寫 T63 紅測試時,那個檔還沒進 main 的話,就等它進了再拿;或寫 T62 守門時直接不加這個例外,看哪張的紅測試先寫(協調者排)。
+  - 不管哪個順序,T62 與 T63 都合併之後,守門的例外清單裡**不再有 `golden-run.ts`**。驗收 agent 核對這一點。
 
 ## 驗收條件
 
@@ -120,6 +121,7 @@ live golden 會真的花錢(每次都打 OpenAI)。使用者定的規矩是當�
 | fake golden | `npm run prompt:golden`(預設 `--fake`) | 退出碼 0;golden-fake 的輸出跟改之前一樣 |
 | 守門 | `npm run typecheck`、`npm run boundaries` | 全過;例外條數不變(12 → 03 本來就有) |
 | 變異 | `npm run mutate -- stryker.t63-golden-cap.json`(驗收 agent 加,`mutate` 放 `golden-run.ts` 改到的那幾行) | ≥ 80% |
+| T62 守門 | T62 的靜態守門測試(T62 與 T63 都合併後) | 綠,而且例外清單裡沒有 `golden-run.ts` |
 | 真資料 | `learning/` 前後量檔案數、整體雜湊、帳本行數 | 三項相同 |
 | 不動的地方 | `git diff --stat <紅測試分支的 tip>..HEAD -- contracts docs prompts packages/core/prompts 'features/**/*.feature' packages/core/src/llm packages/core/src/prompt-quality/golden-sets packages/core/src/prompt-quality/fixtures scripts` | 沒有輸出 |
 
@@ -143,19 +145,16 @@ live golden 會真的花錢(每次都打 OpenAI)。使用者定的規矩是當�
 - import:`@core/llm/index.js` 的 `createLiveGatewayRouter`、`FallbackGroup`(12 → 03,本來就有)。
 - R2:跟 T59(03)、T61 與 T62(02)、T60(11、infra)都不相交。
 
-## 待顧問決定
+## 顧問裁定(2026-10-27)
 
-- **D1:七個 task 全部 `cloud-only`**(建議),還是只設 golden 現在用的四個。
-  理由:另外三個留預設的話,哪天新增 `deepen` 或 `reteach.short` 的 golden set,就會在雲端失敗時默默走本機。全部 `cloud-only` 等於「golden 永遠只量雲端」,一條規則。
-- **D2:預算在建目錄之前查**(建議),還是讓第一次 `call` 去丟。
-  後者會在 `golden/`(進 git)留下一個只有 `prompt.snapshot.md` 的資料夾,跟「離線不留空目錄」的既有規矩衝突(`golden-run.ts` 第 329 行的註解)。
-- **D3:`probeLocal` 固定不可用、不碰閘道**(建議)。golden 不用本機,探測也不該打到那台機器。
-- **D4:記 ADR-083**(建議記)。這是一條新的路由例外:golden 的 router 跟其他入口不同,永遠只走雲端。草稿:
-  - **Context**:live golden 用 `LlmRouterImpl`,繞過日上限;換成 `createLiveGatewayRouter` 的預設備援表,`grade.apply` 在雲端失敗時會改走閘道,本機輸出混進 golden。
-  - **Decision**:golden 的 router 走 `createLiveGatewayRouter`(有日上限、帳本驗證過),備援表七個 task 全部 `cloud-only`,`probeLocal` 固定不可用;預算在建目錄之前查。
-  - **Alternatives**:預設備援表(混進本機輸出);只設四個 task(新的 golden set 會漏);跑之前只查 `llm-spend`(靠人記得,不是程式擋)。
-  - **Consequences**:live golden 有日上限;雲端不能用時 golden 大聲失敗;跑到一半用完會留半套資料夾(低優先)。
-  顧問同意的話,起草者把它寫進 `../02-decision-map.md`,跟這張工單放同一個 docs commit。
+准 `ebcb9b0`,工單內容不改:
+
+- **D1**:七個 task 全部 `cloud-only`。另外三個留預設的話,哪天新增 `deepen` 或 `reteach.short` 的 golden set,就會在雲端失敗時默默走本機。全部 `cloud-only` 等於「golden 永遠只量雲端」,一條規則。
+- **D2**:預算在建目錄之前查。讓第一次 `call` 去丟,會在 `golden/`(進 git)留下一個只有 `prompt.snapshot.md` 的資料夾,跟「離線不留空目錄」的既有規矩衝突(`golden-run.ts` 第 329 行的註解)。
+- **D3**:`probeLocal` 固定不可用、不碰閘道。`probeOnline` 本來就直接委派雲端的探測、不碰閘道,所以**只包 `probeLocal`**。
+- **D4**:記 **ADR-083**,用工單裡的草稿。寫入前跑了取最大號(main `aa33557` 與這個分支都是 082)。→ `../02-decision-map.md` 最後一條。
+- 「golden 中途失敗留半套資料夾」照記在下面的低優先小票清單。
+- T62 守門的 `golden-run.ts` 例外由測試 agent 在這張拿掉(上面「紅測試」最後一條)。
 
 ## 低優先小票清單(協調者不另建清單檔,記在工單裡)
 
