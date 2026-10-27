@@ -17,7 +17,7 @@ must_catch:
 
 # 工單 T64:cucumber 起的子行程與步驟,`XDG_CACHE_HOME` 一律指暫存目錄
 
-> 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(顧問裁定,低優先)。規格:UI/Tauri 負責人(代筆)。編號 T64:協調者配的。
+> 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(顧問裁定,低優先)。顧問 2026-10-27 審過 `ecace49`:D1、D2 照建議,改 2 處(見最後「顧問裁定」)。規格:UI/Tauri 負責人(代筆)。編號 T64:協調者配的。
 > **只改測試的支援層,不改程式。** owner 是測試 agent,不派開發 worker。LLM 真呼叫 0。
 > 範圍只有 cucumber 的 support 層。**不碰 vitest 的全域設定**(T60 的 D1 乙不做)。`XDG_CONFIG_HOME` 這張**只量不改**。
 
@@ -80,12 +80,12 @@ T60 驗收時在 i9 用空 HOME 跑了一次全套 cucumber(`docs/reviews/accept
 |---|---|---|
 | 單元 | `VITEST_MAX_WORKERS=1 npx vitest run features/support/hermetic-cache.test.ts` | 全綠 |
 | 快取封閉 | **在 i9**:`env -u XDG_CACHE_HOME -u XDG_CONFIG_HOME -u NO_COLOR HOME=<新開空目錄> …`(其他照 T60 驗收第 5 節那一行)`NODE_OPTIONS=--import=tsx npx cucumber-js --tags "not @manual"` | 跑完 HOME 底下**沒有** `.cache/llm-learning-cards`。Chrome 的 `.cache/fontconfig` 等是瀏覽器自己的,照 T60 記下不算(重活,拿位子) |
-| 場景結果 | 同一次 | **787 個場景:720 過、1 失敗、66 undefined**,跟 T60 那次一樣。多一個或少一個都要逐條解釋(例如期間有別的工單合併,新增或做完了場景) |
+| 場景結果 | 同一次 | **總數 787 不變**。基準是 T60 那次的 720 過、1 失敗、66 undefined。**T65 先合併的話**,05 phase-3 的場景 7–9 會從 undefined 變成過,預期 **723 過、1 失敗、63 undefined**。不管哪一種,多一個或少一個都要逐條解釋(例如期間有別的工單合併,新增或做完了場景) |
 | 暫存目錄 | 同一次,跑之前與之後列 `os.tmpdir()` 底下 `lc-cucumber-cache-` 開頭的 | 跑完一個都不剩 |
 | 歸因 | 改之前(基底)在 i9 用空 HOME 跑 `--tags "@i2 and not @manual"`,數 HOME 底下的 uuid 資料夾;改之後再跑一次 | 改之前的數字記下來(預期接近 9);改之後 0。不是 9 的話,用 tag 二分找出其他來源,寫進證據 |
 | 指標檔(只量) | 在 i9 用 `XDG_CONFIG_HOME=<暫存目錄>`,裡面放一份**有效的**指標檔,指到一本哨兵帳本(有 `vault-id`、`state/log.jsonl` 預先一行)。再跑一次全套 cucumber(`--tags "not @manual"`) | 只記錄,不是過關條件:<br>• 哨兵帳本的樹雜湊與 `log.jsonl` 行數前後一樣,代表沒有場景寫進機器指標指到的那本;<br>• 有變的話,用 tag 二分找出是哪些場景,列給顧問 |
 | 真資料 | 筆電的 `learning/` 前後量三項;筆電 `~/.cache/llm-learning-cards` 頂層數 | 都相同(這張的重活全在 i9,筆電不跑 cucumber 全套) |
-| 不動的地方 | `git diff --stat <基底>..HEAD -- packages apps scripts contracts prompts docs 'features/**/*.feature' vitest.config.ts vitest.mutate.config.ts cucumber.js` | 沒有輸出 |
+| 不動的地方 | `git diff --stat <基底>..HEAD -- packages apps scripts contracts prompts docs ':(exclude)docs/reviews' ':(exclude)docs/tickets' 'features/**/*.feature' vitest.config.ts vitest.mutate.config.ts cucumber.js` | 沒有輸出。`docs/reviews`(驗收證據自己會加)與 `docs/tickets` 排除 |
 
 **改壞證明**(驗收 agent):
 
@@ -103,13 +103,15 @@ T60 驗收時在 i9 用空 HOME 跑了一次全套 cucumber(`docs/reviews/accept
 - `features/steps/`、`features/support/` → steps(`scripts/boundaries.owners.json`)。
 - R2:跟 T65(05-grading)、其他進行中的工單不相交。
 
-## 待顧問決定
+## 顧問裁定(2026-10-27)
 
-- **D1:一次 cucumber 行程一個暫存目錄**(`BeforeAll`/`AfterAll`,建議),還是每個場景一個(`Before`/`After`)。
-  - 前者:最小改動,跟「收工刪掉」一致。今天場景之間本來就共用同一個 `~/.cache`。
-  - 後者:場景之間也互不影響,但要確認沒有場景依賴前一個場景留下的快取。
-  - 建議前者。後者有需要再開。
-- **D2:`hermetic-cache.ts` 拆成純函式加 hook 兩個檔**(建議)。hook 檔在 `features/steps/`,vitest 不會載它;純函式放 `features/support/`,vitest 測得到「還原」對不對。
+審 `ecace49`:
+
+- **D1 = 甲**:一次 cucumber 行程一個暫存目錄(`BeforeAll`/`AfterAll`)。今天場景之間本來就共用同一個 `~/.cache`,最小改動。每個場景一個留在低優先小票清單。
+- **D2 = 甲**:拆成純函式(`features/support/hermetic-cache.ts`,vitest 測得到「還原」)加 hook(`features/steps/_hermetic-cache.ts`,vitest 不會載它)兩個檔。
+- 改 2 處:
+  1. 「不動的地方」那一列的 `docs` 會被驗收證據自己弄紅,改成排除 `docs/reviews` 與 `docs/tickets`(T65 同樣排除);
+  2. 場景基準:總數 787 不變。T65 先合併的話,場景 7–9 從 undefined 變成過,預期 723 / 1 / 63,照「多一個少一個都要解釋」記。
 
 ## 低優先小票清單(協調者不另建清單檔,記在工單裡)
 
