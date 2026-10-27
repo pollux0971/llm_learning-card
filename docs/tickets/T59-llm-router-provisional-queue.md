@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/llm/provisional-queue.ts, packages/core/src/llm/index.ts]
 cpu: light
 budget_usd: 2
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 雲端給的結果也放進佇列(provisional 是 false 也放) 場景 2 必須紅
