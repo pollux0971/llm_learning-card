@@ -91,7 +91,9 @@ live golden 會真的花錢(每次都打 OpenAI)。使用者定的規矩是當�
   - 暫存的指標檔與 `vault-id`;
   - `XDG_CONFIG_HOME`、`HOME` 指暫存目錄。
   不打網路、不碰真帳本。
-- **預算**:暫存帳本加 `LLM_DAILY_CAP_USD=0`(`spent >= cap`,0 也算用完)。用預設 router 跑 `runGoldenLive`。斷言:
+- **預算**:上限 US$1(`LLM_DAILY_CAP_USD=1`),在驗證過的暫存帳本種一筆**今天**的 `provider: 'openai'` `llm_call`,金額照 `LLM_PRICE_IN_PER_M` / `LLM_PRICE_OUT_PER_M` 算到 US$1(`spent >= cap` 就算用完)。用預設 router 跑 `runGoldenLive`。
+  - **更正(2026-10-27,測試 agent 在 T62 實測)**:原本寫「`LLM_DAILY_CAP_USD=0`,0 也算用完」是錯的。`packages/core/src/llm/spend.ts` 的 `isBudgetExhausted` 第一行是 `if (!(capUsd > 0)) return false;`:上限 0 是「**沒設上限**」,不是用完。
+  - 斷言:
   - 丟 `LiveRunBudgetExceededError`;
   - 輸出目錄前後一樣(沒有建 set 的資料夾、沒有 `prompt.snapshot.md`);
   - 假雲端被叫 0 次。
