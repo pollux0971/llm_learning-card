@@ -6,7 +6,7 @@ import { z } from 'zod';
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_LINE_BYTES = 262144;
-export const REQUEST_METHODS = ['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq', 'teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back'] as const;
+export const REQUEST_METHODS = ['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq', 'teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back', 'teach.load'] as const;
 export type RequestMethod = (typeof REQUEST_METHODS)[number];
 
 export const ERROR_KINDS = [
@@ -92,6 +92,7 @@ export const RequestSchema = z.discriminatedUnion('method', [
   z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('teach.poll'), params: EmptyParams }),
   z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('teach.cancel'), params: EmptyParams }),
   z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('teach.back'), params: EmptyParams }),
+  z.strictObject({ v: z.literal(1), id: IdSchema, method: z.literal('teach.load'), params: EmptyParams }),
 ]);
 
 const ResultObject = z.record(z.string(), z.unknown());

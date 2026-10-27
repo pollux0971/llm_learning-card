@@ -4,12 +4,10 @@
  */
 import type { LlmRouter } from '@core/grading/index.js';
 import { snapshotLearningDir } from '@core/schema/git-repo.js';
-import { nextCalendarDay } from '@core/schema/review.js';
-import { buildDueList } from '@core/scheduler/index.js';
 import { buildTodaySession, dropAnsweredToday, dueItemsFromCache } from './build.js';
 import { readSessionCache, toSessionCache, warnInvalidSessionCache, writeSessionCache, type SessionCache } from './cache.js';
 import { loadReviews, loadSettings, readReviewsSnapshot } from './io.js';
-import { estimateTomorrow, tallyToday } from './summary.js';
+import { estimateTomorrowFrom, tallyToday } from './summary.js';
 import type { Session, SessionSummaryInput } from './types.js';
 
 export type DayOpen =
@@ -130,16 +128,12 @@ export function summarizeDay(opts: {
   resumed: boolean;
 }): SessionSummaryInput {
   const reviews = loadReviews(opts.learningDir);
-  const tally = tallyToday(
-    opts.cache.queue.map((item) => item.card),
+  const queueCards = opts.cache.queue.map((item) => item.card);
+  const tally = tallyToday(queueCards, reviews, opts.today);
+  const estimate = estimateTomorrowFrom({
     reviews,
-    opts.today,
-  );
-  const tomorrow = nextCalendarDay(opts.today);
-  const dueTomorrowAll = buildDueList(reviews as unknown as Parameters<typeof buildDueList>[0], tomorrow).length;
-  const estimate = estimateTomorrow({
-    dueTomorrowExcludingReturns: Math.max(0, dueTomorrowAll - tally.returned),
-    returnedToday: tally.returned,
+    today: opts.today,
+    queueCards,
     dailyCap: opts.dailyCap,
   });
   const summary: SessionSummaryInput = {

@@ -302,10 +302,22 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewHandler {
     return ok(id, { paused: diskPaused(), today: day() });
   }
 
+  function loadInputs(): { queueCards: readonly string[]; dailyCap: number } {
+    // 開著的考試卡:名單與上限跟小結同一份(當日快取的 queue,不是剩下還沒答的)。
+    if (session !== undefined && cache !== undefined) {
+      return { queueCards: cache.queue.map((item) => item.card), dailyCap: session.dailyCap };
+    }
+    // 沒開著:只讀磁碟。missing / invalid / stale 當 []。不叫 openDay,不叫 warnInvalidSessionCache。
+    const prior = readSessionCache(learningDir, day(), env);
+    const queueCards = prior.kind === 'ok' ? prior.cache.queue.map((item) => item.card) : [];
+    return { queueCards, dailyCap: loadSettings(learningDir).daily_cap };
+  }
+
   const teach = createTeachRuntime({
     learningDir,
     today: () => day(),
     examSession: () => session,
+    loadInputs,
   });
 
   function teachLine(id: number, outcome: ReturnType<typeof teach.open>): string {
@@ -352,7 +364,8 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewHandler {
         | 'teach.deepen'
         | 'teach.poll'
         | 'teach.cancel'
-        | 'teach.back';
+        | 'teach.back'
+        | 'teach.load';
       params: { fill?: string[]; apply?: string; category?: string; index?: number };
     };
     try {
@@ -387,6 +400,8 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewHandler {
           return deepenLine(request.id, deepen.cancel());
         case 'teach.back':
           return deepenLine(request.id, deepen.back());
+        case 'teach.load':
+          return ok(request.id, teach.readLoad());
         default:
           return fail(request.id, 'unknown-method');
       }

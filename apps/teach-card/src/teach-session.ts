@@ -12,7 +12,7 @@ export const POLL_INTERVAL_MS = 500;
 export const GENERATING_MESSAGE = '正在產生更深入的卡片,可能要等幾十秒。';
 
 export interface TeachSessionDeps {
-  client: Pick<ReviewClient, 'teachOpen' | 'teachNext' | 'teachSwitch' | 'teachPrereq' | 'teachDeepen' | 'teachPoll' | 'teachCancel' | 'teachBack' | 'onWait'>;
+  client: Pick<ReviewClient, 'teachOpen' | 'teachNext' | 'teachSwitch' | 'teachPrereq' | 'teachDeepen' | 'teachPoll' | 'teachCancel' | 'teachBack' | 'teachLoad' | 'onWait'>;
   fs: Pick<LearningFs, 'read' | 'assetUrl'>;
   storage: { getItem(key: string): string | null; setItem(key: string, value: string): void };
   /** 輪詢間隔用的注入等待。main.ts 給。這裡不自己計時。 */
@@ -40,6 +40,7 @@ interface ServerView {
   from?: { id: string; title: string } | null;
   canBack?: boolean;
   generating?: boolean;
+  load?: unknown;
 }
 
 export interface TeachView {
@@ -62,6 +63,8 @@ export interface TeachView {
   controlsDisabled: boolean;
   message: string | undefined;
   canRetry: boolean;
+  /** 讀不到或欄位壞掉是 undefined,畫面不顯示提示。 */
+  load: { learnedToday: number; dueTomorrow: number } | undefined;
 }
 
 type Mode = 'loading' | 'card' | 'finished' | 'categories' | 'error';
@@ -72,6 +75,23 @@ type Pending =
   | { kind: 'next' }
   | { kind: 'switch'; category: string }
   | { kind: 'prereq'; index: number };
+
+interface LoadNumbers {
+  learnedToday: number;
+  dueTomorrow: number;
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+/** 兩個都是 ≥ 0 的整數才算數。壞掉、缺欄位回 undefined,不丟錯。 */
+function parseLoad(value: unknown): LoadNumbers | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const rec = value as Record<string, unknown>;
+  if (!isCount(rec.learnedToday) || !isCount(rec.dueTomorrow)) return undefined;
+  return { learnedToday: rec.learnedToday, dueTomorrow: rec.dueTomorrow };
+}
 
 function categoryLabel(row: ServerRow, current: boolean): string {
   const count = row.remaining === 0 ? '學完了' : `剩 ${row.remaining} 張`;
@@ -91,6 +111,8 @@ export function createTeachSession(deps: TeachSessionDeps): {
   chooseCategory(id: string): Promise<void>;
   followPrereq(index: number): Promise<void>;
   retry(): Promise<void>;
+  /** 視窗拿到焦點時重拿今日負擔。失敗安靜:不改 view、promise 不 reject。 */
+  refreshLoad(): Promise<void>;
   categoryNameOf(id: string): string;
   /** 畫面該重拉的時候。形狀照 onWait:回傳的函式取消訂閱。 */
   onChange(listener: () => void): () => void;
@@ -111,6 +133,7 @@ export function createTeachSession(deps: TeachSessionDeps): {
   let serverCanBack = false;
   let from: { id: string; title: string } | undefined;
   let deepenError: string | undefined;
+  let load: LoadNumbers | undefined;
   let generation = 0;
   let gate: Promise<void> = Promise.resolve();
   const changeListeners: Array<() => void> = [];
@@ -163,6 +186,7 @@ export function createTeachSession(deps: TeachSessionDeps): {
       controlsDisabled,
       message: mode === 'finished' ? FINISHED_MESSAGE : mode === 'error' ? message : undefined,
       canRetry: mode === 'error',
+      load,
     };
   }
 
@@ -177,10 +201,16 @@ export function createTeachSession(deps: TeachSessionDeps): {
     message = text;
   }
 
+  function takeLoad(raw: { load?: unknown }): void {
+    // 這一次回應沒有合法 load 就清掉,不留舊數字。refreshLoad 失敗才保留。
+    load = parseLoad(raw.load);
+  }
+
   async function apply(raw: ServerView): Promise<void> {
     category = raw.category;
     rows = raw.categories;
     prereqs = raw.prereqs;
+    takeLoad(raw);
     from = raw.from == null ? undefined : raw.from;
     serverCanBack = raw.canBack === true;
     deps.storage.setItem(LAST_CATEGORY_KEY, raw.category);
@@ -252,6 +282,7 @@ export function createTeachSession(deps: TeachSessionDeps): {
         const raw = (await track(deps.client.teachPoll())) as unknown as ServerView;
         if (gen !== generation) return;
         if (raw.generating === true) {
+          takeLoad(raw);
           emitChange();
           continue;
         }
@@ -271,6 +302,17 @@ export function createTeachSession(deps: TeachSessionDeps): {
   function restoreList(): void {
     mode = beneath;
     message = undefined;
+  }
+
+  async function refreshLoad(): Promise<void> {
+    try {
+      const next = parseLoad(await deps.client.teachLoad());
+      if (next === undefined) return;
+      load = next;
+      emitChange();
+    } catch {
+      // 安靜:保留舊數字,不改 state、不進錯誤畫面。
+    }
   }
 
   function categoryNameOf(id: string): string {
@@ -299,6 +341,7 @@ export function createTeachSession(deps: TeachSessionDeps): {
         const raw = (await track(deps.client.teachDeepen())) as unknown as ServerView;
         if (gen !== generation) return;
         if (raw.generating === true) {
+          takeLoad(raw);
           // 等回應說要生成才通知。送出當下不通知,有子卡的那張才不會閃出生成中那一行。
           emitChange();
           await pollUntilDone(gen);
@@ -362,6 +405,7 @@ export function createTeachSession(deps: TeachSessionDeps): {
       return run({ kind: 'prereq', index });
     },
     retry: () => (pending === undefined ? Promise.resolve() : run(pending)),
+    refreshLoad,
     categoryNameOf,
     onChange,
   };
