@@ -562,17 +562,31 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
       writeFileSync(join(config, 'llm-learning-cards', 'vault.json'), JSON.stringify({ learning_dir: shared, vault_id: id }));
 
       const runner = join(worktree, '.t1-create-live-router.ts');
+      // T63:預設 router 不再是 LlmRouterImpl(沒有 cloudRouter.log 這個內部欄位可讀)。改走公開的路:
+      // 子行程裡把 globalThis.fetch 換成假雲端,用預設 router 真的 call() 一次,
+      // 事件要進指標指向的那本(斷言跟原本一樣:不在 worktree、不在主簽出)。
       writeFileSync(
         runner,
         [
           "import { createDefaultLiveRouter } from './packages/core/src/prompt-quality/golden-run.ts';",
           '',
-          'const router = createDefaultLiveRouter() as unknown as { cloudRouter?: { log?: (event: unknown) => void } };',
-          'const log = router.cloudRouter?.log;',
-          "if (typeof log !== 'function') throw new Error('default router did not create a log appender');",
-          "log({ ts: '2026-10-01T12:00:00+08:00', type: 'llm_call', provider: 'openai', tokens_in: 1, tokens_out: 1 });",
-          // SDK 匯入可能留住 background handle；log 是同步 append，寫完即可明確結束
-          // 這個完全隔離的 child process，不讓測試等待與驗證無關的 handle。
+          'const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });',
+          'globalThis.fetch = (async (input: RequestInfo | URL) => {',
+          '  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;',
+          '  if (url.includes("/v1/models")) return json({ data: [] });',
+          '  if (url.includes("/v1/messages")) {',
+          '    return json({',
+          '      id: "msg_fake", type: "message", role: "assistant", model: "claude-sonnet-5",',
+          '      content: [{ type: "text", text: "ok" }], stop_reason: "end_turn", stop_sequence: null,',
+          '      usage: { input_tokens: 1, output_tokens: 1 },',
+          '    });',
+          '  }',
+          '  throw new Error("unexpected request " + url);',
+          '}) as typeof globalThis.fetch;',
+          '',
+          'const router = createDefaultLiveRouter();',
+          "await router.call('grade.apply', '同源政策是什麼?');",
+          // SDK 匯入可能留住 background handle;call() 回來時 llm_call 已經同步 append 完,明確結束這個完全隔離的 child process。
           'process.exit(0);',
         ].join('\n'),
       );
@@ -585,6 +599,10 @@ describe('createDefaultLiveRouter — ADR-050:預設一定要接上記帳,不能
           HOME: home,
           XDG_CONFIG_HOME: config,
           XDG_RUNTIME_DIR: runtime,
+          LLM_CLOUD_PROVIDER: 'anthropic',
+          LLM_CLOUD_MODEL: 'claude-sonnet-5',
+          ANTHROPIC_API_KEY: 'test-key',
+          LLM_DAILY_CAP_USD: '100',
         },
       });
       expect(child.status, child.stderr).toBe(0);
