@@ -1,0 +1,18 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='{packages/core/src/grading/reteach-short.test.ts,packages/core/src/prompt-quality/structural-checks.test.ts,packages/core/src/prompt-quality/structural-checks-t65.test.ts}' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": ["clear-text", "progress-append-only", "json"],
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "coverageAnalysis": "off",
+  "concurrency": 2,
+  "timeoutMS": 120000,
+  "mutate": [
+    "packages/core/src/grading/reteach-short.ts",
+    "packages/core/src/prompt-quality/structural-checks.ts:22-45"
+  ],
+  "thresholds": { "high": 90, "low": 80, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "apps/desktop/src-tauri/target"]
+}
