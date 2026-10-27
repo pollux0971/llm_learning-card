@@ -26,7 +26,7 @@ must_catch:
 
 # 工單 T66:i4 驗收檔的整合層步驟定義
 
-> 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(顧問判 I4 盤點第 6 節第 4 點:同意開這張)。規格:UI/Tauri 負責人(代筆)。編號 T66:協調者配的。
+> 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(顧問判 I4 盤點第 6 節第 4 點:同意開這張)。顧問 2026-10-27 審過、准:D1 甲(加 lint 條件)、D2 甲、D3 甲(見最後「顧問裁定」)。規格:UI/Tauri 負責人(代筆)。編號 T66:協調者配的。
 > **只有測試,不改產品程式。** owner 是測試 agent,不派開發 worker。LLM 真呼叫 0,不准 `--live`。
 > 起因:[I4 盤點](../reviews/I4-inventory.md)的 G1(7 條自動場景步驟全是 undefined)與 G2(整合工作沒有證據)。做法照 T34 的 A(I3 的整合層步驟)。
 > 基底:main `175b837`(含 I4 盤點)。跟 T67 落點不相交,可以同時做。
@@ -80,13 +80,13 @@ must_catch:
 
 | 場景(行) | 過的條件(看磁碟,不看畫面) |
 |---|---|
-| Teaching order follows the dependency graph(第 22 行) | Given 驗證 order 檔是 `graph/deps.json` 那個類別的圖的拓樸順序(每條邊的起點都排在終點前),**而且跟 id 順序不同**(不然照 id 排也會過)。按「下一個」一路按到類別學完,依序出現的卡就是 order 檔的順序。路上至少有一張卡的 `prereqs`(畫面那一欄)不是空的,見 D1。那張照樣前進、照樣記成學過 |
+| Teaching order follows the dependency graph(第 22 行) | Given 驗證 order 檔是 `graph/deps.json` 那個類別的圖的拓樸順序(每條邊的起點都排在終點前;**只看兩端都在 order 檔裡的邊**,跨類別那條的起點不在這個類別的 order 檔裡,不算,步驟註解寫明),**而且跟 id 順序不同**(不然照 id 排也會過)。按「下一個」一路按到類別學完,依序出現的卡就是 order 檔的順序。路上至少有一張卡的 `prereqs`(畫面那一欄)不是空的,佈置照 D1 甲,而且要過真的 lint(見驗收條件第 8 條)。那張照樣前進、照樣記成學過 |
 | Switching category also records the current card as learned(第 29 行) | 換類別之後,`state/reviews.json` 剛好多了離開的那張,紀錄等於排程的學過轉移(stage 1、`learned_at` 今天、`next_due` 明天);`state/log.jsonl` 多一行 learned;**用真的 `review.ts --dry-run --today <明天>` 看,它在到期名單裡**。畫面換到新類別 order 檔裡第一張沒學的 |
 | Going deeper generates a new level when none exists(第 35 行,`@llm`) | 顯示中的卡用 level 1(同 07 phase-3 的背景)。假網路用 `_fake-deepen-cloud.mjs`。新卡 1 到 3 張,level 2;每張有考題檔、過 validateQuestionFile;`graph/deps.json` 有父卡到每張新卡的邊;畫面是第一張新卡;`log.jsonl` 每個模型請求一筆 `llm_call`,task 都是 `deepen` |
 | Going deeper reuses existing children(第 44 行) | 佈置兩張子卡。假網路收到 0 個請求,`log.jsonl` 沒有新的 `llm_call`;畫面是 id 排第一的子卡 |
 | Generated cards obey the same body limit(第 50 行) | 假網路讓其中一張永遠超過 100 字(`FAKE_DEEPEN_LONG_TITLE`)。寫進磁碟的每張新卡,body 用契約 §2 唯一的字數函式算 ≤ 100,過 validateCard;超字那張沒寫進去。「the same validator used by ingest」的證據:靜態測試量 `packages/core/src/ingest/deepen.ts` 與 `ingest.ts` 都從 `schema/validate-card` 拿 validateCard、深入的重寫走 `generate-cards.ts` 的 enforceWordLimit(起草時讀過,現在就是這樣;測試釘住它,不是兩份) |
-| Categories without raw material follow their configuration(第 69 行) | 設定檔加第四個類別(id 照原文),`require_raw: false`,`raw/` 底下沒有它的檔。真的跑 `scripts/ingest.ts --out <暫存根> --category <它> --topic <一句話>`(經 ingest-cli-runner,帶 `_fake-cloud.mjs`)。寫出來的 level 0 卡都是 `source: llm`、沒有 `source_ref`。之後教學卡換到這個類別,畫面上那張卡的內文(經 lc-fs 讀回來的)frontmatter 是 `source: llm`;「標示」本身見 D3 |
-| Desktop review still works as in I3(第 76 行,`@regression`) | 見 D2。過的條件:考試卡(06 的 TestSession,接同一支真側車)答一題,`reviews.json` 那張卡今天多一筆 history,stage 與 `next_due` 跟排程轉移函式對同一筆舊紀錄算出來的一樣 |
+| Categories without raw material follow their configuration(第 69 行) | 設定檔加第四個類別(id 照原文),`require_raw: false`,`raw/` 底下沒有它的檔。真的跑 `scripts/ingest.ts --out <暫存根> --category <它> --topic <一句話>`(經 ingest-cli-runner,帶 `_fake-cloud.mjs`)。寫出來的 level 0 卡都是 `source: llm`、沒有 `source_ref`。之後教學卡換到這個類別,畫面上那張卡的內文(經 lc-fs 讀回來的)frontmatter 是 `source: llm`;「標示」本身由 D3 的渲染測試量 |
+| Desktop review still works as in I3(第 76 行,`@regression`) | 照 D2 甲:同一個暫存根,教學卡先學一張(日期 D),再用 `LC_REVIEW_TODAY` = D+1 起新的側車,考試卡開起來那張就在題目裡。過的條件:考試卡(06 的 TestSession,接同一支真側車)答一題,`reviews.json` 那張卡今天多一筆 history,stage 與 `next_due` 跟排程轉移函式對同一筆舊紀錄算出來的一樣 |
 
 ### 共用的句子(要分派,不准定義兩次)
 
@@ -118,20 +118,25 @@ i4 的自動場景加背景一共 30 句不同的字;扣掉前 3 句,其他 27 �
 - 07 phase-4 第 20 行的自動場景(圖片從 assets 解析);
 - T46、T48 的 `@manual` 證據(`../reviews/T46-manual-2026-10-24.md`、`../reviews/T48-manual-2026-10-24.md`,真視窗裡圖片顯示)。
 
-## D:留給顧問判
+## D:顧問已判(2026-10-27)
 
 ### D1 · 第 26 行「先備沒學的那張要提示」,在拓樸順序裡怎麼發生
 
 照拓樸順序一張一張按,**同一個類別裡的先備一定先學過**,所以照字面不會有「先備沒學」的卡。
 
-- **甲(建議)**:佈置裡有一張卡的 `prereqs` 指到**別的類別**的卡。`graph/deps.json` 是一個類別一張圖(契約 §8),這條跨類別的先備不放進任何一張圖,所以 order 檔照樣是拓樸順序;那個先備還沒學,畫面就會列出它。側車算「沒學的先備」時本來就看全部類別的卡 id(`packages/core/src/session/teach.ts` 的 buildView),不用改產品。
-- 乙:改場景的字(例如拿掉那一句,或改成「跳著看」)。這是規格措辭,顧問決定;但會動 `.feature`。
+- **甲(建議;顧問選這個,加條件)**:佈置裡有一張卡的 `prereqs` 指到**別的類別**的卡。那個先備還沒學,畫面就會列出它。側車算「沒學的先備」時本來就看全部類別的卡 id(`packages/core/src/session/teach.ts` 的 buildView),不用改產品。
+  - **佈置要過真的 lint**(`packages/core/src/lint` 的 runChecks 對 scanDir 的結果):`prereq_mismatch`、`missing_prereq`、`cycle` 都是 0。
+  - lint 的 prereq_mismatch(`packages/core/src/lint/checks.ts` 的 checkPrereqMismatch,起草時讀過)要求:每張列在某個類別圖 `nodes` 裡的卡,frontmatter 的 `prereqs` 剛好等於那張圖裡指向它的邊的起點。所以**跨類別那條邊放進「後學那張卡所在類別」的圖**,起點是別類別的卡;後學那張要在那張圖的 `nodes` 裡。
+  - order 檔照樣是拓樸順序:Given 只看兩端都在 order 檔裡的邊(見上面場景表)。
+  - lint 的其他種(例如沒有考題檔的 `missing_questions`)不在這條;證據檔照實列出 runChecks 每一種的數字。
+  - **lint 怎麼擺都不乾淨就停下來回報**,顧問改判乙。
+- 乙:改場景的字(例如拿掉那一句,或改成「跳著看」)。這是規格措辭,顧問決定;但會動 `.feature`。只在甲的 lint 條件做不到時才改走這條。
 
 ### D2 · 第 76 行回歸那條,到期的卡從哪來
 
 i4 的背景是「什麼都還沒學」,沒有到期的卡,考試卡沒題可答。
 
-- **甲(建議)**:同一個暫存根,先用教學卡學一張(日期 D),再用 `LC_REVIEW_TODAY = D+1` 起新的側車,考試卡開起來那張就在題目裡,答一題。
+- **甲(建議;顧問選這個)**:同一個暫存根,先用教學卡學一張(日期 D),再用 `LC_REVIEW_TODAY = D+1` 起新的側車,考試卡開起來那張就在題目裡,答一題。
   一條場景串起 07 → 04 → 06,正好是 G2 的「scheduler」證據,也是第 12 行 `@e2e` 的自動版。注意:**這不算第 12 行的人工確認**(那條要真資料、真的跨一天,盤點第 4 節)。
 - 乙:照 I3 的背景,直接在 `reviews.json` 種一張今天到期的卡。比較簡單,但沒接到 07。
 
@@ -139,7 +144,7 @@ i4 的背景是「什麼都還沒學」,沒有到期的卡,考試卡沒題可答
 
 `App.svelte` 的「原始 / 生成」標示是寫在模板裡的一行,沒有測試量過。整合步驟只能看側車回的內文。
 
-- **甲(建議)**:加一條渲染測試 `features/support/t66-source-marker-render.test.ts`(真 Chrome,`packages/ui-shared/src/hud/render-test-support.ts` 的 openApp,照 t45 的做法):`source: llm` 的卡,標示列是「生成」;`source: raw` 的是「原始」。只有測試,不改產品程式。cucumber 那一句看內文的 frontmatter,證據檔寫「標示由渲染測試量」。
+- **甲(建議;顧問選這個)**:加一條渲染測試 `features/support/t66-source-marker-render.test.ts`(真 Chrome,`packages/ui-shared/src/hud/render-test-support.ts` 的 openApp,照 t45 的做法):`source: llm` 的卡,標示列是「生成」;`source: raw` 的是「原始」。只有測試,不改產品程式。cucumber 那一句看內文的 frontmatter,證據檔寫「標示由渲染測試量」。
 - 乙:照 07 phase-3 那條「the marker is visible in the interface」的先例,只看 frontmatter。少一支測試,但標示寫錯不會被抓到。
 
 ## 不改產品,發現產品有缺口時
@@ -153,8 +158,10 @@ i4 的背景是「什麼都還沒學」,沒有到期的卡,考試卡沒題可答
 3. 分派進去的三個步驟檔,原本的 phase 結果不變:`@teach-card and @phase-3`、`@ingest-pipeline and @phase-3`、`@grading`、`@llm-router and @phase-3` 照舊全過。
 4. must_catch 每一條:在驗收 worktree 裡做那個改壞(只改產品程式,不改測試),對應的場景紅,記失敗訊息原文,還原再綠。
 5. `npm run check:steps` 過(0 個重複定義)。
-6. D3 選甲時:渲染測試在基底上就是綠的(行為本來就在),交件前用改壞(把「生成」改成別的字)證明它會紅。
+6. D3(顧問選甲):渲染測試在基底上就是綠的(行為本來就在),交件前用改壞(把「生成」改成別的字)證明它會紅。
 7. `git diff --stat i4-base...<分支>` 只有 touches 列的檔,加上證據檔。產品程式與 `.feature` 0 行。
+8. D1 的佈置過真的 lint:步驟(或 harness 的單元測試)對佈置好的暫存根跑 `packages/core/src/lint/index.ts` 的 lint(根)(就是 runChecks(scanDir(根));09-lint 的步驟也用它),`prereq_mismatch`、`missing_prereq`、`cycle` 都是 0;證據檔附每一種的數字。
+9. 證據檔寫明:第 76 行那條(D2 甲)是「今天學、隔天考」的**自動**證據,**不算第 12 行 `@e2e @manual` 的人工確認**。
 
 ## 受保護的檔
 
@@ -181,6 +188,14 @@ npm run check:steps
 - 改任何 `.feature` 的字(D1 選乙的話,由規格作者另一個 commit 改)。
 - 完整的 `tauri build`(跟 T34 的顧問裁決一樣:Linux + lc-fs 編好就夠)。
 - 真模型(golden 守 `deepen` 與 `ingest.topic` 的品質)。
+
+## 顧問裁定(2026-10-27)
+
+經協調者轉來,兩張(T66、T67)都准。T66 的部分:
+
+1. **D1 甲,加條件**:佈置要過真的 lint,`prereq_mismatch`、`missing_prereq`、圖的問題(`cycle`)都是 0。跨類別先備那條邊放進後學那張卡所在類別的圖(起點是別類別的卡)。Given 的拓樸順序檢查只看兩端都在 order 檔裡的邊,步驟註解寫明。lint 怎麼擺都不乾淨就停下來回報,顧問改判乙。
+2. **D2 甲**:今天學、`LC_REVIEW_TODAY` 隔天考,串起 07 → 04 → 06。證據檔寫明「不算第 12 行的人工確認」。
+3. **D3 甲**:渲染測試放 `features/support/`。
 
 ## 低優先小票清單(協調者不另建清單檔,記在工單裡)
 
