@@ -693,6 +693,7 @@ describe('T52 指紋掃描:真的 repo——沒登記的檔不能讀 §2 規則'
       'packages/core/src/ingest/ingest.ts',
       'packages/core/src/ingest/children.ts',
       'packages/core/src/ingest/deps.ts',
+      'packages/core/src/ingest/card-file.ts',
       'packages/core/src/schema/example-fence.ts',
       'packages/ui-shared/src/example-fence.ts',
     ];
