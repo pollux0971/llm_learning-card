@@ -46,13 +46,15 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stringify as yamlStringify } from 'yaml';
 import type { Card, CardFrontmatter } from '@contracts/index.js';
 import type { LlmRouter } from '@core/llm/index.js';
+import { renderCardFile } from './card-file.js';
 import { nextCardIds } from './ids.js';
 import { generateQuestionsForCards, type GenerateQuestionsFailure } from './questions.js';
 import { loadPromptTemplate } from './prompts.js';
 import { formatAlreadyCovered, listSiblings, loadCategoryCards } from './siblings.js';
+
+export { renderCardFile };
 
 // Stryker disable next-line all: 模組載入時執行一次的靜態初始化,coverageAnalysis: perTest 下不歸屬任何測試(coveredBy 恆為空),
 // 錯字會讓 readFileSync 在 import 當下就丟 ENOENT、整個測試檔案載入失敗,等同被所有測試殺死,只是 Stryker 的 per-test 模型算不出來。
@@ -116,13 +118,6 @@ function parseChildCandidates(text: string): ChildCandidate[] {
     }
     return { title: r.title, body: r.body, examples: r.examples as string[] };
   });
-}
-
-/** 卡檔內文。ingest 與深入共用,格式必須一字不差。 */
-export function renderCardFile(card: Card): string {
-  const yamlFm = yamlStringify(card.frontmatter).trimEnd();
-  const exampleBlocks = card.examples.map((e) => '```example\n' + e.trim() + '\n```').join('\n\n');
-  return `---\n${yamlFm}\n---\n\n${card.body.trim()}\n${exampleBlocks ? '\n' + exampleBlocks + '\n' : ''}`;
 }
 
 function writeCardFile(cardsDir: string, card: Card): void {

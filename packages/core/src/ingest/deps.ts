@@ -86,11 +86,11 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stringify as yamlStringify } from 'yaml';
 import { witness } from '@contracts/witness.js';
 import type { Card, CardId, CategoryId } from '@contracts/index.js';
 import type { LlmRouter } from '@core/llm/index.js';
 import { computeAndSaveCategoryOrder, detectCycle, type Graph } from '@core/schema/graph.js';
+import { renderCardFile } from './card-file.js';
 import { atomicWriteJson, appendLogEvent } from './state.js';
 import { loadPromptTemplate } from './prompts.js';
 import { CORRUPT_HEAD_BYTES, GraphFileCorruptError } from './errors.js';
@@ -328,10 +328,7 @@ function prereqsByCardOf(graph: Graph): Map<CardId, CardId[]> {
 
 function writeCardFile(cardsDir: string, card: Card): void {
   mkdirSync(cardsDir, { recursive: true });
-  const yamlFm = yamlStringify(card.frontmatter).trimEnd();
-  const exampleBlocks = card.examples.map((e) => '```example\n' + e.trim() + '\n```').join('\n\n');
-  const content = `---\n${yamlFm}\n---\n\n${card.body.trim()}\n${exampleBlocks ? '\n' + exampleBlocks + '\n' : ''}`;
-  writeFileSync(join(cardsDir, `${card.frontmatter.id}.md`), content, 'utf8');
+  writeFileSync(join(cardsDir, `${card.frontmatter.id}.md`), renderCardFile(card), 'utf8');
 }
 
 /** 把 graph 蘊含的 prereqs 寫回跟目前不一致的卡片,回傳被改寫的 card id。 */
