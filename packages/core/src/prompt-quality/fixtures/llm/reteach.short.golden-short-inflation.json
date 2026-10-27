@@ -1,0 +1,12 @@
+{
+  "task": "reteach.short",
+  "prompt_contains": "golden: short-inflation",
+  "attempt": 1,
+  "response": {
+    "text": "{\"body\":\"物價一直漲,同樣的錢買到的東西就越來越少;錢放著不動或利率比物價漲得慢,購買力就會下降。\",\"example\":\"十年前一碗麵五十元,現在八十元,一百元能吃到的麵變少了。\"}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

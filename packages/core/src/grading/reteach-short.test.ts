@@ -271,6 +271,34 @@ describe('回應格式與來回檢查', () => {
     expect(existsSync(shortPath())).toBe(false);
   });
 
+  it('來回檢查(判準):body 末尾帶一個沒關的 example 圍欄 → 圍欄吞掉真的 example,讀回來雖然剛好 1 個 example,內容卻不是模型給的那個 → 這次算格式壞(叫 2 次,最後寫的 example 是正式的)', async () => {
+    const unclosed = `${words(8)}\n\n\`\`\`example\n吞掉真例子的字`;
+    const { out, calls } = await run([{ text: reply(unclosed, '正式的例子') }, { text: reply(words(9, '好'), '正式的例子') }]);
+    expect(calls).toHaveLength(2);
+    expect(out).toMatchObject({ kind: 'written', attempts: 2 });
+    const written = readShort();
+    expect(written.body).toBe(words(9, '好'));
+    expect(written.examples).toEqual(['正式的例子']);
+    expect(readFileSync(shortPath(), 'utf8')).not.toContain('吞掉真例子的字');
+  });
+
+  it('來回檢查(判準):三次都是沒關的圍欄 → failed、記 reteach_short_bad_response、不寫檔、佇列沒動', async () => {
+    const unclosed = `${words(8)}\n\n\`\`\`example\n吞掉真例子的字`;
+    const { out, calls } = await run([{ text: reply(unclosed, '例'), provisional: true }, { text: reply(unclosed, '例'), provisional: true }, { text: reply(unclosed, '例'), provisional: true }]);
+    expect(calls).toHaveLength(3);
+    expect(out).toEqual({ kind: 'failed', attempts: 3 });
+    expect(warnings('reteach_short_bad_response')).toHaveLength(1);
+    expect(existsSync(shortPath())).toBe(false);
+    expect(existsSync(provisionalQueuePath(dir))).toBe(false);
+  });
+
+  it('來回檢查(判準)不誤殺:example 前後有空白或換行,trim 之後一致就算好(讀回的 example 是 trim 過的)', async () => {
+    const { out, calls } = await run([{ text: reply(words(10), '\n  正式的例子  \n') }]);
+    expect(calls).toHaveLength(1);
+    expect(out).toMatchObject({ kind: 'written', attempts: 1 });
+    expect(readShort().examples).toEqual(['正式的例子']);
+  });
+
   it('example 本身含三個反引號:寫檔用更長的圍欄(renderCardFile),讀回來仍然剛好 1 個 example、內容原樣', async () => {
     const example = '範例:\n```js\nconsole.log(1)\n```';
     const { out } = await run([{ text: reply(words(10), example) }]);
