@@ -153,6 +153,16 @@ describe('T61 runIngest:壞的模型回應 → ok:false、一張都不寫', () =
     }
   });
 
+  it('regenerate 回應的第 0 筆不是物件、或 body 不是字串:ok:false,一張都不寫,訊息只留第一行', async () => {
+    for (const bad of ['[42]', '["x"]', '[null]', '[[1,2]]', JSON.stringify([{ body: 5 }]), JSON.stringify([{ title: '沒有 body' }]), JSON.stringify([{ body: null, examples: [] }])]) {
+      const r = await ingest(
+        learning(),
+        routerOf((_t, _p, n) => (n === 1 ? cardsJson(GOOD('長卡', { body: '超'.repeat(150) })) : bad)),
+      );
+      expectCleanFailure(r, 'regenerate 回應第 0 筆格式不正確');
+    }
+  });
+
   it('examples 有非字串元素(第二筆是 [42]):整批當格式不對,第一張卡也沒寫,ingested.json 沒有這個檔', async () => {
     const dir = learning();
     const r = await ingest(dir, routerOf(() => cardsJson(GOOD('好卡'), GOOD('壞卡', { examples: [42] }))));
@@ -219,6 +229,8 @@ describe('T61 子卡:壞回應與非字串 example → 丟 ModelResponseFormatEr
       ['筆數 0', '[]', '筆數必須介於'],
       ['筆數太多', JSON.stringify(Array.from({ length: 9 }, (_, i) => child(`子${i}`))), '筆數必須介於'],
       ['欄位型別不對', JSON.stringify([child('甲'), child('乙', { body: 5 })]), '回應第 1 筆格式不正確'],
+      ['title 不是字串', JSON.stringify([child('甲'), child('乙', { title: 5 })]), '回應第 1 筆格式不正確'],
+      ['examples 不是陣列', JSON.stringify([child('甲'), child('乙', { examples: 'x' })]), '回應第 1 筆格式不正確'],
     ];
     for (const [name, text, expected] of cases) {
       const { dir, parent } = parentSetup();
