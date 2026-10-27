@@ -4,7 +4,7 @@ deps: [T57]
 touches: [packages/core/src/ingest/card-file.ts, packages/core/src/ingest/children.ts, packages/core/src/ingest/ingest.ts, packages/core/src/ingest/deps.ts]
 cpu: light
 budget_usd: 1
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 寫卡片時圍欄還是固定三個反引號 第 4、5、7、8、9、17、18、21、22、24、25 列必須紅
