@@ -88,6 +88,10 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
     if (isCloudRequiredError(err)) {
       return fail('ingest 需要雲端模型,目前無法使用雲端,不會降級到本機模型', 1);
     }
+    // 跟上面一樣看 code,不看類別名。預算用完時一張卡都不寫(router 在叫雲端之前就丟)。
+    if (isBudgetExceededError(err)) {
+      return fail('今日預算已用完(LLM_DAILY_CAP_USD),沒有寫任何卡', 1);
+    }
     if (err instanceof ModelResponseFormatError) {
       const firstLine = (err.message.split('\n')[0] ?? '').trim();
       return fail('模型回應格式不對,沒有寫任何卡:' + firstLine, 1);
@@ -189,6 +193,11 @@ export async function runIngest(opts: RunIngestOptions): Promise<RunIngestResult
  */
 function isCloudRequiredError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'CLOUD_REQUIRED';
+}
+
+/** 跟 isCloudRequiredError 一樣看 code,不看類別名。 */
+function isBudgetExceededError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'BUDGET_EXCEEDED';
 }
 
 function fail(message: string, exitCode: number): RunIngestResult {

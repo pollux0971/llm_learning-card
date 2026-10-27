@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 import matter from 'gray-matter';
 import type { LearningWorld } from './_world.js';
+import { cleanupTmps, xdgPointingAt } from '../support/ingest-cli-runner.js';
 import type { Card, CardId, QuestionFile } from '../../packages/contracts/src/index.js';
 import {
   CloudLlmRouter,
@@ -755,6 +756,9 @@ Then('the command prints the failed card and exits with a non-zero status', func
           LLM_CLOUD_PROVIDER: 'anthropic',
           LLM_CLOUD_MODEL: 'test-model',
           ANTHROPIC_API_KEY: 'test-anthropic-key',
+          // T62:不帶 --fake 的 ingest 一定要經驗證過的帳本(契約 §12)。暫存指標檔指到這次的 --out 並寫好身分標記,
+          // 所以 llm_call 照樣記在這個資料夾,下面對這本 log 的斷言不用改;也不會讀到這台機器上真的指標檔。
+          XDG_CONFIG_HOME: xdgPointingAt(cliOut),
           FAKE_CLOUD_LEVEL0_COUNT: String(c.cards.length),
           FAKE_CLOUD_QUESTIONS_FAIL_CARD: failedId,
         },
@@ -778,6 +782,8 @@ Then('the command prints the failed card and exits with a non-zero status', func
     }
   } finally {
     rmSync(cliOut, { recursive: true, force: true });
+    // xdgPointingAt() 建的暫存指標目錄(只清 ingest-cli-runner 自己登記過的路徑,不用樣式掃)
+    cleanupTmps();
   }
 });
 
