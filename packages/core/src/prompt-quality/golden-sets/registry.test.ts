@@ -66,9 +66,10 @@ describe('prompt 檔的守門', () => {
     }
   });
 
-  // T55:多一個 topic.md(ingest.topic),五 → 六。
-  it('掃描器找得到 ingest 底下那六個檔,而且路徑是 repo 相對、用 / 分隔', () => {
+  // T55:多一個 topic.md(ingest.topic),五 → 六。T65:多一個 grading/reteach-short.md(reteach.short),六 → 七(排序後在最前面)。
+  it('掃描器找得到 ingest 底下那六個檔加 grading 底下那一個,而且路徑是 repo 相對、用 / 分隔', () => {
     expect(scanPromptFiles()).toEqual([
+      `${PROMPTS_DIR}/grading/reteach-short.md`,
       `${PROMPTS_DIR}/ingest/cards.md`,
       `${PROMPTS_DIR}/ingest/children.md`,
       `${PROMPTS_DIR}/ingest/deps.md`,
@@ -216,8 +217,8 @@ describe('GoldenSetId 與 LlmTask 在型別上分得開', () => {
 });
 
 describe('登記表本身', () => {
-  // T55:多一組 ingest.topic,五 → 六個真任務。
-  it('六個真的 ingest 任務加一組自我測試', () => {
+  // T55:多一組 ingest.topic,五 → 六個真任務。T65:多一組 reteach.short,六 → 七個真任務。
+  it('七個真任務(六個 ingest 加縮短版)加一組自我測試', () => {
     expect(listGoldenSets().sort()).toEqual([
       'ingest.cards',
       'ingest.children',
@@ -225,6 +226,7 @@ describe('登記表本身', () => {
       'ingest.questions',
       'ingest.regenerate',
       'ingest.topic',
+      'reteach.short',
       'selftest',
     ]);
     expect([...REAL_TASK_GOLDEN_SET_IDS].sort()).toEqual([
@@ -234,6 +236,7 @@ describe('登記表本身', () => {
       'ingest.questions',
       'ingest.regenerate',
       'ingest.topic',
+      'reteach.short',
     ]);
   });
 
@@ -276,6 +279,7 @@ describe('登記表本身', () => {
       'ingest.questions': 3,
       'ingest.deps': 3,
       'ingest.topic': 3,
+      'reteach.short': 3,
       selftest: 3,
     });
   });
@@ -316,8 +320,9 @@ describe('登記表本身', () => {
   });
 
   // T55:ingest.topic 沒有 raw 素材(輸入是一行主題,內容在 fixtures/golden-topic/,見 registry-t55.test.ts),不在這條裡。
+  // T65:reteach.short 的輸入是三張自擬的公開常識卡(fixtures/golden-short/,見 registry-t65.test.ts),也不在這條裡。
   it('五組吃 raw 的真任務,輸入全部來自 raw fixture 的三個切片,沒有自己編的例子', () => {
-    for (const id of REAL_TASK_GOLDEN_SET_IDS.filter((x) => x !== ('ingest.topic' as string))) {
+    for (const id of REAL_TASK_GOLDEN_SET_IDS.filter((x) => x !== ('ingest.topic' as string) && x !== ('reteach.short' as string))) {
       const set = getGoldenSet(id)!;
       // deps 吃的是卡片清單,形狀跟另外四組不同,所以比對的是切片標題
       const needles = RAW_SLICES.map((s) => (id === 'ingest.deps' ? s.heading : s.key));

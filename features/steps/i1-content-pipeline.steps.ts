@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import matter from 'gray-matter';
 import { ROOT, type LearningWorld } from './_world.js';
 import { isLlmPhase3, phase3Hooks } from './_llm-phase3-shared.js';
+import { gradingPhase3Hooks, isGradingPhase3 } from './_grading-phase3-shared.js';
 import { resolveRenamedAwayRouter } from '../support/_router-guard.js';
 import type { CardId } from '../../packages/contracts/src/index.js';
 import { runIngestPipeline, type RunIngestPipelineResult } from '../../packages/core/src/ingest/ingest.js';
@@ -261,6 +262,7 @@ Given('the fake router fixtures directory is renamed away', function (this: Lear
 
 Given('the network is unavailable', function (this: LearningWorld) {
   if (isLlmPhase3(this)) return void phase3Hooks.network?.(false); // 03-llm-router phase-3 共用這句(見 _llm-phase3-shared.ts)
+  if (isGradingPhase3(this)) return void gradingPhase3Hooks.network?.(this, false); // 05-grading phase-3 共用這句(見 _grading-phase3-shared.ts)
   ctx(this).router = offlineRouter();
 });
 
