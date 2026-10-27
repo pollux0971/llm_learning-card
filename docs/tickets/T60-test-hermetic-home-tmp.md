@@ -4,7 +4,7 @@ deps: []
 touches: [scripts/review.test.ts, scripts/review-router.test.ts, scripts/check-gates-pinned.test.ts, scripts/degraded-report.test.ts, scripts/run-tests.test.ts]
 cpu: light
 budget_usd: 1
-status: todo
+status: merged
 owner: 測試
 must_catch:
   - review.test.ts 不帶 dry-run 的那條還讀真的指標檔 用空的 HOME 跑必須紅
