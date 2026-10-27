@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/ingest/errors.ts, packages/core/src/ingest/generate-cards.ts, packages/core/src/ingest/children.ts, packages/core/src/ingest/ingest.ts]
 cpu: light
 budget_usd: 1
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - ingest.cards 回應不是合法 JSON 時 runIngest 還丟錯(沒有回 ok false) 壞 JSON 那條必須紅
