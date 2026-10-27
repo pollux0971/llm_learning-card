@@ -82,12 +82,12 @@ const DEEPEN_MESSAGES: Record<string, string> = {
 const REVIEW_RECORD_CHANGED_MESSAGE = '複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。';
 
 describe('常數與固定清單(驗收 3)', () => {
-  it('版本 1、一行最多 262144 位元組、十三個 method(T37 加四個教學卡動作、T43 再加四個:deepen / poll / cancel / back)', async () => {
+  it('版本 1、一行最多 262144 位元組、十四個 method(T37 加四個教學卡動作、T43 再加四個:deepen / poll / cancel / back、T67 加唯讀的 load)', async () => {
     const p = await protocol();
     expect(p.PROTOCOL_VERSION).toBe(1);
     expect(p.MAX_LINE_BYTES).toBe(262144);
     expect(vectors.maxLineBytes).toBe(262144);
-    expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq', 'teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back']);
+    expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq', 'teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back', 'teach.load']);
   });
 
   it('協定版本不變:只加動作與種類,既有訊息的形狀不變(T43 第 5 節)', async () => {
@@ -279,6 +279,26 @@ describe('T43:四個新動作在向量檔裡(量尺自測:向量被刪掉會被�
       const parsed = JSON.parse(lineOf(entry!)) as { error: { kind: string; message: string } };
       expect(parsed.error.kind).toBe(kind);
       expect(parsed.error.message).toBe(p.ERROR_MESSAGES[kind]);
+    }
+  });
+});
+
+describe('T67:teach.load 在向量檔裡(量尺自測:向量被刪掉會被抓到)', () => {
+  it('至少一列合法請求、各至少兩列不合法 params、至少一列相近的未知 method', () => {
+    const okNames = vectors.requests.filter((e) => e.ts.ok).map((e) => e.name);
+    expect(okNames.some((n) => n.includes('teach.load')), 'teach.load 合法').toBe(true);
+    const bad = vectors.requests.filter((e) => !e.ts.ok && e.ts.kind === 'bad-request' && e.name.includes('teach.load'));
+    expect(bad.length, 'teach.load 不合法 params').toBeGreaterThanOrEqual(2);
+    const unknown = vectors.requests.filter((e) => !e.ts.ok && e.ts.kind === 'unknown-method').map((e) => e.name);
+    expect(unknown.some((n) => n.includes('teach.loads')), 'teach.loads 是未知 method').toBe(true);
+  });
+
+  it('teach.load 的 params 是空物件:帶任何欄位都不合法,v 不是 1 也不合法', async () => {
+    const p = await protocol();
+    expect(p.RequestSchema.safeParse({ v: 1, id: 1, method: 'teach.load', params: {} }).success).toBe(true);
+    expect(p.RequestSchema.safeParse({ v: 2, id: 1, method: 'teach.load', params: {} }).success).toBe(false);
+    for (const field of ['path', 'card', 'category', 'index', 'day', 'today']) {
+      expect(p.RequestSchema.safeParse({ v: 1, id: 1, method: 'teach.load', params: { [field]: 'x' } }).success, field).toBe(false);
     }
   });
 });
