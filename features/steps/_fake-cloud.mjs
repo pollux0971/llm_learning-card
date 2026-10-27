@@ -6,10 +6,10 @@
  * cucumber.js 的 `import: ['features/steps/**\/*.ts']` 不會把它載進 cucumber 自己的
  * 程序(載進去的話,下面覆寫 globalThis.fetch 的副作用會汙染所有場景)。
  *
- * 為什麼是覆寫 fetch 而不是注入 router:scripts/ingest.ts 直接 `new LlmRouterImpl(...)`,
- * 沒有注入點,而 CLI 那一段(參數解析、ensureInitialized、複製 raw、印出清單、退出碼)
- * 正是這個場景要驗的東西——不能繞過它。改在最外層的網路邊界造假,LlmRouterImpl /
- * CloudLlmRouter / anthropicAdapter / Anthropic SDK 全都跑真的:
+ * 為什麼是覆寫 fetch 而不是注入 router:scripts/ingest.ts 自己用驗證過的帳本建
+ * createLiveGatewayRouter(T62,契約 §12),沒有注入點,而 CLI 那一段(參數解析、ensureInitialized、複製 raw、印出清單、退出碼)
+ * 正是這個場景要驗的東西——不能繞過它。改在最外層的網路邊界造假,GatewayLlmRouter /
+ * LlmRouterImpl / CloudLlmRouter / anthropicAdapter / Anthropic SDK 全都跑真的:
  *   - CloudLlmRouter.probeOnline() 用全域 fetch 打 https://api.anthropic.com/v1/models
  *   - anthropicAdapter 用 Anthropic SDK,SDK 建構時取 globalThis.fetch(見
  *     @anthropic-ai/sdk/internal/shims.mjs 的 getDefaultFetch())
