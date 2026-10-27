@@ -191,6 +191,8 @@ interface DockFacts {
   visible: { top: number; bottom: number; left: number; right: number };
   buttons: { top: number; bottom: number; left: number; right: number }[];
   deepenError: { top: number; bottom: number; left: number; right: number } | null;
+  /** T67:今日負擔提示那一行(字是畫在面板色上,不算「底色不透明」的像素);沒有提示是 null */
+  loadHint: { top: number; bottom: number; left: number; right: number } | null;
   /** Wayland 提示的上緣;沒有提示是 null */
   noteTop: number | null;
   scale: number;
@@ -209,6 +211,8 @@ const DOCK_FACTS = `(() => {
   const box = (r) => ({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
   const d = dock.getBoundingClientRect();
   const err = document.querySelector('.deepen-error');
+  const hintRe = /^今天已學 \\d+ 張,明天約 \\d+ 張$/;
+  const hint = [...dock.querySelectorAll('*')].find((e) => hintRe.test(e.textContent.trim()) && ![...e.children].some((c) => hintRe.test(c.textContent.trim())));
   const noteBtn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(WAYLAND_NOTE_DISMISS_LABEL)});
   let note = null;
   if (noteBtn) {
@@ -221,6 +225,7 @@ const DOCK_FACTS = `(() => {
     visible: { top: vTop, bottom: vTop + hudBody.clientHeight, left: vLeft, right: vLeft + hudBody.clientWidth },
     buttons: [...dock.querySelectorAll('button')].map((b) => box(b.getBoundingClientRect())),
     deepenError: err ? box(err.getBoundingClientRect()) : null,
+    loadHint: hint ? box(hint.getBoundingClientRect()) : null,
     noteTop: note ? note.getBoundingClientRect().top : null,
     scale: window.devicePixelRatio || 1,
   };
@@ -292,7 +297,7 @@ function opaqueProblems(img: Image, f: DockFacts): { total: number; samples: str
   const s = f.scale;
   const x0 = Math.ceil((f.dock.left + 12) * s), x1 = Math.floor((f.dock.right - 12) * s);
   const y0 = Math.ceil((f.dock.top + 1) * s), y1 = Math.floor(f.dock.bottom * s);
-  const holes = [...f.buttons.map((b) => ({ ...b, pad: 1.5 })), ...(f.deepenError ? [{ ...f.deepenError, pad: 2 }] : [])];
+  const holes = [...f.buttons.map((b) => ({ ...b, pad: 1.5 })), ...(f.deepenError ? [{ ...f.deepenError, pad: 2 }] : []), ...(f.loadHint ? [{ ...f.loadHint, pad: 2 }] : [])];
   const samples: string[] = [];
   let total = 0, checked = 0;
   for (let y = y0; y < y1; y += 1) {
