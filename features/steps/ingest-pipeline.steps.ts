@@ -734,10 +734,10 @@ Then('a warning naming the third card and the reason is in the log', function (t
 
 /**
  * 「the command」是真的那支 CLI(scripts/ingest.ts),所以這裡真的把它 spawn 起來,
- * 不是在程序內模擬一次。CLI 沒有注入 router 的縫(它自己 `new LlmRouterImpl(...)`),
+ * 不是在程序內模擬一次。CLI 沒有注入 router 的縫(它自己用驗證過的帳本建 createLiveGatewayRouter,T62),
  * 而參數解析、複製 raw、印出清單、退出碼正是這一句要驗的東西,不能繞過去——所以
  * 改在最外層的網路邊界造假:`--import features/steps/_fake-cloud.mjs` 換掉子程序的
- * globalThis.fetch,LlmRouterImpl / CloudLlmRouter / anthropicAdapter / Anthropic SDK
+ * globalThis.fetch,GatewayLlmRouter / LlmRouterImpl / CloudLlmRouter / anthropicAdapter / Anthropic SDK
  * 全部跑真的,只是不打真網路(細節見那個檔案的檔頭)。
  *
  * 上面的 When 跑的是程序內的 runIngestPipeline(),拿不到退出碼,所以這一句自己
