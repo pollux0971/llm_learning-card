@@ -112,4 +112,19 @@ gate=step-dup result=PASS scanned=2713
 
 ## 交件前 diff
 
-對起點 a5d4d48,git diff --name-only 只有工單 touches 的 9 個檔,加上這份報告。沒有 boundaries 登記。
+對起點 a5d4d48,實作檔 git diff --stat(不含這份報告):
+
+```
+ apps/desktop/src/webview/review-client.ts | 21 +++++++++++++-
+ apps/teach-card/src/App.svelte            | 37 +++++++++++++++++++++++--
+ apps/teach-card/src/teach-session.ts      | 46 ++++++++++++++++++++++++++++++-
+ packages/core/src/session/engine.ts       | 18 ++++--------
+ packages/core/src/session/handler.ts      | 17 +++++++++++-
+ packages/core/src/session/protocol.ts     |  3 +-
+ packages/core/src/session/summary.ts      | 26 ++++++++++++++++-
+ packages/core/src/session/teach.ts        | 40 ++++++++++++++++++++++++++-
+ packages/core/src/teach/deck.ts           |  9 ++++++
+ 9 files changed, 197 insertions(+), 20 deletions(-)
+```
+
+git diff --name-only 再加上 docs/reviews/T67-implementation.md。沒有 touches 以外的檔,沒有 boundaries 登記。目錄是 apps/desktop、apps/teach-card、packages/core/src/session、packages/core/src/teach、docs/reviews。
