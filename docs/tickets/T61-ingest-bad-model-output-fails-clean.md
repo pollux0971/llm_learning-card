@@ -20,8 +20,9 @@ must_catch:
 
 # 工單 T61:ingest 遇到格式不對的模型回應,乾淨地失敗、一張都不寫
 
-> 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(低優先小票的 (b) 與 (c);(a) 測試封閉性在 T60)。規格:UI/Tauri 負責人(代筆)。編號 T61:協調者同意可拆。
-> 實作:worker(opencode + grok-4.7);紅測試:測試 agent;驗收:驗收 agent。LLM 真呼叫 0。**不改契約**、不改 `prompts/`(不跑 golden)。
+> 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(低優先小票的 (b) 與 (c);(a) 測試封閉性在 T60)。顧問 2026-10-27 審過 `6a54c6d`:准,不改(D1 拒絕、D2 不改)。規格:UI/Tauri 負責人(代筆)。編號 T61:協調者同意可拆。
+> 實作:worker(opencode + grok-4.7);紅測試:測試 agent;驗收:驗收 agent。LLM 真呼叫 0。
+> **煞車(顧問 2026-10-27)**:T62 修好之前,所有 agent 一律不准跑不帶 `--fake` 的 `scripts/ingest.ts`。這張的 CLI 測試與 `@ingest-pipeline` 不退步會碰到,見「煞車底下怎麼跑」。**不改契約**、不改 `prompts/`(不跑 golden)。
 
 ## 為什麼有這張
 
@@ -86,6 +87,18 @@ T58 工單的 F2。`packages/core/src/ingest/generate-cards.ts` 第 188 行與 `
   - `cards/` 前後一樣。
   假雲端要多一個「回壞 JSON」的開關:改 `_fake-cloud.mjs` 是測試 agent 的事。
 
+## 煞車底下怎麼跑
+
+這張有兩處會起「不帶 `--fake` 的 `scripts/ingest.ts`」,雖然網路是假的:
+
+- 上面的 CLI 紅測試(`_fake-cloud.mjs` 換掉 `globalThis.fetch`);
+- 驗收的 `@ingest-pipeline` 不退步:`features/steps/ingest-pipeline.steps.ts` 本來就這樣跑。
+
+它們不打真網路,但 `scripts/ingest.ts` 開頭會載入 repo 根目錄的 `.env`(`scripts/_env.ts`)。在主簽出裡跑,就會載到真的金鑰。起草者的建議,**請協調者向顧問確認**:
+
+- 只在**沒有 `.env`** 的 worktree 跑(跑之前 `ls .env` 必須是 No such file),而且一定帶 `_fake-cloud.mjs`;
+- 不行的話,CLI 那條與 `@ingest-pipeline` 那一行等 T62 合併之後再跑。單元測試(`runIngest` 那幾條)不受影響。
+
 ## 驗收條件
 
 | 層 | 指令 | 過的條件 |
@@ -114,21 +127,22 @@ T58 工單的 F2。`packages/core/src/ingest/generate-cards.ts` 第 188 行與 `
 - `packages/core/src/ingest/` → 02-ingest-pipeline。
 - R2:跟 T59(03-llm-router)、T60(11-review-cli、infra)不相交,可以同時做。
 
-## 待顧問決定
+## 顧問裁定(2026-10-27)
 
-- **D1:非字串元素要「整筆拒絕」還是「濾掉」。**
-  - **拒絕(建議)**:跟同一行的 `title`、`body` 型別檢查一致。模型沒照格式回,就大聲失敗,不默默少一個例子。加上這張的 (b),拒絕就是一句話的失敗、一張都不寫。
-  - **濾掉**:跟主題生成(`topic.ts` 第 116 行)一致。卡照寫,只是少一個 example,沒有人會知道。
-  - 主題生成那邊這張不改。要統一的話另開票。
-- **D2:CLI 的 `main().catch` 要不要也只印訊息。** 這張不改:會走到那裡的只剩程式錯與磁碟問題,堆疊有用。
+審 `6a54c6d`:准,不改。
 
-## 觀察(給協調者與顧問,不在範圍)
+- **D1 拒絕**:examples 有非字串元素,整筆當「格式不正確」,一張都不寫。主題生成(`topic.ts` 第 116 行)的「濾掉」這張不改,要統一另開票。
+- **D2 不改**:CLI 的 `main().catch` 照舊印堆疊。會走到那裡的只剩程式錯與磁碟問題,堆疊有用。
+- 原本的 F1 就是 **T62**;F2 記進下面的低優先小票清單。
 
-- **F1:`scripts/ingest.ts` 的真呼叫不經過驗證過的帳本、也沒有當日上限。** 兩條路(第 193 行的 `--file`、第 112 行的掃描)都是直接 `new LlmRouterImpl({ logPath: join(absOut, 'state/log.jsonl') })`:
-  - 不是 `createLiveGatewayRouter`,所以 `LLM_DAILY_CAP_USD` 擋不到 ingest;
-  - 花費記在 `--out` 那本,不是指標檔驗證過的那本。
-  T5 工單把「`--out` 是使用者明講的參數」列為不在範圍(同 ADR-051)。但契約 §12(1.4.0)寫的是:任何會花錢的程式,明確參數只能改**輸出**位置,不能改帳本位置。ingest 又是最貴的 task。起草者建議開一張票,由顧問判斷算不算違反 §12。這張不碰。
-- **F2:掃描有檔失敗時,退出碼還是 0**(`scripts/ingest.ts` 的 `finishScan` 只看 `refused` 與 `cloudBlocked`)。這是今天就有的行為(空檔案等失敗也一樣),這張不改。
+## 觀察(不在範圍)
+
+- **F1 → T62**:`scripts/ingest.ts` 的真呼叫不經過驗證過的帳本、也沒有當日上限。兩條路(第 193 行的 `--file`、第 112 行的掃描)都是直接 `new LlmRouterImpl({ logPath: join(absOut, 'state/log.jsonl') })`。顧問 2026-10-27 判定這是違反契約 §12(1.4.0),另開 **T62** 修,排在這張後面(同落點 02,`T62-ingest-cli-verified-ledger.md`)。這張不碰。
+
+## 低優先小票清單(協調者不另建清單檔,記在工單裡)
+
+- **掃描有檔失敗時,退出碼還是 0**(原 F2):`scripts/ingest.ts` 的 `finishScan` 只看 `refused` 與 `cloudBlocked`。今天就有的行為(空檔案等失敗也一樣)。修法候選:有失敗就退出碼 1,訊息照舊。落點 02。
+- **T58 的 F2**(examples 非字串):這張處理了,從清單拿掉。
 
 ## 預算
 
