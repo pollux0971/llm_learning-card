@@ -4,7 +4,7 @@ deps: [T61]
 touches: [scripts/ingest.ts, packages/core/src/ingest/ingest.ts]
 cpu: light
 budget_usd: 2
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - --file、掃描、--topic 任何一條還直接建 LlmRouterImpl 或 CloudLlmRouter 靜態守門必須紅
