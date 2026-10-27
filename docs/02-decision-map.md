@@ -1698,3 +1698,22 @@ graph TD
   - 一個已存的向量列改了(CRLF 的 examples 換成 `\n`)。這是 fixture 的「改既有的要 ADR」,就是這一條。
   - 沒解決:畫面拆 frontmatter 用自己的 regex(`apps/teach-card/src/lib/card.ts`),core 用 gray-matter;兩邊拆法不同不在 §2,不在這條。
 - **Related**: ADR-060(refined)、T51、T52、T57、T58、`contracts/types.md` §2、`contracts/fixtures/word-count-vectors.json`、`docs/tickets/T57-example-fence-follows-screen.md`
+
+## ADR-082 · 寫卡片時每個 example 的圍欄長度跟著內容走;只留一個寫卡片的函式
+
+- **Status**: accepted · 2026-10-27(技術顧問裁;不改契約;前端起草)
+- **Context**:
+  1. 三處寫卡片(ingest 的第 0 層卡、子卡、deps 改寫 prereqs)的 example 圍欄一律是三個反引號。§2(1.5.0)本來就要求「內層含三反引號程式碼圍欄的內容,外層用四個反引號或波浪號包」,寫的那邊沒照做。
+  2. example 只要含一段程式碼圍欄,內層的三個反引號就提早關掉外層:example 被切成兩半,後半掉進 body,後面的 example 被吞掉;掉進 body 的字算字數。T58 起草時量的 25 種寫法,今天 11 種讀回不對。真資料與 golden 目前 0 次。
+- **Decision**:
+  1. 每個 example 各自算:trim 後內容裡最長的一串連續反引號,長度 n,圍欄用 max(3, n + 1) 個反引號。只用反引號。
+  2. 只有一個寫卡片的函式:`packages/core/src/ingest/card-file.ts` 的 `renderCardFile`(只 import `yaml`,型別只用 `import type`,沒有 I/O)。ingest、子卡、deps、topic、deepen 都用它。
+  3. 不是改契約:§2 本來就要求外層比內層多。這條只定寫的那邊怎麼做到。
+- **Alternatives**:
+  - **改用波浪號圍欄** —— 不採用。內容裡也可能有波浪號圍欄,一樣要算長度;只用反引號,規則只看一種字元。
+  - **只數能結束圍欄的行**(行首、後面只有空白)—— 不採用。等於在寫的那邊再寫一次 §2 的結束規則;每一串都數,頂多多一個反引號,不會錯。
+  - **固定寫四個** —— 不採用。內容裡有四個以上的反引號串時,一樣會提早關掉。
+- **Consequences**:
+  - 內容沒有三個以上連續反引號時,寫出來的檔跟以前一字不差(真資料 25 張、golden 114 張都量過)。
+  - body 裡沒關的圍欄還是會吞掉後面的 example(T58 工單的 F1)。這不是圍欄長度的問題,沒處理,記著。
+- **Related**: ADR-081、T58、`contracts/types.md` §2、`docs/tickets/T58-card-writer-fence-length.md`
