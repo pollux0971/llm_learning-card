@@ -47,6 +47,7 @@ import {
   type Vault,
 } from '../support/review-session-harness.js';
 import type { LearningWorld } from './_world.js';
+import { isLlmPhase3, phase3Hooks } from './_llm-phase3-shared.js';
 
 /** 每個會起 review.ts 子程序的步驟(一次 2–10 秒,多次執行會更久)。 */
 const STEP_TIMEOUT_MS = 180_000;
@@ -331,6 +332,7 @@ Then('the cache is rebuilt', function (this: LearningWorld) {
 });
 
 Then('a warning is logged', function (this: LearningWorld) {
+  if (isLlmPhase3(this)) return void phase3Hooks.warningLogged?.(); // 03-llm-router phase-3 共用這句(見 _llm-phase3-shared.ts)
   const s = st(this);
   const warnings = ledgerEvents(s.vault).filter((e) => e.type === 'warning' && e.reason === 'session-cache-invalid');
   assert.equal(warnings.length, 1, `應該剛好一筆 session-cache-invalid 的 warning:${JSON.stringify(ledgerEvents(s.vault))}`);
