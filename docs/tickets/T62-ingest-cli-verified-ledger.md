@@ -105,7 +105,7 @@ T5 工單把「`--out` 是使用者每次明講的必要參數」列為不在範
 | 檔 | 行 | 怎麼起 | T62 之後 |
 |---|---|---|---|
 | `features/steps/ingest-pipeline.steps.ts` | 751 | `_fake-cloud.mjs` + `--file` | 要建暫存指標檔與 `vault-id` |
-| `features/steps/i2-review-loop.steps.ts` | 1034 | `_fake-cloud.mjs` + `--file` | 要建暫存指標檔與 `vault-id` |
+| `features/steps/i2-review-loop.steps.ts` | 1034 | `_fake-cloud.mjs` + `--file` | **不用改**:`childEnv()`(第 394 行)已經把 `XDG_CONFIG_HOME` 指到有 `vault-id` 的暫存帳本(`setupVault`)(2026-10-27 測試 agent 實測更正) |
 | `packages/core/src/ingest/t53-scan-buckets.test.ts` | 144 | 掃描,只標 stale,不碰網路 | **不能變**:不花錢的路不要帳本 |
 
 `packages/core/src/ingest/` 其他起 CLI 的測試(`cli.test.ts`、`t53-cli.test.ts`、`t55-topic-cli.test.ts`、`t55-topic-failures.test.ts`)都帶 `--fake`。`ingest-category.test.ts` 在分類驗證就拒絕,走不到 router。`scripts/zero-input-roster.ts` 只用 `--fake`。
@@ -150,10 +150,12 @@ T5 工單把「`--out` 是使用者每次明講的必要參數」列為不在範
 - **不花錢的路不用帳本**:
   - 只標 stale 的掃描:`t53-scan-buckets.test.ts` 第 144 行那條,不改,要還是綠;
   - 已經生成過的主題,不帶 `--fake`、空的 `XDG_CONFIG_HOME`:退出碼 0、印「已經生成過」。
-- **預算**:指標指到暫存帳本,`LLM_DAILY_CAP_USD=0`(`spent >= cap`,0 也算用完;`readDailyCapUsd` 吃 0)。斷言:
+- **預算**:指標指到暫存帳本,上限 US$1(`LLM_DAILY_CAP_USD=1`),在那本驗證過的暫存帳本種一筆**今天**的 `provider: 'openai'` `llm_call`,金額照 `LLM_PRICE_IN_PER_M` / `LLM_PRICE_OUT_PER_M` 算到 US$1(`spent >= cap` 就算用完)。
+  - **更正(2026-10-27,測試 agent 實測)**:原本寫「`LLM_DAILY_CAP_USD=0`,0 也算用完」是錯的。`packages/core/src/llm/spend.ts` 的 `isBudgetExhausted` 第一行是 `if (!(capUsd > 0)) return false;`:上限 0 是「**沒設上限**」,不是用完。
+  - 斷言:
   - `--file`:退出碼 1、訊息有「今日預算已用完」、沒有以 `at ` 開頭的行、`cards/` 沒有卡、假雲端被叫 0 次;
   - 掃描兩個新檔:兩個都在失敗清單,沒有一個停下整個掃描。
-- **步驟改寫**:`features/steps/ingest-pipeline.steps.ts` 第 751 行、`features/steps/i2-review-loop.steps.ts` 第 1034 行。
+- **步驟改寫**:只有 `features/steps/ingest-pipeline.steps.ts` 第 751 行的 CLI 步驟要補暫存指標檔。`features/steps/i2-review-loop.steps.ts` 第 1034 行**不用改**:`childEnv()` 已經把 XDG 指到有 `vault-id` 的暫存帳本(更正,同上)。
   - 子行程加暫存的 `XDG_CONFIG_HOME`,指標指到那次的 `--out` 資料夾,並在那裡寫對應的 `config/vault-id`;
   - 指到同一個資料夾,原本對那本 log 的斷言就不用改;
   - 建法照 `xdgPointingAt`。
