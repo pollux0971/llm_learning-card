@@ -9,9 +9,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { parse as yamlParse } from 'yaml';
 import {
   DEFAULT_SPEND_PRICES,
-  LlmRouterImpl,
+  createLiveGatewayRouter,
   defaultVaultDeps,
   resolveVerifiedLedger,
+  type FallbackGroup,
+  type LlmTask,
   type RouterSettings,
   type VaultResolveDeps,
 } from '@core/llm/index.js';
@@ -58,6 +60,17 @@ export class LiveRunOfflineError extends Error {
   constructor(public readonly set: string) {
     super(`live golden run 需要雲端,現在連不上(set=${set})。要離線跑就用 --fake,那是重播 fixture、沒有品質資訊。`);
     this.name = 'LiveRunOfflineError';
+  }
+}
+
+/**
+ * 今日預算已用完(ADR-083)。在讀 prompt 檔與建立任何目錄之前丟出,
+ * 不在 golden/ 留下只有快照的空目錄。訊息一句話。
+ */
+export class LiveRunBudgetExceededError extends Error {
+  constructor(public readonly set: string) {
+    super(`今日預算已用完(set=${set}),先調 LLM_DAILY_CAP_USD 或改天再跑 live golden`);
+    this.name = 'LiveRunBudgetExceededError';
   }
 }
 
@@ -114,12 +127,14 @@ export interface RunGoldenOptions {
   baseDir?: string;
   /**
    * phase-2:'live' 走 03-llm-router 的真 router 打雲端;預設 'fake' 重播 fixture。
-   * live 會先 probeOnline(),連不上就丟 LiveRunOfflineError,**而且不建立目錄**
+   * live 會先 probeOnline(),連不上就丟 LiveRunOfflineError;連得上再查今日預算,
+   * 用完就丟 LiveRunBudgetExceededError。**兩種拒絕都不建立目錄**
    * ——半個空目錄比沒有目錄更糟,之後 diff 會拿它當一次 run。
    */
   mode?: GoldenRunMeta['mode'];
   /**
-   * live 模式建立 router 的工廠。預設用 03 的 LlmRouterImpl(讀 env 的 provider/model/金鑰)。
+   * live 模式建立 router 的工廠。預設是 createDefaultLiveRouter()
+   * (03 的 createLiveGatewayRouter,備援表全是 cloud-only,有日上限)。
    * 測試傳自己的工廠,或者在 globalThis.fetch 那一層造假——後者是首選,
    * 那樣 router / adapter / SDK 全都跑真的(見 features/steps/_fake-cloud.mjs 的理由)。
    */
@@ -306,8 +321,8 @@ export async function runGoldenFake(opts: RunGoldenOptions, set?: GoldenSet): Pr
 
 /**
  * live 模式的 golden run(phase-2)。跟 fake 路徑的差別:
- *   1. router 是 03 的真 router(預設 LlmRouterImpl),provider/model/金鑰讀 env(契約 §11)
- *   2. **先 probeOnline()**;連不上就丟 LiveRunOfflineError,而且在那之前不建立任何目錄
+ *   1. router 是 03 的真 router(預設 createLiveGatewayRouter,備援表全 cloud-only),provider/model/金鑰讀 env(契約 §11)
+ *   2. **先 probeOnline()**;連不上就丟 LiveRunOfflineError。連得上再查預算,用完就丟 LiveRunBudgetExceededError。兩種拒絕都不建立任何目錄
  *   3. meta 記 tokens_in / tokens_out 合計,model 在價目表上時再填 estimated_cost_usd
  *   4. 每次呼叫都經過 router 自己的 log(§10 llm_call 事件),這裡不另外記一份
  *   5. 沒指定 baseDir 時存到 golden/(進 git),不是 golden-fake/
@@ -325,9 +340,11 @@ export async function runGoldenLive(opts: RunGoldenOptions, set?: GoldenSet): Pr
 
   const router = opts.router ?? (opts.createRouter ? opts.createRouter() : createDefaultLiveRouter(opts.learningDir));
 
-  // 順序有意義:先確認連得上、再讀 prompt 檔,兩件事都成功才建立目錄。
-  // 反過來的話離線那次會留下一個空目錄,之後 diff 會把它當成一次 run。
+  // 順序有意義:先確認連得上、再查今日預算、再讀 prompt 檔,三件事都成功才建立目錄。
+  // 反過來的話離線或預算用完那次會留下一個空目錄,之後 diff 會把它當成一次 run。
+  // 注入的測試 router 沒有 budgetExhausted 就照舊不查。
   if (!(await router.probeOnline())) throw new LiveRunOfflineError(goldenSet.id);
+  if (liveBudgetExhausted(router)) throw new LiveRunBudgetExceededError(goldenSet.id);
 
   const promptFileAbs = join(root, goldenSet.promptFile);
   if (!existsSync(promptFileAbs)) {
@@ -397,14 +414,34 @@ function readLlmSettings(learningDir: string): RouterSettings {
 }
 
 /**
- * 建立 live 模式預設的 router(03-llm-router 的 LlmRouterImpl)。
+ * golden 專用備援表(ADR-083 / D1):契約 §7 的七個 LlmTask 全部 cloud-only。
+ * 雲端失敗或預算用完都不改走閘道,本機輸出不混進 golden。
+ */
+export const GOLDEN_FALLBACK_TABLE: Readonly<Record<LlmTask, FallbackGroup>> = Object.freeze({
+  'ingest.cards': 'cloud-only',
+  'ingest.questions': 'cloud-only',
+  'ingest.deps': 'cloud-only',
+  deepen: 'cloud-only',
+  'grade.fill.llm': 'cloud-only',
+  'grade.apply': 'cloud-only',
+  'reteach.short': 'cloud-only',
+});
+
+/**
+ * 有 `budgetExhausted` 且回 true 才算用完。沒有這個方法的測試 router 照舊不查。
+ * 用 `call` 綁定,方法本體讀 `this` 時才不會指錯。
+ */
+function liveBudgetExhausted(router: LlmRouter): boolean {
+  const ask = (router as { budgetExhausted?: () => boolean }).budgetExhausted;
+  return typeof ask === 'function' && ask.call(router) === true;
+}
+
+/**
+ * 建立 live 模式預設的 router:03 的 `createLiveGatewayRouter`(有日上限),
+ * 備援表是 `GOLDEN_FALLBACK_TABLE`(ADR-083)。
  *
- * ADR-050 之前這裡沒給 `settings` 也沒給 `logPath`——那行舊註解「provider / model /
- * 金鑰全部由 03 依契約 §11 從 env 與 settings 解析」是錯的:`settings` 不是從 env
- * 解析出來的,是呼叫端要主動讀檔案再傳進去(照 scripts/ingest.ts:95 的寫法);
- * `logPath` 更不是「解析」得出來的東西,是呼叫端自己決定要不要記帳。
- * 少了 logPath,`LlmRouterImpl.call()` 現在會直接丟 `UnaccountableLlmCallError`
- * ——這是故意的煞車,不是退化。
+ * ADR-050:帳本路徑由呼叫端傳,不是從 env「解析」出來的。少了帳本,底層 call()
+ * 會丟 `UnaccountableLlmCallError`——這是故意的煞車,不是退化。
  *
  * 帳本(T5 / ADR-066,契約 §12 1.4.0):**只**來自使用者層指標檔與身分標記驗證過的那本
  * (`resolveVerifiedLedger`)——不是主簽出的 learning/(ADR-051 用 git 位置解析的那一半已被取代:
@@ -412,22 +449,37 @@ function readLlmSettings(learningDir: string): RouterSettings {
  * 標記不符:丟錯(訊息帶 `npx tsx scripts/vault.ts init` / `show`),**不建 router、不建任何目錄**。
  * `learningDir` 只決定讀哪裡的 `config/settings.yaml`(見 `RunGoldenOptions.learningDir`)。
  *
+ * `probeLocal()` 固定回不可用、不碰閘道(D3):只包這一個方法。`call` / `probeOnline` /
+ * `budgetExhausted` 直接委派。傳進去的 `localProber` 同樣固定不可用,不借道
+ * `llm.router-impl.local-prober-default`(T8 F / ADR-044)。
+ *
  * `deps` 只在測試注入;零參數的預設值是入口層,才拿真的 `process.env` / `os.homedir()`。
  */
-export function createDefaultLiveRouter(learningDir?: string, deps: VaultResolveDeps = defaultVaultDeps()): LlmRouter {
+export function createDefaultLiveRouter(
+  learningDir?: string,
+  deps: VaultResolveDeps = defaultVaultDeps(),
+): LlmRouter & { budgetExhausted(): boolean } {
   const resolved = resolveVerifiedLedger(deps);
   if (!resolved.ok) throw new Error(resolved.message);
   const settingsDir = learningDir ?? resolved.ledger.learningDir;
   // 驗證過的 learning/ 一定存在;全新安裝時 state/ 可能還沒有——append-only 的 log 寫入
   // (atomic-write.ts 的 appendLineAtomic())只開檔不建目錄,所以先建好。只建在驗證過的那本底下。
   mkdirSync(join(resolved.ledger.learningDir, 'state'), { recursive: true });
-  return new LlmRouterImpl({
+  const gateway = createLiveGatewayRouter({
+    ledger: resolved.ledger,
     settings: readLlmSettings(settingsDir),
-    logPath: resolved.ledger.logPath,
+    fallbackTable: GOLDEN_FALLBACK_TABLE,
     // 明講底層的本機探測(跟預設值同義:ADR-039 之後閘道才是「本機」),不借道
     // llm.router-impl.local-prober-default 那條退化分支(ADR-044)。
     localProber: async () => ({ available: false, models: [] }),
   });
+  return {
+    call: (task, prompt, opts) => gateway.call(task, prompt, opts),
+    probeOnline: () => gateway.probeOnline(),
+    // D3:底層 probeLocal 會探閘道。golden 固定不可用,只包這一個,不碰閘道。
+    probeLocal: async () => ({ available: false, models: [] }),
+    budgetExhausted: () => gateway.budgetExhausted(),
+  };
 }
 
 /** token 合計 → 美金粗估。model 不在表上回 undefined(不猜)。 */

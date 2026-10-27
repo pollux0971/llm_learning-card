@@ -13,13 +13,13 @@
  * 共用 `'ingest.cards'` 這一個任務,一個檔一組 golden set,所以要各自的 key。
  *
  * --fake(預設)重播 fixture,不花錢不碰網路;--live(phase-2)走 03-llm-router 的
- * 真 router 打雲端,會花錢,而且離線時直接拒絕、不留下半個空目錄。
+ * 真 router 打雲端,會花錢。離線或今日預算已用完時直接拒絕、不留下半個空目錄。
  * --out 不給時,fake run 存到 golden-fake/(不進 git),live run 存到 golden/(進 git);
  * 見 golden-run.ts 的 defaultGoldenBaseDir()。測試一律傳暫存目錄,不碰 repo 裡的檔案。
  * dirty 的 prompt 若解析後的輸出目錄落在 golden/ 底下(沒給 --out 時 live 的預設就是那裡),
  * 退出碼非 0:先提交,或用 --out 指到 golden/ 以外。不建目錄、不呼叫 router。
  */
-import { runGolden, MissingGoldenSetError, LiveRunOfflineError, DirtyPromptError } from './golden-run.js';
+import { runGolden, MissingGoldenSetError, LiveRunOfflineError, LiveRunBudgetExceededError, DirtyPromptError } from './golden-run.js';
 import { compareRuns, LegacyRunLayoutError, NotComparableError } from './compare.js';
 import {
   checkGoldenParentChild,
@@ -283,7 +283,7 @@ async function runGoldenCommand(
         log(`✗ ${e.message}`);
         return { code: 1, output: lines.join('\n') };
       }
-      if (e instanceof LiveRunOfflineError) {
+      if (e instanceof LiveRunOfflineError || e instanceof LiveRunBudgetExceededError) {
         log(`✗ ${e.message}`);
         return { code: 1, output: lines.join('\n') };
       }
