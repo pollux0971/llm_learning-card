@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/grading/reteach-short.ts, packages/core/src/grading/index.ts, packages/core/prompts/grading/reteach-short.md, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/structural-checks.ts]
 cpu: light
 budget_usd: 2
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 縮短版的 body 超過 short_body_limit 還寫進檔(字數量的是讀回來的 body) 字數那條必須紅
@@ -251,6 +251,12 @@ generateShort(args: {
 
 - **05 phase-4 的工單**:離線審核與複審修正,gate 等 I5。上面「給之後 05 phase-4 的分析」就是它的起點。
 - **主題生成的 examples 是濾掉非字串**(T61 的 D1 註):要不要跟 ingest 一樣改成拒絕,另開票。
+- **T65 驗收缺口(驗收者 -5b 2026-10-27,不擋,低優先;補在測試,由測試 agent 做)**:
+  - G4:body 裡帶一個「內容跟模型給的 example 相同」的 example 圍欄,讀回 examples 會是兩個一樣的;現在靠「剛好 1 個」擋住,少了長度檢查就漏(實測),缺一條測試列。
+  - G5:來回檢查失敗之後,下一次 prompt 的「上一次 N 字」的 N 沒有測試釘。另補:第 1 次格式壞 → 第 2 次 prompt 沒有「上一次」;太長 → 壞 → 第 3 次沒有「上一次」。
+  - 模型回應是 JSON `null` 沒有測試列(少了 null 守門會丟 TypeError);warning 的 type、task 欄位沒斷言。
+  - G3(import 守門漏判有替換的模板字串動態 import 與 JSDoc import 型別):grading 底下沒人這樣寫。
+  - 前一次在來回檢查之前就格式壞時,下一次 prompt 不加「上一次 N 字」(沒有 N 可寫):顧問/驗收判接受。
 
 ## 預算
 
