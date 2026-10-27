@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 import matter from 'gray-matter';
 import type { LearningWorld } from './_world.js';
-import { xdgPointingAt } from '../support/ingest-cli-runner.js';
+import { cleanupTmps, xdgPointingAt } from '../support/ingest-cli-runner.js';
 import type { Card, CardId, QuestionFile } from '../../packages/contracts/src/index.js';
 import {
   CloudLlmRouter,
@@ -782,6 +782,8 @@ Then('the command prints the failed card and exits with a non-zero status', func
     }
   } finally {
     rmSync(cliOut, { recursive: true, force: true });
+    // xdgPointingAt() 建的暫存指標目錄(只清 ingest-cli-runner 自己登記過的路徑,不用樣式掃)
+    cleanupTmps();
   }
 });
 
