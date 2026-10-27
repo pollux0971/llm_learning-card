@@ -93,3 +93,12 @@ learning/:檔案數 64、整體雜湊 01d84e9c918e1cf4、帳本 111 行;前後�
 ## 花費
 
 實作者 $1.5379 / 預算 $1 = 1.54 倍(沒超過 2 倍)。LLM(產品用)0。驗收的 i9 CPU:單元、守門、cucumber 兩個 tag、變異各一次。
+
+## 補驗:測試作者補兩個缺口之後
+
+- 補的測試檔只有 t61-bad-model-output.test.ts 一個,來自測試作者的 commit(e700e324bd46227033c7789aeb75acb63fc98103,疊在原紅測試上,+12);我沒有改測試。補的內容:子卡壞回應表多兩列(title 不是字串、examples 不是陣列);新增一條 regenerate 回應第 0 筆不是物件或 body 不是字串(7 種輸入)。
+- 在實作分支上套補的測試檔:21/21 全綠。
+- 缺口一(子卡 title 型別檢查拿掉):1 條紅,失敗訊息「title 不是字串: expected undefined to be an instance of ModelResponseFormatError」(在「子卡:壞回應與非字串 example → 丟 ModelResponseFormatError,不留子卡檔」那一組)。
+- 缺口二(regenerate 第 0 筆格式不正確改回普通 Error):1 條紅,失敗的是「runIngest:壞的模型回應 → ok:false、一張都不寫」那一組的「regenerate 回應的第 0 筆不是物件、或 body 不是字串:ok:false,一張都不寫,訊息只留第一行」。
+- 兩個改壞都已還原,還原後回綠。缺口已補,且補得接得住。
+- learning/ 前後:64 / 01d84e9c918e1cf4 / 111 不變。
