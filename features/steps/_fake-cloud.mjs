@@ -19,10 +19,12 @@
  *   FAKE_CLOUD_LEVEL0_COUNT        level 0 卡片張數(預設 5)
  *   FAKE_CLOUD_CHILDREN_PER_PARENT 每張父卡的子卡數(預設 1)
  *   FAKE_CLOUD_QUESTIONS_FAIL_CARD 這張卡的 'ingest.questions' 每次都回不合法的回應
+ *   FAKE_CLOUD_LEVEL0_REPLY        設成 'not-json' 時,level 0 的 'ingest.cards' 回一段不是 JSON 的多行文字(T61:壞的模型回應)
  */
 
 const LEVEL0_COUNT = Number(process.env.FAKE_CLOUD_LEVEL0_COUNT ?? '5');
 const CHILDREN_PER_PARENT = Number(process.env.FAKE_CLOUD_CHILDREN_PER_PARENT ?? '1');
+const LEVEL0_REPLY = process.env.FAKE_CLOUD_LEVEL0_REPLY ?? '';
 const FAIL_CARD = process.env.FAKE_CLOUD_QUESTIONS_FAIL_CARD ?? '';
 
 function levelZeroCandidatesJson(count) {
@@ -79,6 +81,7 @@ function replyTextFor(prompt) {
   }
 
   if (/^cards:$/m.test(prompt)) return depsEdgesJsonFromPrompt(prompt);
+  if (LEVEL0_REPLY === 'not-json') return '這不是 JSON\n第二行,模型亂回的東西';
   return levelZeroCandidatesJson(LEVEL0_COUNT);
 }
 
