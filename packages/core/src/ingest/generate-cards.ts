@@ -1,5 +1,6 @@
 /** 呼叫 LlmRouter 產生卡片候選,對超過字數上限的卡片重試,最多 3 次嘗試。 */
 import type { LlmRouter } from './types.js';
+import { ModelResponseFormatError } from './errors.js';
 import { loadPromptTemplate } from './prompts.js';
 import { CARD_BODY_WORD_LIMIT } from '@contracts/index.js';
 import { witness } from '@contracts/witness.js';
@@ -170,14 +171,19 @@ async function callAndParseRegenerated(
   return parseRegenerated(result.text);
 }
 
+/** examples 必須是陣列,而且每個元素都是字串。空陣列、空字串都算過。 */
+function examplesAreAllStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
 function parseCardCandidates(text: string): CardCandidate[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new Error(`ingest.cards 回應不是合法 JSON: ${(err as Error).message}`);
+    throw new ModelResponseFormatError(`ingest.cards 回應不是合法 JSON: ${(err as Error).message}`);
   }
-  if (!Array.isArray(parsed)) throw new Error('ingest.cards 回應必須是陣列');
+  if (!Array.isArray(parsed)) throw new ModelResponseFormatError('ingest.cards 回應必須是陣列');
 
   return parsed.map((raw, i) => {
     const r = raw as Record<string, unknown>;
@@ -185,11 +191,11 @@ function parseCardCandidates(text: string): CardCandidate[] {
     if (
       typeof r.title !== 'string' ||
       typeof r.body !== 'string' ||
-      !Array.isArray(r.examples) ||
+      !examplesAreAllStrings(r.examples) ||
       !Array.isArray(lines) ||
       lines.length !== 2
     ) {
-      throw new Error(`ingest.cards 回應第 ${i} 筆格式不正確: ${JSON.stringify(raw)}`);
+      throw new ModelResponseFormatError(`ingest.cards 回應第 ${i} 筆格式不正確: ${JSON.stringify(raw)}`);
     }
     return {
       title: r.title,
@@ -209,14 +215,14 @@ function parseRegenerated(text: string): RegeneratedCard {
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new Error(`regenerate 回應不是合法 JSON: ${(err as Error).message}`);
+    throw new ModelResponseFormatError(`regenerate 回應不是合法 JSON: ${(err as Error).message}`);
   }
-  if (!Array.isArray(parsed)) throw new Error('regenerate 回應必須是陣列');
-  if (parsed.length === 0) throw new Error('regenerate 回應沒有回傳卡片');
+  if (!Array.isArray(parsed)) throw new ModelResponseFormatError('regenerate 回應必須是陣列');
+  if (parsed.length === 0) throw new ModelResponseFormatError('regenerate 回應沒有回傳卡片');
 
   const raw = parsed[0];
   if (!isPlainObject(raw) || typeof raw.body !== 'string') {
-    throw new Error(`regenerate 回應第 0 筆格式不正確: ${JSON.stringify(raw)}`);
+    throw new ModelResponseFormatError(`regenerate 回應第 0 筆格式不正確: ${JSON.stringify(raw)}`);
   }
 
   const card: RegeneratedCard = { body: raw.body, count: parsed.length };

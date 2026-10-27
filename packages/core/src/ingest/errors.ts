@@ -34,3 +34,17 @@ export class GraphFileCorruptError extends Error {
     this.head = head;
   }
 }
+
+/**
+ * 模型回應的形狀不對:不是合法 JSON、不是陣列、筆數或欄位不對,
+ * 或 examples 裡有非字串元素。
+ *
+ * 跟程式錯、磁碟錯分開。`runIngest` 只接這一種,回一句說明、不寫任何卡。
+ * router 的一般錯誤、`GraphFileCorruptError`、fs 錯誤照丟,堆疊留給呼叫端。
+ */
+export class ModelResponseFormatError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ModelResponseFormatError';
+  }
+}
