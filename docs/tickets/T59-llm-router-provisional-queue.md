@@ -39,7 +39,9 @@ must_catch:
 - **gate**:`features/03-llm-router/NEXT.md` 寫 phase-3 只要 phase-2 `done`(2026-09-03)。契約 gate 由 ADR-039 解除。兩項都打勾了。
 - **本機結果從哪來**:phase-4 的 `GatewayLlmRouter`(`packages/core/src/llm/router-gateway.ts`)已經合進 main。它在雲端失敗、預算用完、離線時改走閘道,回 `provisional: true`。phase-4 的狀態是 `blocked`,但只差閘道真連線那一條 `@manual`,程式與自動場景都驗收過了。phase-3 用的是它已經合進 main 的程式,不等那條 `@manual`。
 - **要不要真的閘道**:**8 個場景都不用**。「本機回的結果」用假的閘道 client 做:注入 `GatewayLlmRouter` 的 `gateway` 選項,或照 phase-4 換掉 `globalThis.fetch` 的做法。「網路在不在」用注入的 `probeOnline`。所以閘道機器(`localhost:8787`)沒起來、`GATEWAY_API_KEY` 沒進 `.env`,都不擋這張。
-- **需要真機的 `@manual`**:這張 0 條(`.feature` 本來就沒有)。真的有呼叫端接上佇列之後(見 D1),那張工單再加一條真閘道的觀察:`LLM_DAILY_CAP_USD=0` 讓預算一開始就算用完,呼叫走閘道、標 provisional、佇列多一筆,OpenAI 花費 0。`spend.ts` 的 `readDailyCapUsd` 吃 0(非負數就可以)。那條要等使用者把閘道起起來。
+- **需要真機的 `@manual`**:這張 0 條(`.feature` 本來就沒有)。真的有呼叫端接上佇列之後(見 D1),那張工單再加一條真閘道的觀察:讓預算一開始就算用完,呼叫走閘道、標 provisional、佇列多一筆,OpenAI 花費 0。那條要等使用者把閘道起起來。
+  - **讓預算算用完的做法**:用暫存的驗證帳本(暫存指標檔 + `vault-id`),上限 US$1,在那本種一筆今天已花 US$1 的 `provider: 'openai'` `llm_call`。不在使用者的真帳本種假紀錄。
+  - **更正(2026-10-27,測試 agent 在 T62 實測)**:原本寫「`LLM_DAILY_CAP_USD=0` 讓預算一開始就算用完」是錯的,而且**危險**。`packages/core/src/llm/spend.ts` 的 `isBudgetExhausted` 第一行是 `if (!(capUsd > 0)) return false;`:上限 0 是「**沒設上限**」,照做會真的打 OpenAI、花錢。
 
 ## 為什麼有這張
 
@@ -208,7 +210,7 @@ D1 原本的兩個選項,留著當紀錄:
 
 ## 低優先小票清單(協調者不另建清單檔,記在工單裡)
 
-- **接 deepen 的小票**:`generateDeepen` 用 `recordProvisional` 包 router,並決定 deepen 的鍵(F2)。落點 02 或 07。加一條真閘道的 `@manual`(`LLM_DAILY_CAP_USD=0`)。
+- **接 deepen 的小票**:`generateDeepen` 用 `recordProvisional` 包 router,並決定 deepen 的鍵(F2)。落點 02 或 07。加一條真閘道的 `@manual`(讓預算算用完的做法見上面「需要真機的 `@manual`」;**不要**用 `LLM_DAILY_CAP_USD=0`,那是沒設上限)。
 
 ## 預算
 
