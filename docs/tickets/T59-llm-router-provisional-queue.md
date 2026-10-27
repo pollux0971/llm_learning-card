@@ -19,6 +19,9 @@ must_catch:
   - 合法 JSON 但形狀不對的檔沒當成壞檔 形狀不對那條必須紅
   - 佇列只存在記憶體(新的實例讀不到) 場景 8 必須紅
   - 寫佇列檔沒走 writeFileAtomic 原子寫入那條必須紅
+  - 呼叫時給了 maxTokens 卻沒記進項目,或記了 timeoutMs max_tokens 那條必須紅
+  - 壞檔備份名撞到時蓋掉舊的備份,或備份名不是毫秒精度 兩次壞檔那條必須紅
+  - list 或在線的 drain 在檔案正常時寫檔,或離線的 drain 讀了檔 只讀那幾條必須紅
   - 包裝的 router 改了回傳值(text、provider、provisional 任何一個) 原樣回傳那條必須紅
   - 實作動到 touches 以外的檔 不動的地方那條 diff 必須有輸出
   - provisional-queue.ts 變異分數低於 80%
@@ -26,7 +29,7 @@ must_catch:
 
 # 工單 T59:03-llm-router phase-3——provisional 佇列
 
-> 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(T58 已合 main `d64b1d5`)。規格:UI/Tauri 負責人(代筆)。編號 T59:協調者配的。
+> 狀態:起草 2026-10-27,依協調者 2026-10-27 的交代(T58 已合 main `d64b1d5`)。顧問 2026-10-27 審過 `4c2da7c`:D1–D5 照建議,改 4 處(見最後「顧問裁定」);改完由協調者直接合併,不再送審。規格:UI/Tauri 負責人(代筆)。編號 T59:協調者配的。
 > 實作:worker(opencode + grok-4.7);紅測試與步驟定義:測試 agent(不是起草的人);驗收(含變異):驗收 agent。
 > 對象:`features/03-llm-router/phase-3.feature`(8 個場景,tag `@i6 @llm-router @phase-3`,沒有 `@manual`)。
 > **不改契約。** §7 的 `LlmTask` 與路由表一格都不動;§10 已經有 `provisional_resolved` 事件;§12 已經列了 `state/provisional-queue.json`。LLM 真呼叫 0。
@@ -61,6 +64,7 @@ must_catch:
 | `queued_at` | 字串 | ISO 8601,含時區 |
 | `local_sha256` | 字串 | 本機結果 `text` 的 sha256(UTF-8,小寫十六進位) |
 | `prompt` | 字串 | 原本的 prompt,重放用 |
+| `max_tokens` | 正整數,**選填** | 呼叫時 `opts.maxTokens` 有給才記,沒給就沒有這個鍵。重放時上限不同,結果可能不同。`timeoutMs` 不記。 |
 
 **檔案**:`<learningDir>/state/provisional-queue.json`,內容是項目的 JSON 陣列,依 `queued_at` 由舊到新。讀檔用 zod 驗。寫檔一律走 `@core/schema/atomic-write.js` 的 `writeFileAtomic`(§11b)。
 
@@ -70,9 +74,9 @@ must_catch:
 |---|---|
 | `provisionalQueuePath(learningDir)` | 回 `<learningDir>/state/provisional-queue.json` |
 | `new ProvisionalQueue({ path, log, now? })` | `log` 是 `LogAppender`(`packages/core/src/llm/router.ts`),`now` 預設 `new Date().toISOString()` |
-| `enqueue({ task, card, prompt, localText })` | 同一個 `card` + `task` 已經有一筆:拿掉舊的,把新的放到最後(`queued_at` 是新的,prompt 與雜湊也換新的)。沒有就加在最後。 |
-| `list()` | 回目前所有項目(複本),不寫檔 |
-| `drain(isOnline)` | `isOnline` 是 `() => Promise<boolean>`。在線:回所有項目(複本,含 prompt)。離線:回空陣列,**連檔都不讀**。兩種都**不寫檔**(D2)。 |
+| `enqueue({ task, card, prompt, localText, maxTokens? })` | 同一個 `card` + `task` 已經有一筆:拿掉舊的,把新的放到最後(`queued_at` 是新的,prompt、雜湊、`max_tokens` 也換新的;新的沒給 `maxTokens` 就不留舊的)。沒有就加在最後。 |
+| `list()` | 回目前所有項目(複本)。除了修壞檔,不寫檔 |
+| `drain(isOnline)` | `isOnline` 是 `() => Promise<boolean>`。在線:回所有項目(複本,含 prompt)。離線:回空陣列,**連檔都不讀**(所以也不修壞檔)。在線時除了修壞檔,不寫檔(D2)。 |
 | `resolve({ card, task }, { cloudText, changed })` | 有那一筆:拿掉、寫檔、記一筆 `provisional_resolved` 事件(下面)、回 `true`。沒有:不寫、不記、回 `false`。 |
 
 **事件**:
@@ -80,18 +84,20 @@ must_catch:
 - `provisional_resolved`:`{ ts, type: 'provisional_resolved', card, task, changed, local_sha256, cloud_sha256 }`。`changed` 是呼叫端給的(D3);`cloud_sha256` 是 `cloudText` 的 sha256,留著對帳。
 - 壞檔的 warning:`{ ts, type: 'warning', reason: 'provisional_queue_corrupt', backup: <備份檔名,不含路徑> }`。
 
-**壞檔**(場景 7,D4):`enqueue`、`list`、`resolve`,以及在線的 `drain`,讀檔時遇到下面兩種,就做三件事:
+**讀檔只有一個入口 `load()`**:`enqueue`、`list`、`resolve`、在線的 `drain` 都經過它。離線的 `drain` 不呼叫它。
+
+**壞檔**(場景 7,D4):`load()` 遇到下面兩種,就做三件事:
 
 - 不是合法 JSON;
 - 是合法 JSON,但 zod 驗不過(形狀不對)。
 
 三件事:
 
-1. 把原檔 `rename` 成 `provisional-queue.json.corrupt-<UTC 時間,例如 20261027T093000Z>`,同一個資料夾;
+1. 把原檔 `rename` 成 `provisional-queue.json.corrupt-<UTC 時間到毫秒,例如 20261027T093000123Z>`,同一個資料夾(時間取 `now()`)。那個名字已經有檔:依序試 `-2`、`-3`……(例如 `…123Z-2`),直到沒有。**不准蓋掉舊的備份**;
 2. 寫一個空陣列 `[]` 當新的佇列;
 3. 記上面那筆 warning。
 
-然後照常做原本那件事。檔不存在 = 空佇列,不是壞檔,不記 warning。
+然後照常做原本那件事。檔不存在 = 空佇列,不是壞檔,不記 warning。除了修壞檔這三步,`list` 與 `drain` 不寫檔。
 
 **包裝 router**(場景 1、2、3、7,D1):
 
@@ -99,7 +105,7 @@ must_catch:
 recordProvisional(inner: LlmRouter, queue: ProvisionalQueue, card: CardId): LlmRouter
 ```
 
-- `call()` 委派給 `inner`。回來的結果 `provisional === true` 才 `enqueue({ task, card, prompt, localText: result.text })`。
+- `call()` 委派給 `inner`。回來的結果 `provisional === true` 才 `enqueue({ task, card, prompt, localText: result.text })`;`opts.maxTokens` 有給就一起帶 `maxTokens`。
 - 回傳值**原樣**交回去,一個欄位都不改。
 - `inner` 丟錯就原樣往外丟,不放進佇列。
 - `probeOnline`、`probeLocal` 直接委派。
@@ -127,7 +133,7 @@ recordProvisional(inner: LlmRouter, queue: ProvisionalQueue, card: CardId): LlmR
 | 7 壞檔 | 佇列檔寫成 `{not json`,再做一次會進佇列的本機呼叫 | 備份檔存在、內容逐位元組等於原本的壞內容;佇列剛好 1 筆(這一次的);log 多一筆 warning |
 | 8 重開 | 放三筆,另建一個 `ProvisionalQueue` 讀同一個路徑 | 3 筆,內容一樣 |
 
-場景 7 的「重建成空的」:讀成空佇列,再放進這一次的那一筆,所以之後剛好 1 筆、沒有舊的。這是起草者的解讀,寫在這裡讓顧問看。
+場景 7 的「重建成空的」:讀成空佇列,再放進這一次的那一筆,所以之後剛好 1 筆、沒有舊的(顧問 2026-10-27 同意這個解讀)。
 
 - **另外的單元測試**(建議 `packages/core/src/llm/provisional-queue.test.ts`):
   - 本機但不暫定(`grade.fill.llm`,`provisional: false`)不進佇列;
@@ -136,7 +142,11 @@ recordProvisional(inner: LlmRouter, queue: ProvisionalQueue, card: CardId): LlmR
   - `resolve` 找不到那一筆回 `false`,佇列檔與 log 都不變;
   - 寫檔經過 `writeFileAtomic`(spy,照 `packages/core/src/ingest/t55-topic-generation.test.ts` 第 341 行那條的做法);
   - 包裝 router 回傳的 `text`、`provider`、`model`、`provisional` 跟 `inner` 一樣;
-  - `inner` 丟錯時佇列不變。
+  - `inner` 丟錯時佇列不變;
+  - 給了 `maxTokens` 的呼叫,項目有 `max_tokens` 且等於它;沒給的沒有這個鍵;項目裡沒有 timeout 相關的鍵;
+  - 兩次壞檔、注入同一個 `now()`(同一毫秒):兩個備份檔名不同(第二個是 `-2`),第一個備份的內容沒被動;
+  - 檔案正常時 `list()` 與在線的 `drain()` 不寫檔(檔案位元組與修改時間都不變,`writeFileAtomic` 沒被叫);
+  - 檔案是壞的時,在線的 `drain()` 也會修(備份、重建、warning);離線的 `drain()` 不讀檔(壞檔留著、沒有備份、沒有 warning)。
 
 ## 驗收條件
 
@@ -158,7 +168,9 @@ recordProvisional(inner: LlmRouter, queue: ProvisionalQueue, card: CardId): LlmR
 - 離線 `drain` 也回項目 → 場景 5 紅;
 - 壞檔直接覆蓋(不備份) → 場景 7 紅;
 - 寫檔改用 `writeFileSync` → 原子寫入那條紅;
-- 只放記憶體、不寫檔 → 場景 8 紅。
+- 只放記憶體、不寫檔 → 場景 8 紅;
+- 備份名去掉毫秒、或撞名時直接覆蓋 → 兩次壞檔那條紅;
+- 包裝 router 不帶 `maxTokens` → `max_tokens` 那條紅。
 
 ## 受保護的檔(開發 worker 不改)
 
@@ -172,23 +184,31 @@ recordProvisional(inner: LlmRouter, queue: ProvisionalQueue, card: CardId): LlmR
 - import:`@core/schema/atomic-write.js`、`@core/schema/log.js`(03 → 01,`scripts/boundaries.allow.json` 本來就有)、`@contracts/index.js`(一律放行)。
 - R2:只有 03-llm-router 一個落點,跟 T60、T61 不相交。
 
-## 待顧問決定
+## 顧問裁定(2026-10-27)
 
-- **D1:誰把結果放進佇列。**
-  - **乙(建議)**:這張只做佇列與 `recordProvisional` 包裝。呼叫端知道自己在處理哪張卡,由它包:
-    - `grade.apply` 與 `reteach.short` → 05-grading phase-3(它的場景本來就寫「enters the provisional queue」);
-    - `deepen` → 另開一張小票(落點 02 或 07)。
-    理由:不改 §7 的 `call()` 簽章;這張留在 03 一個落點,不跟 T61(02)搶 R2。
-  - **甲**:`call()` 的 `opts` 加 `card?: CardId`(§7 函式簽章,軟約定),由 `createLiveGatewayRouter` 做出來的 router 自己放。缺點:今天的呼叫端(`gradeApply`、`generateDeepen`)都沒有傳卡片 id,不傳就放不進去,要嘛靜默漏掉、要嘛丟錯;要補就得改 05、02 的程式。
-- **D2:`drain` 只讀。** 只有 `resolve` 會拿掉項目。理由:複審跑到一半當掉時,還沒對完的不會消失。另一種是 `drain` 就拿走,當掉就丟了。建議只讀。
-- **D3:`changed` 由呼叫端給。** `.feature` 開頭寫「這個 phase 只管佇列;對完要怎麼辦歸 grading 與 lint」。比雜湊不可行:`grade.apply` 回的是 JSON,本機與雲端的字幾乎一定不同,但「過或沒過」可能一樣。所以「結果有沒有變」只有呼叫端知道。佇列只把兩邊的雜湊都記下來。
-- **D4:壞檔。** 備份名用 `.corrupt-<UTC 時間>`;合法 JSON 但形狀不對也算壞;每一種讀都檢查。repo 裡沒有現成的備份命名慣例(起草時 grep 過)。
-- **D5:檔案格式不寫進契約。** 只有 03 讀寫這個檔,其他功能只透過 API(跟 02 的 `ingested.json`、`needs-review.json` 一樣,契約只列檔名)。要寫進契約的話是改 §12(硬約定),要問使用者。建議不寫。
+審 `4c2da7c`:D1 乙、D2 `drain` 只讀、D3 `changed` 由呼叫端給、D4 壞檔備份、D5 格式不進契約,都准。改 4 處:
 
-## 觀察(給顧問看,不在範圍)
+1. 項目加選填的 `max_tokens`:`opts.maxTokens` 有給就記(重放時上限不同,結果可能不同);`timeoutMs` 不記。→ 第 1 節的欄位表、`enqueue`、包裝 router、單元測試。
+2. 壞檔備份名改成毫秒精度(例如 `20261027T093000123Z`);同名已經有檔就加 `-2`、`-3`,不准蓋掉舊的備份。→ 第 1 節「壞檔」、單元測試、改壞證明。
+3. 「`list`、`drain` 不寫檔」跟「每一種讀都修壞檔」打架,改成:所有讀檔都走同一個 `load()`,遇到壞檔就修(備份、重建、warning);除了修壞檔,`list` 與 `drain` 不寫檔;離線的 `drain` 連檔都不讀,所以也不修。→ 第 1 節的 API 表與「壞檔」、單元測試。
+4. 場景 7 的解讀(重建成空的再放進這一筆,剛好 1 筆)同意。F1(兩個行程同時寫)、F2(deepen 用同一個鍵)照記;deepen 的鍵留給接 deepen 的那張小票。
+
+D1 原本的兩個選項,留著當紀錄:
+
+- **乙(准)**:這張只做佇列與 `recordProvisional` 包裝。呼叫端知道自己在處理哪張卡,由它包:
+  - `grade.apply` 與 `reteach.short` → 05-grading phase-3(它的場景本來就寫「enters the provisional queue」);
+  - `deepen` → 另開一張小票(落點 02 或 07)。
+  理由:不改 §7 的 `call()` 簽章;這張留在 03 一個落點,不跟 T61(02)搶 R2。
+- **甲(不採用)**:`call()` 的 `opts` 加 `card?: CardId`(§7 函式簽章,軟約定),由 `createLiveGatewayRouter` 做出來的 router 自己放。今天的呼叫端(`gradeApply`、`generateDeepen`)都沒有傳卡片 id,不傳就放不進去;要補就得改 05、02 的程式。
+
+## 觀察(不在範圍)
 
 - **F1:兩個行程同時寫**。桌面的側車與 lint CLI 同時開時,讀改寫會蓋掉對方。這張不加鎖,跟 `reviews.json` 在 T26 之前一樣。之後 09-lint phase-2 真的會同時開時再看要不要比照 T26 的樂觀檢查。
-- **F2:深入一次會叫好幾次 `deepen`**。子卡清單、每張的字數重試、每張的考題,都是 `deepen`。用「卡片 + task」當鍵,同一張父卡的好幾次呼叫只會留最後一次。09-lint phase-2 對卡片是「從來源重生」,不是重放 prompt,所以影響不大;要接 deepen 的那張小票再決定。
+- **F2:深入一次會叫好幾次 `deepen`**。子卡清單、每張的字數重試、每張的考題,都是 `deepen`。用「卡片 + task」當鍵,同一張父卡的好幾次呼叫只會留最後一次。09-lint phase-2 對卡片是「從來源重生」,不是重放 prompt,所以影響不大。deepen 的鍵怎麼定,留給接 deepen 的那張小票(顧問裁)。
+
+## 低優先小票清單(協調者不另建清單檔,記在工單裡)
+
+- **接 deepen 的小票**:`generateDeepen` 用 `recordProvisional` 包 router,並決定 deepen 的鍵(F2)。落點 02 或 07。加一條真閘道的 `@manual`(`LLM_DAILY_CAP_USD=0`)。
 
 ## 預算
 
