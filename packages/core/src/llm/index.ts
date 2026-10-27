@@ -98,3 +98,13 @@ export {
   type NoLedgerOptions,
   type VerifiedLedgerOptions,
 } from './router-gateway.js';
+
+// -------------------------------------------------------------- phase-3 provisional 佇列(T59)
+export {
+  ProvisionalQueue,
+  provisionalQueuePath,
+  recordProvisional,
+  type EnqueueArgs,
+  type ProvisionalEntry,
+  type ProvisionalQueueOptions,
+} from './provisional-queue.js';
