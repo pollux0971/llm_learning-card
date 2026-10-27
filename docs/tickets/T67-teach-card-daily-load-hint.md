@@ -1,10 +1,10 @@
 ---
 id: T67
 deps: []
-touches: [packages/core/src/session/summary.ts, packages/core/src/session/engine.ts, packages/core/src/session/teach.ts, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, packages/core/src/teach/deck.ts, apps/teach-card/src/teach-session.ts, apps/teach-card/src/App.svelte]
+touches: [packages/core/src/session/summary.ts, packages/core/src/session/engine.ts, packages/core/src/session/teach.ts, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, packages/core/src/teach/deck.ts, apps/teach-card/src/teach-session.ts, apps/teach-card/src/App.svelte, apps/desktop/src/webview/review-client.ts]
 cpu: heavy
 budget_usd: 3
-status: todo
+status: dispatched
 owner: worker-grok
 must_catch:
   - 今天學了幾張改數 log.jsonl 的 learned 事件或 weekly.json 只數今天那條必須紅(佈置只寫 reviews.json)
@@ -197,6 +197,15 @@ npm run boundaries
 3. **D3 乙**:「今天已學 N 張,明天約 M 張」。
 4. 場景「Learning a card raises tomorrow's estimate」:步驟把每日上限設得夠高、確定沒碰上限,步驟檔註解寫明。
 5. `phase-5.feature`、ADR-085、07 FEATURE/NEXT、roadmap 照這一版。
+
+## 派工前補充(協調者,2026-10-27,測試 agent -a6 與驗收者 -5b 在紅測試裡發現)
+
+- **touches 補 `apps/desktop/src/webview/review-client.ts`**:`ReviewClient` 要多 `teachLoad()`(對應 `'teach.load'`)。原本漏列,不補 worker 做不完。
+- **`teachLoad` 要做成「安靜呼叫」**:側車忙或出錯時,客戶端**不發忙碌通知**,session 的 waiting、busyNotice、controlsDisabled **一次都不能動**(紅測試用真 `ReviewClient` 加一直忙的側車驗過;否則視窗焦點切回來會閃「考試卡還在用…」並停用按鈕)。`teach.load` 失敗不走 busy 重試的 `onWait`。
+- 名字(紅測試已定,照用):`ReviewClient.teachLoad()` → `'teach.load'`;`session.view().load`;`session.refreshLoad()`(App.svelte 在 window 的 `focus` 事件叫);`estimateTomorrowFrom`、`countLearnedOn`;`REQUEST_METHODS` 末尾加 `'teach.load'`;`TeachHost` 多一個給 load 用的回呼(名字不限,測試只走 handler)。
+- 提示字樣固定「今天已學 N 張,明天約 M 張」,在 `.dock` 最下面一行,學完畫面也有。
+- 渲染測試排除 `[vite]` 開頭的 console(vite HMR 自己的訊息)。
+- 驗收者留的兩個小缺口(不擋,低優先,記在這裡):C9 stale 快取名單裡沒有「今天回退的卡」,所以「讀 stale 快取」被改壞時沒被抓,建議補一條:stale 快取裡有今天回退的卡,`dueTomorrow` 要忽略它;C14 `teach.load` 把 `reviews.json` 原封不動重存抓不到(測試只比位元組,可補 mtime 或接受)。
 
 ## 預算
 
