@@ -2,6 +2,9 @@
  * T4b 驗收 3、4、5 的測試。全部用合成 fixture,不改本 repo 的 SOURCE 標頭,
  * 不碰 /data/python/dev-loop-mcp。
  *
+ * T60:暫存目錄在 os.tmpdir() 底下自己開一個(beforeAll 建、afterAll 刪),子行程的 TMPDIR 指到它;
+ * 不依賴跑測試那台機器上先有某個資料夾,也不碰別人(opencode)的暫存位置。
+ *
  * 包裝腳本契約(實作必須對上這些字,測試轉綠之後不要改這裡):
  * - 呼叫:`bash scripts/check-gates-pinned.sh <consumer-root>`
  * - `TEMPLATE_DIR` 非空:印一行 `TEMPLATE_DIR 明設,未驗證釘版本`,
@@ -17,13 +20,14 @@
  * - 零個 SOURCE 標頭:非零,並印 `✗ SOURCE 標頭的 (版本, commit) 不是恰好一種,不准多數決`
  *   (零組走同一條「不是恰好一種」;只斷言非零的話,拿掉該檢查後 `read`/`set -e` 仍非零,突變不會變紅)
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const WRAPPER = resolve(import.meta.dirname, 'check-gates-pinned.sh');
-const TEMP_BASE = '/tmp/opencode';
+let TEMP_BASE = '';
 const MISSING_COMMIT = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 const SUCCESS = '✓ 守門內容自同步以來未被更動';
 const EXPLICIT_LINE = 'TEMPLATE_DIR 明設,未驗證釘版本';
@@ -31,6 +35,14 @@ const MIXED_LINE = '✗ SOURCE 標頭的 (版本, commit) 不是恰好一種,不
 const SPAWN_TIMEOUT_MS = 60_000;
 
 const tmpDirs: string[] = [];
+
+beforeAll(() => {
+  TEMP_BASE = mkdtempSync(join(tmpdir(), 'lc-gates-pinned-'));
+});
+
+afterAll(() => {
+  rmSync(TEMP_BASE, { recursive: true, force: true });
+});
 
 afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });

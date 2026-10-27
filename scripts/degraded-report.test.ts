@@ -27,6 +27,9 @@
  *        退出碼 ∈ {0, 1}、vitest.json 存在可解析且數字一致、witness 的 test-end 紀錄數 ===
  *        numTotalTests − pending − todo。不滿足就印「讀不到(全套未跑完:退出碼 X,收到 N/M)」,
  *        **而且不印任何降基準的提示**——提示比 FAIL 危險,FAIL 擋住你,提示誘導你去改基準。
+ *
+ * T60:起 scripts/degraded-report.ts 的子行程明寫 NO_COLOR=1,輸出不帶色碼,
+ *      不靠跑測試那台機器(或鏈腳本)替測試設 NO_COLOR(沒設時 `Test Files  1 passed` 會被色碼切開,比對不到)。
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -381,7 +384,7 @@ describe('子行程:退出碼與訊息', () => {
 
   function run(args: string[]): { status: number | null; stdout: string; stderr: string; md: string } {
     const out = join(scratch, `r-${Math.random().toString(36).slice(2)}.md`);
-    const r = spawnSync(process.execPath, [TSX_CLI, SCRIPT, ...args, '--out', out], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 90_000 });
+    const r = spawnSync(process.execPath, [TSX_CLI, SCRIPT, ...args, '--out', out], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 90_000, env: { ...process.env, NO_COLOR: '1' } });
     return { status: r.status, stdout: r.stdout, stderr: r.stderr, md: existsSync(out) ? readFileSync(out, 'utf8') : '' };
   }
 
@@ -603,7 +606,7 @@ describe('量尺 · 甲 · 子行程:目錄漂了 → 退出碼 1,兩個方向�
   }
 
   function run(repo: { root: string; args: string[] }): { status: number | null; stdout: string; stderr: string } {
-    const r = spawnSync(process.execPath, [TSX_CLI, SCRIPT, ...repo.args], { cwd: repo.root, encoding: 'utf8', timeout: 90_000 });
+    const r = spawnSync(process.execPath, [TSX_CLI, SCRIPT, ...repo.args], { cwd: repo.root, encoding: 'utf8', timeout: 90_000, env: { ...process.env, NO_COLOR: '1' } });
     return { status: r.status, stdout: r.stdout, stderr: r.stderr };
   }
 
@@ -816,7 +819,7 @@ describe('量尺 · 乙 · 子行程:宣稱 --full 但 ran_all 量出來是假 �
 
   function run(args: string[]): { status: number | null; stdout: string; stderr: string; md: string; summary: Summary | null } {
     const out = join(scratch, `r-${Math.random().toString(36).slice(2)}.md`);
-    const r = spawnSync(process.execPath, [TSX_CLI, SCRIPT, ...args, '--out', out], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 90_000 });
+    const r = spawnSync(process.execPath, [TSX_CLI, SCRIPT, ...args, '--out', out], { cwd: REPO_ROOT, encoding: 'utf8', timeout: 90_000, env: { ...process.env, NO_COLOR: '1' } });
     const jsonPath = out.replace(/\.md$/, '.json');
     return {
       status: r.status,
