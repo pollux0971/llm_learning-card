@@ -233,6 +233,20 @@
   });
 
   $effect(() => {
+    let alive = true;
+    const onFocus = (): void => {
+      void session.refreshLoad().then(() => {
+        if (alive) pull();
+      });
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      alive = false;
+      window.removeEventListener('focus', onFocus);
+    };
+  });
+
+  $effect(() => {
     const el = zoomEl;
     if (!zoom || !el) return;
     const place = () => {
@@ -282,8 +296,13 @@
     </div>
   {:else if view.state === 'finished'}
     <p class="finished">{view.message}</p>
-    <div class="controls">
-      <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
+    <div class="dock">
+      <div class="controls">
+        <HudButton onclick={() => { session.openCategories(); pull(); }} disabled={view.controlsDisabled}>換類別</HudButton>
+      </div>
+      {#if view.load}
+        <p class="load-hint">今天已學 {view.load.learnedToday} 張,明天約 {view.load.dueTomorrow} 張</p>
+      {/if}
     </div>
   {:else if view.state === 'card' && shown}
     <div class="lc-scale" style:zoom={contentZoom}>
@@ -346,6 +365,9 @@
           <p class="deepen-error">{#each quoteParts(view.deepenError) as part, index (index)}{#if part.keep}<span class="quote-keep">{part.text}</span>{:else}{part.text}{/if}{/each}</p>
         {/if}
       </div>
+      {#if view.load}
+        <p class="load-hint">今天已學 {view.load.learnedToday} 張,明天約 {view.load.dueTomorrow} 張</p>
+      {/if}
     </div>
   {/if}
 </HudPanel>
@@ -423,6 +445,17 @@
   .status-slot {
     display: flow-root;
     min-height: calc(67.4px + 0.75rem + 2px);
+  }
+  /* 黏底塊最下面固定一行。高度固定,數字變了不推動上面的按鈕。
+     顏色只用 var(--hud-*),不畫框、不用 style 屬性。 */
+  .load-hint {
+    margin: 0.35rem 0 0;
+    height: 1.25rem;
+    line-height: 1.25rem;
+    font-size: 0.85rem;
+    color: var(--hud-text);
+    white-space: nowrap;
+    overflow: hidden;
   }
   .quote-keep {
     white-space: nowrap;

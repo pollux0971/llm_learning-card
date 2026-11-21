@@ -15,6 +15,7 @@ import { applyLearnedTransition } from '../scheduler/transitions.js';
 import {
   atDeepenFloor,
   childIdsOf,
+  countLearnedOn,
   isMainFlowLevel,
   nextUnlearned,
   omitIds,
@@ -25,6 +26,7 @@ import {
   type CrumbState,
 } from '../teach/deck.js';
 import { findCardFile, readReviewsSnapshot, saveReviewsIfUnchanged } from './io.js';
+import { estimateTomorrowFrom } from './summary.js';
 import type { Session } from './types.js';
 
 export interface TeachCategoryRow {
@@ -50,6 +52,8 @@ export interface TeachView {
   canBack: boolean;
   /** 生成中由側車蓋掉;這裡組畫面時恆為 false。 */
   generating: boolean;
+  /** 今天已學幾張、明天大約幾張。每次組畫面都重算。 */
+  load: { learnedToday: number; dueTomorrow: number };
 }
 
 export type TeachOutcome = { ok: true; view: TeachView } | { ok: false; kind: 'bad-request' | 'teach-record-changed' };
@@ -60,12 +64,23 @@ export type DeepenPrep =
   | { action: 'reuse'; view: TeachView }
   | { action: 'generate'; parent: Card; view: TeachView };
 
+export interface TeachLoadInputs {
+  /** 今天考試卡的名單(當日快取 queue 的卡 id)。沒開著、沒有快取、壞掉或別天的快取就是 []。 */
+  queueCards: readonly string[];
+  dailyCap: number;
+}
+
 export interface TeachHost {
   learningDir: string;
   /** 跟 session 同一個來源:handler 的 day()。沒有 start 過就每次問。 */
   today(): string;
   /** 沒有開著的考試卡 session 就回 undefined。 */
   examSession(): Session | undefined;
+  /**
+   * 明天預估要用的名單與每日上限。只讀:不建快取、不寫 warning。
+   * session 開著就用它的名單與 dailyCap;沒開著由 handler 讀磁碟。
+   */
+  loadInputs(): TeachLoadInputs;
 }
 
 interface CategoryConfig {
@@ -162,6 +177,8 @@ export function createTeachRuntime(host: TeachHost): {
   /** 生成寫完之後推一層麵包屑,顯示第一張新卡。 */
   enterChildren(parentId: string, childIds: readonly string[]): TeachOutcome;
   view(): TeachView;
+  /** 只算今日負擔。不改目前這張卡、麵包屑,不寫檔。 */
+  readLoad(): { learnedToday: number; dueTomorrow: number };
 } {
   const { learningDir } = host;
   let category: string | undefined;
@@ -200,7 +217,23 @@ export function createTeachRuntime(host: TeachHost): {
     return crumbs.map((crumb) => crumb.parentId);
   }
 
+  function computeLoad(reviews: Record<string, Review>): { learnedToday: number; dueTomorrow: number } {
+    const today = host.today();
+    const inputs = host.loadInputs();
+    const estimate = estimateTomorrowFrom({
+      reviews,
+      today,
+      queueCards: inputs.queueCards,
+      dailyCap: inputs.dailyCap,
+    });
+    return {
+      learnedToday: countLearnedOn(reviews, today),
+      dueTomorrow: estimate.shown,
+    };
+  }
+
   function buildView(reviews: Record<string, Review>, ids: ReadonlySet<string>): TeachView {
+    const load = computeLoad(reviews);
     const cats = loadCategories(learningDir);
     const current = category ?? cats[0]?.id ?? '';
     const categories: TeachCategoryRow[] = cats.map((cat) => ({
@@ -213,7 +246,7 @@ export function createTeachRuntime(host: TeachHost): {
     const from = top === undefined ? null : { id: top.parentId, title: readMeta(learningDir, top.parentId).title };
     const canBack = crumbs.length > 0;
     if (cardId === undefined) {
-      return { category: current, categories, card: null, prereqs: [], from, canBack, generating: false };
+      return { category: current, categories, card: null, prereqs: [], from, canBack, generating: false, load };
     }
     const meta = readMeta(learningDir, cardId);
     const prereqIds = omitIds(unlearnedPrereqs(meta.prereqs, reviews, [...ids]), crumbParents());
@@ -225,6 +258,7 @@ export function createTeachRuntime(host: TeachHost): {
       from,
       canBack,
       generating: false,
+      load,
     };
   }
 
@@ -376,5 +410,9 @@ export function createTeachRuntime(host: TeachHost): {
     },
 
     view: currentView,
+
+    readLoad(): { learnedToday: number; dueTomorrow: number } {
+      return computeLoad(readReviewsSnapshot(learningDir).reviews);
+    },
   };
 }

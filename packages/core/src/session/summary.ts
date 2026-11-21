@@ -3,7 +3,9 @@
  * 不吃 Session 物件、不碰磁碟——呼叫端(scripts/review.ts)自己從 Session
  * 與磁碟狀態算出這裡要的數字,方便單獨測文字格式與邊界值。
  */
-import type { Review } from '@contracts/index.js';
+import type { IsoDate, Review } from '@contracts/index.js';
+import { nextCalendarDay } from '@core/schema/review.js';
+import { buildDueList } from '@core/scheduler/index.js';
 import type { EstimateInput, EstimateResult, SessionSummaryInput } from './types.js';
 
 /**
@@ -22,6 +24,28 @@ export function estimateTomorrow(input: EstimateInput): EstimateResult {
     shown: capped ? input.dailyCap : total,
     overflow: capped ? total - input.dailyCap : 0,
   };
+}
+
+/**
+ * 考試卡小結與教學卡頁尾共用的「明天預估」(ADR-085)。
+ * 算法就是 summarizeDay 原來那一段:tallyToday 數回退、buildDueList 數明天到期、estimateTomorrow 套每日上限。
+ * 不改傳進去的 reviews / queueCards,不碰磁碟。
+ */
+export function estimateTomorrowFrom(input: {
+  reviews: Readonly<Record<string, Review>>;
+  today: IsoDate;
+  /** 今天考試卡的名單(當日快取的 queue 的卡 id);今天還沒有快取就是 [] */
+  queueCards: readonly string[];
+  dailyCap: number;
+}): EstimateResult {
+  const tally = tallyToday(input.queueCards, input.reviews, input.today);
+  const tomorrow = nextCalendarDay(input.today);
+  const dueTomorrowAll = buildDueList(input.reviews as unknown as Parameters<typeof buildDueList>[0], tomorrow).length;
+  return estimateTomorrow({
+    dueTomorrowExcludingReturns: Math.max(0, dueTomorrowAll - tally.returned),
+    returnedToday: tally.returned,
+    dailyCap: input.dailyCap,
+  });
 }
 
 /**

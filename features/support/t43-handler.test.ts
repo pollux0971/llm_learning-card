@@ -639,6 +639,6 @@ describe('型別自測:畫面欄位的形狀', () => {
     await r.view('teach.open');
     const view: DeepView = await r.view('teach.deepen');
     expect(Object.keys(view.from ?? {}).sort()).toEqual(['id', 'title']);
-    expect(Object.keys(view).sort()).toEqual(['canBack', 'card', 'categories', 'category', 'from', 'generating', 'prereqs']);
+    expect(Object.keys(view).sort()).toEqual(['canBack', 'card', 'categories', 'category', 'from', 'generating', 'load', 'prereqs']);
   });
 });

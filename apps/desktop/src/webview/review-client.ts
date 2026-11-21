@@ -37,6 +37,8 @@ export interface ReviewClient {
   teachPoll(): Promise<Record<string, unknown>>;
   teachCancel(): Promise<Record<string, unknown>>;
   teachBack(): Promise<Record<string, unknown>>;
+  /** 唯讀。忙或出錯不發忙碌通知、不走 busy 重試。 */
+  teachLoad(): Promise<Record<string, unknown>>;
   onWait(listener: (waiting: boolean) => void): () => void;
 }
 
@@ -54,7 +56,8 @@ type Method =
   | 'teach.deepen'
   | 'teach.poll'
   | 'teach.cancel'
-  | 'teach.back';
+  | 'teach.back'
+  | 'teach.load';
 
 /** Rust 那七種:進出錯畫面。其餘側車錯誤留在卡片上(ADR-079)。判斷放這裡,視窗不出現 busy 字面。 */
 const CLIENT_LAYER_KINDS = ['not-configured', 'sidecar-unavailable', 'sidecar-exited', 'timeout', 'busy', 'bad-envelope', 'bad-response'] as const;
@@ -158,6 +161,21 @@ export function createReviewClient(opts?: {
     return value.result;
   }
 
+  /**
+   * 只送一次。不 announce、不 sleep、不重試 busy。
+   * teach.load 用這條:焦點重拿失敗要安靜,不能讓視窗閃「稍等一下」或停用按鈕。
+   */
+  async function callOnce(method: Method, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const id = nextId;
+    nextId += 1;
+    try {
+      return await attempt(id, method, params);
+    } catch (err) {
+      if (err instanceof ReviewError) throw err;
+      throw rejectionError(err);
+    }
+  }
+
   async function call(method: Method, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const started = now();
     let announced = false;
@@ -227,6 +245,7 @@ export function createReviewClient(opts?: {
     teachPoll: () => call('teach.poll', {}),
     teachCancel: () => call('teach.cancel', {}),
     teachBack: () => call('teach.back', {}),
+    teachLoad: () => callOnce('teach.load', {}),
     onWait,
   };
 }

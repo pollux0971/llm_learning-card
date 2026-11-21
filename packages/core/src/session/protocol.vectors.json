@@ -1116,6 +1116,59 @@
    },
    "rust": "accept",
    "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "valid teach.load {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.load\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept",
+   "note": "T67:ADR-085 加的唯讀動作"
+  },
+  {
+   "name": "params content: teach.load {\"x\": 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.load\",\"params\":{\"x\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.load 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.load {\"category\": \"language\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.load\",\"params\":{\"category\":\"language\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.load 不帶類別:它只讀,不選卡(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.load {\"today\": \"2026-09-10\"}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.load\",\"params\":{\"today\":\"2026-09-10\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "「今天」是側車自己的,視窗不能帶(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "method teach.loads",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach.loads\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
   }
  ],
  "responses": [

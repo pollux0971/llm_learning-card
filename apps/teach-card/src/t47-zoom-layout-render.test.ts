@@ -573,6 +573,9 @@ describe('T47 渲染:很長的內容不弄丟按鈕(c)、縮放下 T45 照舊(d)
       const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
       buttons.push({ label, rect: [r.x, r.y, r.width, r.height], inside: inside(r), hitsSelf: Boolean(hit) && (hit === b || b.contains(hit)) });
     }
+    const hintRe = /^今天已學 \\d+ 張,明天約 \\d+ 張$/;
+    const hint = [...document.querySelectorAll('.dock *')].find((e) => hintRe.test(e.textContent.trim()) && ![...e.children].some((c) => hintRe.test(c.textContent.trim())));
+    const hintBottom = hint ? hint.getBoundingClientRect().bottom : -Infinity;
     const controls = document.querySelector('.controls');
     const slot = document.querySelector('.status-slot');
     const cr = controls ? controls.getBoundingClientRect() : null;
@@ -582,7 +585,8 @@ describe('T47 渲染:很長的內容不弄丟按鈕(c)、縮放下 T45 照舊(d)
       controls: cr ? [cr.x, cr.y, cr.width, cr.height] : null, slot: sr ? [sr.x, sr.y, sr.width, sr.height] : null,
       controlsInside: cr ? inside(cr) : false, slotInside: sr ? inside(sr) : false,
       visible: { top, bottom },
-      dockGap: cr && sr ? bottom - Math.max(cr.bottom, sr.bottom) : null,
+      // T67:黏底塊最下面多了一行今日負擔提示(「今天已學 N 張,明天約 M 張」);沒有提示(T67 之前、舊側車)時照舊只看按鈕列與狀態字樣
+      dockGap: cr && sr ? bottom - Math.max(cr.bottom, sr.bottom, hintBottom) : null,
     };
   })()`;
   const layout = (page: GalleryPage): Promise<Layout> => page.evaluate<Layout>(LAYOUT);

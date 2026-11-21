@@ -1,0 +1,27 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='{packages/core/src/session/t67-estimate.test.ts,packages/core/src/session/summary.test.ts,packages/core/src/session/protocol.test.ts,packages/core/src/teach/deck.test.ts,features/support/t67-teach-load.test.ts,features/support/t67-shared-estimate.test.ts,features/support/t37-handler.test.ts,features/support/t43-handler.test.ts,apps/teach-card/src/t67-load-session.test.ts,apps/teach-card/src/teach-session.test.ts,apps/teach-card/src/t40-busy.test.ts,apps/desktop/src/review-client.test.ts,apps/desktop/src/review-client-busy.test.ts,apps/desktop/src/review-client-teach.test.ts}' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": ["clear-text", "progress-append-only", "json"],
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "coverageAnalysis": "off",
+  "concurrency": 2,
+  "timeoutMS": 120000,
+  "mutate": [
+    "packages/core/src/session/summary.ts:28-50",
+    "packages/core/src/teach/deck.ts:122-130",
+    "packages/core/src/session/handler.ts:305-316",
+    "packages/core/src/session/handler.ts:403-404",
+    "packages/core/src/session/teach.ts:220-233",
+    "packages/core/src/session/teach.ts:414-416",
+    "apps/desktop/src/webview/review-client.ts:164-178",
+    "apps/desktop/src/webview/review-client.ts:248-248",
+    "apps/teach-card/src/teach-session.ts:84-95",
+    "apps/teach-card/src/teach-session.ts:204-207",
+    "apps/teach-card/src/teach-session.ts:307-316"
+  ],
+  "thresholds": { "high": 90, "low": 80, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "apps/desktop/src-tauri/target"]
+}

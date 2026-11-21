@@ -119,3 +119,12 @@ export function unlearnedPrereqs(
   }
   return out;
 }
+
+/** reviews.json 裡 learned_at 等於那一天的紀錄數。不看 stage、next_due、history。 */
+export function countLearnedOn(reviews: Readonly<Record<string, { learned_at?: string }>>, day: string): number {
+  let n = 0;
+  for (const review of Object.values(reviews)) {
+    if (review.learned_at === day) n += 1;
+  }
+  return n;
+}
