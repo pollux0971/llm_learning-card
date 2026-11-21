@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/session/summary.ts, packages/core/src/session/engine.ts, packages/core/src/session/teach.ts, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, packages/core/src/teach/deck.ts, apps/teach-card/src/teach-session.ts, apps/teach-card/src/App.svelte, apps/desktop/src/webview/review-client.ts]
 cpu: heavy
 budget_usd: 3
-status: dispatched
+status: merged
 owner: worker-grok
 must_catch:
   - 今天學了幾張改數 log.jsonl 的 learned 事件或 weekly.json 只數今天那條必須紅(佈置只寫 reviews.json)
@@ -206,6 +206,13 @@ npm run boundaries
 - 提示字樣固定「今天已學 N 張,明天約 M 張」,在 `.dock` 最下面一行,學完畫面也有。
 - 渲染測試排除 `[vite]` 開頭的 console(vite HMR 自己的訊息)。
 - 驗收者留的兩個小缺口(不擋,低優先,記在這裡):C9 stale 快取名單裡沒有「今天回退的卡」,所以「讀 stale 快取」被改壞時沒被抓,建議補一條:stale 快取裡有今天回退的卡,`dueTomorrow` 要忽略它;C14 `teach.load` 把 `reviews.json` 原封不動重存抓不到(測試只比位元組,可補 mtime 或接受)。
+
+## 驗收結果(2026-11-21,驗收者 -65)
+
+- 通過,沒有阻擋項。變異 82.05%(64 殺 / 14 活;summary、teach、deck 100%,teach-session 94%,handler 60%,review-client 50%)。證據 [acceptance-T67-impl.md](../reviews/acceptance-T67-impl.md)、[acceptance-T67-red.md](../reviews/acceptance-T67-red.md)。
+- 低優先(不擋,記在這裡):handler 的「session 開著」分支與走磁碟結果相同(等價);`callOnce` 的 id 遞增與非 `ReviewError` 轉換沒有測試(後果只在被 `refreshLoad` 吃掉的路徑)。
+- `@manual`(07 phase-5 的觀感那一條)交顧問判;判過之後才把 07 phase-5 標 done。
+- i9 環境型不穩(已按規則重跑):t47 渲染一檔「Chrome 10 秒沒開 DevTools 埠」零斷言、單跑連 2 次綠;`@hud-skin` 像素量測類在 i9 高負載時第一次 5 敗、重跑 23/23(基底 5e77c5c 也 23/23)。
 
 ## 預算
 
