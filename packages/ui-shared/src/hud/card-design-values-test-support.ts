@@ -99,9 +99,9 @@ export const HEAD_MIN_CONTRAST = 4.5;
 
 // ── 不退步:06、07 已 done 的 phase ────────────────────────────────────────
 /**
- * 現在 06 的 phase-1、phase-2、phase-3 與 07 的 phase-1、phase-2、phase-3、phase-4 done。新出現 done 的 phase,這份清單沒有它就紅,
+ * 現在 06 的 phase-1、phase-2、phase-3 與 07 的 phase-1、phase-2、phase-3、phase-4、phase-5 done。新出現 done 的 phase,這份清單沒有它就紅,
  * 逼人有意識地把它的 feature 雜湊釘進來(紅測試作者更新),不默默放過。
- * 雜湊是 `.feature` 檔內容的 sha256:phase-1 兩份是基底 b4d7e6d 時量的;06 phase-2 是 main 6c822c6(06 phase-2 標 done)時量的;06 phase-3 是 main 5be60bd 時量的(phase-3.feature 在 T23 沒變);07 phase-2 是 main d3a1da7 時量的(2026-10-23 標 done,證據 docs/reviews/T40-manual-2026-10-23.md;phase-2.feature 自 T37 起沒再改);07 phase-3 是 main e30a353 時量的(2026-10-24 標 done,T43/T44 @manual 通過;phase-3.feature 自初版沒再改);07 phase-4 是 main 67e2ded 時量的(2026-10-25 標 done,T46/T47/T48/T49 @manual 顧問判通過;phase-4.feature 最後改動是 2d9bd81〔T47〕)。
+ * 雜湊是 `.feature` 檔內容的 sha256:phase-1 兩份是基底 b4d7e6d 時量的;06 phase-2 是 main 6c822c6(06 phase-2 標 done)時量的;06 phase-3 是 main 5be60bd 時量的(phase-3.feature 在 T23 沒變);07 phase-2 是 main d3a1da7 時量的(2026-10-23 標 done,證據 docs/reviews/T40-manual-2026-10-23.md;phase-2.feature 自 T37 起沒再改);07 phase-3 是 main e30a353 時量的(2026-10-24 標 done,T43/T44 @manual 通過;phase-3.feature 自初版沒再改);07 phase-4 是 main 67e2ded 時量的(2026-10-25 標 done,T46/T47/T48/T49 @manual 顧問判通過;phase-4.feature 最後改動是 2d9bd81〔T47〕);07 phase-5 是 main a4f1746 時量的(2026-11-22 標 done,T67 @manual 顧問判通過、O1 照現狀收;phase-5.feature 最後改動是 38487ff5)。
  */
 export const DONE_PHASE_FEATURES: readonly { folder: string; phase: string; file: string; sha256: string }[] = [
   { folder: '06-test-card', phase: 'phase-1', file: 'features/06-test-card/phase-1.feature', sha256: 'cafdb78488aaf22bace7c18bf658706cb5bc321959739549aa8559992bc5fe7f' },
@@ -111,13 +111,14 @@ export const DONE_PHASE_FEATURES: readonly { folder: string; phase: string; file
   { folder: '07-teach-card', phase: 'phase-2', file: 'features/07-teach-card/phase-2.feature', sha256: '9ec41cd146fd44fb960ebeb3276596c927c372575fdb894de993cf9071f97dba' },
   { folder: '07-teach-card', phase: 'phase-3', file: 'features/07-teach-card/phase-3.feature', sha256: 'a27ff4e8c1f4159ad16147a0fd557ed1d59d0e239431e90e0d9718ea99190ccd' },
   { folder: '07-teach-card', phase: 'phase-4', file: 'features/07-teach-card/phase-4.feature', sha256: 'e779886b027dfa7e0afffdf1e4ce1ee0c56d2a3c4d134d9b4b90f84ba82bb8ed' },
+  { folder: '07-teach-card', phase: 'phase-5', file: 'features/07-teach-card/phase-5.feature', sha256: '5844debb571a4aa66d40dd575806eb20668abdc4e92d4bc09bc70097f0ddc1ad' },
 ];
 /**
- * 子行程跑的標籤式(場景 4):06 的 phase-1、phase-2 與 phase-3、07 的 phase-1、phase-2、phase-3 與 phase-4,都不含 @manual。
+ * 子行程跑的標籤式(場景 4):06 的 phase-1、phase-2 與 phase-3、07 的 phase-1、phase-2、phase-3、phase-4 與 phase-5,都不含 @manual。
  * 不能寫成 `(@test-card or @teach-card) and (@phase-1 or @phase-2 or @phase-3)`:06 的 phase-4 還不是 done,不該被拉進來。
  * 新增 done 的 phase 時,這個式子與上面的清單一起更新(紅測試作者)。
  */
-export const DONE_PHASES_TAG_EXPRESSION = '((@test-card and (@phase-1 or @phase-2 or @phase-3)) or (@teach-card and (@phase-1 or @phase-2 or @phase-3 or @phase-4))) and not @manual';
+export const DONE_PHASES_TAG_EXPRESSION = '((@test-card and (@phase-1 or @phase-2 or @phase-3)) or (@teach-card and (@phase-1 or @phase-2 or @phase-3 or @phase-4 or @phase-5))) and not @manual';
 
 /**
  * 「即將標 done」的 phase:雜湊已經釘住,但 FEATURE.md 的 phase 表還沒翻成 done(協調者標 done 的那個 commit 之前)時,

@@ -43,11 +43,12 @@ describe('doneFeatureProblems 抓得到', () => {
     writeFileSync(join(root, 'features', '07-teach-card', 'phase-2.feature'), feat);
     writeFileSync(join(root, 'features', '07-teach-card', 'phase-3.feature'), feat);
     writeFileSync(join(root, 'features', '07-teach-card', 'phase-4.feature'), feat);
+    writeFileSync(join(root, 'features', '07-teach-card', 'phase-5.feature'), feat);
     return root;
   }
   const table = (rows: string[]) => ['| # | 內容 | wave | 狀態 | 日期 |', '|---|---|---|---|---|', ...rows].join('\n');
   const pinnedFor = (feat: string) => {
-    const root = fake(table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |']), table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |', '| 4 | d | W | done | d |']), feat);
+    const root = fake(table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |']), table(['| 1 | a | W | done | d |', '| 2 | b | W | done | d |', '| 3 | c | W | done | d |', '| 4 | d | W | done | d |', '| 5 | e | W | done | d |']), feat);
     return { root, pinned: DONE_PHASE_FEATURES.map((p) => ({ ...p, sha256: doneFeatureHash(root, p.file) })) };
   };
   const doneFeatureHash = (root: string, file: string) => {
