@@ -14,6 +14,7 @@ import { topicRouter } from '../../packages/core/src/ingest/t55-test-support.js'
 import { ensureInitialized, setCategory } from '../../packages/core/src/ingest/init.js';
 import { validateCard } from '../../packages/core/src/schema/validate-card.js';
 import { buildDueList } from '../../packages/core/src/scheduler/index.js';
+import { i4EachHasQuestionFile, isI4 } from './i4-two-card-system.steps.js';
 import {
   cardPath, countingRouter, expectedMarked, ingestOne, loadScan, rawText, readCard, treeHash, writeRaw, type ScanResult,
 } from '../../packages/core/src/ingest/t53-test-support.js';
@@ -134,6 +135,7 @@ Then('each has source llm and no source reference', function (this: LearningWorl
 });
 
 Then('each has a question file', function (this: LearningWorld) {
+  if (isI4(this)) return i4EachHasQuestionFile(this); // I4 整合(深入新生成的卡)共用這句(見 i4-two-card-system.steps.ts)
   for (const c of levelZeroCards(this)) assert.ok(existsSync(join(this.dir!, 'questions', `${c.id}.yaml`)), `${c.id} 要有考題檔`);
 });
 
