@@ -25,6 +25,7 @@ import { ERROR_MESSAGES } from '../../packages/core/src/session/protocol.js';
 import { parseCardText } from '../../packages/core/src/schema/parse-card.js';
 import { validateQuestionFile } from '../../packages/core/src/schema/validate-question.js';
 import { spawnSidecar, type Sidecar } from '../support/review-sidecar-harness.js';
+import { i4PressDeepen, isI4 } from './i4-two-card-system.steps.js';
 import {
   PARENT,
   PARENT_TITLE,
@@ -224,6 +225,7 @@ Given('the displayed card is at the deepest allowed level', function (this: Lear
 // ---------------------------------------------------------------- When
 
 When('the person presses deepen', { timeout: 180_000 }, async function (this: LearningWorld) {
+  if (isI4(this)) return i4PressDeepen(this); // I4 整合共用這句(見 i4-two-card-system.steps.ts)
   const session = await ensureWindow(this);
   await session.deepen();
   await waitDeepenDone(this);

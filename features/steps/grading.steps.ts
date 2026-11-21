@@ -32,6 +32,7 @@ import {
 import { countWords } from '@core/schema/word-count.js';
 import type { LogEvent } from '@contracts/index.js';
 import { assertI2GraderRecorded, isI2Loop } from './i2-review-loop.steps.js';
+import { i4NetworkAvailable, isI4 } from './i4-two-card-system.steps.js';
 
 const FIXTURES_DIR = resolve(import.meta.dirname, '../../contracts/fixtures/llm');
 
@@ -335,6 +336,7 @@ Given('an apply question with three rubric criteria', function (this: LearningWo
 });
 
 Given('the network is available', function (this: LearningWorld) {
+  if (isI4(this)) return i4NetworkAvailable(this); // I4 整合(docs/integration/i4-two-card-system.feature)共用這句(見 i4-two-card-system.steps.ts)
   if (isLlmPhase3(this)) return void phase3Hooks.network?.(true); // 03-llm-router phase-3 共用這句(見 _llm-phase3-shared.ts)
   if (isGradingPhase3(this)) return void gradingPhase3Hooks.network?.(this, true); // 05-grading phase-3 共用這句(見 _grading-phase3-shared.ts)
   // 純敘述:grader 是 'cloud' 還是 'local-provisional' 由 LlmResult.provisional 決定
