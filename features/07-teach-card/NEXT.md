@@ -4,9 +4,9 @@
 
 | 欄位 | 值 |
 |---|---|
-| 已完成 | phase-4(2026-10-25:T46 折疊與圖片放大、T47 縮放與黏底與視窗、T48 修補〔圖片放大層〕、T49 修補〔黏底塊不透明、不留縫〕;@manual `docs/reviews/T46-manual-2026-10-24.md`、`docs/reviews/T47-manual-2026-10-24.md`、`docs/reviews/T49-manual-2026-10-25.md` 顧問判通過;F2〔捲到底按鈕上移 1.29 px〕交 T50 小票)、phase-3(2026-10-24:T43 實作〔背景生成、可取消〕、T44 修補〔生成中的畫面跟著更新〕;@manual `docs/reviews/T43-manual-2026-10-24.md`〔F1/F2 不過〕與重做 `docs/reviews/T44-manual-2026-10-24.md`〔全過〕顧問判通過)、phase-2(2026-10-23:T37 實作、T40 修補〔兩視窗共用側車〕;@manual 重做 `docs/reviews/T40-manual-2026-10-23.md` 顧問判通過)、phase-1(2026-09-03) |
+| 已完成 | phase-5(2026-11-22:T67 今日負擔提示〔側車 `teach.load`、共用 `estimateTomorrowFrom`、頁尾提示〕;@manual `docs/reviews/T67-manual-2026-11-21.md` 顧問判通過,O1〔最小視窗黏底塊佔內文高度 43%〕照現狀收,另一種做法記低優先)、phase-4(2026-10-25:T46 折疊與圖片放大、T47 縮放與黏底與視窗、T48 修補〔圖片放大層〕、T49 修補〔黏底塊不透明、不留縫〕;@manual `docs/reviews/T46-manual-2026-10-24.md`、`docs/reviews/T47-manual-2026-10-24.md`、`docs/reviews/T49-manual-2026-10-25.md` 顧問判通過;F2〔捲到底按鈕上移 1.29 px〕交 T50 小票)、phase-3(2026-10-24:T43 實作〔背景生成、可取消〕、T44 修補〔生成中的畫面跟著更新〕;@manual `docs/reviews/T43-manual-2026-10-24.md`〔F1/F2 不過〕與重做 `docs/reviews/T44-manual-2026-10-24.md`〔全過〕顧問判通過)、phase-2(2026-10-23:T37 實作、T40 修補〔兩視窗共用側車〕;@manual 重做 `docs/reviews/T40-manual-2026-10-23.md` 顧問判通過)、phase-1(2026-09-03) |
 | 進行中 | 無 |
-| 下一個 | phase-5 今日負擔提示(T67;2026-10-27 I4 盤點發現計畫漏排,ADR-085),屬 I4 的關鍵路徑之一 |
+| 下一個 | 無(07 五個 phase 全部 `done`;I4 要的是 i4 驗收檔的整合層步驟〔T66,已合併〕與真資料的人工確認) |
 
 ## Gate
 
@@ -26,7 +26,7 @@
 - [x] 自身:phase-4 `done`
 - [x] 整合:無
 
-理由:頁尾的提示跟黏底的按鈕列放在一起,版面是 phase-4 定的。數字由側車算,不用等別的資料夾:「今天學了幾張」讀 `state/reviews.json` 的 `learned_at`,「明天約幾張」用考試卡小結的同一個函式(ADR-085)。週目標不在這裡,留給 08 phase-2。
+(2026-11-22 已 `done`。)理由:頁尾的提示跟黏底的按鈕列放在一起,版面是 phase-4 定的。數字由側車算,不用等別的資料夾:「今天學了幾張」讀 `state/reviews.json` 的 `learned_at`,「明天約幾張」用考試卡小結的同一個函式(ADR-085)。週目標不在這裡,留給 08 phase-2。
 
 ## Gate 未滿足時
 
