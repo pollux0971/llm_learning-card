@@ -4,7 +4,7 @@ deps: []
 touches: [features/steps/i4-two-card-system.steps.ts, features/support/i4-harness.ts, features/steps/teach-card-phase3.steps.ts, features/steps/ingest-phase3.steps.ts, features/steps/grading.steps.ts, features/support/t66-source-marker-render.test.ts]
 cpu: heavy
 budget_usd: 2
-status: todo
+status: merged
 owner: 測試
 must_catch:
   - 側車排教學卡不看 order 檔(改成照 id 排) 依賴順序那條必須紅
@@ -200,6 +200,12 @@ npm run check:steps
 ## 低優先小票清單(協調者不另建清單檔,記在工單裡)
 
 - 07 phase-3「the marker is visible in the interface」也只看 frontmatter。D3 選甲之後,可以用同一支渲染測試補「待審核」徽章。
+
+## 驗收結果(2026-11-22,驗收者 -65)
+
+- 通過,沒有阻擋項。基底 d9ff55a 上 `@integration and @i4 and not @manual` 7 條自動場景全 undefined(45 步);t66-impl 上 8/8、52 步全過(8 = 7 自動 + standalone-regression 那條也帶這兩個 tag)。證據 [acceptance-T66.md](../reviews/acceptance-T66.md),含 G2 證據表(fs、order 檔、llm-router、scheduler 各一列;第 55 行範例圖片引用 07 phase-1、07 phase-4 與 T46/T48 的 `@manual`;第 12 行 `@e2e` 不算)。
+- 低優先(不擋):M6 深入出來的子卡 `prereqs` 寫成空,場景沒斷言(建議補「子卡 prereqs = [父卡]」);Rust `lc-fs` 的 read 拒絕那條改壞驗收者沒做(重編負擔),由測試角色的改壞清單負責。
+- 環境備忘:i9 `/tmp` 底下有大量 `lc-t53*` 暫存資料夾(約 800 個,T53 測試每跑一次漏一批),不是本票造成;另開低優先小票處理(讓那些測試自己清)。
 
 ## 預算
 
