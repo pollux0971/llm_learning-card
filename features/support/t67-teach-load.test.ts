@@ -12,7 +12,7 @@
  *
  * 本來就綠(基底上已成立,守不退步):沒有(整個檔都是新的行為)。
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -415,6 +415,40 @@ describe('teach.load:只讀,而且不動畫面', () => {
     await fresh.load();
     expect(tree(cacheBase(r.v))).toEqual(before);
     expect(logText(r.v)).toBe(logBefore);
+  });
+
+  it('快取是別天的(stale):名單當 [],忽略它裡面今天回退的卡(C9:讀 stale 快取會多算 2)', async () => {
+    const r = await rig();
+    seedDue(r.v, ['sec-0001', 'sec-0002'], [0, 0]);
+    await r.ok('start');
+    expect(await r.answerAllWrong(), '佈置:兩張都答錯').toBeGreaterThanOrEqual(2);
+    // 回退的兩張改成明天不到期、也沒有別的卡:有名單 → 先扣 0 再加回 2 = 2;名單是 [] → 0
+    const reviews = readReviews(r.v);
+    for (const id of ['sec-0001', 'sec-0002']) reviews[id] = { ...reviews[id]!, next_due: '2026-12-01' };
+    writeReviews(r.v, reviews);
+    const fresh = await r.restart();
+    expect((await fresh.load()).dueTomorrow, '佈置:快取是今天的時候,回退的兩張算進去').toBe(2);
+    const cache = JSON.parse(readFileSync(cachePath(r.v), 'utf8')) as Obj;
+    writeFileSync(cachePath(r.v), JSON.stringify({ ...cache, date: '2026-09-08' }), 'utf8');
+    expect(readFileSync(cachePath(r.v), 'utf8'), '佈置:快取的 date 真的被改成別天').toContain('2026-09-08');
+    const after = await (await r.restart()).load();
+    expect(after.dueTomorrow, 'stale 快取的名單要忽略').toBe(0);
+  });
+
+  it('不重存 reviews.json:檔案的修改時間與 inode 不變(C14:原封不動重存位元組一樣、時間會變)', async () => {
+    const r = await rig();
+    seedLearned(r.v, ['sec-0001', 'sec-0002'], ['lang-0001']);
+    const path = join(r.v.dir, 'state/reviews.json');
+    const old = new Date('2026-01-01T00:00:00Z');
+    utimesSync(path, old, old);
+    const before = statSync(path);
+    await r.load();
+    await r.ok('teach.open');
+    await r.load();
+    await (await r.restart()).load();
+    const after = statSync(path);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+    expect(after.ino).toBe(before.ino);
   });
 
   it('不改畫面那張卡:open → load ×3 → next,跟 open → next 一樣(同一張卡、同樣的先備、同樣的類別清單)', async () => {

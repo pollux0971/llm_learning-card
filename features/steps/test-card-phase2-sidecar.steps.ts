@@ -130,9 +130,9 @@ Then('no action the window can send carries a path or a card id', { timeout: 180
   assert.ok(b.proc!.isAlive());
   // 視窗端的 ReviewClient 本身也沒有任何能帶 path 或 card 的方法(T40:多了 onWait,它收一個聽眾函式,不是 path 或 card)
   const client = createReviewClient({ handler: async () => '' }) as unknown as Record<string, { length: number }>;
-  assert.deepEqual(Object.keys(client).sort(), ['next', 'onWait', 'start', 'status', 'submit', 'summary', 'teachBack', 'teachCancel', 'teachDeepen', 'teachNext', 'teachOpen', 'teachPoll', 'teachPrereq', 'teachSwitch']);
-  // T43:四個新方法都不收參數(沒有路徑、卡 id、工作編號)
-  for (const name of ['start', 'next', 'summary', 'status', 'teachNext', 'teachDeepen', 'teachPoll', 'teachCancel', 'teachBack']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
+  assert.deepEqual(Object.keys(client).sort(), ['next', 'onWait', 'start', 'status', 'submit', 'summary', 'teachBack', 'teachCancel', 'teachDeepen', 'teachLoad', 'teachNext', 'teachOpen', 'teachPoll', 'teachPrereq', 'teachSwitch']);
+  // T43:四個新方法都不收參數(沒有路徑、卡 id、工作編號);T67:teachLoad 也不收
+  for (const name of ['start', 'next', 'summary', 'status', 'teachNext', 'teachDeepen', 'teachPoll', 'teachCancel', 'teachBack', 'teachLoad']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
 });
 
 // ---------------------------------------------------------------- 場景:兩邊的訊息形狀一樣
