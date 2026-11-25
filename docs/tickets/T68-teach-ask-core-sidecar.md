@@ -4,7 +4,7 @@ deps: []
 touches: [packages/core/src/llm/types.ts, packages/core/src/llm/routing.ts, packages/core/src/llm/token-limits.ts, packages/core/src/llm/fallback.ts, packages/core/src/prompt-quality/golden-run.ts, packages/core/prompts/teach/ask.md, packages/core/src/teach/ask.ts, packages/core/src/teach/index.ts, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/fixtures/golden-ask/inputs.json, packages/core/src/session/teach.ts, packages/core/src/session/handler.ts, packages/core/src/session/teach-ask.ts, packages/core/src/session/protocol.ts, packages/core/src/session/protocol.vectors.json, apps/desktop/src/webview/review-client.ts, contracts/fixtures/llm/, contracts/fixtures/README.md]
 cpu: heavy
 budget_usd: 4
-status: dispatched
+status: merged
 owner: worker-claude
 must_catch:
   - ask 跑著時 teach.next(或 switch、prereq、open、deepen、back)回 busy 或 bad-request 同時有 ask 在跑那條必須紅(這些動作照常執行,同時丟掉還在跑的 ask)

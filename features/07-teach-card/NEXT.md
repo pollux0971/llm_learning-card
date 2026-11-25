@@ -5,7 +5,7 @@
 | 欄位 | 值 |
 |---|---|
 | 已完成 | phase-5(2026-11-22:T67 今日負擔提示〔側車 `teach.load`、共用 `estimateTomorrowFrom`、頁尾提示〕;@manual `docs/reviews/T67-manual-2026-11-21.md` 顧問判通過,O1〔最小視窗黏底塊佔內文高度 43%〕照現狀收,另一種做法記低優先)、phase-4(2026-10-25:T46 折疊與圖片放大、T47 縮放與黏底與視窗、T48 修補〔圖片放大層〕、T49 修補〔黏底塊不透明、不留縫〕;@manual `docs/reviews/T46-manual-2026-10-24.md`、`docs/reviews/T47-manual-2026-10-24.md`、`docs/reviews/T49-manual-2026-10-25.md` 顧問判通過;F2〔捲到底按鈕上移 1.29 px〕交 T50 小票)、phase-3(2026-10-24:T43 實作〔背景生成、可取消〕、T44 修補〔生成中的畫面跟著更新〕;@manual `docs/reviews/T43-manual-2026-10-24.md`〔F1/F2 不過〕與重做 `docs/reviews/T44-manual-2026-10-24.md`〔全過〕顧問判通過)、phase-2(2026-10-23:T37 實作、T40 修補〔兩視窗共用側車〕;@manual 重做 `docs/reviews/T40-manual-2026-10-23.md` 顧問判通過)、phase-1(2026-09-03) |
-| 進行中 | 無 |
+| 進行中 | phase-6 上半 T68(核心與側車)已合併 2026-11-25〔驗收 [acceptance-T68-red.md](../../docs/reviews/acceptance-T68-red.md)、[acceptance-T68-impl.md](../../docs/reviews/acceptance-T68-impl.md),變異 ask 84.44%、routing 97.73%〕;下半 T69(畫面)待派 |
 | 下一個 | phase-6 問 AI(`ready`,2026-11-25 使用者 `/feature` 確認,ADR-086;工單 T68〔核心與側車〕、T69〔畫面〕) |
 
 ## Gate
