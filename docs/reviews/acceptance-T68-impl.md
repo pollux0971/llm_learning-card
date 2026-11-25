@@ -151,11 +151,11 @@ G5、G8 與提示標籤的字串可以不補。
 
 ### 剩下 47 個存活怎麼分(逐條讀過)
 
-- **文字層(提示標籤、分隔符號,9 個)**:ask.ts 的模板開頭、`example:` 標籤、`earlier discussion on this card:` 標籤、輪數編號、結尾空行,以及 NonBlank 的錯誤訊息字串。只影響給模型看的格式與 zod 的訊息,不是行為。
-- **等價或死碼(約 24 個)**:`running()` 四個(handler 不用);「晚到」第二道保險與 `cancelled` 預設值(第一道已擋,拿掉行為不變);`finally` 清 job;`JSON.parse` 的 trim(JSON 本來容忍前後空白);`history` 初始值與 invalidate、shutdown 裡的清理(下一次問時因為卡 id 不同本來就會清,等價);poll 的 idle 與 done 判斷(handler 之後的回應形狀不變);`errorCode` 的型別判斷;帳本壞行那個 `if` 與它的訊息字串(壞行走到下一行一樣丟、一樣回 budget 與同一個訊息);`shutdown` 的清理。
+- **文字層(提示標籤、分隔符號,9 個)**:ask.ts 的模板開頭、example 前面那個空行的內容、`earlier discussion on this card:` 標籤、輪數編號、結尾空行,以及 NonBlank 的錯誤訊息字串。只影響給模型看的格式與 zod 的訊息,不是行為。
+- **等價或死碼(約 24 個)**:`running()` 四個(handler 不用);「晚到」第二道保險與 `cancelled` 預設值(第一道已擋,拿掉行為不變);`finally` 清 job;`JSON.parse` 的 trim(近似等價:只差前後有 BOM 或不換行空白時,見第 10 節 41);`history` 初始值與 invalidate、shutdown 裡的清理(下一次問時因為卡 id 不同本來就會清,等價);poll 的 idle 與 done 判斷(handler 之後的回應形狀不變);`errorCode` 的型別判斷;帳本壞行那個 `if` 與它的訊息字串(壞行走到下一行一樣丟、一樣回 budget 與同一個訊息);`shutdown` 的清理。
 - **不是這張的(約 9 個)**:handler 第 399、403、407、409、411、413 行是 T43 以前就有的「換卡動作」程式(`deepen.running()` 擋、`abandon`、預設參數),落在我設的範圍裡才被算進來。
 - **剩下 2 個小缺口(不擋)**:
-  1. 讀帳本時「不是 ENOENT 的讀檔錯誤」(例如權限不夠)現在會被當成「沒花費」放行:把那個 `catch` 的處理拿掉、或把 `!== 'ENOENT'` 改成 false,測試都不紅。實務上 router 本身遇到壞帳本會拒絕真呼叫,所以不會多花錢,但行為與「不知道不是 0」的原則不完全一致。建議補一條:帳本檔不是 ENOENT 的錯誤(例如把 log.jsonl 換成資料夾)→ `error: 'budget'`、router 呼叫 0。
+  1. 讀帳本時「不是 ENOENT 的讀檔錯誤」(例如權限不夠、log.jsonl 被換成資料夾):**實作的行為是對的**(丟錯,外層回 `error: 'budget'`、不呼叫);但**沒有測試釘住**,把處理拿掉或把判斷改成永遠放行,測試都不紅。(本節第一次寫成「現在被當成沒花費放行」是說反了:放行的是改壞版,不是實作。更正見第 10 節。)建議補一條:帳本檔讀取失敗且不是 ENOENT → `error: 'budget'`、router 呼叫 0。
   2. handler 第 357 行 `reloadAndMaybeDropRouter()`(問之前重讀 .env、金鑰變了就換 router)沒有測試。這是 deepen 與考題也在用的共用步驟,不是 T68 新邏輯,可以不補。
 
 ### 結論(第二輪)
@@ -163,3 +163,87 @@ G5、G8 與提示標籤的字串可以不補。
 變異 84.44%,**達到 ≥80%**。第一輪的 G1 到 G9(提示含標題與 example、呼叫中 BUDGET_EXCEEDED、無帳本檔、空白問題、第一輪無前輪區塊、全空白回答、訊息非空、無卡時嚴格 bad-request)都已經釘住,對應的改壞不再存活。剩下的是文字層、等價、非 T68 的既有程式,加上上面 2 個小缺口。沒有阻擋項。
 
 - 真 learning/ 前後仍是 64 檔 / 3f944d2429767455 / 118 行,`~/.cache` 498,不變。LLM 呼叫 0。
+
+## 10. 47 個存活逐個列表(第二輪,ask 設定 84.44%)
+
+來源:第二輪 Stryker 的報告(逐個讀過,每個對回 t68-impl 的原始碼);報告檔在 i9 上已隨簽出清掉,這一節沒有重跑。行號是 t68-impl(也是 t68-red2)的行號。
+分類:**文字層**(只改給模型看的格式)、**等價**(改了行為不變,寫一句為什麼)、**死碼**(沒有人呼叫)、**沒測到**(行為會變、沒有測試紅;分「非 T68」「共用步驟」「T68 缺口」)。
+統計:文字層 8、等價 15(其中 2 個是推定:#23、#24)、死碼 4、近似等價 1、沒測到·非 T68 7、沒測到·共用 1、沒測到·T68 缺口 11(其中 #36、#37 影響小),共 47。
+
+### 10.1 handler.ts(12 個)
+
+| # | 行 | Stryker 改了什麼 | 分類 | 說明 / 建議補什麼 |
+|---|---|---|---|---|
+| 1 | 357 | CallExpression:刪掉 `reloadAndMaybeDropRouter()` | 沒測到·共用 | 問之前重讀 .env、金鑰變了就丟舊 router。deepen、考題用同一段,不是 T68 新邏輯。可不補;要補:換 .env 金鑰後再問,router 工廠被呼叫第二次 |
+| 2 | 399 | CallExpression:刪掉 `deepen.abandon()`(teach.open) | 沒測到·非 T68 | T43 以前就有的規則(開啟時放掉進行中的深入),落在我的範圍才算進來 |
+| 3 | 403 | ConditionalExpression → `false`(teach.next 的「deepen 跑著回 bad-request」) | 沒測到·非 T68 | 同上,T43 規則;T68 的互斥測試只測 teach.ask 這一邊 |
+| 4 | 403 | StringLiteral `'bad-request'` → `""` | 沒測到·非 T68 | 同上(錯誤種類字串) |
+| 5 | 407 | ConditionalExpression → `false`(teach.switch 同一條規則) | 沒測到·非 T68 | 同 3 |
+| 6 | 407 | StringLiteral `'bad-request'` → `""` | 沒測到·非 T68 | 同 4 |
+| 7 | 409 | StringLiteral:`category ?? ''` 的預設值 `''` → `"Stryker was here!"` | 等價 | 協定規定 switch 一定帶 category(必填字串),預設值走不到 |
+| 8 | 411 | ConditionalExpression → `false`(teach.prereq 同一條規則) | 沒測到·非 T68 | 同 3 |
+| 9 | 411 | StringLiteral `'bad-request'` → `""` | 沒測到·非 T68 | 同 4 |
+| 10 | 413 | UnaryOperator:`index ?? -1` 的 `-1` → `+1` | 等價 | 協定規定 prereq 一定帶 index(必填非負整數),預設值走不到 |
+| 11 | 428 | StringLiteral:`question ?? ''` 的 `''` → `"Stryker was here!"` | 等價 | 協定規定 teach.ask 一定帶 question(必填字串),預設值走不到 |
+| 12 | 437 | ConditionalExpression → `true`(`polled.state === 'done'` 恆真) | 等價 | 不是 done 時 `polled.ask` 是 undefined,回應 `{...view, ask: undefined}` 經 JSON 序列化後與沒有 ask 一樣 |
+
+### 10.2 teach-ask.ts(26 個)
+
+| # | 行 | Stryker 改了什麼 | 分類 | 說明 / 建議補什麼 |
+|---|---|---|---|---|
+| 13 | 75 | ConditionalExpression → `true`(errorCode 的 `typeof err === 'object'` 判斷) | 沒測到·T68 缺口 | 這四個(13 到 16)是同一件事:router 丟的不是物件(字串、null、undefined)時,原本回 `undefined` 走 `failed`;改壞後讀 `.code` 會對 null 丟 TypeError,從 catch 裡逃出去變成沒人處理的 rejection。**補一條:router 丟字串、丟 null → `error: 'failed'`,不留下未處理的錯誤** |
+| 14 | 75 | LogicalOperator:`&&` → `\|\|` | 沒測到·T68 缺口 | 同 13 |
+| 15 | 75 | ConditionalExpression → `true`(`err !== null` 那半) | 沒測到·T68 缺口 | 同 13 |
+| 16 | 75 | ConditionalExpression → `true`(另一半) | 沒測到·T68 缺口 | 同 13 |
+| 17 | 92 | ArrayDeclaration:`history` 初始 `[]` → `["Stryker was here"]` | 等價 | 第一次問時 `historyCard` 還是 undefined,與卡 id 不同,第一行就先把 history 清成 `[]` |
+| 18 | 109 | BlockStatement:讀帳本的 `catch` 整塊清空 | 沒測到·T68 缺口 | **小缺口①**(見 10.4):非 ENOENT 的讀檔錯誤現在會丟錯、回 budget;改壞版會把它吞掉當沒花費,沒有測試紅 |
+| 19 | 110 | ConditionalExpression → `false`(`code !== 'ENOENT'` 永遠不丟) | 沒測到·T68 缺口 | 同 18 |
+| 20 | 113 | ConditionalExpression → `false`(`if (!parsed.ok) throw`) | 等價 | 壞行時 `parsed.events` 是 undefined,下一行的 computeDailySpend 一樣丟錯,同一個外層 catch 回同一個 budget 與同一句訊息 |
+| 21 | 113 | StringLiteral:丟出的錯誤文字 → `""` | 等價 | 外層 catch 不看錯誤文字,固定回「花費算不出來」那一句 |
+| 22 | 123 | ConditionalExpression → `true`(`job === mine && !mine.cancelled` 整個) | 沒測到·T68 缺口 | 這個條件擋「晚到的結果」。成功路徑前面還有一道 cancelled 檢查,所以成功不會漏;但 catch 路徑沒有,**晚到的『失敗』(router 在換卡後才丟錯)會漏進新狀態,poll 會回舊卡的錯誤**。**補一條:ask 在途中換卡,router 之後才失敗(NO_MODEL 與一般錯誤各一)→ poll 不回那個失敗** |
+| 23 | 123 | LogicalOperator:`&&` → `\|\|` | 等價(推定) | 可到達的狀態只有兩種:兩邊都真(還在跑)、兩邊都假(已丟棄),`\|\|` 與 `&&` 結果一樣;沒有「一真一假」的路 |
+| 24 | 123 | ConditionalExpression → `true`(其中一個子條件) | 等價(推定) | 丟棄時 `job` 與 `cancelled` 一起變(drop 同時設兩個),另一個子條件單獨就擋得住。**22 到 24 因為報告已清,我分不出哪個 mutant 對應哪一種;22 的補測一次就能確認** |
+| 25 | 127 | ConditionalExpression → `false`(`if (mine.cancelled) return` 在拿到 router 之後) | 沒測到·T68 缺口 | 換卡發生在「拿 router」途中時,原本不再呼叫 AI;改壞版會多呼叫一次 AI(結果事後被丟,但錢花了)。**補一條控制器單元測試(假的 acquireRouter 刻意拖慢):拿 router 途中換卡 → router 的 call 次數 0** |
+| 26 | 165 | ConditionalExpression → `true`(`finally` 裡 `if (job === mine) job = undefined` 恆真) | 沒測到·T68 缺口 | **最值得補**:舊 ask 晚到收尾時,會把「新卡上新開的 ask」的 job 也清掉,新 ask 的答案就被丟掉、poll 一直回 idle,畫面卡住。**補一條:ask1 被攔住 → 換卡 → ask2 開始 → 放行 ask1 → ask2 仍在跑、最後 poll 拿到 ask2 的答案** |
+| 27 | 170 | ArrowFunction:`running` 整個換成回 undefined | 死碼 | `running()` 在介面上,但 handler 沒有人呼叫(互斥由 `ask()` 自己判斷)。建議之後刪掉,或有人用了再測 |
+| 28 | 170 | ConditionalExpression → `true` | 死碼 | 同 27 |
+| 29 | 170 | ConditionalExpression → `false` | 死碼 | 同 27 |
+| 30 | 170 | EqualityOperator:`!==` → `===` | 死碼 | 同 27 |
+| 31 | 186 | ObjectLiteral:`{ cancelled: false }` → `{}` | 等價 | `cancelled` 只被當真假讀,`undefined` 也是假 |
+| 32 | 194 | ConditionalExpression → `true`(`result !== undefined` 恆真) | 等價 | 沒結果時回 `{state:'done', ask: undefined}`,handler 展開後 `ask: undefined` 經 JSON 序列化消失,與 idle 的回應一樣 |
+| 33 | 195 | ObjectLiteral:idle 的 `{ state: 'idle' }` → `{}` | 等價 | handler 只比對 `'asking'` 與 `'done'`,其他一律走純 TeachView 那條,所以內容是什麼都一樣 |
+| 34 | 195 | StringLiteral:`'idle'` → `""` | 等價 | 同 33 |
+| 35 | 204 | ArrayDeclaration:invalidate 裡 `history = []` → `["Stryker was here"]` | 等價 | invalidate 同時把 `historyCard` 設成 undefined,下一次問就會因卡 id 不同而清掉 history |
+| 36 | 208 | BlockStatement:`shutdown()` 整個清空 | 沒測到·T68 缺口(小) | shutdown 在側車結束時才呼叫,沒有測試看得到。**可補一條控制器單元測試:shutdown 後在途的 ask 不再產生結果、不再呼叫 router**;影響小(行程就要結束) |
+| 37 | 209 | CallExpression:刪掉 shutdown 裡的 `drop()` | 沒測到·T68 缺口(小) | 同 36 |
+| 38 | 210 | ArrayDeclaration:shutdown 裡 `history = []` → 怪值 | 等價 | 同 35(shutdown 本身行程要結束,history 清不清沒人看得到) |
+
+### 10.3 ask.ts(9 個)
+
+| # | 行 | Stryker 改了什麼 | 分類 | 說明 / 建議補什麼 |
+|---|---|---|---|---|
+| 39 | 18 | ObjectLiteral:NonBlank 的 `{ message: '不能是空的' }` → `{}` | 文字層 | 只是 zod 的錯誤訊息,不外露 |
+| 40 | 18 | StringLiteral:`'不能是空的'` → `""` | 文字層 | 同 39 |
+| 41 | 32 | MethodExpression:`JSON.parse(text.trim())` 拿掉 `trim()` | 近似等價(小缺口) | JSON.parse 本來就容忍前後的空格、換行、tab;只有「前後有 BOM 或不換行空白(NBSP)」時,原版接受、改壞版拒絕。我第一版寫「等價」不夠精確。若規格要容忍這種前後字元,補一條「前後有 BOM 仍算合法」;不然可不補 |
+| 42 | 75 | StringLiteral → `""`(提示的分隔線 `'---'` 或模板結尾換行處理之一) | 文字層 | 只影響給模型看的區塊分隔 |
+| 43 | 75 | StringLiteral → `""`(同一行的另一個) | 文字層 | 同 42 |
+| 44 | 76 | StringLiteral:example 前面那個空行 `''` → `"Stryker was here!"` | 文字層 | 只是 example 前的空行內容(`example:` 標籤與 example 文字本身已被 G1 測試釘住,沒有存活) |
+| 45 | 79 | StringLiteral:`'earlier discussion on this card:'` → `""` | 文字層 | 前面討論區塊的標題字樣;G6 測試釘的是「第一輪沒有這個區塊」,沒釘標題字 |
+| 46 | 81 | ArithmeticOperator:`i + 1` → `i - 1`(前輪編號) | 文字層 | 只是 earlier question 1/2/3 的編號 |
+| 47 | 84 | StringLiteral:`'---'` → `""`(問題前的分隔線) | 文字層 | 同 42 |
+
+### 10.4 小缺口①(帳本讀檔錯誤不是 ENOENT)一句話
+
+**現在實作的行為(對):** 讀 `state/log.jsonl` 遇到不是「檔案不存在」的錯誤(例如權限不夠、被換成資料夾),`teach-ask.ts` 第 110 行會把錯往外丟,外層回 `error: 'budget'`(訊息「今天的花費算不出來」)且不呼叫 router;**應該的行為**也是這個——所以實作不用改,缺的是測試:第 109、110 行被改壞(把錯吞掉當沒花費)時沒有任何測試紅(# 18、19)。**請 -67 補一條:把 log.jsonl 換成資料夾 → `error: 'budget'`、router 呼叫 0 次。** 我在第 9 節第一次寫成「實作現在被當成沒花費放行」是說反了,已更正。
+
+### 10.5 建議補測的優先序(重跑變異前)
+
+1. **#26**(舊 ask 晚到收尾清掉新 ask,畫面會卡住):最重要。
+2. **#22**(晚到的失敗漏進新卡)。
+3. **#13 到 16**(router 丟非物件)。
+4. **#18、19**(帳本讀檔錯誤)。
+5. **#25**(拿 router 途中換卡,不再呼叫)。
+6. 低優先:#36、37(shutdown)、#41(BOM)、#1(.env 重讀)。
+7. 其餘(文字層 8、等價 15、死碼 4、非 T68 7)不補。#27 到 30 建議之後把沒人用的 `running()` 刪掉。
+
+補完 1 到 4 之後,預期 ask 設定的分數會升到約 87% 到 88%(多殺 8 到 9 個);這是估算,沒有重跑。
