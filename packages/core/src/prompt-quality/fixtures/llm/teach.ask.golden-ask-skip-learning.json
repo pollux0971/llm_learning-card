@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "golden: ask-skip-learning",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"我可以給重點,但先把這張卡讀完再往下,後面才接得起來。\", \"suggestion\": \"continue\", \"followups\": [\"可以先看重點嗎?\"]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

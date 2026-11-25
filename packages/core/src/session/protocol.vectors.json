@@ -1169,6 +1169,178 @@
    },
    "rust": "accept",
    "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "valid teach.ask {question}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.ask\",\"params\":{\"question\":\"為什麼可以丟掉一半?\"}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept",
+   "note": "T68:ADR-086 加的動作;只收 question"
+  },
+  {
+   "name": "valid teach.ask.poll {}",
+   "line": "{\"v\":1,\"id\":1,\"method\":\"teach.ask.poll\",\"params\":{}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept",
+   "note": "T68:拿 teach.ask 的結果"
+  },
+  {
+   "name": "params content: teach.ask {question, path}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask\",\"params\":{\"question\":\"x\",\"path\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.ask 不收路徑、卡 id 或任何別的參數:問的永遠是側車目前那張卡(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.ask {question, card}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask\",\"params\":{\"question\":\"x\",\"card\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.ask 不收路徑、卡 id 或任何別的參數:問的永遠是側車目前那張卡(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.ask {question, id}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask\",\"params\":{\"question\":\"x\",\"id\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.ask 不收路徑、卡 id 或任何別的參數:問的永遠是側車目前那張卡(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.ask {question, category}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask\",\"params\":{\"question\":\"x\",\"category\":\"sec-0001\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.ask 不收路徑、卡 id 或任何別的參數:問的永遠是側車目前那張卡(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.ask {} (no question)",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "沒有 question(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.ask {question: 1}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask\",\"params\":{\"question\":1}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "question 一定是字串"
+  },
+  {
+   "name": "params content: teach.ask {question: null}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask\",\"params\":{\"question\":null}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "question 不是 null"
+  },
+  {
+   "name": "params content: teach.ask {question: [...]}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask\",\"params\":{\"question\":[\"a\"]}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "question 不是陣列"
+  },
+  {
+   "name": "params content: teach.ask.poll {question}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask.poll\",\"params\":{\"question\":\"x\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.ask.poll 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.ask.poll {path}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask.poll\",\"params\":{\"path\":\"x\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.ask.poll 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "params content: teach.ask.poll {card}",
+   "line": "{\"v\":1,\"id\":9,\"method\":\"teach.ask.poll\",\"params\":{\"card\":\"x\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "bad-request",
+    "id": 9
+   },
+   "rust": "accept",
+   "note": "teach.ask.poll 的 params 是空物件(Rust 只看信封,不看 params 的內容)"
+  },
+  {
+   "name": "method teach.asks (unknown)",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach.asks\",\"params\":{\"question\":\"x\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method Teach.Ask (case differs)",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"Teach.Ask\",\"params\":{\"question\":\"x\"}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
+  },
+  {
+   "name": "method teach.ask.polls (unknown)",
+   "line": "{\"v\":1,\"id\":4,\"method\":\"teach.ask.polls\",\"params\":{}}",
+   "ts": {
+    "ok": false,
+    "kind": "unknown-method",
+    "id": 4
+   },
+   "rust": "accept",
+   "note": "Rust 不看 method 的值"
   }
  ],
  "responses": [
@@ -1393,6 +1565,30 @@
   {
    "name": "teach view while generating (T43)",
    "line": "{\"v\":1,\"id\":5,\"ok\":true,\"result\":{\"category\":\"security\",\"categories\":[],\"card\":{\"id\":\"sec-0001\",\"path\":\"cards/security/sec-0001.md\",\"title\":\"t\"},\"prereqs\":[],\"from\":null,\"canBack\":false,\"generating\":true}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "success teach.ask asking (T68)",
+   "line": "{\"v\":1,\"id\":3,\"ok\":true,\"result\":{\"asking\":true}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "success teach.ask.poll with answer (T68)",
+   "line": "{\"v\":1,\"id\":3,\"ok\":true,\"result\":{\"category\":\"security\",\"ask\":{\"answer\":\"因為清單排好了。\",\"provisional\":false,\"suggestion\":\"continue\",\"highlight\":\"next\",\"followups\":[\"沒排好會怎樣?\"]}}}",
+   "ts": {
+    "ok": true
+   },
+   "rust": "accept"
+  },
+  {
+   "name": "success teach.ask.poll with error (T68)",
+   "line": "{\"v\":1,\"id\":3,\"ok\":true,\"result\":{\"ask\":{\"error\":\"unreadable\",\"message\":\"這次的回答看不懂,可以再問一次。\"}}}",
    "ts": {
     "ok": true
    },

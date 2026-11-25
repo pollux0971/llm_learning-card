@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "golden: ask-deepest-level",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"這已經是最深的一層了,可以往下一張。\", \"suggestion\": \"continue\", \"followups\": []}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

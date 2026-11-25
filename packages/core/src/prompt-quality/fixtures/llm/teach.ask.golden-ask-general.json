@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "golden: ask-general",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"因為清單已經排好了,看中間那一個就知道目標在左半還是右半,所以每次可以丟掉一半。\", \"suggestion\": \"continue\", \"followups\": [\"沒排好會怎樣?\", \"最多要幾步?\"]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

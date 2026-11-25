@@ -82,12 +82,12 @@ const DEEPEN_MESSAGES: Record<string, string> = {
 const REVIEW_RECORD_CHANGED_MESSAGE = '複習紀錄剛被別的地方改過,請重新開始今天的複習。剛才那一題需要重答。';
 
 describe('常數與固定清單(驗收 3)', () => {
-  it('版本 1、一行最多 262144 位元組、十四個 method(T37 加四個教學卡動作、T43 再加四個:deepen / poll / cancel / back、T67 加唯讀的 load)', async () => {
+  it('版本 1、一行最多 262144 位元組、十六個 method(T37 加四個教學卡動作、T43 再加四個:deepen / poll / cancel / back、T67 加唯讀的 load、T68 加 ask 與 ask.poll)', async () => {
     const p = await protocol();
     expect(p.PROTOCOL_VERSION).toBe(1);
     expect(p.MAX_LINE_BYTES).toBe(262144);
     expect(vectors.maxLineBytes).toBe(262144);
-    expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq', 'teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back', 'teach.load']);
+    expect([...p.REQUEST_METHODS]).toEqual(['start', 'next', 'submit', 'summary', 'status', 'teach.open', 'teach.next', 'teach.switch', 'teach.prereq', 'teach.deepen', 'teach.poll', 'teach.cancel', 'teach.back', 'teach.load', 'teach.ask', 'teach.ask.poll']);
   });
 
   it('協定版本不變:只加動作與種類,既有訊息的形狀不變(T43 第 5 節)', async () => {
@@ -300,5 +300,46 @@ describe('T67:teach.load 在向量檔裡(量尺自測:向量被刪掉會被抓�
     for (const field of ['path', 'card', 'category', 'index', 'day', 'today']) {
       expect(p.RequestSchema.safeParse({ v: 1, id: 1, method: 'teach.load', params: { [field]: 'x' } }).success, field).toBe(false);
     }
+  });
+});
+
+describe('T68:teach.ask 與 teach.ask.poll 在向量檔裡(量尺自測:向量被刪掉會被抓到)', () => {
+  it('兩個動作各至少一列合法請求;teach.ask 至少四列不合法 params(多了路徑 / 卡 id / 別的欄位、缺或錯型的 question),poll 至少兩列;至少一列相近的未知 method', () => {
+    const okNames = vectors.requests.filter((e) => e.ts.ok).map((e) => e.name);
+    expect(okNames.some((n) => n.includes('teach.ask {question}')), 'teach.ask 合法').toBe(true);
+    expect(okNames.some((n) => n.includes('teach.ask.poll')), 'teach.ask.poll 合法').toBe(true);
+    const bad = (m: string) => vectors.requests.filter((e) => !e.ts.ok && e.ts.kind === 'bad-request' && e.name.startsWith(`params content: ${m} `));
+    expect(bad('teach.ask').length, 'teach.ask 不合法 params').toBeGreaterThanOrEqual(4);
+    expect(bad('teach.ask.poll').length, 'teach.ask.poll 不合法 params').toBeGreaterThanOrEqual(2);
+    const unknown = vectors.requests.filter((e) => !e.ts.ok && e.ts.kind === 'unknown-method').map((e) => e.name);
+    expect(unknown.some((n) => n.includes('teach.asks')), 'teach.asks 是未知 method').toBe(true);
+  });
+
+  it('teach.ask 的 params 是 { question: 字串 } 的嚴格物件:合法一種;不收路徑、卡 id、別的任何欄位;v 不是 1 也不合法', async () => {
+    const p = await protocol();
+    const ask = (params: unknown, v = 1) => p.RequestSchema.safeParse({ v, id: 1, method: 'teach.ask', params }).success;
+    expect(ask({ question: '為什麼?' })).toBe(true);
+    expect(ask({ question: '為什麼?' }, 2)).toBe(false);
+    for (const field of ['path', 'card', 'id', 'cardId', 'category', 'learning', 'file', 'dir', 'history', 'round']) {
+      expect(ask({ question: 'x', [field]: 'sec-0001' }), `question + ${field}`).toBe(false);
+    }
+    expect(ask({}), '沒有 question').toBe(false);
+    expect(ask({ path: 'cards/security/sec-0001.md' }), '只有路徑').toBe(false);
+    for (const bad of [1, null, true, ['x'], { text: 'x' }]) expect(ask({ question: bad }), JSON.stringify(bad)).toBe(false);
+  });
+
+  it('teach.ask.poll 的 params 是空物件:帶任何欄位都不合法,v 不是 1 也不合法', async () => {
+    const p = await protocol();
+    expect(p.RequestSchema.safeParse({ v: 1, id: 1, method: 'teach.ask.poll', params: {} }).success).toBe(true);
+    expect(p.RequestSchema.safeParse({ v: 2, id: 1, method: 'teach.ask.poll', params: {} }).success).toBe(false);
+    for (const field of ['question', 'path', 'card', 'category', 'job', 'index']) {
+      expect(p.RequestSchema.safeParse({ v: 1, id: 1, method: 'teach.ask.poll', params: { [field]: 'x' } }).success, field).toBe(false);
+    }
+  });
+
+  it('協定版本仍是 1、錯誤種類清單不變(T68 沒有新的錯誤 kind:失敗走 ask.error,busy / bad-request 照舊)', async () => {
+    const p = await protocol();
+    expect(p.PROTOCOL_VERSION).toBe(1);
+    expect([...p.ERROR_KINDS].sort()).toEqual([...SIDECAR_KINDS, ...RUST_KINDS].sort());
   });
 });

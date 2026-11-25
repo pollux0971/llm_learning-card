@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "golden: ask-unlearned-prereq",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"二分搜尋要靠排序才成立,建議先回去把排序補起來。\", \"suggestion\": \"back\", \"followups\": [\"排序是什麼?\"]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

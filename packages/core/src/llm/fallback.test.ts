@@ -16,12 +16,15 @@ import { CloudRequiredError, DailyBudgetExceededError } from './errors.js';
 import { FALLBACK_TABLE, decideFallback, type CloudStatus, type FallbackGroup } from './fallback.js';
 import { LLM_TASKS, type LlmTask } from './types.js';
 
+/** T68:`teach.ask` 還不在 LlmTask 型別裡的基底上,tsc 也要乾淨(紅測試不把型別弄壞);實作加進 LLM_TASKS 之後這個 cast 無害。 */
+const ASK = 'teach.ask' as string as LlmTask;
+
 const GATEWAY_ALWAYS: LlmTask[] = ['grade.fill.llm'];
-const GATEWAY_FALLBACK: LlmTask[] = ['deepen', 'grade.apply', 'reteach.short'];
+const GATEWAY_FALLBACK: LlmTask[] = ['deepen', 'grade.apply', 'reteach.short', ASK];
 const CLOUD_ONLY: LlmTask[] = ['ingest.cards', 'ingest.questions', 'ingest.deps'];
 
 describe('FALLBACK_TABLE', () => {
-  it('契約 §7 的七個 task 每一個都有分組', () => {
+  it('契約 §7 的八個 task(T68 加 teach.ask)每一個都有分組', () => {
     for (const task of LLM_TASKS) {
       expect(FALLBACK_TABLE[task], `${task} 沒有分組`).toBeDefined();
     }
@@ -32,7 +35,7 @@ describe('FALLBACK_TABLE', () => {
     for (const task of CLOUD_ONLY) expect(FALLBACK_TABLE[task]).toBe('cloud-only');
   });
 
-  it('deepen / grade.apply / reteach.short 可以備援', () => {
+  it('deepen / grade.apply / reteach.short / teach.ask 可以備援(T68:teach.ask 與 deepen 同組)', () => {
     for (const task of GATEWAY_FALLBACK) expect(FALLBACK_TABLE[task]).toBe('gateway-fallback');
   });
 
@@ -57,7 +60,12 @@ describe('decideFallback — gateway-always(grade.fill.llm)', () => {
   });
 });
 
-describe('decideFallback — gateway-fallback(deepen / grade.apply / reteach.short)', () => {
+describe('decideFallback — gateway-fallback(deepen / grade.apply / reteach.short / teach.ask)', () => {
+  it('T68:teach.ask 雲端失敗 → 閘道、標 provisional、原因 cloud_failed(跟 deepen 一樣)', () => {
+    expect(decideFallback({ task: ASK, cloud: 'failed' })).toEqual(decideFallback({ task: 'deepen', cloud: 'failed' }));
+    expect(decideFallback({ task: ASK, cloud: 'failed' })).toEqual({ target: 'gateway', provisional: true, reason: 'cloud_failed' });
+  });
+
   it.each(GATEWAY_FALLBACK)('%s:雲端沒事就走雲端,不標 provisional', (task) => {
     expect(decideFallback({ task, cloud: 'ok' })).toEqual({ target: 'cloud', provisional: false });
   });
