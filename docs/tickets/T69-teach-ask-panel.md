@@ -5,7 +5,7 @@ touches: [apps/teach-card/src/teach-session.ts, apps/teach-card/src/App.svelte, 
 cpu: heavy
 budget_usd: 3
 status: todo
-owner: worker-grok
+owner: worker-claude
 must_catch:
   - 回答顯示在卡片上面或蓋掉卡片內容 「顯示在卡下面、卡本身不變」那條必須紅(卡片區塊的 outerHTML 前後一樣)
   - 建議 continue 卻亮了別的按鈕、或亮了又自己按下去 亮按鈕那三條必須紅(只亮不按;卡沒換)
@@ -27,7 +27,7 @@ must_catch:
 # 工單 T69:07-teach-card phase-6(下半)——「問 AI」的畫面
 
 > 狀態:起草 2026-11-25(協調者 -91),依技術顧問 2026-11-25 的交代。**依賴 T68**(協定與 `ask` 回應形狀),T68 合併後才派。決策 ADR-086、規格 `features/07-teach-card/phase-6.feature`(分支 `ask-ai-spec` `fc76c90`)。**待顧問審。**
-> 實作:worker(opencode + grok-4.7);紅測試、渲染測試、步驟定義:測試 agent;驗收:驗收 agent;`@manual` 觀感:前端量、技術顧問判。
+> 實作:worker(Claude);紅測試、渲染測試、步驟定義:測試 agent;驗收:驗收 agent;`@manual` 觀感:前端量、技術顧問判。
 > 規格:UI/Tauri 負責人可補樣式細節,顧問定。
 
 ## 範圍
@@ -107,7 +107,7 @@ npm run boundaries
 
 ## 預算
 
-`budget_usd: 3`。grok 不設花費上限,只記錄。LLM 真呼叫:0。
+`budget_usd: 3`。2026-11-25 起使用者不用 grok,「GROK不需要限額」作廢(顧問裁定):Claude worker 一次只開一個,`budget_usd` 當停止線(超過就停下來回報協調者),另有額度線(`7d` 比開工漲超過 3 個百分點、或 `5h` 超過 80% 就停)。每張記花費。LLM 真呼叫:0。
 
 ## worktree
 

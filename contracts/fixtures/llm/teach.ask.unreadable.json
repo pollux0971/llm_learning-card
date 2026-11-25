@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "question: ask-fixture-unreadable",
+  "attempt": 1,
+  "response": {
+    "text": "好的,這張卡的重點是每次丟掉一半。建議繼續讀下一張。",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

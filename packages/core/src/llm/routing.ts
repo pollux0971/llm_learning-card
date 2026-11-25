@@ -46,6 +46,7 @@ export const ROUTING_TABLE: Readonly<Record<LlmTask, RouteGroup>> = {
   deepen: 'cloud-or-local',
   'grade.apply': 'cloud-or-local',
   'reteach.short': 'cloud-or-local',
+  'teach.ask': 'cloud-or-local',
   'grade.fill.llm': 'local-only',
 };
 

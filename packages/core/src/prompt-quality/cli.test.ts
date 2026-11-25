@@ -171,12 +171,12 @@ describe('cli main', () => {
     for (const id of listGoldenSets()) expect(existsSync(join(out, id))).toBe(true);
   });
 
-  // T18 (d2) 改了這條:ingest.children 多三個泛化輸入,18 → 21。T55:多一組 ingest.topic(3 個輸入),21 → 24。T65:多一組 reteach.short(3 個輸入),24 → 27。
-  it('--golden --fake 七組真任務加自我測試,一共 27 個輸入都跑得起來', async () => {
+  // T18 (d2) 改了這條:ingest.children 多三個泛化輸入,18 → 21。T55:多一組 ingest.topic(3 個輸入),21 → 24。T65:多一組 reteach.short(3 個輸入),24 → 27。T68:多一組 teach.ask(6 個輸入),27 → 33。
+  it('--golden --fake 八組真任務加自我測試,一共 33 個輸入都跑得起來', async () => {
     const out = tmpOutDir();
     const result = await main(['--golden', '--fake', '--out', out]);
     expect(result.code).toBe(0);
-    expect(result.output).toContain('處理了 27 個 golden 輸入');
+    expect(result.output).toContain('處理了 33 個 golden 輸入');
     for (const id of REAL_TASK_GOLDEN_SET_IDS) {
       expect(result.output).toContain(`✓ golden run ${id} →`);
     }
@@ -260,13 +260,13 @@ describe('cli main', () => {
    * 逐行比對而不是 `toContain`:輸出是**用換行接起來的**,`join('')` 這種
    * 「全部黏成一行」的壞法在 `toContain` 底下完全看不出來,但人讀起來是一坨。
    */
-  // T55:多一行 ingest.topic(在 ingest.cards 後面),六 → 七組。T65:多一行 reteach.short(在 ingest.deps 後面、selftest 前面),七 → 八組。
-  it('--list 逐行印出八組,每行是「id → LlmTask、prompt 檔、輸入數」', async () => {
+  // T55:多一行 ingest.topic(在 ingest.cards 後面),六 → 七組。T65:多一行 reteach.short(在 ingest.deps 後面、selftest 前面),七 → 八組。T68:多一行 teach.ask(在 reteach.short 後面、selftest 前面),八 → 九組。
+  it('--list 逐行印出九組,每行是「id → LlmTask、prompt 檔、輸入數」', async () => {
     const result = await main(['--list']);
     expect(result.code).toBe(0);
     const lines = result.output.split('\n');
     expect(lines[0]).toBe('登記的 golden set:');
-    expect(lines.slice(1, 9)).toEqual([
+    expect(lines.slice(1, 10)).toEqual([
       `- ingest.cards → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/cards.md,3 個輸入`,
       `- ingest.topic → LlmTask ingest.cards,prompt ${PROMPTS_DIR}/ingest/topic.md,3 個輸入`,
       // T18 (d2):ingest.children 多三個泛化輸入,3 → 6。
@@ -275,11 +275,12 @@ describe('cli main', () => {
       `- ingest.questions → LlmTask ingest.questions,prompt ${PROMPTS_DIR}/ingest/questions.md,3 個輸入`,
       `- ingest.deps → LlmTask ingest.deps,prompt ${PROMPTS_DIR}/ingest/deps.md,3 個輸入`,
       `- reteach.short → LlmTask reteach.short,prompt ${PROMPTS_DIR}/grading/reteach-short.md,3 個輸入`,
+      `- teach.ask → LlmTask teach.ask,prompt ${PROMPTS_DIR}/teach/ask.md,6 個輸入`,
       '- selftest → LlmTask grade.apply,prompt packages/core/src/prompt-quality/golden-sets/grade.apply.selftest-prompt.md,3 個輸入(自我測試,不是真實任務)',
     ]);
   });
 
-  it('只有 selftest 那行帶「自我測試」註記,七組真任務的行沒有', async () => {
+  it('只有 selftest 那行帶「自我測試」註記,八組真任務的行沒有', async () => {
     const lines = (await main(['--list'])).output.split('\n');
     for (const id of REAL_TASK_GOLDEN_SET_IDS) {
       const line = lines.find((l) => l.startsWith(`- ${id} →`))!;
@@ -292,11 +293,11 @@ describe('cli main', () => {
     const result = await main(['--list']);
     expect(result.code).toBe(0);
     const lines = result.output.split('\n');
-    // T65:清單多一行 reteach.short(七 → 八組),後面的行號各 +1。
-    expect(lines[9]).toBe('');
-    expect(lines[10]).toBe(`${PROMPTS_DIR}/ 底下掃到 ${scanPromptFiles().length} 個 prompt 檔。`);
-    expect(lines[11]).toBe('✓ 每個 prompt 檔都恰好被一組 golden set 登記。');
-    expect(lines.length).toBe(12);
+    // T65:清單多一行 reteach.short(七 → 八組),後面的行號各 +1。T68:再多一行 teach.ask(八 → 九組),又各 +1。
+    expect(lines[10]).toBe('');
+    expect(lines[11]).toBe(`${PROMPTS_DIR}/ 底下掃到 ${scanPromptFiles().length} 個 prompt 檔。`);
+    expect(lines[12]).toBe('✓ 每個 prompt 檔都恰好被一組 golden set 登記。');
+    expect(lines.length).toBe(13);
   });
 
   it('有 prompt 檔沒被登記時退出碼 1,而且指名是哪一個', () => {

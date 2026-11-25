@@ -64,6 +64,13 @@ export type DeepenPrep =
   | { action: 'reuse'; view: TeachView }
   | { action: 'generate'; parent: Card; view: TeachView };
 
+/** 問 AI 要的:目前這張卡、畫面先備提示列的先備、是否已是最深一層。 */
+export interface AskContext {
+  card: Card;
+  prereqs: { id: string; title: string }[];
+  atFloor: boolean;
+}
+
 export interface TeachLoadInputs {
   /** 今天考試卡的名單(當日快取 queue 的卡 id)。沒開著、沒有快取、壞掉或別天的快取就是 []。 */
   queueCards: readonly string[];
@@ -174,6 +181,8 @@ export function createTeachRuntime(host: TeachHost): {
   prereq(index: number): TeachOutcome;
   back(): TeachOutcome;
   prepareDeepen(): DeepenPrep;
+  /** 問 AI 用:目前這張卡的內容與先備。沒有目前這張卡是 undefined。 */
+  askContext(): AskContext | undefined;
   /** 生成寫完之後推一層麵包屑,顯示第一張新卡。 */
   enterChildren(parentId: string, childIds: readonly string[]): TeachOutcome;
   view(): TeachView;
@@ -403,6 +412,12 @@ export function createTeachRuntime(host: TeachHost): {
         return { action: 'reuse', view: entered.view };
       }
       return { action: 'generate', parent: loadCard(learningDir, cardId), view: currentView() };
+    },
+
+    askContext(): AskContext | undefined {
+      if (cardId === undefined) return undefined;
+      const view = currentView();
+      return { card: loadCard(learningDir, cardId), prereqs: view.prereqs, atFloor: atDeepenFloor(readMeta(learningDir, cardId).level) };
     },
 
     enterChildren(parentId: string, childIds: readonly string[]): TeachOutcome {

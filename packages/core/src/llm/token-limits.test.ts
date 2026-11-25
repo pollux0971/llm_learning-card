@@ -2,18 +2,23 @@ import { describe, it, expect } from 'vitest';
 import { TASK_MAX_TOKENS } from './token-limits.js';
 import { LLM_TASKS } from './types.js';
 
-describe('TASK_MAX_TOKENS — 契約 §7 的 7 個 LlmTask 各自的 token 上限', () => {
+describe('TASK_MAX_TOKENS — 契約 §7 的 8 個 LlmTask 各自的 token 上限(T68:多一個 teach.ask)', () => {
   it.each(LLM_TASKS)('has an entry for task=%s', (task) => {
     expect(TASK_MAX_TOKENS[task]).toBeTypeOf('number');
     expect(TASK_MAX_TOKENS[task]).toBeGreaterThan(0);
   });
 
-  it('covers exactly the 7 tasks in the contract, no more, no fewer', () => {
+  it('covers exactly the 8 tasks in the contract, no more, no fewer', () => {
     expect(Object.keys(TASK_MAX_TOKENS).sort()).toEqual([...LLM_TASKS].sort());
   });
 
   it('ingest.cards >= 4096 (回歸鎖:這是最容易被手滑改小的一個,卡片生成需要最多字)', () => {
     expect(TASK_MAX_TOKENS['ingest.cards']).toBeGreaterThanOrEqual(4096);
+  });
+
+  it('teach.ask = 1536(T68,顧問定):截斷算錯誤,中文回答加三個追問在 1024 很容易碰到;比 deepen 的 2048 小', () => {
+    expect((TASK_MAX_TOKENS as Record<string, number>)['teach.ask']).toBe(1536);
+    expect((TASK_MAX_TOKENS as Record<string, number>)['teach.ask']).toBeLessThan(TASK_MAX_TOKENS.deepen);
   });
 
   it('matches the values decided for this fix', () => {
@@ -25,6 +30,7 @@ describe('TASK_MAX_TOKENS — 契約 §7 的 7 個 LlmTask 各自的 token 上�
       'reteach.short': 512,
       'grade.fill.llm': 256,
       'grade.apply': 512,
+      'teach.ask': 1536,
     });
   });
 });

@@ -13,6 +13,7 @@ import { openDay, snapshotAfterReview, summarizeDay } from './engine.js';
 import { findCardFile, listCardIds, loadReviews, loadSettings } from './io.js';
 import { presentNextCard } from './present.js';
 import { ERROR_MESSAGES, classifyRequestLine, type ErrorKind } from './protocol.js';
+import { createAskController } from './teach-ask.js';
 import { createDeepenController } from './teach-deepen.js';
 import { createTeachRuntime } from './teach.js';
 import type { Session } from './types.js';
@@ -346,6 +347,18 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewHandler {
     startFailureKind,
   });
 
+  const ask = createAskController({
+    learningDir,
+    today: () => day(),
+    env,
+    teach,
+    deepenRunning: () => deepen.running(),
+    acquireRouter: async () => {
+      reloadAndMaybeDropRouter();
+      return ensureRouter();
+    },
+  });
+
   const handle = async (line: string): Promise<string> => {
     const classified = classifyRequestLine(line);
     if (!classified.ok) return fail(classified.id, classified.kind);
@@ -365,8 +378,10 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewHandler {
         | 'teach.poll'
         | 'teach.cancel'
         | 'teach.back'
-        | 'teach.load';
-      params: { fill?: string[]; apply?: string; category?: string; index?: number };
+        | 'teach.load'
+        | 'teach.ask'
+        | 'teach.ask.poll';
+      params: { fill?: string[]; apply?: string; category?: string; index?: number; question?: string };
     };
     try {
       switch (request.method) {
@@ -382,26 +397,46 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewHandler {
           return handleStatus(request.id);
         case 'teach.open':
           deepen.abandon();
+          ask.invalidate();
           return teachLine(request.id, teach.open(request.params.category));
         case 'teach.next':
           if (deepen.running()) return fail(request.id, 'bad-request');
+          ask.invalidate();
           return teachLine(request.id, teach.next());
         case 'teach.switch':
           if (deepen.running()) return fail(request.id, 'bad-request');
+          ask.invalidate();
           return teachLine(request.id, teach.switchTo(request.params.category ?? ''));
         case 'teach.prereq':
           if (deepen.running()) return fail(request.id, 'bad-request');
+          ask.invalidate();
           return teachLine(request.id, teach.prereq(request.params.index ?? -1));
         case 'teach.deepen':
+          // 問 AI 跑著時深入照常執行,同時丟掉還在跑的 ask。前幾輪問答等下次問時照卡比對(深入成功換了卡才清)。
+          ask.abandon();
           return deepenLine(request.id, await deepen.deepen());
         case 'teach.poll':
           return deepenLine(request.id, deepen.poll());
         case 'teach.cancel':
           return deepenLine(request.id, deepen.cancel());
         case 'teach.back':
+          ask.invalidate();
           return deepenLine(request.id, deepen.back());
         case 'teach.load':
           return ok(request.id, teach.readLoad());
+        case 'teach.ask': {
+          const question = request.params.question ?? '';
+          if (question.trim().length === 0) return fail(request.id, 'bad-request');
+          const started = ask.ask(question);
+          if (!started.ok) return fail(request.id, started.kind);
+          return ok(request.id, { asking: true });
+        }
+        case 'teach.ask.poll': {
+          const polled = ask.poll();
+          if (polled.state === 'asking') return ok(request.id, { asking: true });
+          if (polled.state === 'done') return ok(request.id, { ...teach.view(), ask: polled.ask });
+          return ok(request.id, { ...teach.view() });
+        }
         default:
           return fail(request.id, 'unknown-method');
       }
@@ -412,6 +447,7 @@ export function createReviewHandler(deps: ReviewHandlerDeps): ReviewHandler {
   return Object.assign(handle, {
     shutdown(): void {
       deepen.shutdown();
+      ask.shutdown();
     },
   });
 }

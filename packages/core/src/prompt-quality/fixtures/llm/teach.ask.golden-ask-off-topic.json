@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "golden: ask-off-topic",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"這個問題跟這張卡沒有關係,我只能回答二分搜尋的內容。要不要回到這張卡?\", \"suggestion\": \"continue\", \"followups\": []}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

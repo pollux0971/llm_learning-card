@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "golden: ask-very-short",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"因為已經排好序。\", \"suggestion\": \"continue\", \"followups\": [\"再說明一點?\"]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

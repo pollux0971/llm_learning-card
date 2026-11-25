@@ -130,6 +130,9 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** T68:`teach.ask` 還不在 LlmTask 型別裡的基底上,tsc 也要乾淨(紅測試不把型別弄壞);實作加進 LLM_TASKS 之後這個 cast 無害。 */
+const ASK = 'teach.ask' as string as LlmTask;
+
 const ALL_TASKS: LlmTask[] = [
   'ingest.cards',
   'ingest.questions',
@@ -138,10 +141,11 @@ const ALL_TASKS: LlmTask[] = [
   'grade.apply',
   'reteach.short',
   'grade.fill.llm',
+  ASK,
 ];
 
 /** 契約 §7 路由表第三欄(離線+無本機)要求 NO_MODEL 的四個 task。 */
-const OFFLINE_NO_MODEL_TASKS: LlmTask[] = ['deepen', 'grade.apply', 'reteach.short', 'grade.fill.llm'];
+const OFFLINE_NO_MODEL_TASKS: LlmTask[] = ['deepen', 'grade.apply', 'reteach.short', 'grade.fill.llm', ASK];
 
 function fallbackEvent(logged: LogEvent[]): Record<string, unknown> | undefined {
   return (logged as unknown as Record<string, unknown>[]).find((e) => e.fallback === 'gateway');
@@ -199,7 +203,7 @@ describe('GatewayLlmRouter.call — 一般路徑', () => {
     expect(h.cloudCalls).toBe(0);
   });
 
-  it.each(['deepen', 'grade.apply', 'reteach.short'] as LlmTask[])('%s 雲端沒事就走雲端', async (task) => {
+  it.each(['deepen', 'grade.apply', 'reteach.short', ASK] as LlmTask[])('%s 雲端沒事就走雲端', async (task) => {
     const h = makeHarness();
     const result = await h.router.call(task, '提示');
     expect(result.provider).toBe('openai');
@@ -272,8 +276,8 @@ describe('GatewayLlmRouter.call — 雲端整個連不上(probeOnline 回 false)
     expect(h.cloudCalls).toBe(0);
   });
 
-  it('grade.apply 與 reteach.short 也一樣', async () => {
-    for (const task of ['grade.apply', 'reteach.short'] as const) {
+  it('grade.apply、reteach.short 與 teach.ask(T68)也一樣', async () => {
+    for (const task of ['grade.apply', 'reteach.short', ASK] as const) {
       const h = makeHarness({ online: false });
       const result = await h.router.call(task, '同源政策');
       expect(result.provider).toBe('ollama');

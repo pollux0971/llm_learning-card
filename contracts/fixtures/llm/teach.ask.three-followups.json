@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "question: ask-fixture-three-followups",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"二分搜尋每次把範圍砍半。你可以從三個方向再問下去。\", \"suggestion\": \"deepen\", \"followups\": [\"最壞情況要看幾次?\", \"中間值怎麼取?\", \"什麼時候不能用?\"]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

@@ -12,6 +12,7 @@ export const LLM_TASKS = [
   'grade.fill.llm',
   'grade.apply',
   'reteach.short',
+  'teach.ask',
 ] as const;
 
 export type LlmTask = (typeof LLM_TASKS)[number];

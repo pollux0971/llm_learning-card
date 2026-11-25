@@ -162,11 +162,11 @@ type LiveRouter = LlmRouter & { budgetExhausted?: () => boolean };
 // ------------------------------------------------------------------ 1. 備援表
 
 describe('T63 GOLDEN_FALLBACK_TABLE', () => {
-  it('鍵剛好是契約 §7 的七個 LlmTask、值全部是 cloud-only、物件凍結', () => {
+  it('鍵剛好是契約 §7 的八個 LlmTask(T68 加 teach.ask)、值全部是 cloud-only、物件凍結', () => {
     const table = (goldenRun as Record<string, unknown>)['GOLDEN_FALLBACK_TABLE'] as Record<string, string> | undefined;
     expect(table, 'golden-run.ts 要匯出 GOLDEN_FALLBACK_TABLE').toBeDefined();
     expect(Object.keys(table!).sort()).toEqual([...LLM_TASKS].sort());
-    expect(Object.keys(table!)).toHaveLength(7);
+    expect(Object.keys(table!)).toHaveLength(8);
     for (const task of LLM_TASKS) expect(table![task], task).toBe('cloud-only');
     expect(Object.isFrozen(table)).toBe(true);
   });

@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "question: ask-fixture-no-followups",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"對,先備已經學過,這張卡可以直接往下讀。\", \"suggestion\": \"continue\", \"followups\": []}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

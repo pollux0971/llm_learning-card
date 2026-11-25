@@ -1,11 +1,11 @@
 ---
 id: T68
 deps: []
-touches: [packages/core/src/llm/types.ts, packages/core/src/llm/routing.ts, packages/core/src/llm/token-limits.ts, packages/core/prompts/teach/ask.md, packages/core/src/teach/ask.ts, packages/core/src/teach/index.ts, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/fixtures/golden-ask/inputs.json, packages/core/src/session/teach.ts, packages/core/src/session/handler.ts, packages/core/src/session/teach-ask.ts, packages/core/src/session/protocol.ts, packages/core/src/session/protocol.vectors.json, apps/desktop/src/webview/review-client.ts, contracts/fixtures/llm/teach.ask.json, contracts/fixtures/README.md]
+touches: [packages/core/src/llm/types.ts, packages/core/src/llm/routing.ts, packages/core/src/llm/token-limits.ts, packages/core/src/llm/fallback.ts, packages/core/src/prompt-quality/golden-run.ts, packages/core/prompts/teach/ask.md, packages/core/src/teach/ask.ts, packages/core/src/teach/index.ts, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/fixtures/golden-ask/inputs.json, packages/core/src/session/teach.ts, packages/core/src/session/handler.ts, packages/core/src/session/teach-ask.ts, packages/core/src/session/protocol.ts, packages/core/src/session/protocol.vectors.json, apps/desktop/src/webview/review-client.ts, contracts/fixtures/llm/, contracts/fixtures/README.md]
 cpu: heavy
 budget_usd: 4
-status: todo
-owner: worker-grok
+status: dispatched
+owner: worker-claude
 must_catch:
   - ask 跑著時 teach.next(或 switch、prereq、open、deepen、back)回 busy 或 bad-request 同時有 ask 在跑那條必須紅(這些動作照常執行,同時丟掉還在跑的 ask)
   - 換卡後晚到的回答進了新卡的問答紀錄,或出現在 teach.ask.poll 的結果 晚到那條必須紅(側車丟掉)
@@ -30,7 +30,7 @@ must_catch:
 # 工單 T68:07-teach-card phase-6(上半)——「問 AI」的核心與側車
 
 > 狀態:起草 2026-11-25(協調者 -91),依技術顧問 2026-11-25 的交代。使用者 2026-11-25 用 `/feature` 確認「可以加上詢問選項輔佐討論,都選a」。決策 ADR-086、規格 `features/07-teach-card/phase-6.feature`、契約 1.6.0(都在分支 `ask-ai-spec` `fc76c90`)。**待顧問審。**
-> 實作:worker(opencode + grok-4.7);紅測試與步驟定義:測試 agent;驗收:驗收 agent;golden 評分:技術顧問。
+> 實作:worker(Claude);紅測試與步驟定義:測試 agent;驗收:驗收 agent;golden 評分:技術顧問。
 > 基底:`ask-ai-spec` 合進 main 之後的 main。**同一批 main 還沒推之前不派工。**
 > 下半(畫面)是 T69,依賴這張。落點不相交,但 T69 要 T68 的協定與回應形狀,所以先 T68。
 
@@ -80,7 +80,7 @@ must_catch:
 6. **離線**:`NO_MODEL` → `error: 'no-model'`;本機回的 `provisional: true` 帶回去,畫面標「暫定」。
 7. **不落地**:不寫卡檔、`reviews.json`、order 檔;router 照舊記 `llm_call`(不由這張改)。
 8. **golden 集**:登記 `teach.ask`(`registry.ts`、`GoldenSetId`),輸入放 `packages/core/src/prompt-quality/fixtures/golden-ask/inputs.json`,至少 6 組:一般問題、問題跟卡無關、要求 AI 直接給答案跳過學習、卡有未學先備、卡已是最深一層、問得很短。**全是假資料(沒有 `learning/` 的內容)**。
-9. **FakeLlmRouter 的 fixture**:`contracts/fixtures/llm/teach.ask.json`(一組好回答、一組壞回答、一組追問 3 個、一組追問 0 個),`contracts/fixtures/README.md` 加一行。
+9. **FakeLlmRouter 的 fixture**:`contracts/fixtures/llm/teach.ask.<情境>.json`,**一檔一筆**(`loadFixturesFromDir` 的讀法;至少 4 個檔:好回答、壞回答、追問 3 個、追問 0 個),`contracts/fixtures/README.md` 加一行。
 
 ## 紅測試(測試 agent 寫,開發 worker 不改)
 
@@ -146,10 +146,21 @@ npm run boundaries
 
 ## 預算
 
-`budget_usd: 4`。grok 不設花費上限,只記錄。LLM 真呼叫:worker 0 次;golden run 由協調者跑(約 US$0.01,算今日花費)。
+`budget_usd: 4`。2026-11-25 起使用者不用 grok,「GROK不需要限額」作廢(顧問裁定):Claude worker 一次只開一個,`budget_usd` 當停止線(超過就停下來回報協調者),另有額度線(`7d` 比開工漲超過 3 個百分點、或 `5h` 超過 80% 就停)。每張記花費。LLM 真呼叫:worker 0 次;golden run 由協調者跑(約 US$0.01,算今日花費)。
 
 ## worktree
 
 一個,從 `/data/python/llm_learning-cards-workers` 開,基底是紅測試分支的 tip,同一時間只給一個 agent。派工歸協調者。
 落點:`packages/core/src/llm/`、`packages/core/src/teach/`、`packages/core/src/session/`、`packages/core/prompts/teach/`、`packages/core/src/prompt-quality/`、`apps/desktop/src/webview/review-client.ts`(只加 `teachAsk()`)。
 真的 learning/ 開工、收工各量一次,前後要相同(不寫死數字)。
+
+## 派工前補充(協調者,2026-11-25,測試 agent -67 與驗收者 -65 在紅測試裡發現)
+
+- **touches 補**:`packages/core/src/llm/fallback.ts`(`FALLBACK_TABLE` 是 `Record<LlmTask,…>`,不補 `teach.ask` 這格 tsc 就紅;測試釘 `gateway-fallback`,跟 `deepen` 同組)、`packages/core/src/prompt-quality/golden-run.ts`(`GOLDEN_FALLBACK_TABLE` 同理,T63 的測試要求全部 cloud-only)、`contracts/fixtures/llm/`(一檔一筆,見上面第 9 點)。
+- **`ReviewClient` 要加兩個方法**:`teachAsk(question)` 與 `teachAskPoll()`,不是只有一個。
+- **名字(紅測試已定,照用)**:`packages/core/src/teach/ask.ts` 匯出 `AskAnswerSchema`(`z.strictObject`)與 `parseAskAnswer(text)` → `{ ok: true, value } | { ok: false }`;`teach.ask.poll` 進行中回 `{ asking: true }`,完成回 `result.ask`;失敗四種都在 `ask.error`(整體 `ok: true`)。
+- **輪數**:一個提示最多帶 4 輪**含這一輪**(第 5 個問題的提示不帶第 1 輪,仍帶第 2–4 輪)。
+- **golden**:六組 key = `general` / `off-topic` / `skip-learning` / `unlearned-prereq` / `deepest-level` / `very-short`;輸入檔 `fixtures/golden-ask/inputs.json` 由 worker 寫;`--fake` 的六個回應檔(`packages/core/src/prompt-quality/fixtures/llm/teach.ask.golden-ask-*.json`)測試 agent 已寫並釘 sha,**屬受保護的檔**。
+- **受保護的檔再加**:`packages/core/src/prompt-quality/fixtures/llm/teach.ask.golden-ask-*.json`、`packages/core/src/session/protocol.vectors.json`(向量檔)、`features/steps/`、`features/support/`。
+- 驗收者留的三個小缺口(規格有寫、測試沒釘;低優先,測試 agent 補,不擋):G1 提示要含卡標題與 example;G2 呼叫中 router 丟 `BUDGET_EXCEEDED` 要回 `error: 'budget'`(現在只釘「呼叫前擋」);G3 全新 learning 沒有 `log.jsonl` 時第一次問要成功。**實作要照做**,即使測試還沒釘。
+- 驗收證據:[acceptance-T68-red.md](../reviews/acceptance-T68-red.md)。

@@ -39,6 +39,10 @@ export interface ReviewClient {
   teachBack(): Promise<Record<string, unknown>>;
   /** 唯讀。忙或出錯不發忙碌通知、不走 busy 重試。 */
   teachLoad(): Promise<Record<string, unknown>>;
+  /** 問 AI(ADR-086):馬上回 { asking: true },之後用 teachAskPoll 拿結果。問的永遠是側車目前那張卡。 */
+  teachAsk(question: string): Promise<Record<string, unknown>>;
+  /** 進行中回 { asking: true },完成回 TeachView 加 ask。 */
+  teachAskPoll(): Promise<Record<string, unknown>>;
   onWait(listener: (waiting: boolean) => void): () => void;
 }
 
@@ -57,7 +61,9 @@ type Method =
   | 'teach.poll'
   | 'teach.cancel'
   | 'teach.back'
-  | 'teach.load';
+  | 'teach.load'
+  | 'teach.ask'
+  | 'teach.ask.poll';
 
 /** Rust 那七種:進出錯畫面。其餘側車錯誤留在卡片上(ADR-079)。判斷放這裡,視窗不出現 busy 字面。 */
 const CLIENT_LAYER_KINDS = ['not-configured', 'sidecar-unavailable', 'sidecar-exited', 'timeout', 'busy', 'bad-envelope', 'bad-response'] as const;
@@ -246,6 +252,8 @@ export function createReviewClient(opts?: {
     teachCancel: () => call('teach.cancel', {}),
     teachBack: () => call('teach.back', {}),
     teachLoad: () => callOnce('teach.load', {}),
+    teachAsk: (question: string) => call('teach.ask', { question }),
+    teachAskPoll: () => call('teach.ask.poll', {}),
     onWait,
   };
 }

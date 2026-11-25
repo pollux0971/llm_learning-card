@@ -104,7 +104,9 @@ describe('T65 golden:登記表有 reteach.short', () => {
     expect(listGoldenSets()).toContain(SET);
     expect(REAL_TASK_GOLDEN_SET_IDS).toContain(SET);
     expect(listGoldenSets().indexOf(SET)).toBe(listGoldenSets().indexOf('ingest.deps') + 1);
-    expect(listGoldenSets().indexOf(SET)).toBe(listGoldenSets().indexOf('selftest') - 1);
+    // T68:teach.ask 登記在 reteach.short 後面、selftest 前面(原本斷言 reteach.short 緊貼 selftest;現在中間多一組 teach.ask)
+    expect(listGoldenSets().indexOf('teach.ask' as string as GoldenSetId)).toBe(listGoldenSets().indexOf(SET) + 1);
+    expect(listGoldenSets().indexOf(SET)).toBe(listGoldenSets().indexOf('selftest') - 2);
   });
 
   it('三個輸入:id 是 short-<key>,順序同 inputs.json;prompt 有 golden / category / title / limit 各一行,後面有原卡的 body 與每一個 example', () => {
