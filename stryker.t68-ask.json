@@ -1,0 +1,21 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "MUTATE_TEST_GLOB='{packages/core/src/teach/ask.test.ts,features/support/t68-handler.test.ts,features/support/t68-sidecar.test.ts,features/support/t68-client.test.ts,packages/core/src/session/protocol.test.ts,features/support/t37-handler.test.ts,features/support/t43-handler.test.ts,packages/core/src/session/teach.test.ts}' npx vitest run --bail=1 --config vitest.mutate.config.ts"
+  },
+  "reporters": ["clear-text", "progress-append-only", "json"],
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "coverageAnalysis": "off",
+  "concurrency": 2,
+  "timeoutMS": 120000,
+  "mutate": [
+    "packages/core/src/teach/ask.ts",
+    "packages/core/src/session/teach-ask.ts",
+    "packages/core/src/session/handler.ts:350-361",
+    "packages/core/src/session/handler.ts:398-440",
+    "packages/core/src/session/teach.ts:417-421"
+  ],
+  "thresholds": { "high": 90, "low": 80, "break": 0 },
+  "ignorePatterns": ["reports", "dist", "apps/desktop/src-tauri/target"]
+}
