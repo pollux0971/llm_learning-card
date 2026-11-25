@@ -3,7 +3,7 @@
 - 被驗分支:`t68-impl` = 204c49a3986d3dd7334bb1448e3a614fce4c02d7(基底 `t68-start` = c7d85dca7344a2857267e9955a6ac7d41ab0f793,實作者的 6 個 commit,22 檔 +612/−6)
 - 驗收簽出(i9,detached):開跑與跑完的 tree sha 都是 a3c9c6f6b3c7a952dfe5296841bc6843f52e9f0e;沒有 `.env`;空 HOME、`VITEST_MAX_WORKERS=1`
 - 日期:2026-11-25;驗收角色(acceptance line)
-- 結論:**功能通過、沒有阻擋項;變異分數 71.19%(ask 設定)低於我設的 80% 下限,存活的改壞裡有 7 類是規格有寫或應該釘的測試缺口,建議測試 agent 補測後重跑變異**(由顧問裁決放行與否)。路由表變異 97.73%,過 95%。
+- 結論:**通過,沒有阻擋項。** 第一輪變異 71.19%(ask 設定),補測後第二輪 84.44%(達 80%),見第 9 節;路由表變異 97.73%,過 95%。(第一輪的缺口 G1 到 G9 已由測試 agent 補上。)
 
 ## 1. 測試作者與範圍
 
@@ -133,3 +133,33 @@
 8. 鬆的那條:「沒有目前卡時問」改成要求 bad-request,不接受任何 ask.error。
 
 G5、G8 與提示標籤的字串可以不補。
+
+## 9. 補測後重跑(2026-11-25,第二輪)
+
+- 被驗:`t68-red2` = aa6e1660f706bfd7813b7b2f5c3834f28d12b7b0(基底 t68-impl 204c49a;3 個檔、+432/−4)。i9 簽出的 tree sha 開跑與跑完都是 9c801edd083d8829d2f476d1494cc8ba6eb8f862;沒有 `.env`。
+- 測試作者與範圍:`git diff --name-only t68-impl t68-red2` 只有 3 個測試檔(新增的缺口測試兩個、既有 handler 測試一個),**實作 0 行**。既有 handler 測試改的是「沒有目前卡時問」那一條,從「bad-request 或任何 ask.error 都行」收緊成**明確 bad-request、router 呼叫 0**(舊斷言被換掉,新的更嚴)。
+- 基準:tsc 乾淨、check:steps PASS、**全部 vitest 303 檔全過;7922 過、174 略過(共 8096)**(上一輪 301 檔 7875 過,多的是新增測試)。
+- 變異:`npm run mutate -- stryker.t68-ask-r2.json`。設定與範圍和第一輪相同(ask.ts、teach-ask.ts、handler 接線兩段、teach.ts 的 askContext),只有測試檔清單多了兩個新測試檔。原設定檔 stryker.t68-ask.json 保留不動。
+
+| 檔 / 範圍 | 第一輪 | **第二輪** | 殺 / 活 |
+|---|---|---|---|
+| **ask 設定總計** | 71.19% | **84.44%**(過 80%) | 255 / 47 |
+| teach/ask.ts | 53.13% | 85.94% | 55 / 9 |
+| session/teach-ask.ts | 75.00% | 83.75% | 134 / 26 |
+| session/handler.ts(接線) | 78.08% | 83.56% | 61 / 12 |
+| session/teach.ts(askContext) | 80.00% | 100.00% | 5 / 0 |
+
+### 剩下 47 個存活怎麼分(逐條讀過)
+
+- **文字層(提示標籤、分隔符號,9 個)**:ask.ts 的模板開頭、`example:` 標籤、`earlier discussion on this card:` 標籤、輪數編號、結尾空行,以及 NonBlank 的錯誤訊息字串。只影響給模型看的格式與 zod 的訊息,不是行為。
+- **等價或死碼(約 24 個)**:`running()` 四個(handler 不用);「晚到」第二道保險與 `cancelled` 預設值(第一道已擋,拿掉行為不變);`finally` 清 job;`JSON.parse` 的 trim(JSON 本來容忍前後空白);`history` 初始值與 invalidate、shutdown 裡的清理(下一次問時因為卡 id 不同本來就會清,等價);poll 的 idle 與 done 判斷(handler 之後的回應形狀不變);`errorCode` 的型別判斷;帳本壞行那個 `if` 與它的訊息字串(壞行走到下一行一樣丟、一樣回 budget 與同一個訊息);`shutdown` 的清理。
+- **不是這張的(約 9 個)**:handler 第 399、403、407、409、411、413 行是 T43 以前就有的「換卡動作」程式(`deepen.running()` 擋、`abandon`、預設參數),落在我設的範圍裡才被算進來。
+- **剩下 2 個小缺口(不擋)**:
+  1. 讀帳本時「不是 ENOENT 的讀檔錯誤」(例如權限不夠)現在會被當成「沒花費」放行:把那個 `catch` 的處理拿掉、或把 `!== 'ENOENT'` 改成 false,測試都不紅。實務上 router 本身遇到壞帳本會拒絕真呼叫,所以不會多花錢,但行為與「不知道不是 0」的原則不完全一致。建議補一條:帳本檔不是 ENOENT 的錯誤(例如把 log.jsonl 換成資料夾)→ `error: 'budget'`、router 呼叫 0。
+  2. handler 第 357 行 `reloadAndMaybeDropRouter()`(問之前重讀 .env、金鑰變了就換 router)沒有測試。這是 deepen 與考題也在用的共用步驟,不是 T68 新邏輯,可以不補。
+
+### 結論(第二輪)
+
+變異 84.44%,**達到 ≥80%**。第一輪的 G1 到 G9(提示含標題與 example、呼叫中 BUDGET_EXCEEDED、無帳本檔、空白問題、第一輪無前輪區塊、全空白回答、訊息非空、無卡時嚴格 bad-request)都已經釘住,對應的改壞不再存活。剩下的是文字層、等價、非 T68 的既有程式,加上上面 2 個小缺口。沒有阻擋項。
+
+- 真 learning/ 前後仍是 64 檔 / 3f944d2429767455 / 118 行,`~/.cache` 498,不變。LLM 呼叫 0。
