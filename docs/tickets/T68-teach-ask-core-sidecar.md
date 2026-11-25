@@ -5,7 +5,7 @@ touches: [packages/core/src/llm/types.ts, packages/core/src/llm/routing.ts, pack
 cpu: heavy
 budget_usd: 4
 status: dispatched
-owner: worker-grok
+owner: worker-claude
 must_catch:
   - ask 跑著時 teach.next(或 switch、prereq、open、deepen、back)回 busy 或 bad-request 同時有 ask 在跑那條必須紅(這些動作照常執行,同時丟掉還在跑的 ask)
   - 換卡後晚到的回答進了新卡的問答紀錄,或出現在 teach.ask.poll 的結果 晚到那條必須紅(側車丟掉)
@@ -30,7 +30,7 @@ must_catch:
 # 工單 T68:07-teach-card phase-6(上半)——「問 AI」的核心與側車
 
 > 狀態:起草 2026-11-25(協調者 -91),依技術顧問 2026-11-25 的交代。使用者 2026-11-25 用 `/feature` 確認「可以加上詢問選項輔佐討論,都選a」。決策 ADR-086、規格 `features/07-teach-card/phase-6.feature`、契約 1.6.0(都在分支 `ask-ai-spec` `fc76c90`)。**待顧問審。**
-> 實作:worker(opencode + grok-4.7);紅測試與步驟定義:測試 agent;驗收:驗收 agent;golden 評分:技術顧問。
+> 實作:worker(Claude);紅測試與步驟定義:測試 agent;驗收:驗收 agent;golden 評分:技術顧問。
 > 基底:`ask-ai-spec` 合進 main 之後的 main。**同一批 main 還沒推之前不派工。**
 > 下半(畫面)是 T69,依賴這張。落點不相交,但 T69 要 T68 的協定與回應形狀,所以先 T68。
 
@@ -146,7 +146,7 @@ npm run boundaries
 
 ## 預算
 
-`budget_usd: 4`。grok 不設花費上限,只記錄。LLM 真呼叫:worker 0 次;golden run 由協調者跑(約 US$0.01,算今日花費)。
+`budget_usd: 4`。2026-11-25 起使用者不用 grok,「GROK不需要限額」作廢(顧問裁定):Claude worker 一次只開一個,`budget_usd` 當停止線(超過就停下來回報協調者),另有額度線(`7d` 比開工漲超過 3 個百分點、或 `5h` 超過 80% 就停)。每張記花費。LLM 真呼叫:worker 0 次;golden run 由協調者跑(約 US$0.01,算今日花費)。
 
 ## worktree
 
