@@ -1,0 +1,12 @@
+{
+  "task": "teach.ask",
+  "prompt_contains": "question: ask-fixture-good",
+  "attempt": 1,
+  "response": {
+    "text": "{\"answer\": \"因為清單已經排好順序,中間的值比目標大,目標就不可能在右半邊,所以右半邊可以整個丟掉。\", \"suggestion\": \"continue\", \"followups\": [\"如果清單沒排好呢?\", \"一千筆最多要看幾次?\"]}",
+    "provider": "fake",
+    "model": "recorded",
+    "latency_ms": 0,
+    "provisional": false
+  }
+}

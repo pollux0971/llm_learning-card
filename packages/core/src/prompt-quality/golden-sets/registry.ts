@@ -324,6 +324,49 @@ const RETEACH_SHORT: GoldenSet = {
 };
 
 /**
+ * T68:問 AI。輸入是測試與開發寫的六組假資料(fixtures/golden-ask/inputs.json),不取自 raw/ 或 learning/。
+ * header 自己組(格式同 teach/ask.ts 的 buildAskPrompt:卡的資料、內文與例子、這一輪的問題),不 import teach/。
+ * 六組 key:general / off-topic / skip-learning / unlearned-prereq / deepest-level / very-short。
+ */
+interface AskFixture {
+  key: string;
+  category: string;
+  title: string;
+  level: number;
+  deepest: boolean;
+  unlearnedPrereqs: string[];
+  body: string;
+  examples: string[];
+  question: string;
+}
+
+function loadAskFixtures(): AskFixture[] {
+  const path = join(ROOT, 'packages/core/src/prompt-quality/fixtures/golden-ask/inputs.json');
+  return JSON.parse(readFileSync(path, 'utf8')) as AskFixture[];
+}
+
+function askInput(item: AskFixture): GoldenInput {
+  const id = `ask-${item.key}`;
+  const header = [
+    `golden: ${id}`,
+    `category: ${item.category}`,
+    `title: ${item.title}`,
+    `level: ${item.level}`,
+    `deepest level: ${item.deepest ? 'yes' : 'no'}`,
+    `unlearned prereqs: ${item.unlearnedPrereqs.length === 0 ? '(none)' : item.unlearnedPrereqs.join('; ')}`,
+  ];
+  const card = [item.body, ...item.examples.flatMap((e) => ['', `example: ${e}`])].join('\n');
+  return { id, prompt: [block(header, card), '---', `question: ${item.question}`, ''].join('\n') };
+}
+
+const TEACH_ASK: GoldenSet = {
+  id: 'teach.ask',
+  task: 'teach.ask',
+  promptFile: `${PROMPTS_DIR}/teach/ask.md`,
+  inputs: loadAskFixtures().map(askInput),
+};
+
+/**
  * Wave 0 留下的自我測試組(原名 `grade.apply`)。它評的是 `golden-sets/` 自己的佔位
  * prompt 檔,示範框架本身跑得起來;**05 尚未提供 prompt 檔,`grade.apply` 的真實登記待 05**。
  */
@@ -346,6 +389,7 @@ const REGISTRY: Partial<Record<GoldenSetId, GoldenSet>> = {
   'ingest.questions': INGEST_QUESTIONS,
   'ingest.deps': INGEST_DEPS,
   'reteach.short': RETEACH_SHORT,
+  'teach.ask': TEACH_ASK,
   selftest: SELFTEST,
 };
 
@@ -358,6 +402,7 @@ export const REAL_TASK_GOLDEN_SET_IDS: readonly GoldenSetId[] = [
   'ingest.questions',
   'ingest.deps',
   'reteach.short',
+  'teach.ask',
 ];
 
 export const GOLDEN_SET_REGISTRY_FILE = 'packages/core/src/prompt-quality/golden-sets/registry.ts';

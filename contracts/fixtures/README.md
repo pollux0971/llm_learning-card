@@ -16,6 +16,7 @@ cards/                單張卡的合法與非法樣本,檔名說明錯在哪
 reviews/              各種複習狀態
 weekly/               週目標狀態
 llm/                  預錄的模型回應,給 FakeLlmRouter 重播
+                      `llm/teach.ask.*.json`:問 AI 的回應(T68,一檔一筆;prompt_contains 是 `question: ask-fixture-…`:好回答、讀不懂、追問 3 個、沒有追問)
 raw/                  原始素材樣本
 ```
 
