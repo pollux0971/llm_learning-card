@@ -1,12 +1,16 @@
 ---
 id: T68
 deps: []
-touches: [packages/core/src/llm/types.ts, packages/core/src/llm/routing.ts, packages/core/src/llm/token-limits.ts, packages/core/prompts/teach/ask.md, packages/core/src/teach/ask.ts, packages/core/src/teach/index.ts, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/fixtures/golden-ask/inputs.json, packages/core/src/session/teach.ts, packages/core/src/session/handler.ts, packages/core/src/session/protocol.ts, packages/core/src/session/protocol.vectors.json, apps/desktop/src/webview/review-client.ts, contracts/fixtures/llm/teach.ask.json, contracts/fixtures/README.md]
+touches: [packages/core/src/llm/types.ts, packages/core/src/llm/routing.ts, packages/core/src/llm/token-limits.ts, packages/core/prompts/teach/ask.md, packages/core/src/teach/ask.ts, packages/core/src/teach/index.ts, packages/core/src/prompt-quality/golden-sets/registry.ts, packages/core/src/prompt-quality/types.ts, packages/core/src/prompt-quality/fixtures/golden-ask/inputs.json, packages/core/src/session/teach.ts, packages/core/src/session/handler.ts, packages/core/src/session/teach-ask.ts, packages/core/src/session/protocol.ts, packages/core/src/session/protocol.vectors.json, apps/desktop/src/webview/review-client.ts, contracts/fixtures/llm/teach.ask.json, contracts/fixtures/README.md]
 cpu: heavy
 budget_usd: 4
 status: todo
 owner: worker-grok
 must_catch:
+  - ask 跑著時 teach.next(或 switch、prereq、open、deepen、back)回 busy 或 bad-request 同時有 ask 在跑那條必須紅(這些動作照常執行,同時丟掉還在跑的 ask)
+  - 換卡後晚到的回答進了新卡的問答紀錄,或出現在 teach.ask.poll 的結果 晚到那條必須紅(側車丟掉)
+  - deepen 跑著時 teach.ask 沒回 bad-request 互斥那條必須紅
+  - teach.ask 同步等雲端回答才回(回應不是 { asking: true }) 背景那條必須紅(假 router 慢回答時,teach.ask 在回答之前就回了)
   - TASK_MAX_TOKENS 少了 teach.ask 或 LLM_TASKS 沒有它 token-limits 與 routing 的窮盡測試必須紅
   - teach.ask 的路由跟 deepen 不同(例如離線無本機沒丟 NO_MODEL、離線有本機沒標 provisional) 路由表那組必須紅
   - 側車收路徑、卡 id 或任何多餘參數 protocol 的 strict schema 與向量必須紅
@@ -41,7 +45,7 @@ must_catch:
 1. **契約 §7**(1.6.0 已在規格批改好,**唯讀**):`LlmTask` 加 `teach.ask`,路由跟 `deepen` 同一列。
    - `packages/core/src/llm/types.ts` 的 `LLM_TASKS` 加 `'teach.ask'`。
    - `packages/core/src/llm/routing.ts` 的 `ROUTING_TABLE['teach.ask']` = `deepen` 同一組(`cloud-or-local`)。
-   - `packages/core/src/llm/token-limits.ts` 的 `TASK_MAX_TOKENS['teach.ask']`:建議 1024(回答加 3 個追問,比 deepen 的 2048 短)。**數字由顧問在審工單時定;沒定就用 1024。**
+   - `packages/core/src/llm/token-limits.ts` 的 `TASK_MAX_TOKENS['teach.ask']`:**1536**(顧問定;截斷算錯誤〔`OutputTruncatedError`〕,中文回答加 3 個追問很容易碰到 1024)。prompt 寫明:answer 不超過 200 字,每個追問不超過 30 字;zod 不檢查長度,只檢查非空。
 2. **prompt**:`packages/core/prompts/teach/ask.md`(新資料夾,照 `prompts/grading/reteach-short.md` 的寫法)。輸入有:目前那張卡(標題、body、example)、這張卡的先備清單與哪些還沒學、前幾輪的問答(最多 N 輪,見第 5 點)、這一輪的問題。輸出是**一個 JSON 物件**,不要別的字。
 3. **回答格式**(模組內部,**不是契約**;`packages/core/src/teach/ask.ts` 用 zod 驗,strict):
 
@@ -53,7 +57,12 @@ must_catch:
 
    - 看不懂(不是 JSON、缺欄位、多欄位、值不合法、followups 超過 3 個)→ **整個當失敗**:不猜、不截、不修;側車回「這次的回答看不懂,可以再問一次」,建議是 `none`。
    - `back` 要回 `unlearned prerequisite` 的 id 時,由**側車**從這張卡的先備算(AI 不給 id、不收 AI 給的 id):第一張未學的先備;沒有就是 `none-available`。
-4. **側車動作 `teach.ask`**(`protocol.ts`、`handler.ts`、`session/teach.ts`;協定向量檔補,測試 agent 寫):
+4. **側車動作 `teach.ask`(背景執行,照 deepen 的做法;顧問 2026-11-25 擋下同步 await)**:
+   - 側車 `review_sidecar.rs` 用 try_lock,同一時間只有一個請求,第二個拿 busy。雲端回答要 5–15 秒,所以 `teach.ask` **不能同步等**:新增 `packages/core/src/session/teach-ask.ts`(`createAskController`,照 `teach-deepen.ts` 的 `createDeepenController`),`teach.ask` 只在背景開始、**馬上回 `{ asking: true }`**;視窗用新動作 **`teach.ask.poll`**(參數 `{}`)拿結果(進行中回 `{ asking: true }`,完成回下面的 `ask`)。
+   - 問的時候按 `teach.next`、`switch`、`prereq`、`open`、`deepen`、`back`:**照常執行,同時丟掉還在跑的 ask**(像 deepen 的 abandon);晚到的回答由側車丟掉,不放進新卡的問答紀錄、`teach.ask.poll` 也不回它。
+   - `deepen` 跑著時呼叫 `teach.ask`:回 `bad-request`,跟 `teach.next` 的規則一樣。
+   - 協定方法表加 `'teach.ask'`、`'teach.ask.poll'`,向量檔兩個都補。
+   - 以下是動作的內容:(`protocol.ts`、`handler.ts`、`session/teach.ts`;協定向量檔補,測試 agent 寫):
    - 參數:`{ question: string }`,strict。**不收路徑、不收卡 id、不收別的**。問的永遠是側車目前那張卡。
    - 回應(接在現有 `TeachView` 後面,同一條路,ADR-075、ADR-077):
 
@@ -66,7 +75,7 @@ must_catch:
 
    - `highlight` 由側車算(畫面只照著亮):`continue`→`next`;`deepen`→`deepen`(已是最深一層時 `null`,照 phase-3 的「已經是最深的一層」);`back`→第一張未學先備,沒有就 `null`。
    - 同一張卡的前幾輪問答放在**側車記憶體**,換卡(`teach.next`、`teach.switch`、`teach.prereq`、`teach.deepen` 成功、`teach.back`、`teach.open`)就清;側車重啟就沒了。**上限 N = 4 輪**(顧問可改;問答都算進提示,所以也是 token 上限)。
-   - 一次只准一個 `teach.ask` 在跑;跑著時再來一個回既有的 busy。
+   - 一次只准一個 ask 在背景跑;跑著時再來一個 `teach.ask` 回 `bad-request`。
 5. **花費**:呼叫前照 `LLM_DAILY_CAP_USD` 擋,到上限回 `error: 'budget'`、**不呼叫**。用 `packages/core/src/llm/spend.ts` 的 `readDailySpend` 與 `isBudgetExhausted`(`CAP=0` = 沒有上限,不是用完)。**先讀 `router-gateway.ts` 現在怎麼擋**(`budget-exhausted`):能用同一條就用同一條,不要另寫一份算法;兩邊對「上限」的看法要一樣。
 6. **離線**:`NO_MODEL` → `error: 'no-model'`;本機回的 `provisional: true` 帶回去,畫面標「暫定」。
 7. **不落地**:不寫卡檔、`reviews.json`、order 檔;router 照舊記 `llm_call`(不由這張改)。
@@ -79,6 +88,7 @@ must_catch:
 |---|---|---|---|
 | 契約窮盡 | `LLM_TASKS`、`TASK_MAX_TOKENS`、路由表都含 `teach.ask`,且與 `deepen` 同組 | 既有的 `token-limits.test.ts`(7→8、`toEqual` 表加一列)、`routing.test.ts`(11 組變 14 組)、`router.test.ts`、`fallback.test.ts` 跟著改;**每一處改了什麼、為什麼,寫進紅測試 commit 說明**(測試 agent 改既有測試) | 紅 |
 | 回答 schema | `ask.ts` 的 zod:好回答、缺欄位、多欄位、suggestion 非法、followups 4 個、answer 空、不是 JSON、JSON 外有字 | vitest 表格 | 紅 |
+| 背景與互斥 | teach.ask 回 `{ asking: true }` 在回答之前;ask 跑著時 next/switch/prereq/open/deepen/back 照常執行並丟掉 ask;晚到的回答不進新卡紀錄、poll 不回;deepen 跑著時 ask 回 bad-request | 真側車 + 可控制 resolve 時機的假 router | 紅 |
 | 側車協定 | `teach.ask` 的 strict schema:多一個欄位(`path`、`card`、`id`)必須被拒;向量檔 | `protocol.test.ts` 加向量 | 紅 |
 | 只問目前那張 | 換卡再問,提示裡只有新那張卡;前一輪問答被清掉 | 真側車 + `FakeLlmRouter` 記下收到的 prompt | 紅 |
 | 輪數上限 | 第 5 輪的提示不含第 1 輪 | 同上 | 紅 |
@@ -130,10 +140,9 @@ npm run boundaries
 - 改 `deepen` 或 `teach.deepen` 的行為。
 - 其他 task 的 token 上限。
 
-## 待顧問定(起草時沒有依據,不替它編)
+## 顧問已定
 
-1. `teach.ask` 的 `TASK_MAX_TOKENS`(建議 1024)與輪數上限 N(建議 4)。
-2. `back` 且有未學先備時,回應裡要不要同時帶那張先備的標題(畫面亮的是 07 phase-1 的先備提示,它本來就有標題,所以建議不帶)。
+(2026-11-25 顧問已定:`TASK_MAX_TOKENS['teach.ask']` = 1536、輪數 N = 4、`back` 不帶先備標題。無待定項。)
 
 ## 預算
 
