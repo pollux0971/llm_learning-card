@@ -1790,3 +1790,27 @@ graph TD
   - 考試卡小結的明天估計要抽成兩邊共用的一個函式(T67 做,小結的數字不變)。
   - i4 第 63 行的 `@manual` 由顧問用 07 phase-5 的 `@manual` 判,不交使用者。
 - **Related**: ADR-002、ADR-009、ADR-015、ADR-075、ADR-077、ADR-080、ADR-084、T66、T67、`features/07-teach-card/`、`features/08-weekly-goal/`、`docs/reviews/I4-inventory.md`
+
+## ADR-086 · 教學卡加「問 AI」:新 LlmTask `teach.ask`,AI 只建議、不自動跳,討論不落地
+
+- **Status**: accepted · 2026-11-25(使用者 `/feature` 確認,兩題都選 A,另加「詢問選項輔佐討論」;改契約 §7 硬約定,契約 1.6.0;技術顧問起草)
+- **Context**:
+  1. 使用者原話:「我希望可以加上詢問ai的功能,而ai會回答問題,並判斷該單元能不能繼續讀下去,要深入還是回到基礎」;確認時補「可以加上詢問選項輔佐討論」。
+  2. 契約 §7 的 7 個 `LlmTask` 沒有一個是「回答使用者的問題」。借 `deepen` 會讓 token 上限、golden 集、花費記錄都混在一起。
+  3. ADR-002:每日學習量由使用者控制。ADR-010:教學順序是軟性的,只提示先備、不阻擋。
+- **Decision**:
+  1. **契約 §7 加 `teach.ask`**(Q1 = A),路由跟 `deepen` 同一列:在線 cloud;離線有本機 local、`provisional=true`;離線無本機 throw `NO_MODEL`。契約 1.5.0 → 1.6.0。`TASK_MAX_TOKENS` 補一格。
+  2. **AI 只建議,不自動跳**(Q2 = A)。三選一:`continue` 亮「下一個」、`deepen` 亮「深入這個」、`back` 在先備提示裡亮第一張未學的先備;沒有未學先備時只在回答裡說,什麼都不亮。
+  3. **追問選項**:AI 每次附 0–3 個追問,點了就當下一個問題送出。同一張卡的前幾輪問答一起給 AI(輪數上限由工單定),換卡或關窗就清掉。
+  4. **不落地**:問答不寫卡、`reviews.json`、order 檔,不改任何磁碟格式;router 照舊記 `llm_call`。
+  5. 回答格式是模組內部的軟約定(zod 驗);看不懂整個當失敗,不猜、不亮按鈕。
+  6. 呼叫前照 `LLM_DAILY_CAP_USD` 擋。新 prompt 走 golden run(ADR-032)。
+  7. 放在 07 phase-6,屬 I5;不等 I4 的人工確認。
+- **Alternatives**:
+  - **借 `deepen` 的 task**(Q1 = B)—— 不採用。花費、token 上限、golden 集混在一起。
+  - **AI 判斷後自動跳卡**(Q2 = B)—— 不採用。違反 ADR-002 與 ADR-010。
+  - **把問答存成檔案**—— 不採用。要新的磁碟格式(硬約定),使用者沒有要求。
+- **Consequences**:
+  - 每問一次就是一次雲端呼叫,算進每日上限。
+  - 08 phase-2 之外,07 多一個 I5 的 phase。
+- **Related**: ADR-002、ADR-010、ADR-032、ADR-075、ADR-077、`contracts/types.md` §7、`features/07-teach-card/phase-6.feature`

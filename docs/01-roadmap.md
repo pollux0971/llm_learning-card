@@ -162,6 +162,7 @@ order 齊全 / 驗證器 25/25,三筆 `cycle_removed` 證明多重循環修復�
 | 10-desktop-shell/phase-3 | 系統列、自啟、縮到系統列 |
 | 05-grading/phase-3 | 縮短版生成(06 phase-4 要用;2026-10-27 從原本的 phase-3 拆出來,ADR-084) |
 | 06-test-card/phase-4 | 縮短版重教 |
+| 07-teach-card/phase-6 | 問 AI(2026-11-25 使用者 `/feature` 確認;契約 1.6.0,ADR-086) |
 
 **整合工作**:08 訂閱真的 scheduler 事件;06 接上 grading 的 generateShort。
 
