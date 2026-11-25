@@ -16,8 +16,7 @@ import { join } from 'node:path';
 import type { CardId } from '@contracts/index.js';
 import type { LlmRouter as GradingRouter } from '@core/grading/index.js';
 import type { LlmRouter } from '@core/llm/index.js';
-import { ExplicitLedger } from '@core/llm/ledger.js';
-import { isBudgetExhausted, readDailyCapUsd, readDailySpend, readSpendPrices } from '@core/llm/spend.js';
+import { computeDailySpend, isBudgetExhausted, parseLedger, readDailyCapUsd, readSpendPrices } from '@core/llm/spend.js';
 import { buildAskPrompt, parseAskAnswer, type AskAnswer, type AskRound } from '../teach/ask.js';
 import type { AskContext, createTeachRuntime } from './teach.js';
 
@@ -102,9 +101,17 @@ export function createAskController(deps: AskControllerDeps): AskController {
   /** 呼叫前查今天的花費。回 undefined = 可以呼叫。 */
   function budgetBlock(): AskResult | undefined {
     try {
-      const logPath = join(deps.learningDir, 'state', 'log.jsonl');
-      const ledger = ExplicitLedger.unverified(logPath, '側車只讀今日花費,不寫;學習目錄由側車啟動時的指標檔驗證過');
-      const spent = readDailySpend(ledger, deps.today(), readSpendPrices(deps.env));
+      // 帳本把手只由入口層產生(ExplicitLedger.unverified 只准兩個入口);側車的 learningDir 已經過指標檔驗證,
+      // 這裡只讀 state/log.jsonl,壞行的定義仍只經過 parseLedger(壞行 = 不知道,不是 0)。
+      let content = '';
+      try {
+        content = readFileSync(join(deps.learningDir, 'state', 'log.jsonl'), 'utf8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+      const parsed = parseLedger(content);
+      if (!parsed.ok) throw new Error('帳本有壞行');
+      const spent = computeDailySpend(parsed.events, deps.today(), readSpendPrices(deps.env));
       return isBudgetExhausted(spent.usd, readDailyCapUsd(deps.env)) ? failure('budget') : undefined;
     } catch {
       return failure('budget', UNKNOWN_SPEND_MESSAGE);
