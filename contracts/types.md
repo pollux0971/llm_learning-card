@@ -1,6 +1,6 @@
 # 契約:型別與檔案格式
 
-> 版本:1.5.0
+> 版本:1.6.0
 >
 > **硬約定**(§1 §2 §3 §4 §7 的 LlmTask 與路由表 §8 §9 §10 §11 §11b §12):改動需 ADR。
 > (§1 與 §11b 於 1.2.0 補進索引,見 ADR-061;§2 的圍欄與 CJK 判定於 1.2.0 改寫,見 ADR-060。)
@@ -8,6 +8,7 @@
 > §13 的路徑檢查見 ADR-062(1.3.0)與 ADR-063(1.3.1:字元集合、長度、raw、保留名)。
 > 1.4.0 動到兩個硬約定,使用者 2026-10-15 批准:§12 加帳本身分與位置由使用者層指標決定(ADR-066);§1 的 `CategoryId` 收窄成 §13 的一個合法段加長度上限(ADR-067)。
 > 1.5.0 動到 §2(硬約定),使用者 2026-10-27 選 A:哪些是 example 圍欄,以教學卡畫面的區塊解析為準;步驟 2 的「其他」寫完整(ADR-081,補充 ADR-060)。
+> 1.6.0 動到 §7(硬約定),使用者 2026-11-25 選 A:`LlmTask` 加 `teach.ask`(教學卡的「問 AI」),路由跟 `deepen` 同一列(ADR-086)。
 > 分層理由見 `README.md`。
 
 以下是所有**跨模組**的定義。模組內部型別不在此。
@@ -274,7 +275,8 @@ interface SchedulerOutcome {
 ```ts
 type LlmTask =
   | 'ingest.cards' | 'ingest.questions' | 'ingest.deps'
-  | 'deepen' | 'grade.fill.llm' | 'grade.apply' | 'reteach.short';
+  | 'deepen' | 'grade.fill.llm' | 'grade.apply' | 'reteach.short'
+  | 'teach.ask';
 
 interface LlmResult {
   text: string;
@@ -298,13 +300,13 @@ interface LlmRouter {
 | task | 在線 | 離線+本機 | 離線+無本機 |
 |---|---|---|---|
 | ingest.cards / ingest.questions / ingest.deps | cloud | throw `CLOUD_REQUIRED` | throw `CLOUD_REQUIRED` |
-| deepen / grade.apply / reteach.short | cloud | local, provisional=true | throw `NO_MODEL` |
+| deepen / grade.apply / reteach.short / teach.ask | cloud | local, provisional=true | throw `NO_MODEL` |
 | grade.fill.llm | local | local | throw `NO_MODEL` |
 
 **Wave 0 的 stub**:每個需要 LLM 的功能自備 `FakeLlmRouter implements LlmRouter`,從 `contracts/fixtures/llm/` 讀預錄回應。這是各功能能單獨跑的關鍵。
 
 **`opts.maxTokens`(軟約定,函式簽章)**:每個 task 的預設上限見 `packages/core/src/llm/token-limits.ts`
-的 `TASK_MAX_TOKENS`(對照這裡的 7 個 `LlmTask`)。`call()` 沒收到 `opts.maxTokens` 時查這張表;
+的 `TASK_MAX_TOKENS`(對照這裡的 8 個 `LlmTask`)。`call()` 沒收到 `opts.maxTokens` 時查這張表;
 收到就覆蓋表格值。動機:adapter 原本寫死一個全域 1024,真的呼叫時回應被截斷——如果切斷點剛好切壞
 JSON 才會被抓到,切在別的地方 JSON 可能仍合法,會靜默回傳一張少字的卡。截斷本身視為錯誤
 (`OutputTruncatedError`,`packages/core/src/llm/errors.ts`),不回傳半截 text。
