@@ -272,16 +272,17 @@ describe('只問目前那張卡(must_catch 問的是別張卡)', () => {
     expect(promptOf(r, 1)).not.toContain(PARENT_TITLE);
   });
 
-  it('沒有目前這張卡時(今天的卡都學完了)問,回 error、不打模型、不丟例外', async () => {
+  it('沒有目前這張卡時(今天的卡都學完了)問,回 bad-request、不打模型、不丟例外(T68 驗收補:原本太鬆,接受任何 ask.error)', async () => {
     const r = await askRig();
     await r.view('teach.open');
     await r.view('teach.next');
     const end = await r.send('teach.next');
     expect(cardIdOf(end), '兩張 level 1 都學完').toBeUndefined();
-    const res = await r.askFull(Q(1));
-    // 回 bad-request 或帶 error 的 ask 都行,不能是模型被叫、也不能是丟例外
+    const res = await r.ask(Q(1));
+    expect(res['ok'], JSON.stringify(res)).toBe(false);
+    expect(kindOf(res)).toBe('bad-request');
+    await r.settle();
     expect(r.askRouter.asks, '沒有卡就不問模型').toHaveLength(0);
-    expect(res.done['ok'] === false || res.ask?.error !== undefined, JSON.stringify(res.done)).toBe(true);
   });
 });
 
