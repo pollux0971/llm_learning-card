@@ -15,6 +15,7 @@ export const TASK_MAX_TOKENS: Readonly<Record<LlmTask, number>> = {
   'ingest.questions': 4096,
   'ingest.deps': 2048,
   deepen: 2048,
+  'teach.ask': 1536,
   'reteach.short': 512,
   'grade.fill.llm': 256,
   'grade.apply': 512,

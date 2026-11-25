@@ -14,7 +14,7 @@
  *
  * - `FallbackGroup`:三種 task 分組
  *   - `'gateway-always'`:`grade.fill.llm`。契約 §7 本來就寫 local,不是新規則。
- *   - `'gateway-fallback'`:`deepen` / `grade.apply` / `reteach.short`。雲端優先,
+ *   - `'gateway-fallback'`:`deepen` / `grade.apply` / `reteach.short` / `teach.ask`。雲端優先,
  *     雲端不能用就改走閘道並標 provisional。
  *   - `'cloud-only'`:`ingest.*`。沒有備援(使用者明確選的:卡片品質還沒用本機
  *     模型驗過,不讓它產卡)。
@@ -60,6 +60,7 @@ export const FALLBACK_TABLE: Readonly<Record<LlmTask, FallbackGroup>> = {
   deepen: 'gateway-fallback',
   'grade.apply': 'gateway-fallback',
   'reteach.short': 'gateway-fallback',
+  'teach.ask': 'gateway-fallback',
   'grade.fill.llm': 'gateway-always',
 };
 

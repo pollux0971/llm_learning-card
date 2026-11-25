@@ -10,7 +10,8 @@ export type LlmTask =
   | 'deepen'
   | 'grade.fill.llm'
   | 'grade.apply'
-  | 'reteach.short';
+  | 'reteach.short'
+  | 'teach.ask';
 
 export interface LlmResult {
   text: string;
@@ -71,6 +72,7 @@ export type GoldenSetId =
   | 'ingest.questions'
   | 'ingest.deps'
   | 'reteach.short'
+  | 'teach.ask'
   | 'selftest';
 
 /** 一個 prompt 檔的 golden set:固定輸入 + 它評的是哪個 prompt 檔 + 送去哪個契約任務。 */

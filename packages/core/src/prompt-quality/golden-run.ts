@@ -425,6 +425,7 @@ export const GOLDEN_FALLBACK_TABLE: Readonly<Record<LlmTask, FallbackGroup>> = O
   'grade.fill.llm': 'cloud-only',
   'grade.apply': 'cloud-only',
   'reteach.short': 'cloud-only',
+  'teach.ask': 'cloud-only',
 });
 
 /**
