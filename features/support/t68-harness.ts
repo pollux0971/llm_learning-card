@@ -94,6 +94,11 @@ export interface AskGate {
   fail(err: Error): void;
 }
 
+/** 讓假 router「丟任何值」(字串、null、數字……),不只 Error。 */
+export class ThrowValue {
+  constructor(readonly value: unknown) {}
+}
+
 export class FakeAskRouter {
   /** task 是 teach.ask 的呼叫 */
   readonly asks: AskCall[] = [];
@@ -104,7 +109,7 @@ export class FakeAskRouter {
   /** 手上正在處理(進來了還沒回)的 ask 數 */
   inflight = 0;
   /** 每個 ask 的回應:字串、或要丟的錯、或依呼叫算 */
-  reply: string | Error | ((call: AskCall) => string | Error) = () => askAnswer();
+  reply: string | Error | ThrowValue | ((call: AskCall) => string | Error | ThrowValue) = () => askAnswer();
   /** 回的 provisional(離線走本機) */
   provisional = false;
   private gates: { promise: Promise<void>; release: () => void; fail: (e: Error) => void; reached: (c: AskCall) => void; used: boolean }[] = [];
@@ -151,6 +156,7 @@ export class FakeAskRouter {
         gate.reached(call);
         await gate.promise;
       }
+      if (scripted instanceof ThrowValue) throw scripted.value;
       if (scripted instanceof Error) throw scripted;
       return { text: scripted, provider: provisional ? 'ollama' : 'openai', model: 'fake', latency_ms: 0, provisional };
     } finally {
