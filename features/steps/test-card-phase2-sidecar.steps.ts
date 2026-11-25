@@ -120,6 +120,10 @@ Then('no action the window can send carries a path or a card id', { timeout: 180
     ['teach.poll', { job: 1 }],
     ['teach.cancel', { path: 'cards/security/sec-0001.md' }],
     ['teach.back', { card: 'sec-0001' }],
+    // T68(ADR-086):問 AI 只收一個問題文字,不收路徑、卡 id;poll 不收任何東西
+    ['teach.ask', { question: 'x', path: 'cards/security/sec-0001.md' }],
+    ['teach.ask', { question: 'x', card: 'sec-0001' }],
+    ['teach.ask.poll', { question: 'x' }],
   ];
   let id = 2000;
   for (const [method, params] of attempts) {
@@ -130,9 +134,10 @@ Then('no action the window can send carries a path or a card id', { timeout: 180
   assert.ok(b.proc!.isAlive());
   // 視窗端的 ReviewClient 本身也沒有任何能帶 path 或 card 的方法(T40:多了 onWait,它收一個聽眾函式,不是 path 或 card)
   const client = createReviewClient({ handler: async () => '' }) as unknown as Record<string, { length: number }>;
-  assert.deepEqual(Object.keys(client).sort(), ['next', 'onWait', 'start', 'status', 'submit', 'summary', 'teachBack', 'teachCancel', 'teachDeepen', 'teachLoad', 'teachNext', 'teachOpen', 'teachPoll', 'teachPrereq', 'teachSwitch']);
-  // T43:四個新方法都不收參數(沒有路徑、卡 id、工作編號);T67:teachLoad 也不收
-  for (const name of ['start', 'next', 'summary', 'status', 'teachNext', 'teachDeepen', 'teachPoll', 'teachCancel', 'teachBack', 'teachLoad']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
+  assert.deepEqual(Object.keys(client).sort(), ['next', 'onWait', 'start', 'status', 'submit', 'summary', 'teachAsk', 'teachAskPoll', 'teachBack', 'teachCancel', 'teachDeepen', 'teachLoad', 'teachNext', 'teachOpen', 'teachPoll', 'teachPrereq', 'teachSwitch']);
+  // T43:四個新方法都不收參數(沒有路徑、卡 id、工作編號);T67:teachLoad 也不收;T68:teachAskPoll 不收、teachAsk 只收一個問題
+  for (const name of ['start', 'next', 'summary', 'status', 'teachNext', 'teachDeepen', 'teachPoll', 'teachCancel', 'teachBack', 'teachLoad', 'teachAskPoll']) assert.equal(client[name]!.length, 0, `${name} 不收參數`);
+  assert.equal(client['teachAsk']!.length, 1, 'teachAsk 只收一個問題(不收路徑、卡 id)');
 });
 
 // ---------------------------------------------------------------- 場景:兩邊的訊息形狀一樣
